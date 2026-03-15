@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Antiphon - Design Direction Mockups</title>
+<style>
+  /* ========== RESET & BASE ========== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Blueprint dark theme tokens */
+    --bg-app: #1c2127;
+    --bg-panel: #252a31;
+    --bg-elevated: #2f343c;
+    --bg-input: #383e47;
+    --bg-hover: #404854;
+    --text-primary: #f6f7f9;
+    --text-secondary: #abb3bf;
+    --text-muted: #738091;
+    --border: #404854;
+    --border-light: #333940;
+    /* Blueprint intents */
+    --blue: #2d72d2;
+    --blue-hover: #215db0;
+    --green: #238551;
+    --green-bg: rgba(35,133,81,0.15);
+    --orange: #c87619;
+    --orange-bg: rgba(200,118,25,0.15);
+    --red: #cd4246;
+    --red-bg: rgba(205,66,70,0.15);
+    --blue-bg: rgba(45,114,210,0.15);
+    /* Spacing */
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+    /* Radius */
+    --radius: 4px; --radius-lg: 6px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #111418;
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+
+  /* ========== NAV ========== */
+  .showcase-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: var(--bg-app);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: var(--sp-4);
+    padding: var(--sp-3) var(--sp-6);
+  }
+  .showcase-nav h1 { font-size: 14px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+  .showcase-nav .tabs { display: flex; gap: 2px; overflow-x: auto; }
+  .showcase-nav .tab {
+    padding: var(--sp-2) var(--sp-4); border-radius: var(--radius); cursor: pointer;
+    font-size: 13px; color: var(--text-secondary); white-space: nowrap;
+    border: none; background: none; transition: all 0.15s;
+  }
+  .showcase-nav .tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .showcase-nav .tab.active { background: var(--blue); color: white; }
+
+  /* ========== SECTIONS ========== */
+  .direction { display: none; padding-top: 52px; min-height: 100vh; }
+  .direction.active { display: block; }
+  .direction-header {
+    padding: var(--sp-6) var(--sp-8); border-bottom: 1px solid var(--border);
+    background: var(--bg-app);
+  }
+  .direction-header h2 { font-size: 20px; margin-bottom: var(--sp-2); }
+  .direction-header p { color: var(--text-secondary); font-size: 14px; max-width: 800px; }
+  .direction-header .tags { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
+  .tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: var(--bg-input); color: var(--text-secondary);
+  }
+
+  .screens { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8); }
+  .screen-label {
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: var(--sp-3);
+  }
+
+  /* ========== SHARED MOCK COMPONENTS ========== */
+  .mock { background: var(--bg-app); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .mock-navbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--sp-2) var(--sp-4); background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); height: 40px;
+  }
+  .mock-navbar .logo { font-weight: 700; font-size: 14px; color: var(--blue); }
+  .mock-navbar .nav-links { display: flex; gap: var(--sp-4); }
+  .mock-navbar .nav-link { font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+  .mock-navbar .nav-link.active { color: var(--text-primary); }
+  .mock-navbar .avatar {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--blue);
+    display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600;
+  }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.running { background: var(--blue); animation: pulse 2s infinite; }
+  .status-dot.pending { background: var(--orange); }
+  .status-dot.complete { background: var(--green); }
+  .status-dot.failed { background: var(--red); }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes stream { 0% { width: 0; } 100% { width: 100%; } }
+
+  .badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600;
+  }
+  .badge-blue { background: var(--blue-bg); color: var(--blue); }
+  .badge-green { background: var(--green-bg); color: var(--green); }
+  .badge-orange { background: var(--orange-bg); color: var(--orange); }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+
+  .btn {
+    padding: 5px 12px; border-radius: var(--radius); font-size: 12px; font-weight: 500;
+    border: none; cursor: pointer; display: inline-flex; align-items: center; gap: var(--sp-1);
+  }
+  .btn-primary { background: var(--blue); color: white; }
+  .btn-success { background: var(--green); color: white; }
+  .btn-warning { background: var(--orange); color: white; }
+  .btn-danger { background: var(--red); color: white; }
+  .btn-default { background: var(--bg-input); color: var(--text-primary); }
+  .btn-minimal { background: none; color: var(--text-secondary); }
+  .btn-sm { padding: 3px 8px; font-size: 11px; }
+
+  .progress-bar {
+    height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden;
+  }
+  .progress-bar .fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+  .progress-bar .fill.blue { background: var(--blue); }
+  .progress-bar .fill.green { background: var(--green); }
+
+  /* Stage pipeline */
+  .stage-pipeline { display: flex; align-items: center; gap: 0; }
+  .stage-node {
+    display: flex; align-items: center; gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3); font-size: 11px; border-radius: var(--radius);
+    white-space: nowrap;
+  }
+  .stage-node.done { background: var(--green-bg); color: var(--green); }
+  .stage-node.active { background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+  .stage-node.pending { background: var(--bg-input); color: var(--text-muted); }
+  .stage-node.failed { background: var(--red-bg); color: var(--red); }
+  .stage-connector { width: 24px; height: 2px; background: var(--border); flex-shrink: 0; }
+  .stage-connector.done { background: var(--green); }
+
+  /* Streaming output */
+  .stream-output {
+    font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 12px; line-height: 1.6; color: var(--text-secondary);
+    padding: var(--sp-4); background: var(--bg-panel); border-radius: var(--radius);
+    max-height: 200px; overflow-y: auto;
+  }
+  .stream-output .tool-call {
+    color: var(--text-muted); font-size: 11px; padding: 2px 0;
+    border-left: 2px solid var(--blue); padding-left: var(--sp-3); margin: var(--sp-2) 0;
+  }
+  .stream-cursor { display: inline-block; width: 7px; height: 14px; background: var(--blue); animation: pulse 1s infinite; vertical-align: text-bottom; }
+
+  .activity-bar {
+    display: flex; align-items: center; gap: var(--sp-4);
+    padding: var(--sp-2) var(--sp-4); background: var(--bg-elevated);
+    border-radius: var(--radius); font-size: 11px; color: var(--text-muted);
+  }
+  .activity-bar .action { color: var(--blue); font-weight: 500; }
+
+  /* Prompt input */
+  .prompt-bar {
+    display: flex; align-items: center; gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4); background: var(--bg-panel);
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+  }
+  .prompt-bar input {
+    flex: 1; background: none; border: none; color: var(--text-primary);
+    font-size: 13px; outline: none;
+  }
+  .prompt-bar input::placeholder { color: var(--text-muted); }
+
+  /* Markdown artifact */
+  .artifact-content {
+    padding: var(--sp-6); max-width: 900px; margin: 0 auto;
+    font-size: 14px; line-height: 1.7;
+  }
+  .artifact-content h1 { font-size: 24px; margin-bottom: var(--sp-4); color: var(--text-primary); }
+  .artifact-content h2 { font-size: 18px; margin: var(--sp-6) 0 var(--sp-3); color: var(--text-primary); border-bottom: 1px solid var(--border); padding-bottom: var(--sp-2); }
+  .artifact-content h3 { font-size: 15px; margin: var(--sp-4) 0 var(--sp-2); color: var(--text-primary); }
+  .artifact-content p { color: var(--text-secondary); margin-bottom: var(--sp-3); }
+  .artifact-content ul { padding-left: var(--sp-6); color: var(--text-secondary); margin-bottom: var(--sp-3); }
+  .artifact-content li { margin-bottom: var(--sp-1); }
+  .artifact-content code {
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    background: var(--bg-input); padding: 1px 4px; border-radius: 3px; font-size: 12px;
+  }
+  .artifact-content pre {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--sp-4); margin: var(--sp-3) 0; overflow-x: auto;
+  }
+  .artifact-content pre code { background: none; padding: 0; }
+
+  /* ========== DIRECTION A: LINEAR-INSPIRED MINIMAL ========== */
+  .dir-a .dashboard-body { padding: var(--sp-6) var(--sp-8); }
+  .dir-a .workflow-list { display: flex; flex-direction: column; gap: var(--sp-3); max-width: 960px; margin: 0 auto; }
+  .dir-a .workflow-item {
+    display: flex; align-items: center; gap: var(--sp-4);
+    padding: var(--sp-4) var(--sp-5); background: var(--bg-panel);
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    cursor: pointer; transition: border-color 0.15s;
+  }
+  .dir-a .workflow-item:hover { border-color: var(--blue); }
+  .dir-a .wf-title { font-size: 14px; font-weight: 500; flex: 1; }
+  .dir-a .wf-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: var(--sp-4); align-items: center; }
+
+  /* ========== DIRECTION B: GITHUB-DENSE TABLE ========== */
+  .dir-b .dashboard-body { padding: var(--sp-4) var(--sp-6); }
+  .dir-b .wf-table { width: 100%; border-collapse: collapse; }
+  .dir-b .wf-table th {
+    font-size: 11px; font-weight: 600; color: var(--text-muted); text-align: left;
+    padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .dir-b .wf-table td {
+    font-size: 13px; padding: var(--sp-3); border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+  }
+  .dir-b .wf-table tr:hover td { background: var(--bg-hover); cursor: pointer; }
+  .dir-b .wf-table .wf-name { font-weight: 500; color: var(--blue); }
+  .dir-b .wf-table .wf-id { color: var(--text-muted); font-size: 11px; }
+
+  /* ========== DIRECTION C: SPLIT-PANEL IDE ========== */
+  .dir-c .ide-layout { display: flex; height: calc(100vh - 52px - 100px); }
+  .dir-c .sidebar-panel {
+    width: 260px; background: var(--bg-panel); border-right: 1px solid var(--border);
+    overflow-y: auto; flex-shrink: 0;
+  }
+  .dir-c .sidebar-section { padding: var(--sp-3) var(--sp-4); }
+  .dir-c .sidebar-section-title {
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: var(--sp-2);
+  }
+  .dir-c .tree-item {
+    display: flex; align-items: center; gap: var(--sp-2);
+    padding: 4px var(--sp-3); border-radius: var(--radius); font-size: 13px;
+    cursor: pointer; color: var(--text-secondary);
+  }
+  .dir-c .tree-item:hover { background: var(--bg-hover); }
+  .dir-c .tree-item.active { background: var(--blue-bg); color: var(--blue); }
+  .dir-c .tree-indent { padding-left: 20px; }
+  .dir-c .main-panel { flex: 1; overflow-y: auto; }
+  .dir-c .resize-handle {
+    width: 4px; background: var(--border); cursor: col-resize;
+    transition: background 0.15s;
+  }
+  .dir-c .resize-handle:hover { background: var(--blue); }
+
+  /* ========== DIRECTION D: PIPELINE-FORWARD ========== */
+  .dir-d .pipeline-hero {
+    padding: var(--sp-6) var(--sp-8);
+    background: var(--bg-panel); border-bottom: 1px solid var(--border);
+  }
+  .dir-d .pipeline-large { display: flex; align-items: center; gap: 0; justify-content: center; padding: var(--sp-4) 0; }
+  .dir-d .stage-lg {
+    display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+    padding: var(--sp-4) var(--sp-5); border-radius: var(--radius-lg);
+    min-width: 100px; cursor: pointer; transition: all 0.15s;
+  }
+  .dir-d .stage-lg:hover { background: var(--bg-hover); }
+  .dir-d .stage-lg .stage-icon {
+    width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 16px;
+  }
+  .dir-d .stage-lg .stage-icon.done { background: var(--green-bg); color: var(--green); }
+  .dir-d .stage-lg .stage-icon.active { background: var(--blue-bg); color: var(--blue); }
+  .dir-d .stage-lg .stage-icon.pending { background: var(--bg-input); color: var(--text-muted); }
+  .dir-d .stage-lg .stage-label { font-size: 11px; color: var(--text-secondary); }
+  .dir-d .stage-lg .stage-time { font-size: 10px; color: var(--text-muted); }
+  .dir-d .connector-lg { width: 40px; height: 2px; background: var(--border); margin-bottom: 20px; }
+  .dir-d .connector-lg.done { background: var(--green); }
+  .dir-d .content-below { padding: var(--sp-6) var(--sp-8); }
+
+  /* ========== DIRECTION E: CARD-BASED MODULAR ========== */
+  .dir-e .dashboard-body { padding: var(--sp-6) var(--sp-8); }
+  .dir-e .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--sp-4); }
+  .dir-e .wf-card {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: var(--sp-5); cursor: pointer;
+    transition: all 0.15s;
+  }
+  .dir-e .wf-card:hover { border-color: var(--blue); transform: translateY(-1px); }
+  .dir-e .wf-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--sp-3); }
+  .dir-e .wf-card-title { font-size: 14px; font-weight: 600; }
+  .dir-e .wf-card-body { font-size: 12px; color: var(--text-secondary); margin-bottom: var(--sp-4); }
+  .dir-e .wf-card-meta { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); }
+  .dir-e .mini-pipeline { display: flex; gap: 3px; align-items: center; }
+  .dir-e .mini-stage { width: 8px; height: 8px; border-radius: 2px; }
+  .dir-e .mini-stage.done { background: var(--green); }
+  .dir-e .mini-stage.active { background: var(--blue); animation: pulse 2s infinite; }
+  .dir-e .mini-stage.pending { background: var(--bg-input); }
+
+  /* ========== DIRECTION F: CONVERSATION-FIRST ========== */
+  .dir-f .gate-layout { display: flex; height: calc(100vh - 52px - 100px); }
+  .dir-f .conversation-panel { flex: 1; display: flex; flex-direction: column; }
+  .dir-f .conversation-messages {
+    flex: 1; overflow-y: auto; padding: var(--sp-6);
+    display: flex; flex-direction: column; gap: var(--sp-4);
+    max-width: 800px; margin: 0 auto; width: 100%;
+  }
+  .dir-f .msg {
+    padding: var(--sp-4); border-radius: var(--radius-lg); max-width: 85%;
+  }
+  .dir-f .msg.agent {
+    background: var(--bg-panel); border: 1px solid var(--border); align-self: flex-start;
+  }
+  .dir-f .msg.user {
+    background: var(--blue-bg); border: 1px solid rgba(45,114,210,0.3); align-self: flex-end;
+  }
+  .dir-f .msg .msg-label { font-size: 11px; font-weight: 600; margin-bottom: var(--sp-2); }
+  .dir-f .msg .msg-label.agent-label { color: var(--blue); }
+  .dir-f .msg .msg-label.user-label { color: var(--text-secondary); text-align: right; }
+  .dir-f .msg .msg-body { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+  .dir-f .context-panel {
+    width: 400px; background: var(--bg-panel); border-left: 1px solid var(--border);
+    overflow-y: auto; flex-shrink: 0;
+  }
+  .dir-f .context-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+  }
+  .dir-f .context-tab {
+    padding: var(--sp-3) var(--sp-4); font-size: 12px; color: var(--text-muted);
+    cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .dir-f .context-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .dir-f .prompt-area {
+    padding: var(--sp-4); border-top: 1px solid var(--border);
+  }
+
+  /* ========== COMPARISON VIEW ========== */
+  .comparison { display: none; padding-top: 52px; }
+  .comparison.active { display: block; }
+  .comparison-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4);
+    padding: var(--sp-6);
+  }
+  .comparison-card {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); overflow: hidden; cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .comparison-card:hover { border-color: var(--blue); }
+  .comparison-card h3 {
+    padding: var(--sp-3) var(--sp-4); font-size: 14px;
+    background: var(--bg-elevated); border-bottom: 1px solid var(--border);
+  }
+  .comparison-card .desc { padding: var(--sp-3) var(--sp-4); font-size: 12px; color: var(--text-secondary); }
+  .comparison-card .preview {
+    height: 200px; background: var(--bg-app); margin: var(--sp-3);
+    border-radius: var(--radius); display: flex; align-items: center;
+    justify-content: center; color: var(--text-muted); font-size: 12px;
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+  }
+
+  /* ========== FILTER BAR (shared) ========== */
+  .filter-bar {
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-6); border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+  }
+  .filter-bar .search {
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: var(--sp-2) var(--sp-3); color: var(--text-primary); font-size: 12px;
+    width: 220px; outline: none;
+  }
+  .filter-bar .search:focus { border-color: var(--blue); }
+  .filter-bar .filter-group { display: flex; gap: 2px; }
+  .filter-btn {
+    padding: var(--sp-1) var(--sp-3); font-size: 11px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: none; color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .filter-btn.active { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); }
+
+  /* Gate actions bar */
+  .gate-actions {
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-6);
+    background: var(--bg-panel); border-top: 1px solid var(--border);
+  }
+  .gate-actions .spacer { flex: 1; }
+
+  /* Version badge */
+  .version-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    background: var(--bg-input); color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<!-- ========== SHOWCASE NAVIGATION ========== -->
+<nav class="showcase-nav">
+  <h1>Antiphon Design Directions</h1>
+  <div class="tabs">
+    <button class="tab" onclick="showComparison()" id="tab-compare">Overview</button>
+    <button class="tab" onclick="showDirection('a')" id="tab-a">A: Linear Minimal</button>
+    <button class="tab" onclick="showDirection('b')" id="tab-b">B: GitHub Dense</button>
+    <button class="tab" onclick="showDirection('c')" id="tab-c">C: Split-Panel IDE</button>
+    <button class="tab" onclick="showDirection('d')" id="tab-d">D: Pipeline Forward</button>
+    <button class="tab" onclick="showDirection('e')" id="tab-e">E: Card Modular</button>
+    <button class="tab" onclick="showDirection('f')" id="tab-f">F: Conversation First</button>
+  </div>
+</nav>
+
+<!-- ========== COMPARISON OVERVIEW ========== -->
+<div class="comparison active" id="comparison">
+  <div class="direction-header">
+    <h2>Design Direction Comparison</h2>
+    <p>Six visual approaches for Antiphon's core screens. Each direction shows Dashboard, Workflow Detail, and Gate Review layouts. Click any card to view the full mockup.</p>
+  </div>
+  <div class="comparison-grid">
+    <div class="comparison-card" onclick="showDirection('a')">
+      <h3>A: Linear-Inspired Minimal</h3>
+      <div class="desc">Clean single-column workflow list. Maximum whitespace. Focused, calm. Inspired by Linear's restrained density.</div>
+      <div class="preview">
+        <div style="width:90%;display:flex;flex-direction:column;gap:6px">
+          <div style="height:28px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+          <div style="height:28px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+          <div style="height:28px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--blue)"></div>
+          <div style="height:28px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="comparison-card" onclick="showDirection('b')">
+      <h3>B: GitHub-Dense Table</h3>
+      <div class="desc">Information-dense table layout. Compact rows, sortable columns. Maximum data visibility. GitHub's PR list aesthetic.</div>
+      <div class="preview">
+        <div style="width:90%;display:flex;flex-direction:column;gap:1px">
+          <div style="height:18px;background:var(--bg-elevated);border-radius:2px"></div>
+          <div style="height:22px;background:var(--bg-panel);border-bottom:1px solid var(--border-light)"></div>
+          <div style="height:22px;background:var(--bg-panel);border-bottom:1px solid var(--border-light)"></div>
+          <div style="height:22px;background:var(--bg-hover);border-bottom:1px solid var(--border-light)"></div>
+          <div style="height:22px;background:var(--bg-panel);border-bottom:1px solid var(--border-light)"></div>
+          <div style="height:22px;background:var(--bg-panel);border-bottom:1px solid var(--border-light)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="comparison-card" onclick="showDirection('c')">
+      <h3>C: Split-Panel IDE</h3>
+      <div class="desc">VS Code-style resizable panels. Stage tree on left, content on right. Power-user oriented. Maximum information density.</div>
+      <div class="preview">
+        <div style="width:90%;height:80%;display:flex;gap:2px">
+          <div style="width:30%;background:var(--bg-panel);border-radius:2px"></div>
+          <div style="width:2px;background:var(--blue)"></div>
+          <div style="flex:1;background:var(--bg-panel);border-radius:2px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="comparison-card" onclick="showDirection('d')">
+      <h3>D: Pipeline-Forward</h3>
+      <div class="desc">Stage progression dominates the page. Large visual pipeline at top, content below. Vercel/Azure DevOps inspired. Status-at-a-glance.</div>
+      <div class="preview">
+        <div style="width:90%;display:flex;flex-direction:column;gap:8px;align-items:center">
+          <div style="display:flex;gap:6px;align-items:center">
+            <div style="width:20px;height:20px;border-radius:50%;background:var(--green)"></div>
+            <div style="width:16px;height:2px;background:var(--green)"></div>
+            <div style="width:20px;height:20px;border-radius:50%;background:var(--green)"></div>
+            <div style="width:16px;height:2px;background:var(--green)"></div>
+            <div style="width:20px;height:20px;border-radius:50%;background:var(--blue);animation:pulse 2s infinite"></div>
+            <div style="width:16px;height:2px;background:var(--border)"></div>
+            <div style="width:20px;height:20px;border-radius:50%;background:var(--bg-input)"></div>
+          </div>
+          <div style="width:80%;height:60px;background:var(--bg-panel);border-radius:4px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="comparison-card" onclick="showDirection('e')">
+      <h3>E: Card-Based Modular</h3>
+      <div class="desc">Dashboard as a grid of rich cards. Each workflow is a self-contained card with inline status, mini-pipeline, and quick actions.</div>
+      <div class="preview">
+        <div style="width:90%;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="height:60px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+          <div style="height:60px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--blue)"></div>
+          <div style="height:60px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+          <div style="height:60px;background:var(--bg-panel);border-radius:4px;border:1px solid var(--border)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="comparison-card" onclick="showDirection('f')">
+      <h3>F: Conversation-First</h3>
+      <div class="desc">Gate review centered on chat experience. Artifact as context panel on the side. Claude Code-style conversational flow.</div>
+      <div class="preview">
+        <div style="width:90%;height:80%;display:flex;gap:2px">
+          <div style="flex:1;background:var(--bg-app);border-radius:2px;display:flex;flex-direction:column;gap:4px;padding:6px">
+            <div style="height:16px;width:70%;background:var(--bg-panel);border-radius:8px"></div>
+            <div style="height:16px;width:50%;background:var(--blue-bg);border-radius:8px;align-self:flex-end"></div>
+            <div style="height:16px;width:80%;background:var(--bg-panel);border-radius:8px"></div>
+          </div>
+          <div style="width:35%;background:var(--bg-panel);border-radius:2px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION A: LINEAR-INSPIRED MINIMAL ========== -->
+<div class="direction dir-a" id="dir-a">
+  <div class="direction-header">
+    <h2>Direction A: Linear-Inspired Minimal</h2>
+    <p>Clean, spacious single-column workflow list. Maximum breathing room. Each workflow is a card-style row with essential info only. Calm, focused, professional. Inspired by Linear's restrained information density.</p>
+    <div class="tags"><span class="tag">Minimal</span><span class="tag">Single Column</span><span class="tag">Spacious</span><span class="tag">Card Rows</span></div>
+  </div>
+  <div class="screens">
+    <!-- Dashboard -->
+    <div>
+      <div class="screen-label">Dashboard</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link active">Workflows</span>
+            <span class="nav-link">Settings</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="filter-bar" style="background:var(--bg-app);border:none;padding:var(--sp-5) var(--sp-8) var(--sp-3)">
+          <input class="search" placeholder="Search workflows..." />
+          <div class="filter-group">
+            <button class="filter-btn active">All</button>
+            <button class="filter-btn">Active</button>
+            <button class="filter-btn">Pending Review</button>
+            <button class="filter-btn">Completed</button>
+          </div>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary">+ New Workflow</button>
+        </div>
+        <div class="dashboard-body">
+          <div class="workflow-list">
+            <div class="workflow-item">
+              <span class="status-dot running"></span>
+              <span class="wf-title">TRADE-4521: Risk limit breach notifications</span>
+              <span class="badge badge-blue">AI Working</span>
+              <div class="wf-meta">
+                <span>Architecture</span>
+                <span>3/6 stages</span>
+                <span>12m ago</span>
+              </div>
+            </div>
+            <div class="workflow-item" style="border-color:var(--orange)">
+              <span class="status-dot pending"></span>
+              <span class="wf-title">TRADE-4498: Portfolio rebalancing alerts</span>
+              <span class="badge badge-orange">Pending Review</span>
+              <div class="wf-meta">
+                <span>Test Plan</span>
+                <span>2/6 stages</span>
+                <span>1h ago</span>
+              </div>
+            </div>
+            <div class="workflow-item">
+              <span class="status-dot complete"></span>
+              <span class="wf-title">TRADE-4472: API rate limiting refactor</span>
+              <span class="badge badge-green">Completed</span>
+              <div class="wf-meta">
+                <span>All stages</span>
+                <span>6/6 stages</span>
+                <span>2d ago</span>
+              </div>
+            </div>
+            <div class="workflow-item">
+              <span class="status-dot running"></span>
+              <span class="wf-title">TRADE-4510: User session timeout handling</span>
+              <span class="badge badge-blue">AI Working</span>
+              <div class="wf-meta">
+                <span>Spec</span>
+                <span>1/6 stages</span>
+                <span>5m ago</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workflow Detail / Agent Execution -->
+    <div>
+      <div class="screen-label">Workflow Detail — Agent Executing</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link">← Workflows</span>
+            <span class="nav-link active">TRADE-4521</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div style="padding:var(--sp-5) var(--sp-8);max-width:960px;margin:0 auto">
+          <div style="margin-bottom:var(--sp-4)">
+            <h3 style="font-size:16px;margin-bottom:var(--sp-2)">Risk limit breach notifications</h3>
+            <div style="display:flex;gap:var(--sp-3);align-items:center;margin-bottom:var(--sp-5)">
+              <span class="badge badge-blue">AI Working</span>
+              <span style="font-size:12px;color:var(--text-muted)">Stage 3 of 6 · Architecture</span>
+            </div>
+          </div>
+          <div class="stage-pipeline" style="margin-bottom:var(--sp-6)">
+            <div class="stage-node done"><span class="status-dot complete"></span> Spec</div>
+            <div class="stage-connector done"></div>
+            <div class="stage-node done"><span class="status-dot complete"></span> Test Plan</div>
+            <div class="stage-connector done"></div>
+            <div class="stage-node active"><span class="status-dot running"></span> Architecture</div>
+            <div class="stage-connector"></div>
+            <div class="stage-node pending">Implementation</div>
+            <div class="stage-connector"></div>
+            <div class="stage-node pending">Code Review</div>
+            <div class="stage-connector"></div>
+            <div class="stage-node pending">PR</div>
+          </div>
+          <div class="activity-bar" style="margin-bottom:var(--sp-3)">
+            <span class="status-dot running"></span>
+            <span class="action">Reading src/Services/NotificationService.cs</span>
+            <span>·</span>
+            <span>Tokens: 12,450 in / 3,200 out</span>
+            <span>·</span>
+            <span>Tools: 8</span>
+            <span>·</span>
+            <span>2m 34s</span>
+          </div>
+          <div class="stream-output">
+            <div class="tool-call">▸ glob src/**/*Notification*.cs — 3 files found</div>
+            <div class="tool-call">▸ read src/Services/NotificationService.cs</div>
+            <div style="margin-top:var(--sp-2)">Based on the existing notification infrastructure, I recommend the following architecture for risk limit breach notifications:
+
+## Architecture Decision: Event-Driven Notification Pipeline
+
+### Overview
+The risk limit breach notification system should integrate with the existing `NotificationService` using an event-driven pattern.<span class="stream-cursor"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gate Review -->
+    <div>
+      <div class="screen-label">Gate Review — Artifact + Actions</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link">← Workflows</span>
+            <span class="nav-link active">TRADE-4498 · Test Plan</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div style="overflow-y:auto;max-height:400px">
+          <div class="artifact-content">
+            <div style="display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-4)">
+              <h1 style="margin:0">Test Plan: Portfolio Rebalancing Alerts</h1>
+              <span class="version-badge">v2</span>
+            </div>
+            <h2>Acceptance Criteria</h2>
+            <ul>
+              <li>Alert triggers when portfolio drift exceeds configured threshold (default 5%)</li>
+              <li>Alert includes current allocation vs target allocation breakdown</li>
+              <li>Alert is delivered via configured channels (in-app, email, Teams)</li>
+              <li>Alert is suppressed during market close hours (configurable)</li>
+            </ul>
+            <h2>Test Scenarios</h2>
+            <h3>Happy Path</h3>
+            <p>Given a portfolio with target allocation 60/40 stocks/bonds, when stock allocation drifts to 66% (6% drift, exceeding 5% threshold), then an alert is generated with the drift details and delivered to configured channels.</p>
+            <h3>Edge Cases</h3>
+            <ul>
+              <li>Drift exactly at threshold (5.00%) — should trigger</li>
+              <li>Multiple simultaneous drifts across sub-portfolios</li>
+              <li>Alert during market close hours — suppressed and queued</li>
+              <li>Channel delivery failure — retry with exponential backoff</li>
+            </ul>
+            <h2>Integration Tests</h2>
+            <p>Test the full pipeline from drift detection through <code>AlertService</code> to channel delivery:</p>
+            <pre><code>// Verify alert creation and routing
+var portfolio = CreateTestPortfolio(targetStocks: 0.60);
+portfolio.SetCurrentAllocation(stocks: 0.66);
+await _alertService.EvaluateDrift(portfolio);
+Assert.Single(_channelMock.SentAlerts);</code></pre>
+          </div>
+          <!-- Gate actions at end of content -->
+          <div class="gate-actions">
+            <span style="font-size:12px;color:var(--text-muted)">Stage 2 of 6 · Test Plan · v2</span>
+            <div class="spacer"></div>
+            <button class="btn btn-default">Go Back</button>
+            <button class="btn btn-warning">Reject with Feedback</button>
+            <button class="btn btn-success">Approve & Continue</button>
+          </div>
+        </div>
+        <!-- Fixed prompt bar at bottom -->
+        <div style="padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--border)">
+          <div class="prompt-bar">
+            <input placeholder="Send feedback to the agent..." />
+            <button class="btn btn-primary btn-sm">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION B: GITHUB-DENSE TABLE ========== -->
+<div class="direction dir-b" id="dir-b">
+  <div class="direction-header">
+    <h2>Direction B: GitHub-Dense Table</h2>
+    <p>Maximum information density. Table layout with sortable columns showing all workflow metadata at a glance. Compact rows for scanning many workflows quickly. GitHub's issue/PR list aesthetic.</p>
+    <div class="tags"><span class="tag">Dense</span><span class="tag">Table Layout</span><span class="tag">Sortable</span><span class="tag">Compact</span></div>
+  </div>
+  <div class="screens">
+    <!-- Dashboard -->
+    <div>
+      <div class="screen-label">Dashboard</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link active">Workflows</span>
+            <span class="nav-link">Audit</span>
+            <span class="nav-link">Settings</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="filter-bar">
+          <input class="search" placeholder="Filter workflows..." />
+          <div class="filter-group">
+            <button class="filter-btn active">All (7)</button>
+            <button class="filter-btn">Active (3)</button>
+            <button class="filter-btn">Pending (2)</button>
+            <button class="filter-btn">Done (2)</button>
+          </div>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary btn-sm">+ New Workflow</button>
+        </div>
+        <div class="dashboard-body">
+          <table class="wf-table">
+            <thead>
+              <tr>
+                <th style="width:30px"></th>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Stage</th>
+                <th>Progress</th>
+                <th>Template</th>
+                <th>Cost</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="status-dot running"></span></td>
+                <td><span class="wf-name">Risk limit breach notifications</span><br><span class="wf-id">TRADE-4521 · WF-047</span></td>
+                <td><span class="badge badge-blue">AI Working</span></td>
+                <td>Architecture</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill blue" style="width:50%"></div></div><span style="font-size:11px;color:var(--text-muted)">3/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Full</td>
+                <td style="color:var(--text-muted)">$2.40</td>
+                <td style="color:var(--text-muted)">12m</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot pending"></span></td>
+                <td><span class="wf-name">Portfolio rebalancing alerts</span><br><span class="wf-id">TRADE-4498 · WF-045</span></td>
+                <td><span class="badge badge-orange">Review</span></td>
+                <td>Test Plan</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill blue" style="width:33%"></div></div><span style="font-size:11px;color:var(--text-muted)">2/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Full</td>
+                <td style="color:var(--text-muted)">$1.80</td>
+                <td style="color:var(--text-muted)">1h</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot pending"></span></td>
+                <td><span class="wf-name">Session timeout handling</span><br><span class="wf-id">TRADE-4510 · WF-046</span></td>
+                <td><span class="badge badge-orange">Review</span></td>
+                <td>Spec</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill blue" style="width:17%"></div></div><span style="font-size:11px;color:var(--text-muted)">1/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Quick</td>
+                <td style="color:var(--text-muted)">$0.60</td>
+                <td style="color:var(--text-muted)">30m</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot running"></span></td>
+                <td><span class="wf-name">WebSocket reconnection logic</span><br><span class="wf-id">TRADE-4515 · WF-048</span></td>
+                <td><span class="badge badge-blue">AI Working</span></td>
+                <td>Spec</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill blue" style="width:17%"></div></div><span style="font-size:11px;color:var(--text-muted)">1/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Full</td>
+                <td style="color:var(--text-muted)">$0.30</td>
+                <td style="color:var(--text-muted)">2m</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot complete"></span></td>
+                <td><span class="wf-name">API rate limiting refactor</span><br><span class="wf-id">TRADE-4472 · WF-042</span></td>
+                <td><span class="badge badge-green">Done</span></td>
+                <td>—</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill green" style="width:100%"></div></div><span style="font-size:11px;color:var(--text-muted)">6/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Full</td>
+                <td style="color:var(--text-muted)">$8.50</td>
+                <td style="color:var(--text-muted)">2d</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot failed"></span></td>
+                <td><span class="wf-name">Cache invalidation strategy</span><br><span class="wf-id">TRADE-4480 · WF-043</span></td>
+                <td><span class="badge badge-red">Failed</span></td>
+                <td>Implementation</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill blue" style="width:67%"></div></div><span style="font-size:11px;color:var(--text-muted)">4/6</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Full</td>
+                <td style="color:var(--text-muted)">$5.20</td>
+                <td style="color:var(--text-muted)">1d</td>
+              </tr>
+              <tr>
+                <td><span class="status-dot complete"></span></td>
+                <td><span class="wf-name">Logging middleware cleanup</span><br><span class="wf-id">TRADE-4465 · WF-041</span></td>
+                <td><span class="badge badge-green">Done</span></td>
+                <td>—</td>
+                <td><div style="display:flex;align-items:center;gap:var(--sp-2)"><div class="progress-bar" style="width:80px"><div class="fill green" style="width:100%"></div></div><span style="font-size:11px;color:var(--text-muted)">3/3</span></div></td>
+                <td style="color:var(--text-muted)">BMAD Quick</td>
+                <td style="color:var(--text-muted)">$1.10</td>
+                <td style="color:var(--text-muted)">5d</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION C: SPLIT-PANEL IDE ========== -->
+<div class="direction dir-c" id="dir-c">
+  <div class="direction-header">
+    <h2>Direction C: Split-Panel IDE</h2>
+    <p>VS Code-inspired resizable panels. Workflow/stage tree on the left, content on the right. Power-user oriented with maximum information density. Feels like a development environment.</p>
+    <div class="tags"><span class="tag">IDE Style</span><span class="tag">Split Panels</span><span class="tag">Resizable</span><span class="tag">Power User</span></div>
+  </div>
+  <div class="screens">
+    <div>
+      <div class="screen-label">Workflow Detail — Split Panel View</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link active">Workflows</span>
+            <span class="nav-link">Audit</span>
+            <span class="nav-link">Settings</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="ide-layout" style="height:500px">
+          <div class="sidebar-panel">
+            <div class="sidebar-section">
+              <div class="sidebar-section-title">Workflows</div>
+              <div class="tree-item active">
+                <span class="status-dot running"></span> TRADE-4521: Risk limit breach
+              </div>
+              <div class="tree-item">
+                <span class="status-dot pending"></span> TRADE-4498: Portfolio alerts
+              </div>
+              <div class="tree-item">
+                <span class="status-dot running"></span> TRADE-4515: WebSocket reconnect
+              </div>
+              <div class="tree-item">
+                <span class="status-dot complete"></span> TRADE-4472: Rate limiting
+              </div>
+            </div>
+            <div class="sidebar-section" style="border-top:1px solid var(--border);padding-top:var(--sp-3)">
+              <div class="sidebar-section-title">Stages — TRADE-4521</div>
+              <div class="tree-item" style="color:var(--green)">✓ Spec <span class="version-badge" style="margin-left:auto">v1</span></div>
+              <div class="tree-item" style="color:var(--green)">✓ Test Plan <span class="version-badge" style="margin-left:auto">v2</span></div>
+              <div class="tree-item active">
+                <span class="status-dot running"></span> Architecture
+              </div>
+              <div class="tree-item" style="color:var(--text-muted)">○ Implementation</div>
+              <div class="tree-item" style="color:var(--text-muted)">○ Code Review</div>
+              <div class="tree-item" style="color:var(--text-muted)">○ PR</div>
+            </div>
+            <div class="sidebar-section" style="border-top:1px solid var(--border);padding-top:var(--sp-3)">
+              <div class="sidebar-section-title">Artifacts</div>
+              <div class="tree-item tree-indent">spec.md</div>
+              <div class="tree-item tree-indent">test-plan.md</div>
+              <div class="tree-item tree-indent active" style="font-style:italic;color:var(--blue)">architecture.md (generating...)</div>
+            </div>
+          </div>
+          <div class="resize-handle"></div>
+          <div class="main-panel" style="display:flex;flex-direction:column">
+            <div style="padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:var(--sp-3)">
+              <span style="font-size:13px;font-weight:500">Architecture</span>
+              <span class="badge badge-blue">AI Working</span>
+              <div style="flex:1"></div>
+              <span style="font-size:11px;color:var(--text-muted)">Stage 3 of 6</span>
+            </div>
+            <div style="flex:1;padding:var(--sp-4);overflow-y:auto">
+              <div class="activity-bar" style="margin-bottom:var(--sp-3)">
+                <span class="status-dot running"></span>
+                <span class="action">Reading NotificationService.cs</span>
+                <span>·</span>
+                <span>12,450 / 3,200 tokens</span>
+                <span>·</span>
+                <span>8 tools</span>
+                <span>·</span>
+                <span>2m 34s</span>
+              </div>
+              <div class="stream-output" style="max-height:350px">
+                <div class="tool-call">▸ glob src/**/*Notification*.cs — 3 files</div>
+                <div class="tool-call">▸ read src/Services/NotificationService.cs (245 lines)</div>
+                <div class="tool-call">▸ read src/Models/AlertConfiguration.cs (89 lines)</div>
+                <div class="tool-call">▸ grep "INotificationChannel" src/ — 7 matches</div>
+                <div style="margin-top:var(--sp-3)">
+# Architecture: Risk Limit Breach Notifications
+
+## Overview
+The notification system follows an event-driven architecture using the existing `INotificationChannel` abstraction.
+
+## Key Design Decisions
+
+### 1. Event Bus Integration
+Risk limit breaches are detected by the `RiskMonitorService` and published as `RiskLimitBreachedEvent` domain events. The `NotificationOrchestrator` subscribes to these events and routes notifications through configured channels.
+
+### 2. Channel Strategy
+Reuse the existing `INotificationChannel` interface with new implementations:<span class="stream-cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION D: PIPELINE-FORWARD ========== -->
+<div class="direction dir-d" id="dir-d">
+  <div class="direction-header">
+    <h2>Direction D: Pipeline-Forward</h2>
+    <p>Stage progression dominates the visual hierarchy. Large, prominent pipeline visualization at the top of every workflow page. Content lives below. Inspired by Vercel deployments and Azure DevOps pipelines. Status-at-a-glance is the priority.</p>
+    <div class="tags"><span class="tag">Pipeline Dominant</span><span class="tag">Visual Stages</span><span class="tag">Status First</span><span class="tag">Vercel-inspired</span></div>
+  </div>
+  <div class="screens">
+    <div>
+      <div class="screen-label">Workflow Detail — Pipeline View</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link">← Workflows</span>
+            <span class="nav-link active">TRADE-4521</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="pipeline-hero">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)">
+            <div>
+              <h3 style="font-size:16px">Risk limit breach notifications</h3>
+              <span style="font-size:12px;color:var(--text-muted)">TRADE-4521 · BMAD Full · Started 45m ago</span>
+            </div>
+            <div style="display:flex;gap:var(--sp-3);align-items:center">
+              <span style="font-size:12px;color:var(--text-muted)">Cost: $2.40</span>
+              <button class="btn btn-default btn-sm">Pause</button>
+              <button class="btn btn-default btn-sm">Abandon</button>
+            </div>
+          </div>
+          <div class="pipeline-large">
+            <div class="stage-lg">
+              <div class="stage-icon done">✓</div>
+              <div class="stage-label">Spec</div>
+              <div class="stage-time">4m 12s</div>
+            </div>
+            <div class="connector-lg done"></div>
+            <div class="stage-lg">
+              <div class="stage-icon done">✓</div>
+              <div class="stage-label">Test Plan</div>
+              <div class="stage-time">6m 30s</div>
+            </div>
+            <div class="connector-lg done"></div>
+            <div class="stage-lg" style="background:var(--blue-bg);border-radius:var(--radius-lg)">
+              <div class="stage-icon active" style="animation:pulse 2s infinite">⚡</div>
+              <div class="stage-label" style="font-weight:600;color:var(--blue)">Architecture</div>
+              <div class="stage-time">2m 34s...</div>
+            </div>
+            <div class="connector-lg"></div>
+            <div class="stage-lg">
+              <div class="stage-icon pending">○</div>
+              <div class="stage-label">Implementation</div>
+              <div class="stage-time">—</div>
+            </div>
+            <div class="connector-lg"></div>
+            <div class="stage-lg">
+              <div class="stage-icon pending">○</div>
+              <div class="stage-label">Code Review</div>
+              <div class="stage-time">—</div>
+            </div>
+            <div class="connector-lg"></div>
+            <div class="stage-lg">
+              <div class="stage-icon pending">○</div>
+              <div class="stage-label">PR</div>
+              <div class="stage-time">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="content-below">
+          <div class="activity-bar" style="margin-bottom:var(--sp-4)">
+            <span class="status-dot running"></span>
+            <span class="action">Reading src/Services/NotificationService.cs</span>
+            <span>·</span>
+            <span>12,450 / 3,200 tokens</span>
+            <span>·</span>
+            <span>8 tools</span>
+            <span>·</span>
+            <span>2m 34s</span>
+          </div>
+          <div class="stream-output" style="max-height:250px">
+            <div class="tool-call">▸ glob src/**/*Notification*.cs — 3 files found</div>
+            <div class="tool-call">▸ read src/Services/NotificationService.cs</div>
+            <div style="margin-top:var(--sp-2)">Based on the existing notification infrastructure, I recommend an event-driven architecture using the existing `INotificationChannel` abstraction.
+
+## Key Decisions
+1. **Event Bus** — `RiskLimitBreachedEvent` published by `RiskMonitorService`
+2. **Channel Routing** — Reuse `INotificationChannel` with Teams + Email implementations<span class="stream-cursor"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION E: CARD-BASED MODULAR ========== -->
+<div class="direction dir-e" id="dir-e">
+  <div class="direction-header">
+    <h2>Direction E: Card-Based Modular</h2>
+    <p>Dashboard as a responsive grid of rich workflow cards. Each card is self-contained: title, status, mini-pipeline, cost, and quick actions. Works well for teams with many concurrent workflows. Scannable at multiple sizes.</p>
+    <div class="tags"><span class="tag">Card Grid</span><span class="tag">Self-Contained</span><span class="tag">Responsive</span><span class="tag">Rich Preview</span></div>
+  </div>
+  <div class="screens">
+    <div>
+      <div class="screen-label">Dashboard</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link active">Workflows</span>
+            <span class="nav-link">Settings</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="filter-bar">
+          <input class="search" placeholder="Search workflows..." />
+          <div class="filter-group">
+            <button class="filter-btn active">All</button>
+            <button class="filter-btn">Active</button>
+            <button class="filter-btn">Pending</button>
+          </div>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary btn-sm">+ New Workflow</button>
+        </div>
+        <div class="dashboard-body">
+          <div class="card-grid">
+            <div class="wf-card" style="border-left:3px solid var(--blue)">
+              <div class="wf-card-header">
+                <div class="wf-card-title">Risk limit breach notifications</div>
+                <span class="badge badge-blue">AI Working</span>
+              </div>
+              <div class="wf-card-body">TRADE-4521 · Architecture stage · AI generating architecture document</div>
+              <div style="margin-bottom:var(--sp-3)">
+                <div class="mini-pipeline">
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage active"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                </div>
+              </div>
+              <div class="wf-card-meta">
+                <span>BMAD Full · $2.40</span>
+                <span>12m ago</span>
+              </div>
+            </div>
+            <div class="wf-card" style="border-left:3px solid var(--orange)">
+              <div class="wf-card-header">
+                <div class="wf-card-title">Portfolio rebalancing alerts</div>
+                <span class="badge badge-orange">Pending Review</span>
+              </div>
+              <div class="wf-card-body">TRADE-4498 · Test Plan awaiting your review</div>
+              <div style="margin-bottom:var(--sp-3)">
+                <div class="mini-pipeline">
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                </div>
+              </div>
+              <div class="wf-card-meta">
+                <span>BMAD Full · $1.80</span>
+                <span>1h ago</span>
+              </div>
+            </div>
+            <div class="wf-card" style="border-left:3px solid var(--blue)">
+              <div class="wf-card-header">
+                <div class="wf-card-title">Session timeout handling</div>
+                <span class="badge badge-blue">AI Working</span>
+              </div>
+              <div class="wf-card-body">TRADE-4510 · Spec generation in progress</div>
+              <div style="margin-bottom:var(--sp-3)">
+                <div class="mini-pipeline">
+                  <div class="mini-stage active"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                </div>
+              </div>
+              <div class="wf-card-meta">
+                <span>BMAD Quick · $0.60</span>
+                <span>30m ago</span>
+              </div>
+            </div>
+            <div class="wf-card" style="border-left:3px solid var(--green)">
+              <div class="wf-card-header">
+                <div class="wf-card-title">API rate limiting refactor</div>
+                <span class="badge badge-green">Completed</span>
+              </div>
+              <div class="wf-card-body">TRADE-4472 · All stages complete · PR merged</div>
+              <div style="margin-bottom:var(--sp-3)">
+                <div class="mini-pipeline">
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                </div>
+              </div>
+              <div class="wf-card-meta">
+                <span>BMAD Full · $8.50</span>
+                <span>2d ago</span>
+              </div>
+            </div>
+            <div class="wf-card" style="border-left:3px solid var(--red)">
+              <div class="wf-card-header">
+                <div class="wf-card-title">Cache invalidation strategy</div>
+                <span class="badge badge-red">Failed</span>
+              </div>
+              <div class="wf-card-body">TRADE-4480 · Implementation stage failed · Agent error</div>
+              <div style="margin-bottom:var(--sp-3)">
+                <div class="mini-pipeline">
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage done"></div>
+                  <div class="mini-stage" style="background:var(--red)"></div>
+                  <div class="mini-stage pending"></div>
+                  <div class="mini-stage pending"></div>
+                </div>
+              </div>
+              <div class="wf-card-meta">
+                <span>BMAD Full · $5.20</span>
+                <span>1d ago</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== DIRECTION F: CONVERSATION-FIRST ========== -->
+<div class="direction dir-f" id="dir-f">
+  <div class="direction-header">
+    <h2>Direction F: Conversation-First</h2>
+    <p>Gate review centered on the chat/conversation experience. The interaction with the AI agent is the primary surface. Artifact content lives in a context panel on the side. Inspired by Claude Code's conversational model. Feedback feels like a natural dialogue.</p>
+    <div class="tags"><span class="tag">Chat-Centric</span><span class="tag">Context Panel</span><span class="tag">Conversational</span><span class="tag">Claude Code-inspired</span></div>
+  </div>
+  <div class="screens">
+    <div>
+      <div class="screen-label">Gate Review — Conversation + Artifact Panel</div>
+      <div class="mock">
+        <div class="mock-navbar">
+          <span class="logo">Antiphon</span>
+          <div class="nav-links">
+            <span class="nav-link">← Workflows</span>
+            <span class="nav-link active">TRADE-4498 · Test Plan</span>
+          </div>
+          <div class="avatar">M</div>
+        </div>
+        <div class="gate-layout" style="height:500px">
+          <div class="conversation-panel">
+            <div style="padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:var(--sp-3)">
+              <div class="stage-pipeline" style="font-size:10px">
+                <div class="stage-node done" style="padding:2px 6px"><span class="status-dot complete"></span> Spec</div>
+                <div class="stage-connector done" style="width:12px"></div>
+                <div class="stage-node active" style="padding:2px 6px"><span class="status-dot pending"></span> Test Plan</div>
+                <div class="stage-connector" style="width:12px"></div>
+                <div class="stage-node pending" style="padding:2px 6px">Arch</div>
+              </div>
+              <div style="flex:1"></div>
+              <button class="btn btn-default btn-sm">Go Back</button>
+              <button class="btn btn-warning btn-sm">Reject</button>
+              <button class="btn btn-success btn-sm">Approve</button>
+            </div>
+            <div class="conversation-messages">
+              <div class="msg agent">
+                <div class="msg-label agent-label">AI Agent · Test Plan Stage</div>
+                <div class="msg-body">I've generated the test plan for Portfolio Rebalancing Alerts. The plan covers 4 acceptance criteria, 6 test scenarios including edge cases, and integration test examples.
+
+Key areas covered:
+• Drift threshold detection (configurable, default 5%)
+• Multi-channel delivery (in-app, email, Teams)
+• Market hours suppression logic
+• Failure retry with exponential backoff
+
+Please review the artifact in the panel →</div>
+              </div>
+              <div class="msg user">
+                <div class="msg-label user-label">Mike</div>
+                <div class="msg-body">The test scenarios look good but you're missing negative tests. What happens when the drift calculation returns NaN? And what about concurrent rebalancing events?</div>
+              </div>
+              <div class="msg agent">
+                <div class="msg-label agent-label">AI Agent · Revision</div>
+                <div class="msg-body">Good catches. I've added two sections:
+
+**Negative Tests:**
+• NaN/infinity drift values → alert suppressed + error logged
+• Negative allocation percentages → validation error before drift calc
+
+**Concurrency Tests:**
+• Simultaneous drift events across sub-portfolios → deduplicated alerts
+• Rapid sequential threshold crossings → debounce window (configurable, default 5min)
+
+The artifact has been updated to v2. See changes highlighted in the diff view →</div>
+              </div>
+              <div class="msg user">
+                <div class="msg-label user-label">Mike</div>
+                <div class="msg-body">Much better. The debounce window is a nice touch. Approved.</div>
+              </div>
+            </div>
+            <div class="prompt-area">
+              <div class="prompt-bar">
+                <input placeholder="Send feedback to the agent..." />
+                <button class="btn btn-primary btn-sm">Send</button>
+              </div>
+            </div>
+          </div>
+          <div class="context-panel">
+            <div class="context-tabs">
+              <div class="context-tab active">Artifact</div>
+              <div class="context-tab">Diff (v1→v2)</div>
+              <div class="context-tab">Audit</div>
+            </div>
+            <div style="padding:var(--sp-4);font-size:13px;line-height:1.6;color:var(--text-secondary)">
+              <div style="display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-4)">
+                <strong style="color:var(--text-primary);font-size:15px">Test Plan: Portfolio Rebalancing</strong>
+                <span class="version-badge">v2</span>
+              </div>
+              <div style="margin-bottom:var(--sp-3)">
+                <strong style="color:var(--text-primary)">Acceptance Criteria</strong>
+                <ul style="padding-left:16px;margin-top:4px">
+                  <li>Alert triggers when drift > threshold</li>
+                  <li>Alert includes allocation breakdown</li>
+                  <li>Multi-channel delivery</li>
+                  <li>Market hours suppression</li>
+                </ul>
+              </div>
+              <div style="margin-bottom:var(--sp-3)">
+                <strong style="color:var(--text-primary)">Test Scenarios</strong>
+                <ul style="padding-left:16px;margin-top:4px">
+                  <li>Happy path — drift exceeds threshold</li>
+                  <li>Drift exactly at threshold</li>
+                  <li>Multiple sub-portfolio drifts</li>
+                  <li>Market close suppression</li>
+                  <li style="color:var(--green)">★ NaN drift values (v2)</li>
+                  <li style="color:var(--green)">★ Concurrent events + debounce (v2)</li>
+                </ul>
+              </div>
+              <div>
+                <strong style="color:var(--text-primary)">Integration Tests</strong>
+                <pre style="background:var(--bg-elevated);padding:8px;border-radius:4px;font-size:11px;margin-top:4px;overflow-x:auto"><code>var portfolio = CreateTestPortfolio(0.60);
+portfolio.SetCurrentAllocation(0.66);
+await _alertService.EvaluateDrift(portfolio);
+Assert.Single(_channelMock.SentAlerts);</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showDirection(id) {
+    document.querySelectorAll('.direction, .comparison').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('dir-' + id).classList.add('active');
+    document.getElementById('tab-' + id).classList.add('active');
+  }
+  function showComparison() {
+    document.querySelectorAll('.direction, .comparison').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('comparison').classList.add('active');
+    document.getElementById('tab-compare').classList.add('active');
+  }
+  // Default to comparison view
+  showComparison();
+</script>
+
+</body>
+</html>
