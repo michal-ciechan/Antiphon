@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
+    public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +41,20 @@ public class AppDbContext : DbContext
                 IsAdmin = true,
                 CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
             });
+        });
+
+        modelBuilder.Entity<WorkflowTemplate>(entity =>
+        {
+            entity.ToTable("WorkflowTemplates");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.Name).IsRequired().HasMaxLength(200);
+            entity.Property(t => t.Description).HasMaxLength(2000);
+            entity.Property(t => t.YamlDefinition).IsRequired();
+            entity.Property(t => t.IsBuiltIn).IsRequired();
+            entity.Property(t => t.CreatedAt).IsRequired();
+            entity.Property(t => t.UpdatedAt).IsRequired();
+
+            entity.HasIndex(t => t.Name).IsUnique();
         });
     }
 }

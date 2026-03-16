@@ -2,10 +2,13 @@ using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Realtime;
 
 // Bootstrap Serilog for startup logging (before host is built)
@@ -64,6 +67,9 @@ try
     });
     builder.Services.AddHttpContextAccessor();
 
+    // Application services
+    builder.Services.AddScoped<WorkflowTemplateService>();
+
     // SignalR — real-time communication (NFR4: sub-1s push)
     builder.Services.AddSignalR();
     builder.Services.AddSingleton<IEventBus, EventBus>();
@@ -83,15 +89,19 @@ try
     app.UseMiddleware<CurrentUserMiddleware>();
     app.UseMiddleware<ExceptionMiddleware>();
 
-    // Auto-migrate database on startup
+    // Auto-migrate database on startup and seed data
     using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         dbContext.Database.Migrate();
+        await DatabaseSeeder.SeedAsync(dbContext, CancellationToken.None);
     }
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
     app.MapHealthChecks("/health");
+
+    // API endpoints
+    app.MapSettingsEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
