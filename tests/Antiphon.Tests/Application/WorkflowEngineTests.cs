@@ -17,11 +17,12 @@ public class WorkflowEngineTests : TransactionalTestBase
 {
     private readonly MockEventBus _eventBus = new();
     private readonly MockExecutor _mockExecutor = new();
+    private readonly MockGitService _gitService = new();
     private readonly WorkflowEngine _engine;
 
     public WorkflowEngineTests(TestDbFixture fixture) : base(fixture)
     {
-        _engine = new WorkflowEngine(DbContext, _mockExecutor, _eventBus);
+        _engine = new WorkflowEngine(DbContext, _mockExecutor, _eventBus, _gitService);
     }
 
     private const string TwoStageYaml = """

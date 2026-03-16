@@ -19,12 +19,14 @@ public class WorkflowEngine
     private readonly AppDbContext _db;
     private readonly IStageExecutor _stageExecutor;
     private readonly IEventBus _eventBus;
+    private readonly IGitService _gitService;
 
-    public WorkflowEngine(AppDbContext db, IStageExecutor stageExecutor, IEventBus eventBus)
+    public WorkflowEngine(AppDbContext db, IStageExecutor stageExecutor, IEventBus eventBus, IGitService gitService)
     {
         _db = db;
         _stageExecutor = stageExecutor;
         _eventBus = eventBus;
+        _gitService = gitService;
     }
 
     /// <summary>
@@ -161,6 +163,10 @@ public class WorkflowEngine
 
         await _db.SaveChangesAsync(ct);
 
+        // Initialize git workflow branches (FR28)
+        var repoPath = project.GitRepositoryUrl;
+        await _gitService.InitializeWorkflowBranchesAsync(workflow.Id, repoPath, ct);
+
         // Transition to Running
         TransitionWorkflow(workflow, WorkflowStatus.Running);
         await _db.SaveChangesAsync(ct);
@@ -236,6 +242,12 @@ public class WorkflowEngine
         _db.StageExecutions.Add(execution);
         await _db.SaveChangesAsync(ct);
 
+        // Create stage branch for execution (FR29)
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
+            ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
+        var repoPath = project.GitRepositoryUrl;
+        await _gitService.CreateStageBranchAsync(workflowId, nextStage.Name, repoPath, ct);
+
         // Push StageStarted event
         await _eventBus.PublishToGroupAsync(
             $"workflow-{workflowId}",
@@ -286,10 +298,21 @@ public class WorkflowEngine
             throw;
         }
 
+        // Commit artifacts to stage branch (FR30, FR33)
+        foreach (var artifactFilePath in result.ArtifactPaths)
+        {
+            await _gitService.CommitArtifactAsync(
+                workflowId, nextStage.Name, result.OutputContent, artifactFilePath, repoPath, ct);
+        }
+
+        // Tag the stage commit (FR31)
+        var tagName = await _gitService.TagStageAsync(
+            workflowId, nextStage.Name, nextStage.CurrentVersion, repoPath, ct);
+
         // Mark stage execution as completed
         execution.Status = StageStatus.Completed;
         execution.CompletedAt = DateTime.UtcNow;
-        execution.GitTagName = result.ArtifactPaths.Count > 0 ? result.ArtifactPaths[0] : null;
+        execution.GitTagName = tagName;
 
         // Mark stage as completed
         nextStage.Status = StageStatus.Completed;
@@ -331,6 +354,7 @@ public class WorkflowEngine
     public async Task ResumeAfterGateAsync(Guid workflowId, CancellationToken ct)
     {
         var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
             .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
             ?? throw new NotFoundException(nameof(Workflow), workflowId);
 
@@ -338,6 +362,21 @@ public class WorkflowEngine
         {
             throw new ConflictException(
                 $"Workflow must be in GateWaiting state to resume after gate. Current: {workflow.Status}");
+        }
+
+        // Merge the approved stage branch into workflow master (FR32)
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
+            ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
+        var repoPath = project.GitRepositoryUrl;
+
+        // Find the most recently completed stage (the one that triggered the gate)
+        var approvedStage = workflow.Stages
+            .OrderByDescending(s => s.StageOrder)
+            .FirstOrDefault(s => s.Status == StageStatus.Completed);
+
+        if (approvedStage is not null)
+        {
+            await _gitService.MergeStageBranchAsync(workflowId, approvedStage.Name, repoPath, ct);
         }
 
         // Transition back to Running
