@@ -1,0 +1,25 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Database=antiphon;Username=antiphon;Password=antiphon_dev"
+  },
+  "Llm": {
+    "DefaultProvider": "anthropic",
+    "AnthropicApiKey": "<your-api-key>",
+    "OpenAiApiKey": "<your-api-key>"
+  },
+  "Git": {
+    "DefaultBranch": "main",
+    "PollIntervalSeconds": 30,
+    "WorktreeBasePath": "/tmp/antiphon-worktrees"
+  },
+  "GitHub": {
+    "Enabled": false,
+    "PersonalAccessToken": "<your-pat>"
+  },
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
