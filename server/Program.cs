@@ -3,6 +3,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Antiphon.Server.Api.Middleware;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 
@@ -52,6 +53,16 @@ try
         healthChecks.AddNpgSql(connectionString, name: "postgresql");
     }
 
+    // ICurrentUser — scoped, resolved by CurrentUserMiddleware per request
+    builder.Services.AddScoped<ICurrentUser>(sp =>
+    {
+        var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
+        var currentUser = httpContextAccessor.HttpContext?.Items["CurrentUser"] as ICurrentUser;
+        return currentUser ?? throw new InvalidOperationException(
+            "ICurrentUser not available. Ensure CurrentUserMiddleware is registered in the pipeline.");
+    });
+    builder.Services.AddHttpContextAccessor();
+
     // OpenTelemetry tracing (NFR20)
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService("Antiphon"))
@@ -62,8 +73,9 @@ try
 
     var app = builder.Build();
 
-    // Middleware pipeline order: CorrelationId → ExceptionHandler → routing → endpoints
+    // Middleware pipeline order: CorrelationId → CurrentUser → ExceptionHandler → routing → endpoints
     app.UseMiddleware<CorrelationIdMiddleware>();
+    app.UseMiddleware<CurrentUserMiddleware>();
     app.UseMiddleware<ExceptionMiddleware>();
 
     // Auto-migrate database on startup
