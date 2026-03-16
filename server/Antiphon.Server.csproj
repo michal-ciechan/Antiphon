@@ -8,6 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.E2E" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.*">
