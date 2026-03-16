@@ -113,6 +113,7 @@ try
     // API endpoints
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
+    app.MapWorkflowEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
