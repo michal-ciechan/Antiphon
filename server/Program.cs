@@ -9,6 +9,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Data.Seeding;
+using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Realtime;
 
 // Bootstrap Serilog for startup logging (before host is built)
@@ -71,6 +72,8 @@ try
     builder.Services.AddScoped<WorkflowTemplateService>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddScoped<WorkflowEngine>();
+    builder.Services.AddScoped<IStageExecutor, MockExecutor>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
