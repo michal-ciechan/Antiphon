@@ -69,6 +69,10 @@ try
 
     // Application services
     builder.Services.AddScoped<WorkflowTemplateService>();
+    builder.Services.AddScoped<LlmProviderService>();
+
+    // HttpClient for provider connectivity testing
+    builder.Services.AddHttpClient();
 
     // SignalR — real-time communication (NFR4: sub-1s push)
     builder.Services.AddSignalR();

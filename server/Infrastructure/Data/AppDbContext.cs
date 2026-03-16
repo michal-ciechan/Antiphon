@@ -12,6 +12,8 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
+    public DbSet<LlmProvider> LlmProviders => Set<LlmProvider>();
+    public DbSet<ModelRouting> ModelRoutings => Set<ModelRouting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -55,6 +57,39 @@ public class AppDbContext : DbContext
             entity.Property(t => t.UpdatedAt).IsRequired();
 
             entity.HasIndex(t => t.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<LlmProvider>(entity =>
+        {
+            entity.ToTable("LlmProviders");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Name).IsRequired().HasMaxLength(200);
+            entity.Property(p => p.ProviderType).IsRequired();
+            entity.Property(p => p.ApiKey).HasMaxLength(500);
+            entity.Property(p => p.BaseUrl).HasMaxLength(500);
+            entity.Property(p => p.IsEnabled).IsRequired();
+            entity.Property(p => p.DefaultModel).HasMaxLength(200);
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.Property(p => p.UpdatedAt).IsRequired();
+
+            entity.HasIndex(p => p.Name).IsUnique();
+
+            entity.HasMany(p => p.ModelRoutings)
+                .WithOne(r => r.Provider)
+                .HasForeignKey(r => r.ProviderId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ModelRouting>(entity =>
+        {
+            entity.ToTable("ModelRoutings");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.StageName).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.ModelName).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.ProviderId).IsRequired();
+            entity.Property(r => r.CreatedAt).IsRequired();
+
+            entity.HasIndex(r => r.StageName).IsUnique();
         });
     }
 }

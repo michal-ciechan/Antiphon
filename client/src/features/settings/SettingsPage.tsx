@@ -1,5 +1,6 @@
 import { Container, Title, Paper, Tabs, Text } from '@mantine/core'
 import { TemplateManager } from './TemplateManager'
+import { ProviderConfig } from './ProviderConfig'
 
 export function SettingsPage() {
   return (
@@ -20,7 +21,7 @@ export function SettingsPage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="llm-providers" pt="md">
-            <Text c="dimmed">LLM provider configuration coming soon.</Text>
+            <ProviderConfig />
           </Tabs.Panel>
 
           <Tabs.Panel value="projects" pt="md">
