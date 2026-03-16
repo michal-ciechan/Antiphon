@@ -70,6 +70,7 @@ try
     // Application services
     builder.Services.AddScoped<WorkflowTemplateService>();
     builder.Services.AddScoped<LlmProviderService>();
+    builder.Services.AddScoped<ProjectService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
@@ -106,6 +107,7 @@ try
 
     // API endpoints
     app.MapSettingsEndpoints();
+    app.MapProjectEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");

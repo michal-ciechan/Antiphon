@@ -1,6 +1,7 @@
-import { Container, Title, Paper, Tabs, Text } from '@mantine/core'
+import { Container, Title, Paper, Tabs } from '@mantine/core'
 import { TemplateManager } from './TemplateManager'
 import { ProviderConfig } from './ProviderConfig'
+import { ProjectConfig } from './ProjectConfig'
 
 export function SettingsPage() {
   return (
@@ -25,7 +26,7 @@ export function SettingsPage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="projects" pt="md">
-            <Text c="dimmed">Project configuration coming soon.</Text>
+            <ProjectConfig />
           </Tabs.Panel>
         </Tabs>
       </Paper>

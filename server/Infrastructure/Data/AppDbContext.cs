@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<WorkflowTemplate> WorkflowTemplates => Set<WorkflowTemplate>();
     public DbSet<LlmProvider> LlmProviders => Set<LlmProvider>();
     public DbSet<ModelRouting> ModelRoutings => Set<ModelRouting>();
+    public DbSet<Project> Projects => Set<Project>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -90,6 +91,22 @@ public class AppDbContext : DbContext
             entity.Property(r => r.CreatedAt).IsRequired();
 
             entity.HasIndex(r => r.StageName).IsUnique();
+        });
+
+        modelBuilder.Entity<Project>(entity =>
+        {
+            entity.ToTable("Projects");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.Name).IsRequired().HasMaxLength(200);
+            entity.Property(p => p.GitRepositoryUrl).IsRequired().HasMaxLength(500);
+            entity.Property(p => p.ConstitutionPath).IsRequired().HasMaxLength(500)
+                .HasDefaultValue("project-context.md");
+            entity.Property(p => p.GitHubIntegrationEnabled).IsRequired();
+            entity.Property(p => p.NotificationsEnabled).IsRequired();
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.Property(p => p.UpdatedAt).IsRequired();
+
+            entity.HasIndex(p => p.Name).IsUnique();
         });
     }
 }
