@@ -15,6 +15,10 @@ public class AppDbContext : DbContext
     public DbSet<LlmProvider> LlmProviders => Set<LlmProvider>();
     public DbSet<ModelRouting> ModelRoutings => Set<ModelRouting>();
     public DbSet<Project> Projects => Set<Project>();
+    public DbSet<Workflow> Workflows => Set<Workflow>();
+    public DbSet<Stage> Stages => Set<Stage>();
+    public DbSet<GateDecision> GateDecisions => Set<GateDecision>();
+    public DbSet<StageExecution> StageExecutions => Set<StageExecution>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +111,128 @@ public class AppDbContext : DbContext
             entity.Property(p => p.UpdatedAt).IsRequired();
 
             entity.HasIndex(p => p.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<Workflow>(entity =>
+        {
+            entity.ToTable("Workflows");
+            entity.HasKey(w => w.Id);
+            entity.Property(w => w.Name).IsRequired().HasMaxLength(200);
+            entity.Property(w => w.Description).HasMaxLength(2000);
+            entity.Property(w => w.TemplateId).IsRequired();
+            entity.Property(w => w.ProjectId).IsRequired();
+            entity.Property(w => w.Status).IsRequired();
+            entity.Property(w => w.InitialContext).IsRequired();
+            entity.Property(w => w.GitBranchName).IsRequired().HasMaxLength(500);
+            entity.Property(w => w.CreatedAt).IsRequired();
+            entity.Property(w => w.UpdatedAt).IsRequired();
+
+            entity.HasIndex(w => w.ProjectId).HasDatabaseName("IX_Workflows_ProjectId");
+            entity.HasIndex(w => w.TemplateId).HasDatabaseName("IX_Workflows_TemplateId");
+            entity.HasIndex(w => w.Status).HasDatabaseName("IX_Workflows_Status");
+
+            entity.HasOne(w => w.Template)
+                .WithMany()
+                .HasForeignKey(w => w.TemplateId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(w => w.Project)
+                .WithMany()
+                .HasForeignKey(w => w.ProjectId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(w => w.CurrentStage)
+                .WithMany()
+                .HasForeignKey(w => w.CurrentStageId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Stage>(entity =>
+        {
+            entity.ToTable("Stages");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.WorkflowId).IsRequired();
+            entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
+            entity.Property(s => s.Description).HasMaxLength(2000);
+            entity.Property(s => s.StageOrder).IsRequired();
+            entity.Property(s => s.Status).IsRequired();
+            entity.Property(s => s.ExecutorType).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.ModelName).HasMaxLength(200);
+            entity.Property(s => s.GateRequired).IsRequired();
+            entity.Property(s => s.CurrentVersion).IsRequired().HasDefaultValue(1);
+            entity.Property(s => s.CreatedAt).IsRequired();
+
+            entity.HasIndex(s => s.WorkflowId).HasDatabaseName("IX_Stages_WorkflowId");
+            entity.HasIndex(s => new { s.WorkflowId, s.StageOrder })
+                .IsUnique()
+                .HasDatabaseName("IX_Stages_WorkflowId_StageOrder");
+
+            entity.HasOne(s => s.Workflow)
+                .WithMany(w => w.Stages)
+                .HasForeignKey(s => s.WorkflowId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<GateDecision>(entity =>
+        {
+            entity.ToTable("GateDecisions");
+            entity.HasKey(g => g.Id);
+            entity.Property(g => g.StageId).IsRequired();
+            entity.Property(g => g.WorkflowId).IsRequired();
+            entity.Property(g => g.Action).IsRequired();
+            entity.Property(g => g.Feedback).HasMaxLength(4000);
+            entity.Property(g => g.DecidedBy).IsRequired();
+            entity.Property(g => g.CreatedAt).IsRequired();
+
+            entity.HasIndex(g => g.StageId).HasDatabaseName("IX_GateDecisions_StageId");
+            entity.HasIndex(g => g.WorkflowId).HasDatabaseName("IX_GateDecisions_WorkflowId");
+
+            entity.HasOne(g => g.Stage)
+                .WithMany(s => s.GateDecisions)
+                .HasForeignKey(g => g.StageId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(g => g.Workflow)
+                .WithMany(w => w.GateDecisions)
+                .HasForeignKey(g => g.WorkflowId)
+                .OnDelete(DeleteBehavior.NoAction);
+
+            entity.HasOne(g => g.DecidedByUser)
+                .WithMany()
+                .HasForeignKey(g => g.DecidedBy)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<StageExecution>(entity =>
+        {
+            entity.ToTable("StageExecutions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.StageId).IsRequired();
+            entity.Property(e => e.WorkflowId).IsRequired();
+            entity.Property(e => e.Version).IsRequired();
+            entity.Property(e => e.Status).IsRequired();
+            entity.Property(e => e.StartedAt).IsRequired();
+            entity.Property(e => e.ErrorDetails).HasMaxLength(4000);
+            entity.Property(e => e.GitTagName).HasMaxLength(500);
+            entity.Property(e => e.TokensIn).IsRequired();
+            entity.Property(e => e.TokensOut).IsRequired();
+            entity.Property(e => e.EstimatedCostUsd).IsRequired().HasPrecision(18, 6);
+
+            entity.HasIndex(e => e.StageId).HasDatabaseName("IX_StageExecutions_StageId");
+            entity.HasIndex(e => e.WorkflowId).HasDatabaseName("IX_StageExecutions_WorkflowId");
+            entity.HasIndex(e => new { e.StageId, e.Version })
+                .IsUnique()
+                .HasDatabaseName("IX_StageExecutions_StageId_Version");
+
+            entity.HasOne(e => e.Stage)
+                .WithMany(s => s.StageExecutions)
+                .HasForeignKey(e => e.StageId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Workflow)
+                .WithMany(w => w.StageExecutions)
+                .HasForeignKey(e => e.WorkflowId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }
