@@ -6,6 +6,7 @@ using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Realtime;
 
 // Bootstrap Serilog for startup logging (before host is built)
 Log.Logger = new LoggerConfiguration()
@@ -63,6 +64,10 @@ try
     });
     builder.Services.AddHttpContextAccessor();
 
+    // SignalR — real-time communication (NFR4: sub-1s push)
+    builder.Services.AddSignalR();
+    builder.Services.AddSingleton<IEventBus, EventBus>();
+
     // OpenTelemetry tracing (NFR20)
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService("Antiphon"))
@@ -87,6 +92,9 @@ try
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
     app.MapHealthChecks("/health");
+
+    // SignalR hub
+    app.MapHub<AntiphonHub>("/hubs/antiphon");
 
     // SPA fallback for production (serves React build from wwwroot)
     app.UseStaticFiles();
