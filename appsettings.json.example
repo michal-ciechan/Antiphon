@@ -2,19 +2,45 @@
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Database=antiphon;Username=antiphon;Password=antiphon_dev"
   },
-  "Llm": {
-    "DefaultProvider": "anthropic",
-    "AnthropicApiKey": "<your-api-key>",
-    "OpenAiApiKey": "<your-api-key>"
-  },
   "Git": {
+    "WorkspacePath": "",
     "DefaultBranch": "main",
     "PollIntervalSeconds": 30,
     "WorktreeBasePath": "/tmp/antiphon-worktrees"
   },
+  "Llm": {
+    "DefaultProvider": "anthropic",
+    "DefaultModel": "",
+    "Providers": [
+      {
+        "Name": "anthropic",
+        "ApiKey": "<your-api-key>",
+        "BaseUrl": "https://api.anthropic.com",
+        "Models": ["claude-sonnet-4-20250514"]
+      },
+      {
+        "Name": "openai",
+        "ApiKey": "<your-api-key>",
+        "BaseUrl": "https://api.openai.com",
+        "Models": ["gpt-4o"]
+      }
+    ]
+  },
+  "SignalR": {
+    "HubPath": "/hubs/workflow",
+    "ReconnectIntervalsMs": [0, 2000, 5000, 10000, 30000],
+    "KeepAliveIntervalSeconds": 15,
+    "ClientTimeoutSeconds": 30
+  },
+  "Audit": {
+    "RetentionDays": 90,
+    "EnableFullContent": true,
+    "EnableIpLogging": true
+  },
   "GitHub": {
     "Enabled": false,
-    "PersonalAccessToken": "<your-pat>"
+    "PersonalAccessToken": "<your-pat>",
+    "BaseUrl": "https://api.github.com"
   },
   "Logging": {
     "LogLevel": {
