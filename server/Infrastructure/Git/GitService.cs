@@ -137,6 +137,14 @@ public class GitService : IGitService
         return result;
     }
 
+    public async Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, string pathFilter, CancellationToken ct)
+    {
+        _logger.LogInformation("Computing path-filtered diff between {Tag1} and {Tag2} for path {Path}", tag1, tag2, pathFilter);
+
+        var result = await RunGitAsync(repoPath, $"diff {tag1}..{tag2} -- {pathFilter}", ct);
+        return result;
+    }
+
     /// <summary>
     /// Builds git commit arguments with the [antiphon] trailer (FR30).
     /// Uses --trailer to add [antiphon] as a proper git trailer.

@@ -59,8 +59,8 @@ public static class GateEndpoints
                 new { workflowId = id, action = "approved", stageId = currentStage.Id },
                 cancellationToken);
 
-            // Resume workflow execution
-            await engine.ResumeAfterGateAsync(id, cancellationToken);
+            // Delegate to engine: tag, merge, advance (FR22, FR31, FR32)
+            await engine.ApproveGateAsync(id, cancellationToken);
 
             return Results.NoContent();
         });
@@ -69,6 +69,7 @@ public static class GateEndpoints
             Guid id,
             GateFeedbackRequest request,
             AppDbContext db,
+            WorkflowEngine engine,
             ICurrentUser currentUser,
             IEventBus eventBus,
             CancellationToken cancellationToken) =>
@@ -101,11 +102,6 @@ public static class GateEndpoints
                 CreatedAt = DateTime.UtcNow
             };
             db.GateDecisions.Add(decision);
-
-            // Reset the stage status to pending so it can be re-executed with feedback
-            currentStage.Status = StageStatus.Pending;
-            currentStage.CurrentVersion++;
-
             await db.SaveChangesAsync(cancellationToken);
 
             await eventBus.PublishToGroupAsync(
@@ -114,12 +110,16 @@ public static class GateEndpoints
                 new { workflowId = id, action = "rejected", stageId = currentStage.Id },
                 cancellationToken);
 
+            // Delegate to engine: re-execute stage with feedback (FR23)
+            await engine.RejectGateAsync(id, request.Feedback, cancellationToken);
+
             return Results.NoContent();
         });
 
         gates.MapPost("/prompt", async (
             Guid id,
             GateFeedbackRequest request,
+            WorkflowEngine engine,
             AppDbContext db,
             ICurrentUser currentUser,
             IEventBus eventBus,
@@ -136,13 +136,14 @@ public static class GateEndpoints
                     $"Workflow must be in Running or GateWaiting state to send a prompt. Current: {workflow.Status}");
             }
 
-            // Store as a system event (feedback to agent)
-            // In a full implementation, this would be passed to the agent executor.
             await eventBus.PublishToGroupAsync(
                 $"workflow-{id}",
                 "UserPromptSent",
                 new { workflowId = id, feedback = request.Feedback, userId = currentUser.UserId },
                 cancellationToken);
+
+            // Delegate to engine: send prompt to agent, potentially re-execute (FR27)
+            await engine.PromptAgentAsync(id, request.Feedback, cancellationToken);
 
             return Results.NoContent();
         });

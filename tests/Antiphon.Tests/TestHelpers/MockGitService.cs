@@ -48,6 +48,12 @@ public class MockGitService : IGitService
         return Task.FromResult($"diff between {tag1} and {tag2}");
     }
 
+    public Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, string pathFilter, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("GetDiffBetweenTagsFiltered", Guid.Empty, null, $"{tag1}..{tag2} -- {pathFilter}", repoPath));
+        return Task.FromResult($"filtered diff between {tag1} and {tag2} at {pathFilter}");
+    }
+
     public void Clear() => _operations.Clear();
 
     public record GitOperation(string Method, Guid WorkflowId, string? StageName, string? Detail, string RepoPath);

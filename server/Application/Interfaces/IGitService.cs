@@ -37,4 +37,10 @@ public interface IGitService
     /// Returns the diff between two tags for cascade update context (FR34).
     /// </summary>
     Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, CancellationToken ct);
+
+    /// <summary>
+    /// Returns the diff between two tags, filtered to only show changes under the specified path (FR34).
+    /// Used for cascade update context where only _antiphon/artifacts/ changes matter.
+    /// </summary>
+    Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, string pathFilter, CancellationToken ct);
 }

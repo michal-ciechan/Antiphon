@@ -8,8 +8,10 @@ import { StagePipeline } from './StagePipeline'
 import { ContextPanel, type ContextTab } from './ContextPanel'
 import { ConversationView } from './ConversationView'
 import { GateView } from './GateView'
+import { InlineTransitionCard } from './InlineTransitionCard'
 import { GateActionBar } from '../gate/GateActionBar'
 import type { TimelineMessage, ArtifactDto } from './types'
+import type { ArtifactVersion } from '../artifact'
 
 type PageMode = 'conversation' | 'gate'
 
@@ -42,11 +44,21 @@ export function WorkflowDetailPage() {
   const promptAgent = usePromptAgent(id)
   const addComment = useAddComment(id)
 
-  // Mode is derived from workflow status, not URL
-  const mode = useMemo<PageMode>(
+  // Mode is derived from workflow status, but can be manually overridden
+  // to support InlineTransitionCard switching to gate mode
+  const [modeOverride, setModeOverride] = useState<PageMode | null>(null)
+  const derivedMode = useMemo<PageMode>(
     () => (workflow ? deriveMode(workflow.status) : 'conversation'),
     [workflow],
   )
+  const mode = modeOverride ?? derivedMode
+
+  // Reset override when derived mode changes (e.g., after approve transitions back to running)
+  const [prevDerived, setPrevDerived] = useState(derivedMode)
+  if (derivedMode !== prevDerived) {
+    setPrevDerived(derivedMode)
+    setModeOverride(null)
+  }
 
   // Track the active context panel tab; default depends on mode
   const [activeTab, setActiveTab] = useState<ContextTab | null>(null)
@@ -54,6 +66,9 @@ export function WorkflowDetailPage() {
 
   // Selected completed stage artifact (for clicking pipeline stages)
   const [_selectedStage, setSelectedStage] = useState<StageDto | null>(null)
+
+  // Version selection for artifact viewer
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
 
   // Conversation messages - will be populated by SignalR streaming in future stories.
   // For now, provide an empty array so the timeline renders properly.
@@ -71,19 +86,16 @@ export function WorkflowDetailPage() {
     setActiveTab('outputs')
   }, [])
 
-  // Gate action handlers
+  // Gate action handlers — no confirmation dialogs (UX-DR25, recoverable actions)
   const handleApprove = useCallback(() => {
     approveGate.mutate()
   }, [approveGate])
 
   const handleReject = useCallback(() => {
-    // For reject, we use the prompt text. If no text, reject with empty feedback.
     rejectGate.mutate('')
   }, [rejectGate])
 
   const handleGoBack = useCallback(() => {
-    // Go back reuses reject with a specific signal.
-    // For now, mapped to reject with feedback indicating go-back.
     rejectGate.mutate('go-back')
   }, [rejectGate])
 
@@ -101,11 +113,53 @@ export function WorkflowDetailPage() {
     [addComment],
   )
 
+  // Switch to gate mode when InlineTransitionCard is clicked
+  const handleSwitchToGate = useCallback(() => {
+    setModeOverride('gate')
+  }, [])
+
+  // Switch back to conversation mode (from gate view "View conversation" link)
+  const handleViewConversation = useCallback(() => {
+    setModeOverride('conversation')
+  }, [])
+
   // Find the current stage object
   const currentStage = useMemo(() => {
     if (!workflow) return null
     return workflow.stages.find((s) => s.name === workflow.currentStageName) ?? null
   }, [workflow])
+
+  // Find the primary artifact for the current stage
+  const currentArtifact = useMemo(() => {
+    if (!artifacts || !currentStage) return null
+    // Find primary artifact for current stage, at selected version or latest
+    const stageArtifacts = artifacts.filter((a) => a.stageId === currentStage.id)
+    if (selectedVersion != null) {
+      return stageArtifacts.find((a) => a.version === selectedVersion) ?? null
+    }
+    // Get the primary artifact (or first available)
+    return (
+      stageArtifacts.find((a) => a.isPrimary) ??
+      stageArtifacts[stageArtifacts.length - 1] ??
+      null
+    )
+  }, [artifacts, currentStage, selectedVersion])
+
+  // Build version history from artifacts
+  const artifactVersions = useMemo<ArtifactVersion[]>(() => {
+    if (!artifacts || !currentStage) return []
+    const stageArtifacts = artifacts.filter((a) => a.stageId === currentStage.id)
+    const maxVersion = Math.max(...stageArtifacts.map((a) => a.version), 0)
+    return stageArtifacts.map((a) => ({
+      version: a.version,
+      createdAt: a.createdAt,
+      isCurrent: a.version === maxVersion,
+    }))
+  }, [artifacts, currentStage])
+
+  // Whether the InlineTransitionCard should show at the end of conversation
+  const showTransitionCard =
+    workflow?.status === 'GateWaiting' && mode === 'conversation'
 
   const isStreaming = workflow?.status === 'Running'
   const isMutating =
@@ -169,13 +223,28 @@ export function WorkflowDetailPage() {
           }}
         >
           {mode === 'conversation' ? (
-            <ConversationView
-              messages={messages}
-              currentStageId={currentStage?.id}
-              isStreaming={isStreaming}
-            />
+            <>
+              <ConversationView
+                messages={messages}
+                currentStageId={currentStage?.id}
+                isStreaming={isStreaming}
+              />
+              {/* InlineTransitionCard at end of conversation when gate is ready (UX-DR15) */}
+              {showTransitionCard && (
+                <InlineTransitionCard
+                  stageName={workflow.currentStageName ?? 'Unknown'}
+                  onSwitchToGate={handleSwitchToGate}
+                />
+              )}
+            </>
           ) : (
-            <GateView stageName={workflow.currentStageName} />
+            <GateView
+              stageName={workflow.currentStageName}
+              artifact={currentArtifact}
+              versions={artifactVersions}
+              onViewConversation={handleViewConversation}
+              onSelectVersion={setSelectedVersion}
+            />
           )}
         </Box>
 

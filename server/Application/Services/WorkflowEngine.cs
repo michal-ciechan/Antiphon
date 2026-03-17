@@ -395,6 +395,139 @@ public class WorkflowEngine
     }
 
     /// <summary>
+    /// Approves the current gate: tags the stage, merges it into workflow master,
+    /// and advances to the next stage (FR22, FR31, FR32).
+    /// </summary>
+    public async Task ApproveGateAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        if (workflow.Status != WorkflowStatus.GateWaiting)
+        {
+            throw new ConflictException(
+                $"Workflow must be in GateWaiting state to approve gate. Current: {workflow.Status}");
+        }
+
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
+            ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
+        var repoPath = project.GitRepositoryUrl;
+
+        // Find the completed stage that triggered the gate
+        var approvedStage = workflow.Stages
+            .OrderByDescending(s => s.StageOrder)
+            .FirstOrDefault(s => s.Status == StageStatus.Completed)
+            ?? throw new ConflictException("No completed stage found for gate approval.");
+
+        // Tag the stage commit (FR31) and merge into workflow master (FR32)
+        await _gitService.TagStageAsync(workflowId, approvedStage.Name, approvedStage.CurrentVersion, repoPath, ct);
+        await _gitService.MergeStageBranchAsync(workflowId, approvedStage.Name, repoPath, ct);
+
+        // Transition back to Running and advance to next stage
+        TransitionWorkflow(workflow, WorkflowStatus.Running);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "GateApproved",
+            new { workflowId, stageId = approvedStage.Id, stageName = approvedStage.Name },
+            ct);
+
+        // Continue to next stage
+        await ExecuteNextStageAsync(workflowId, ct);
+    }
+
+    /// <summary>
+    /// Rejects the current gate with feedback: re-executes the current stage with
+    /// rejection context injected (FR23).
+    /// </summary>
+    public async Task RejectGateAsync(Guid workflowId, string feedback, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        if (workflow.Status != WorkflowStatus.GateWaiting)
+        {
+            throw new ConflictException(
+                $"Workflow must be in GateWaiting state to reject gate. Current: {workflow.Status}");
+        }
+
+        // Find the completed stage that triggered the gate
+        var rejectedStage = workflow.Stages
+            .OrderByDescending(s => s.StageOrder)
+            .FirstOrDefault(s => s.Status == StageStatus.Completed)
+            ?? throw new ConflictException("No completed stage found for gate rejection.");
+
+        // Reset stage to Pending with incremented version for re-execution
+        rejectedStage.Status = StageStatus.Pending;
+        rejectedStage.CurrentVersion++;
+        rejectedStage.CompletedAt = null;
+
+        // Transition back to Running for re-execution
+        TransitionWorkflow(workflow, WorkflowStatus.Running);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "GateRejected",
+            new { workflowId, stageId = rejectedStage.Id, stageName = rejectedStage.Name, feedback },
+            ct);
+
+        // Re-execute the stage (the executor will pick up the next pending stage, which is the reset one)
+        await ExecuteNextStageAsync(workflowId, ct);
+    }
+
+    /// <summary>
+    /// Sends a user prompt to the agent at the current stage gate (FR27).
+    /// The agent receives the prompt and produces a revised artifact.
+    /// </summary>
+    public async Task PromptAgentAsync(Guid workflowId, string prompt, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        if (workflow.Status != WorkflowStatus.GateWaiting && workflow.Status != WorkflowStatus.Running)
+        {
+            throw new ConflictException(
+                $"Workflow must be in GateWaiting or Running state to prompt agent. Current: {workflow.Status}");
+        }
+
+        // Find the current stage
+        var currentStage = workflow.Stages
+            .OrderByDescending(s => s.StageOrder)
+            .FirstOrDefault(s => s.Status == StageStatus.Completed || s.Status == StageStatus.Running)
+            ?? throw new ConflictException("No active stage found for agent prompt.");
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "AgentPromptReceived",
+            new { workflowId, stageId = currentStage.Id, prompt },
+            ct);
+
+        // If the stage was completed (at a gate), reset it for re-execution with the prompt
+        if (currentStage.Status == StageStatus.Completed && workflow.Status == WorkflowStatus.GateWaiting)
+        {
+            currentStage.Status = StageStatus.Pending;
+            currentStage.CurrentVersion++;
+            currentStage.CompletedAt = null;
+
+            TransitionWorkflow(workflow, WorkflowStatus.Running);
+            workflow.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+
+            await ExecuteNextStageAsync(workflowId, ct);
+        }
+    }
+
+    /// <summary>
     /// Pauses an active workflow. Validates that the transition is allowed by the state machine,
     /// sets status to Paused, and pushes a WorkflowStatusChanged event via IEventBus.
     /// </summary>
