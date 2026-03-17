@@ -1,5 +1,7 @@
 import '@mantine/core/styles.css'
+import '@mantine/notifications/styles.css'
 import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route } from 'react-router'
 import { useSignalR } from './hooks/useSignalR'
@@ -25,6 +27,7 @@ function SignalRProvider({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <MantineProvider theme={theme} defaultColorScheme="dark">
+      <Notifications position="top-right" limit={3} />
       <QueryClientProvider client={queryClient}>
         <SignalRProvider>
           <BrowserRouter>
