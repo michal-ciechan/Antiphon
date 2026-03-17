@@ -1,7 +1,9 @@
 import { useRef, useCallback } from 'react'
-import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton } from '@mantine/core'
+import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table, Progress } from '@mantine/core'
 import { VscFile, VscInfo, VscComment, VscDiff, VscHistory } from 'react-icons/vsc'
 import { ConversationTimeline } from './ConversationTimeline'
+import { useAuditQuery } from '../../api/audit'
+import type { AuditQueryResult, CostByModelDto } from '../../api/audit'
 import type { TimelineMessage, ArtifactDto } from './types'
 import type { StageDto } from '../../api/workflows'
 
@@ -22,6 +24,8 @@ interface ContextPanelProps {
   messages?: TimelineMessage[]
   /** Current stage ID for timeline expansion */
   currentStageId?: string
+  /** Workflow ID for audit queries */
+  workflowId?: string
 }
 
 const TAB_CONFIG: { value: ContextTab; label: string; icon: React.ReactNode }[] = [
@@ -207,6 +211,203 @@ function StageInfoTab({
   )
 }
 
+function formatCost(usd: number): string {
+  if (usd < 0.01) return `$${usd.toFixed(6)}`
+  if (usd < 1) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
+  return String(count)
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function CostByModelRow({ model }: { model: CostByModelDto }) {
+  return (
+    <Table.Tr>
+      <Table.Td>
+        <Text size="xs" fw={500}>{model.modelName}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="xs">{formatCost(model.costUsd)}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="xs">{formatTokens(model.tokensIn + model.tokensOut)}</Text>
+      </Table.Td>
+      <Table.Td>
+        <Text size="xs">{model.callCount}</Text>
+      </Table.Td>
+    </Table.Tr>
+  )
+}
+
+function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: string }) {
+  const { data, isLoading, error } = useAuditQuery({
+    workflowId,
+    stageId,
+    take: 50,
+  })
+
+  if (!workflowId && !stageId) {
+    return (
+      <Stack align="center" justify="center" style={{ height: '100%' }}>
+        <VscHistory size={32} color="var(--mantine-color-dimmed)" />
+        <Text c="dimmed" size="sm">
+          Select a workflow to view audit trail.
+        </Text>
+      </Stack>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <Stack align="center" justify="center" style={{ height: '100%' }}>
+        <Loader size="sm" />
+        <Text c="dimmed" size="sm">Loading audit data...</Text>
+      </Stack>
+    )
+  }
+
+  if (error) {
+    return (
+      <Text c="danger" size="sm">
+        Failed to load audit data.
+      </Text>
+    )
+  }
+
+  if (!data || data.totalCount === 0) {
+    return (
+      <Stack align="center" justify="center" style={{ height: '100%' }}>
+        <VscHistory size={32} color="var(--mantine-color-dimmed)" />
+        <Text c="dimmed" size="sm">
+          No audit records yet.
+        </Text>
+      </Stack>
+    )
+  }
+
+  const { costSummary, records } = data as AuditQueryResult
+
+  return (
+    <Stack gap="sm">
+      {/* Cost Summary */}
+      <Box>
+        <Text size="xs" fw={600} mb={4}>
+          Cost Summary
+        </Text>
+        <Stack gap={2}>
+          <Group gap="xs">
+            <Text size="xs" c="dimmed">Total Cost:</Text>
+            <Text size="xs" fw={600}>{formatCost(costSummary.totalCostUsd)}</Text>
+          </Group>
+          <Group gap="xs">
+            <Text size="xs" c="dimmed">Tokens In:</Text>
+            <Text size="xs">{formatTokens(costSummary.totalTokensIn)}</Text>
+            <Text size="xs" c="dimmed" ml="xs">Out:</Text>
+            <Text size="xs">{formatTokens(costSummary.totalTokensOut)}</Text>
+          </Group>
+          <Group gap="xs">
+            <Text size="xs" c="dimmed">LLM Calls:</Text>
+            <Text size="xs">{costSummary.totalLlmCalls}</Text>
+            <Text size="xs" c="dimmed" ml="xs">Tool Calls:</Text>
+            <Text size="xs">{costSummary.totalToolCalls}</Text>
+          </Group>
+        </Stack>
+      </Box>
+
+      {/* Cost by Model */}
+      {costSummary.byModel.length > 0 && (
+        <Box>
+          <Text size="xs" fw={600} mb={4}>
+            Cost by Model
+          </Text>
+          <Table striped highlightOnHover withTableBorder style={{ fontSize: '0.7rem' }}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th><Text size="xs">Model</Text></Table.Th>
+                <Table.Th><Text size="xs">Cost</Text></Table.Th>
+                <Table.Th><Text size="xs">Tokens</Text></Table.Th>
+                <Table.Th><Text size="xs">Calls</Text></Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {costSummary.byModel.map((model) => (
+                <CostByModelRow key={model.modelName} model={model} />
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Box>
+      )}
+
+      {/* Execution Timeline */}
+      <Box>
+        <Text size="xs" fw={600} mb={4}>
+          Execution Timeline ({data.totalCount} events)
+        </Text>
+        <Stack gap={2}>
+          {records.map((record) => (
+            <Box
+              key={record.id}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 'var(--mantine-radius-xs)',
+                border: '1px solid var(--mantine-color-dark-5)',
+                backgroundColor: 'var(--mantine-color-dark-7)',
+              }}
+            >
+              <Group gap="xs" justify="space-between">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={
+                    record.eventType === 'LlmCall'
+                      ? 'active'
+                      : record.eventType === 'ToolInvocation'
+                        ? 'grape'
+                        : record.eventType === 'GoBack' || record.eventType === 'UpdateBasedOnDiff'
+                          ? 'warning'
+                          : 'gray'
+                  }
+                >
+                  {record.eventType}
+                </Badge>
+                <Text size="xs" c="dimmed">
+                  {new Date(record.createdAt).toLocaleTimeString()}
+                </Text>
+              </Group>
+              <Text size="xs" mt={2}>{record.summary}</Text>
+              {record.tokensIn > 0 && (
+                <Group gap="xs" mt={2}>
+                  <Text size="xs" c="dimmed">
+                    {formatTokens(record.tokensIn)} in / {formatTokens(record.tokensOut)} out
+                  </Text>
+                  {record.costUsd > 0 && (
+                    <Text size="xs" c="dimmed">
+                      {formatCost(record.costUsd)}
+                    </Text>
+                  )}
+                  {record.durationMs > 0 && (
+                    <Text size="xs" c="dimmed">
+                      {formatDuration(record.durationMs)}
+                    </Text>
+                  )}
+                </Group>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      </Box>
+    </Stack>
+  )
+}
+
 export function ContextPanel({
   activeTab,
   onTabChange,
@@ -216,6 +417,7 @@ export function ContextPanel({
   stages,
   messages,
   currentStageId,
+  workflowId,
 }: ContextPanelProps) {
   // Per-tab scroll preservation
   const scrollPositions = useRef<Record<string, number>>({})
@@ -340,12 +542,7 @@ export function ContextPanel({
             padding: 'var(--mantine-spacing-sm)',
           }}
         >
-          <Stack align="center" justify="center" style={{ height: '100%' }}>
-            <VscHistory size={32} color="var(--mantine-color-dimmed)" />
-            <Text c="dimmed" size="sm">
-              Audit trail coming soon.
-            </Text>
-          </Stack>
+          <AuditTab workflowId={workflowId} stageId={currentStage?.id} />
         </Tabs.Panel>
       </Tabs>
     </Box>

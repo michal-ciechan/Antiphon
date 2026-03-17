@@ -19,6 +19,8 @@ public class AppDbContext : DbContext
     public DbSet<Stage> Stages => Set<Stage>();
     public DbSet<GateDecision> GateDecisions => Set<GateDecision>();
     public DbSet<StageExecution> StageExecutions => Set<StageExecution>();
+    public DbSet<AuditRecord> AuditRecords => Set<AuditRecord>();
+    public DbSet<CostLedgerEntry> CostLedgerEntries => Set<CostLedgerEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -233,6 +235,86 @@ public class AppDbContext : DbContext
                 .WithMany(w => w.StageExecutions)
                 .HasForeignKey(e => e.WorkflowId)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<AuditRecord>(entity =>
+        {
+            entity.ToTable("AuditRecords");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.EventType).IsRequired();
+            entity.Property(a => a.ModelName).HasMaxLength(200);
+            entity.Property(a => a.TokensIn).IsRequired();
+            entity.Property(a => a.TokensOut).IsRequired();
+            entity.Property(a => a.CostUsd).IsRequired().HasPrecision(18, 6);
+            entity.Property(a => a.DurationMs).IsRequired();
+            entity.Property(a => a.ClientIp).HasMaxLength(100);
+            entity.Property(a => a.GitTagName).HasMaxLength(500);
+            entity.Property(a => a.Summary).IsRequired().HasMaxLength(2000);
+            entity.Property(a => a.FullContent).HasColumnType("jsonb");
+            entity.Property(a => a.CreatedAt).IsRequired();
+
+            entity.HasIndex(a => a.WorkflowId).HasDatabaseName("IX_AuditRecords_WorkflowId");
+            entity.HasIndex(a => a.StageId).HasDatabaseName("IX_AuditRecords_StageId");
+            entity.HasIndex(a => a.CreatedAt).HasDatabaseName("IX_AuditRecords_CreatedAt");
+            entity.HasIndex(a => a.EventType).HasDatabaseName("IX_AuditRecords_EventType");
+
+            entity.HasOne(a => a.Workflow)
+                .WithMany()
+                .HasForeignKey(a => a.WorkflowId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.Stage)
+                .WithMany()
+                .HasForeignKey(a => a.StageId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.StageExecution)
+                .WithMany()
+                .HasForeignKey(a => a.StageExecutionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.User)
+                .WithMany()
+                .HasForeignKey(a => a.UserId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CostLedgerEntry>(entity =>
+        {
+            entity.ToTable("CostLedgerEntries");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.WorkflowId).IsRequired();
+            entity.Property(c => c.StageId).IsRequired();
+            entity.Property(c => c.ModelName).IsRequired().HasMaxLength(200);
+            entity.Property(c => c.TokensIn).IsRequired();
+            entity.Property(c => c.TokensOut).IsRequired();
+            entity.Property(c => c.CostUsd).IsRequired().HasPrecision(18, 6);
+            entity.Property(c => c.DurationMs).IsRequired();
+            entity.Property(c => c.CreatedAt).IsRequired();
+
+            entity.HasIndex(c => c.WorkflowId).HasDatabaseName("IX_CostLedgerEntries_WorkflowId");
+            entity.HasIndex(c => c.StageId).HasDatabaseName("IX_CostLedgerEntries_StageId");
+            entity.HasIndex(c => c.CreatedAt).HasDatabaseName("IX_CostLedgerEntries_CreatedAt");
+
+            entity.HasOne(c => c.Workflow)
+                .WithMany()
+                .HasForeignKey(c => c.WorkflowId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.Stage)
+                .WithMany()
+                .HasForeignKey(c => c.StageId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.StageExecution)
+                .WithMany()
+                .HasForeignKey(c => c.StageExecutionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(c => c.AuditRecord)
+                .WithMany()
+                .HasForeignKey(c => c.AuditRecordId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }
