@@ -1,7 +1,14 @@
 import { useState } from 'react'
-import { Container, Title, Table, Badge, Button, Group, Text, Anchor } from '@mantine/core'
+import { Container, Title, Table, Badge, Button, Group, Text, Anchor, Modal, ActionIcon, Tooltip } from '@mantine/core'
 import { Link } from 'react-router'
-import { useWorkflows, type WorkflowStatus } from '../../api/workflows'
+import {
+  useWorkflows,
+  usePauseWorkflow,
+  useResumeWorkflow,
+  useAbandonWorkflow,
+  type WorkflowDto,
+  type WorkflowStatus,
+} from '../../api/workflows'
 import { PipelineIndicator } from '../../shared/PipelineIndicator'
 import { NewWorkflowDialog } from './NewWorkflowDialog'
 
@@ -25,9 +32,25 @@ function formatDate(iso: string): string {
   })
 }
 
+function canPause(wf: WorkflowDto): boolean {
+  return wf.availableTransitions.includes('Paused')
+}
+
+function canResume(wf: WorkflowDto): boolean {
+  return wf.availableTransitions.includes('Running') && wf.status === 'Paused'
+}
+
+function canAbandon(wf: WorkflowDto): boolean {
+  return wf.availableTransitions.includes('Abandoned')
+}
+
 export function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows()
   const [dialogOpened, setDialogOpened] = useState(false)
+  const [abandonTarget, setAbandonTarget] = useState<WorkflowDto | null>(null)
+  const pauseMutation = usePauseWorkflow()
+  const resumeMutation = useResumeWorkflow()
+  const abandonMutation = useAbandonWorkflow()
 
   return (
     <Container size="lg" py="xl">
@@ -54,6 +77,7 @@ export function DashboardPage() {
               <Table.Th>Current Stage</Table.Th>
               <Table.Th>Progress</Table.Th>
               <Table.Th>Created</Table.Th>
+              <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -81,11 +105,82 @@ export function DashboardPage() {
                 <Table.Td>
                   <Text size="sm">{formatDate(wf.createdAt)}</Text>
                 </Table.Td>
+                <Table.Td>
+                  <Group gap="xs">
+                    {canPause(wf) && (
+                      <Tooltip label="Pause">
+                        <ActionIcon
+                          variant="light"
+                          color="orange"
+                          size="sm"
+                          onClick={() => pauseMutation.mutate(wf.id)}
+                          loading={pauseMutation.isPending}
+                        >
+                          ⏸
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    {canResume(wf) && (
+                      <Tooltip label="Resume">
+                        <ActionIcon
+                          variant="light"
+                          color="blue"
+                          size="sm"
+                          onClick={() => resumeMutation.mutate(wf.id)}
+                          loading={resumeMutation.isPending}
+                        >
+                          ▶
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    {canAbandon(wf) && (
+                      <Tooltip label="Abandon">
+                        <ActionIcon
+                          variant="light"
+                          color="red"
+                          size="sm"
+                          onClick={() => setAbandonTarget(wf)}
+                        >
+                          ✕
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                  </Group>
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       )}
+      <Modal
+        opened={abandonTarget !== null}
+        onClose={() => setAbandonTarget(null)}
+        title="Abandon Workflow"
+        centered
+      >
+        <Text mb="lg">
+          Are you sure you want to abandon <strong>{abandonTarget?.name}</strong>? This action is
+          irreversible and the workflow cannot be resumed.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => setAbandonTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            loading={abandonMutation.isPending}
+            onClick={() => {
+              if (abandonTarget) {
+                abandonMutation.mutate(abandonTarget.id, {
+                  onSuccess: () => setAbandonTarget(null),
+                })
+              }
+            }}
+          >
+            Abandon
+          </Button>
+        </Group>
+      </Modal>
     </Container>
   )
 }

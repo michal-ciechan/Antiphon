@@ -101,5 +101,32 @@ public static class WorkflowEndpoints
 
             return Results.Created($"/api/workflows/{workflow.Id}", new { id = workflow.Id });
         });
+
+        workflows.MapPost("/{id:guid}/pause", async (
+            Guid id,
+            WorkflowEngine engine,
+            CancellationToken cancellationToken) =>
+        {
+            await engine.PauseWorkflowAsync(id, cancellationToken);
+            return Results.NoContent();
+        });
+
+        workflows.MapPost("/{id:guid}/resume", async (
+            Guid id,
+            WorkflowEngine engine,
+            CancellationToken cancellationToken) =>
+        {
+            await engine.ResumeWorkflowAsync(id, cancellationToken);
+            return Results.NoContent();
+        });
+
+        workflows.MapPost("/{id:guid}/abandon", async (
+            Guid id,
+            WorkflowEngine engine,
+            CancellationToken cancellationToken) =>
+        {
+            await engine.AbandonWorkflowAsync(id, cancellationToken);
+            return Results.NoContent();
+        });
     }
 }

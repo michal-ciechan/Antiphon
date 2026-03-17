@@ -80,3 +80,33 @@ export function useCreateWorkflow() {
     },
   })
 }
+
+export function usePauseWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiPost<void>(`/workflows/${id}/pause`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
+    },
+  })
+}
+
+export function useResumeWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiPost<void>(`/workflows/${id}/resume`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
+    },
+  })
+}
+
+export function useAbandonWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiPost<void>(`/workflows/${id}/abandon`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
+    },
+  })
+}

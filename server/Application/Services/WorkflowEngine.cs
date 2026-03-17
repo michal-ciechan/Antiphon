@@ -394,6 +394,73 @@ public class WorkflowEngine
         await ExecuteNextStageAsync(workflowId, ct);
     }
 
+    /// <summary>
+    /// Pauses an active workflow. Validates that the transition is allowed by the state machine,
+    /// sets status to Paused, and pushes a WorkflowStatusChanged event via IEventBus.
+    /// </summary>
+    public async Task PauseWorkflowAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        TransitionWorkflow(workflow, WorkflowStatus.Paused);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "WorkflowStatusChanged",
+            new { workflowId, status = workflow.Status.ToString() },
+            ct);
+    }
+
+    /// <summary>
+    /// Resumes a paused workflow. Validates that the transition is allowed by the state machine,
+    /// sets status to Running, pushes a WorkflowStatusChanged event, and continues stage execution.
+    /// </summary>
+    public async Task ResumeWorkflowAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        TransitionWorkflow(workflow, WorkflowStatus.Running);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "WorkflowStatusChanged",
+            new { workflowId, status = workflow.Status.ToString() },
+            ct);
+
+        // Continue execution from where it left off
+        await ExecuteNextStageAsync(workflowId, ct);
+    }
+
+    /// <summary>
+    /// Abandons a workflow. Validates that the transition is allowed by the state machine,
+    /// sets status to Abandoned, and pushes a WorkflowStatusChanged event via IEventBus.
+    /// </summary>
+    public async Task AbandonWorkflowAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        TransitionWorkflow(workflow, WorkflowStatus.Abandoned);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "WorkflowStatusChanged",
+            new { workflowId, status = workflow.Status.ToString() },
+            ct);
+    }
+
     private static void TransitionWorkflow(Workflow workflow, WorkflowStatus newStatus)
     {
         if (!WorkflowStateMachine.CanTransition(workflow.Status, newStatus))
