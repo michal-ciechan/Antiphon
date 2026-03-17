@@ -1,0 +1,120 @@
+# generated: 2026-03-16
+# last_updated: 2026-03-16
+# project: Antiphon
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-03-16
+last_updated: 2026-03-16
+project: Antiphon
+project_key: NOKEY
+tracking_system: file-system
+story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Platform Foundation & Configuration
+  epic-1: in-progress
+  1-1-project-scaffold-and-development-environment: done
+  1-2-database-foundation-and-configuration-system: done
+  1-3-error-handling-and-logging-infrastructure: done
+  1-4-authentication-abstraction-and-request-attribution: done
+  1-5-real-time-communication-infrastructure: done
+  1-6-test-infrastructure-and-e2e-foundation: done
+  1-7-frontend-shell-and-navigation: done
+  1-8-workflow-template-management: done
+  1-9-llm-provider-configuration: done
+  1-10-project-configuration-and-feature-flags: done
+  1-11-database-seeding-and-first-run-experience: done
+  epic-1-retrospective: optional
+
+  # Epic 2: Core Workflow Loop
+  epic-2: in-progress
+  2-1-workflow-domain-model-and-state-machine: done
+  2-2-workflow-engine-and-sequential-stage-execution: done
+  2-3-git-branching-tagging-and-artifact-storage: done
+  2-4-workflow-crud-api-and-minimal-list-view: done
+  2-5-new-workflow-dialog: done
+  2-6-workflow-pause-resume-and-abandon: done
+  2-7-workflow-detail-page-shell-and-mode-switching: done
+  2-8-conversation-timeline-and-stage-markers: done
+  2-9-action-bar-and-dual-mode-prompt: done
+  2-10-context-panel-with-tabs: done
+  2-11-artifact-renderer-with-markdown-and-mermaid: done
+  2-12-gate-review-flow-approve-and-reject: done
+  2-13-git-diff-spike-de-risk-epic-5: done
+  epic-2-retrospective: optional
+
+  # Epic 3: AI Agent Execution & Streaming
+  epic-3: done
+  3-1-agent-executor-and-microsoft-agent-framework-integration: done
+  3-2-built-in-agent-tools-and-tool-registry: done
+  3-3-real-time-agent-streaming-via-signalr: done
+  3-4-activity-status-line: done
+  3-5-multi-model-routing: done
+  epic-3-retrospective: optional
+
+  # Epic 4: Dashboard & Real-Time Monitoring
+  epic-4: done
+  4-1-workflow-card-and-mini-pipeline-components: done
+  4-2-dashboard-card-grid-filters-and-empty-state: done
+  4-3-real-time-dashboard-updates-and-toasts: done
+  epic-4-retrospective: optional
+
+  # --- MVP LINE: Epics 1-4 deliver the minimum viable product ---
+
+  # Epic 5: Course Correction & Cascade Updates
+  epic-5: done
+  5-1-go-back-state-transitions-and-affected-stage-detection: done
+  5-2-cascade-decision-card-and-user-choices: done
+  5-3-diff-based-cascade-execution: done
+  5-4-artifact-diff-viewer: done
+  epic-5-retrospective: optional
+
+  # Epic 6: Audit Trail & Cost Tracking
+  epic-6: done
+  6-1-llm-call-and-tool-recording: done
+  6-2-two-tier-audit-storage-and-retention: done
+  6-3-audit-query-api-and-ui: done
+  epic-6-retrospective: optional
+
+  # Epic 7: GitHub Integration
+  epic-7: done
+  7-1-github-pr-creation: done
+  7-2-github-pr-monitoring-and-feedback-loop: done
+  epic-7-retrospective: optional
+
+  # Epic 8: External Change Detection
+  epic-8: done
+  8-1-external-commit-detection-and-classification: done
+  8-2-path-based-cascade-triggers: done
+  epic-8-retrospective: optional

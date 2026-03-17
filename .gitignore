@@ -17,3 +17,5 @@ dist/
 .vs/
 .vscode/
 *.swp
+.claude/
+server/logs/
