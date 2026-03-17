@@ -4,29 +4,33 @@ import { useParams } from 'react-router'
 import { useWorkflow, type StageDto, type WorkflowStatus } from '../../api/workflows'
 import { useWorkflowArtifacts } from '../../api/artifacts'
 import { useApproveGate, useRejectGate, usePromptAgent, useAddComment } from '../../api/gates'
+import { useGoBack, useAffectedStages, useSubmitCascade, type AffectedStageDto, type CascadeDecision } from '../../api/cascade'
 import { StagePipeline } from './StagePipeline'
 import { ContextPanel, type ContextTab } from './ContextPanel'
 import { ConversationView } from './ConversationView'
 import { GateView } from './GateView'
+import { CascadeDecisionCard } from './CascadeDecisionCard'
 import { InlineTransitionCard } from './InlineTransitionCard'
 import { GateActionBar } from '../gate/GateActionBar'
 import { useStreamingStore } from '../../stores/streamingStore'
 import type { TimelineMessage, ArtifactDto } from './types'
 import type { ArtifactVersion } from '../artifact'
 
-type PageMode = 'conversation' | 'gate'
+type PageMode = 'conversation' | 'gate' | 'cascade'
 
 const STATUS_COLORS: Record<WorkflowStatus, string> = {
   Created: 'gray',
   Running: 'blue',
   Paused: 'orange',
   GateWaiting: 'orange',
+  CascadeWaiting: 'yellow',
   Completed: 'green',
   Failed: 'red',
   Abandoned: 'gray',
 }
 
 function deriveMode(status: WorkflowStatus): PageMode {
+  if (status === 'CascadeWaiting') return 'cascade'
   return status === 'GateWaiting' ? 'gate' : 'conversation'
 }
 
@@ -44,6 +48,17 @@ export function WorkflowDetailPage() {
   const rejectGate = useRejectGate(id)
   const promptAgent = usePromptAgent(id)
   const addComment = useAddComment(id)
+
+  // Cascade mutations (Story 5.1 / 5.2)
+  const goBack = useGoBack(id)
+  const submitCascade = useSubmitCascade(id)
+  const { data: affectedStages } = useAffectedStages(
+    id,
+    workflow?.status === 'CascadeWaiting',
+  )
+
+  // Local state for affected stages from go-back response
+  const [goBackAffectedStages, setGoBackAffectedStages] = useState<AffectedStageDto[] | null>(null)
 
   // Mode is derived from workflow status, but can be manually overridden
   // to support InlineTransitionCard switching to gate mode
@@ -102,8 +117,37 @@ export function WorkflowDetailPage() {
   }, [rejectGate])
 
   const handleGoBack = useCallback(() => {
-    rejectGate.mutate('go-back')
-  }, [rejectGate])
+    // Go-back targets the earliest completed stage before the current gate stage
+    if (!workflow) return
+    const completedStages = workflow.stages
+      .filter((s) => s.status === 'Completed')
+      .sort((a, b) => a.stageOrder - b.stageOrder)
+    const targetStage = completedStages[completedStages.length - 1]
+    if (!targetStage) return
+
+    goBack.mutate(targetStage.id, {
+      onSuccess: (response) => {
+        setGoBackAffectedStages(response.affectedStages)
+      },
+    })
+  }, [workflow, goBack])
+
+  const handleCascadeConfirm = useCallback(
+    (decisions: CascadeDecision[]) => {
+      submitCascade.mutate(decisions, {
+        onSuccess: () => {
+          setGoBackAffectedStages(null)
+        },
+      })
+    },
+    [submitCascade],
+  )
+
+  const handleCascadeCancel = useCallback(() => {
+    // Cancel just dismisses the card — workflow remains in CascadeWaiting
+    // User can re-fetch affected stages via the cascade/affected endpoint
+    setGoBackAffectedStages(null)
+  }, [])
 
   const handleSendToAgent = useCallback(
     (text: string) => {
@@ -163,6 +207,28 @@ export function WorkflowDetailPage() {
     }))
   }, [artifacts, currentStage])
 
+  // Compute diff content for the ContextPanel Diff tab
+  // Shows diff between previous version and current version of the current stage artifact
+  const { diffOldContent, diffNewContent, diffOldLabel, diffNewLabel } = useMemo(() => {
+    if (!artifacts || !currentStage || currentStage.currentVersion < 2) {
+      return { diffOldContent: undefined, diffNewContent: undefined, diffOldLabel: undefined, diffNewLabel: undefined }
+    }
+    const stageArtifacts = artifacts.filter((a) => a.stageId === currentStage.id)
+    const currentVersionArtifact = stageArtifacts.find((a) => a.version === currentStage.currentVersion)
+    const previousVersionArtifact = stageArtifacts.find((a) => a.version === currentStage.currentVersion - 1)
+
+    if (!currentVersionArtifact || !previousVersionArtifact) {
+      return { diffOldContent: undefined, diffNewContent: undefined, diffOldLabel: undefined, diffNewLabel: undefined }
+    }
+
+    return {
+      diffOldContent: previousVersionArtifact.content,
+      diffNewContent: currentVersionArtifact.content,
+      diffOldLabel: `v${previousVersionArtifact.version}`,
+      diffNewLabel: `v${currentVersionArtifact.version}`,
+    }
+  }, [artifacts, currentStage])
+
   // Whether the InlineTransitionCard should show at the end of conversation
   const showTransitionCard =
     workflow?.status === 'GateWaiting' && mode === 'conversation'
@@ -172,7 +238,9 @@ export function WorkflowDetailPage() {
     approveGate.isPending ||
     rejectGate.isPending ||
     promptAgent.isPending ||
-    addComment.isPending
+    addComment.isPending ||
+    goBack.isPending ||
+    submitCascade.isPending
 
   if (isLoading) {
     return (
@@ -228,7 +296,14 @@ export function WorkflowDetailPage() {
             overflow: 'auto',
           }}
         >
-          {mode === 'conversation' ? (
+          {mode === 'cascade' ? (
+            <CascadeDecisionCard
+              affectedStages={goBackAffectedStages ?? affectedStages ?? []}
+              onConfirm={handleCascadeConfirm}
+              onCancel={handleCascadeCancel}
+              isSubmitting={submitCascade.isPending}
+            />
+          ) : mode === 'conversation' ? (
             <>
               <ConversationView
                 messages={messages}
@@ -264,6 +339,11 @@ export function WorkflowDetailPage() {
           stages={workflow.stages}
           messages={messages}
           currentStageId={currentStage?.id}
+          workflowId={id}
+          diffOldContent={diffOldContent}
+          diffNewContent={diffNewContent}
+          diffOldLabel={diffOldLabel}
+          diffNewLabel={diffNewLabel}
         />
       </Box>
 

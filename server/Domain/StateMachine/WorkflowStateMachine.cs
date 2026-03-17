@@ -12,11 +12,12 @@ public static class WorkflowStateMachine
     {
         [WorkflowStatus.Created] = [WorkflowStatus.Running],
         [WorkflowStatus.Running] = [WorkflowStatus.GateWaiting, WorkflowStatus.Paused, WorkflowStatus.Failed, WorkflowStatus.Completed],
-        [WorkflowStatus.GateWaiting] = [WorkflowStatus.Running, WorkflowStatus.Paused, WorkflowStatus.Abandoned],
+        [WorkflowStatus.GateWaiting] = [WorkflowStatus.Running, WorkflowStatus.Paused, WorkflowStatus.Abandoned, WorkflowStatus.CascadeWaiting],
         [WorkflowStatus.Paused] = [WorkflowStatus.Running, WorkflowStatus.Abandoned],
         [WorkflowStatus.Failed] = [WorkflowStatus.Running],
         [WorkflowStatus.Completed] = [],
         [WorkflowStatus.Abandoned] = [],
+        [WorkflowStatus.CascadeWaiting] = [WorkflowStatus.Running, WorkflowStatus.Paused, WorkflowStatus.Abandoned],
     };
 
     /// <summary>

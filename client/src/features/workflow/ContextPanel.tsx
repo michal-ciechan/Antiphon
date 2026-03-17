@@ -1,7 +1,8 @@
 import { useRef, useCallback } from 'react'
-import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table, Progress } from '@mantine/core'
+import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table } from '@mantine/core'
 import { VscFile, VscInfo, VscComment, VscDiff, VscHistory } from 'react-icons/vsc'
 import { ConversationTimeline } from './ConversationTimeline'
+import { ArtifactDiffViewer } from '../artifact'
 import { useAuditQuery } from '../../api/audit'
 import type { AuditQueryResult, CostByModelDto } from '../../api/audit'
 import type { TimelineMessage, ArtifactDto } from './types'
@@ -26,6 +27,14 @@ interface ContextPanelProps {
   currentStageId?: string
   /** Workflow ID for audit queries */
   workflowId?: string
+  /** Old artifact content for diff tab */
+  diffOldContent?: string
+  /** New artifact content for diff tab */
+  diffNewContent?: string
+  /** Label for old version in diff */
+  diffOldLabel?: string
+  /** Label for new version in diff */
+  diffNewLabel?: string
 }
 
 const TAB_CONFIG: { value: ContextTab; label: string; icon: React.ReactNode }[] = [
@@ -418,6 +427,10 @@ export function ContextPanel({
   messages,
   currentStageId,
   workflowId,
+  diffOldContent,
+  diffNewContent,
+  diffOldLabel,
+  diffNewLabel,
 }: ContextPanelProps) {
   // Per-tab scroll preservation
   const scrollPositions = useRef<Record<string, number>>({})
@@ -521,15 +534,23 @@ export function ContextPanel({
           style={{
             flex: 1,
             overflow: 'auto',
-            padding: 'var(--mantine-spacing-sm)',
           }}
         >
-          <Stack align="center" justify="center" style={{ height: '100%' }}>
-            <VscDiff size={32} color="var(--mantine-color-dimmed)" />
-            <Text c="dimmed" size="sm">
-              No diff available yet.
-            </Text>
-          </Stack>
+          {diffOldContent != null && diffNewContent != null ? (
+            <ArtifactDiffViewer
+              oldContent={diffOldContent}
+              newContent={diffNewContent}
+              oldLabel={diffOldLabel}
+              newLabel={diffNewLabel}
+            />
+          ) : (
+            <Stack align="center" justify="center" style={{ height: '100%', padding: 'var(--mantine-spacing-sm)' }}>
+              <VscDiff size={32} color="var(--mantine-color-dimmed)" />
+              <Text c="dimmed" size="sm">
+                No diff available yet.
+              </Text>
+            </Stack>
+          )}
         </Tabs.Panel>
 
         {/* Audit Tab */}

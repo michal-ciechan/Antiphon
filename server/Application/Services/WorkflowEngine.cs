@@ -528,6 +528,126 @@ public class WorkflowEngine
     }
 
     /// <summary>
+    /// Initiates a go-back course correction: transitions to CascadeWaiting, resets the target
+    /// stage for re-execution, identifies downstream affected stages, and records the go-back
+    /// event in the audit trail (FR24, FR25, FR38, FR42, FR53).
+    /// Returns affected stages so the caller can present cascade decisions to the user.
+    /// </summary>
+    public async Task<GoBackResult> GoBackAsync(
+        Guid workflowId, Guid targetStageId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        if (workflow.Status != WorkflowStatus.GateWaiting)
+        {
+            throw new ConflictException(
+                $"Workflow must be in GateWaiting state to go back. Current: {workflow.Status}");
+        }
+
+        var targetStage = workflow.Stages.FirstOrDefault(s => s.Id == targetStageId)
+            ?? throw new NotFoundException(nameof(Stage), targetStageId);
+
+        // Validate: target must be a completed stage before the current gate stage
+        if (targetStage.Status != StageStatus.Completed)
+        {
+            throw new ConflictException(
+                $"Target stage \"{targetStage.Name}\" must be in Completed state. Current: {targetStage.Status}");
+        }
+
+        // Detect affected downstream stages before resetting
+        var affectedStages = workflow.Stages
+            .Where(s => s.StageOrder > targetStage.StageOrder && s.Status == StageStatus.Completed)
+            .OrderBy(s => s.StageOrder)
+            .ToList();
+
+        // Reset the target stage for re-execution (increment version, preserve old version via tags)
+        targetStage.CurrentVersion++;
+        targetStage.Status = StageStatus.Pending;
+        targetStage.CompletedAt = null;
+
+        // Set the target stage as current
+        workflow.CurrentStageId = targetStage.Id;
+
+        // Transition to CascadeWaiting if there are downstream affected stages,
+        // otherwise go straight to Running for re-execution
+        if (affectedStages.Count > 0)
+        {
+            TransitionWorkflow(workflow, WorkflowStatus.CascadeWaiting);
+        }
+        else
+        {
+            TransitionWorkflow(workflow, WorkflowStatus.Running);
+        }
+
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        // Record go-back in audit trail (FR42, FR53)
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "GateActioned",
+            new { workflowId, action = "go-back", stageId = targetStageId, targetStageName = targetStage.Name },
+            ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "CascadeTriggered",
+            new { workflowId, targetStageId, affectedStageCount = affectedStages.Count },
+            ct);
+
+        // Build affected stage DTOs with reasons
+        var affectedDtos = affectedStages.Select(s => new AffectedStageDto(
+            StageId: s.Id,
+            StageName: s.Name,
+            StageOrder: s.StageOrder,
+            CurrentVersion: s.CurrentVersion,
+            Reason: $"This stage was built on the output of \"{targetStage.Name}\". Changes to the upstream artifact may invalidate assumptions in this stage's output.",
+            DefaultAction: Domain.Enums.CascadeAction.UpdateFromDiff)).ToList();
+
+        // If no affected stages, start re-execution immediately
+        if (affectedStages.Count == 0)
+        {
+            await ExecuteNextStageAsync(workflowId, ct);
+        }
+
+        return new GoBackResult(affectedDtos);
+    }
+
+    /// <summary>
+    /// Resumes a workflow after cascade decisions have been applied.
+    /// Transitions from CascadeWaiting back to Running and continues execution.
+    /// </summary>
+    public async Task ResumeAfterCascadeAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages.OrderBy(s => s.StageOrder))
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        if (workflow.Status != WorkflowStatus.CascadeWaiting)
+        {
+            throw new ConflictException(
+                $"Workflow must be in CascadeWaiting state to resume after cascade. Current: {workflow.Status}");
+        }
+
+        TransitionWorkflow(workflow, WorkflowStatus.Running);
+        workflow.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        await _eventBus.PublishToGroupAsync(
+            $"workflow-{workflowId}",
+            "WorkflowStatusChanged",
+            new { workflowId, status = workflow.Status.ToString() },
+            ct);
+
+        // Continue execution from the pending stage
+        await ExecuteNextStageAsync(workflowId, ct);
+    }
+
+    /// <summary>
     /// Pauses an active workflow. Validates that the transition is allowed by the state machine,
     /// sets status to Paused, and pushes a WorkflowStatusChanged event via IEventBus.
     /// </summary>

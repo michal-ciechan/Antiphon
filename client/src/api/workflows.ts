@@ -11,6 +11,7 @@ export type WorkflowStatus =
   | 'Completed'
   | 'Failed'
   | 'Abandoned'
+  | 'CascadeWaiting'
 
 export type StageStatus = 'Pending' | 'Running' | 'Completed' | 'Failed'
 

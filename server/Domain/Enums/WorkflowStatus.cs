@@ -8,5 +8,6 @@ public enum WorkflowStatus
     GateWaiting = 3,
     Completed = 4,
     Failed = 5,
-    Abandoned = 6
+    Abandoned = 6,
+    CascadeWaiting = 7
 }
