@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { Container, Title, Table, Badge, Button, Group, Text, Anchor } from '@mantine/core'
 import { Link } from 'react-router'
 import { useWorkflows, type WorkflowStatus } from '../../api/workflows'
 import { PipelineIndicator } from '../../shared/PipelineIndicator'
+import { NewWorkflowDialog } from './NewWorkflowDialog'
 
 const STATUS_COLORS: Record<WorkflowStatus, string> = {
   Created: 'gray',
@@ -25,12 +27,14 @@ function formatDate(iso: string): string {
 
 export function DashboardPage() {
   const { data: workflows, isLoading } = useWorkflows()
+  const [dialogOpened, setDialogOpened] = useState(false)
 
   return (
     <Container size="lg" py="xl">
+      <NewWorkflowDialog opened={dialogOpened} onClose={() => setDialogOpened(false)} />
       <Group justify="space-between" mb="lg">
         <Title order={2}>Workflows</Title>
-        <Button component={Link} to="/workflow/new">
+        <Button onClick={() => setDialogOpened(true)}>
           New Workflow
         </Button>
       </Group>
