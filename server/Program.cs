@@ -11,6 +11,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.ExternalChanges;
+using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.Realtime;
 
 // Bootstrap Serilog for startup logging (before host is built)
@@ -74,12 +76,21 @@ try
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<WorkflowEngine>();
+    builder.Services.AddScoped<CascadeService>();
     // Agent execution — AgentExecutor is the real IStageExecutor; MockExecutor is available for testing.
     // To use MockExecutor instead, change the registration below.
     builder.Services.AddSingleton<ToolRegistry>();
     builder.Services.AddSingleton<LlmClientFactory>();
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
+    builder.Services.AddScoped<AuditService>();
+    builder.Services.AddScoped<CostTrackingService>();
+
+    // GitHub integration (FR59-FR64) — feature-flagged per project
+    builder.Services.AddHttpClient<IGitHubService, GitHubService>();
+    // Background services for GitHub PR monitoring and external change detection
+    builder.Services.AddHostedService<GitHubMonitorService>();
+    builder.Services.AddHostedService<ChangeDetectionService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
@@ -102,6 +113,7 @@ try
     app.UseMiddleware<CorrelationIdMiddleware>();
     app.UseMiddleware<CurrentUserMiddleware>();
     app.UseMiddleware<ExceptionMiddleware>();
+    app.UseMiddleware<AuditMiddleware>();
 
     // Auto-migrate database on startup and seed data
     using (var scope = app.Services.CreateScope())
@@ -119,7 +131,9 @@ try
     app.MapProjectEndpoints();
     app.MapWorkflowEndpoints();
     app.MapGateEndpoints();
+    app.MapCascadeEndpoints();
     app.MapArtifactEndpoints();
+    app.MapAuditEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
