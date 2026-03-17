@@ -10,6 +10,7 @@ import { ConversationView } from './ConversationView'
 import { GateView } from './GateView'
 import { InlineTransitionCard } from './InlineTransitionCard'
 import { GateActionBar } from '../gate/GateActionBar'
+import { useStreamingStore } from '../../stores/streamingStore'
 import type { TimelineMessage, ArtifactDto } from './types'
 import type { ArtifactVersion } from '../artifact'
 
@@ -70,9 +71,14 @@ export function WorkflowDetailPage() {
   // Version selection for artifact viewer
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
 
-  // Conversation messages - will be populated by SignalR streaming in future stories.
-  // For now, provide an empty array so the timeline renders properly.
-  const [messages] = useState<TimelineMessage[]>([])
+  // Streaming store integration — messages from SignalR streaming events
+  const streamingMessages = useStreamingStore((s) => s.messages)
+  const storeIsStreaming = useStreamingStore((s) => s.isStreaming)
+
+  // Combined messages: will include both persisted messages (future) and streaming messages
+  const messages = useMemo<TimelineMessage[]>(() => {
+    return streamingMessages
+  }, [streamingMessages])
 
   const handleStageClick = (stage: StageDto) => {
     if (stage.status === 'Completed') {
@@ -161,7 +167,7 @@ export function WorkflowDetailPage() {
   const showTransitionCard =
     workflow?.status === 'GateWaiting' && mode === 'conversation'
 
-  const isStreaming = workflow?.status === 'Running'
+  const isStreaming = workflow?.status === 'Running' || storeIsStreaming
   const isMutating =
     approveGate.isPending ||
     rejectGate.isPending ||

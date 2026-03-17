@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route } from 'react-router'
 import { useSignalR } from './hooks/useSignalR'
 import { useSignalRInvalidation } from './hooks/useSignalRInvalidation'
+import { useStreamingEvents } from './hooks/useStreamingEvents'
 import { theme } from './theme'
 import { Layout } from './shared/Layout'
 import { ErrorBoundary } from './shared/ErrorBoundary'
@@ -17,6 +18,7 @@ const queryClient = new QueryClient()
 function SignalRProvider({ children }: { children: React.ReactNode }) {
   const connectionRef = useSignalR()
   useSignalRInvalidation(connectionRef)
+  useStreamingEvents(connectionRef)
   return <>{children}</>
 }
 

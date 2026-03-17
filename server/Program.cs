@@ -74,7 +74,11 @@ try
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<WorkflowEngine>();
-    builder.Services.AddScoped<IStageExecutor, MockExecutor>();
+    // Agent execution — AgentExecutor is the real IStageExecutor; MockExecutor is available for testing.
+    // To use MockExecutor instead, change the registration below.
+    builder.Services.AddSingleton<ToolRegistry>();
+    builder.Services.AddSingleton<LlmClientFactory>();
+    builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
 
     // HttpClient for provider connectivity testing
