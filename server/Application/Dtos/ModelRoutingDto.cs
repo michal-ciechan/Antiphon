@@ -5,6 +5,7 @@ public record ModelRoutingDto(
     string StageName,
     string ModelName,
     Guid ProviderId,
+    Guid? WorkflowTemplateId,
     DateTime CreatedAt);
 
 public record CreateModelRoutingRequest(

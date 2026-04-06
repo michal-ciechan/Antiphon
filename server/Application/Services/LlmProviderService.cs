@@ -148,14 +148,26 @@ public class LlmProviderService
     {
         var routings = await _db.ModelRoutings
             .OrderBy(r => r.StageName)
-            .Select(r => new ModelRoutingDto(r.Id, r.StageName, r.ModelName, r.ProviderId, r.CreatedAt))
+            .Select(r => new ModelRoutingDto(r.Id, r.StageName, r.ModelName, r.ProviderId, r.WorkflowTemplateId, r.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        return routings;
+    }
+
+    public async Task<List<ModelRoutingDto>> GetRoutingsByTemplateAsync(
+        Guid templateId, CancellationToken cancellationToken)
+    {
+        var routings = await _db.ModelRoutings
+            .Where(r => r.WorkflowTemplateId == templateId)
+            .OrderBy(r => r.StageName)
+            .Select(r => new ModelRoutingDto(r.Id, r.StageName, r.ModelName, r.ProviderId, r.WorkflowTemplateId, r.CreatedAt))
             .ToListAsync(cancellationToken);
 
         return routings;
     }
 
     public async Task<ModelRoutingDto> CreateRoutingAsync(
-        CreateModelRoutingRequest request, CancellationToken cancellationToken)
+        Guid templateId, CreateModelRoutingRequest request, CancellationToken cancellationToken)
     {
         ValidateRoutingRequest(request.StageName, request.ModelName);
 
@@ -166,19 +178,27 @@ public class LlmProviderService
             throw new ValidationException("providerId", "The specified provider does not exist.");
         }
 
+        // Verify template exists
+        var templateExists = await _db.WorkflowTemplates.AnyAsync(t => t.Id == templateId, cancellationToken);
+        if (!templateExists)
+        {
+            throw new NotFoundException(nameof(Domain.Entities.WorkflowTemplate), templateId);
+        }
+
         var routing = new ModelRouting
         {
             Id = Guid.NewGuid(),
             StageName = request.StageName,
             ModelName = request.ModelName,
             ProviderId = request.ProviderId,
+            WorkflowTemplateId = templateId,
             CreatedAt = DateTime.UtcNow
         };
 
         _db.ModelRoutings.Add(routing);
         await _db.SaveChangesAsync(cancellationToken);
 
-        return new ModelRoutingDto(routing.Id, routing.StageName, routing.ModelName, routing.ProviderId, routing.CreatedAt);
+        return new ModelRoutingDto(routing.Id, routing.StageName, routing.ModelName, routing.ProviderId, routing.WorkflowTemplateId, routing.CreatedAt);
     }
 
     public async Task<ModelRoutingDto> UpdateRoutingAsync(
@@ -202,7 +222,7 @@ public class LlmProviderService
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        return new ModelRoutingDto(routing.Id, routing.StageName, routing.ModelName, routing.ProviderId, routing.CreatedAt);
+        return new ModelRoutingDto(routing.Id, routing.StageName, routing.ModelName, routing.ProviderId, routing.WorkflowTemplateId, routing.CreatedAt);
     }
 
     public async Task DeleteRoutingAsync(Guid id, CancellationToken cancellationToken)
@@ -331,10 +351,21 @@ public class LlmProviderService
             entity.Id,
             entity.Name,
             entity.ProviderType,
-            string.IsNullOrEmpty(entity.ApiKey) ? "" : "••••••",
+            MaskApiKey(entity.ApiKey),
             entity.BaseUrl,
             entity.IsEnabled,
             entity.DefaultModel,
             entity.CreatedAt,
             entity.UpdatedAt);
+
+    private static string MaskApiKey(string apiKey)
+    {
+        if (string.IsNullOrEmpty(apiKey))
+            return "";
+
+        if (apiKey.Length <= 9)
+            return apiKey[0] + new string('*', apiKey.Length - 2) + apiKey[^1];
+
+        return apiKey[..3] + new string('*', apiKey.Length - 6) + apiKey[^3..];
+    }
 }

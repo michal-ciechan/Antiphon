@@ -10,7 +10,9 @@ public class ModelRouting
     public string StageName { get; set; } = string.Empty;
     public string ModelName { get; set; } = string.Empty;
     public Guid ProviderId { get; set; }
+    public Guid? WorkflowTemplateId { get; set; }
     public DateTime CreatedAt { get; set; }
 
     public LlmProvider Provider { get; set; } = null!;
+    public WorkflowTemplate? WorkflowTemplate { get; set; }
 }

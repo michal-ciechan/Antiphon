@@ -6,5 +6,8 @@ public record WorkflowTemplateDto(
     string Description,
     string YamlDefinition,
     bool IsBuiltIn,
+    Guid? TemplateGroupId,
+    string? TemplateGroupName,
+    bool SelectableStages,
     DateTime CreatedAt,
     DateTime UpdatedAt);

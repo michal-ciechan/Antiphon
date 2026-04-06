@@ -2,6 +2,7 @@ import { Container, Title, Paper, Tabs } from '@mantine/core'
 import { TemplateManager } from './TemplateManager'
 import { ProviderConfig } from './ProviderConfig'
 import { ProjectConfig } from './ProjectConfig'
+import { StatusTab } from './StatusTab'
 
 export function SettingsPage() {
   return (
@@ -15,6 +16,7 @@ export function SettingsPage() {
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>
             <Tabs.Tab value="projects">Projects</Tabs.Tab>
+            <Tabs.Tab value="status">Status</Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="templates" pt="md">
@@ -27,6 +29,10 @@ export function SettingsPage() {
 
           <Tabs.Panel value="projects" pt="md">
             <ProjectConfig />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="status" pt="md">
+            <StatusTab />
           </Tabs.Panel>
         </Tabs>
       </Paper>

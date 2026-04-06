@@ -19,16 +19,17 @@ public class WorkflowTemplateService
     public async Task<List<WorkflowTemplateDto>> GetAllAsync(CancellationToken cancellationToken)
     {
         var templates = await _db.WorkflowTemplates
+            .Include(t => t.TemplateGroup)
             .OrderBy(t => t.Name)
-            .Select(t => ToDto(t))
             .ToListAsync(cancellationToken);
 
-        return templates;
+        return templates.Select(ToDto).ToList();
     }
 
     public async Task<WorkflowTemplateDto> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
         var template = await _db.WorkflowTemplates
+            .Include(t => t.TemplateGroup)
             .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(WorkflowTemplate), id);
 
@@ -47,12 +48,16 @@ public class WorkflowTemplateService
             Description = request.Description,
             YamlDefinition = request.YamlDefinition,
             IsBuiltIn = false,
+            TemplateGroupId = request.TemplateGroupId,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
         _db.WorkflowTemplates.Add(template);
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Reload with group nav prop so the DTO can include group name
+        await _db.Entry(template).Reference(t => t.TemplateGroup).LoadAsync(cancellationToken);
 
         return ToDto(template);
     }
@@ -61,6 +66,7 @@ public class WorkflowTemplateService
         Guid id, UpdateWorkflowTemplateRequest request, CancellationToken cancellationToken)
     {
         var template = await _db.WorkflowTemplates
+            .Include(t => t.TemplateGroup)
             .FirstOrDefaultAsync(t => t.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(WorkflowTemplate), id);
 
@@ -69,9 +75,13 @@ public class WorkflowTemplateService
         template.Name = request.Name;
         template.Description = request.Description;
         template.YamlDefinition = request.YamlDefinition;
+        template.TemplateGroupId = request.TemplateGroupId;
         template.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        // Refresh nav prop if group changed
+        await _db.Entry(template).Reference(t => t.TemplateGroup).LoadAsync(cancellationToken);
 
         return ToDto(template);
     }
@@ -192,13 +202,41 @@ public class WorkflowTemplateService
         return errors;
     }
 
-    private static WorkflowTemplateDto ToDto(WorkflowTemplate entity) =>
-        new(
+    private static WorkflowTemplateDto ToDto(WorkflowTemplate entity)
+    {
+        // Parse selectableStages from YAML without throwing — default to false on any parse error
+        var selectableStages = false;
+        try
+        {
+            var yamlStream = new YamlStream();
+            using var reader = new StringReader(entity.YamlDefinition);
+            yamlStream.Load(reader);
+            if (yamlStream.Documents.Count > 0
+                && yamlStream.Documents[0].RootNode is YamlMappingNode root)
+            {
+                var key = new YamlScalarNode("selectableStages");
+                if (root.Children.TryGetValue(key, out var node) && node is YamlScalarNode scalar)
+                {
+                    selectableStages = string.Equals(
+                        scalar.Value, "true", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+        catch (YamlDotNet.Core.YamlException)
+        {
+            // Ignore — return false
+        }
+
+        return new WorkflowTemplateDto(
             entity.Id,
             entity.Name,
             entity.Description,
             entity.YamlDefinition,
             entity.IsBuiltIn,
+            entity.TemplateGroupId,
+            entity.TemplateGroup?.Name,
+            selectableStages,
             entity.CreatedAt,
             entity.UpdatedAt);
+    }
 }

@@ -15,7 +15,6 @@ import {
   Tooltip,
   Alert,
   Loader,
-  Divider,
   PasswordInput,
 } from '@mantine/core'
 import { TbPlus, TbEdit, TbTrash, TbAlertCircle, TbPlugConnected, TbCheck, TbX } from 'react-icons/tb'
@@ -25,12 +24,7 @@ import {
   useUpdateProvider,
   useDeleteProvider,
   useTestProvider,
-  useModelRoutings,
-  useCreateModelRouting,
-  useUpdateModelRouting,
-  useDeleteModelRouting,
   type LlmProviderDto,
-  type ModelRoutingDto,
 } from '../../api/settings'
 
 const PROVIDER_TYPE_LABELS: Record<number, string> = {
@@ -47,9 +41,8 @@ const PROVIDER_TYPE_OPTIONS = [
 
 export function ProviderConfig() {
   const { data: providers, isLoading: providersLoading, error: providersError } = useProviders()
-  const { data: routings, isLoading: routingsLoading, error: routingsError } = useModelRoutings()
 
-  if (providersLoading || routingsLoading) {
+  if (providersLoading) {
     return (
       <Group justify="center" py="xl">
         <Loader size="md" />
@@ -57,21 +50,15 @@ export function ProviderConfig() {
     )
   }
 
-  if (providersError || routingsError) {
+  if (providersError) {
     return (
       <Alert color="red" icon={<TbAlertCircle />} title="Error loading provider configuration">
-        {providersError?.message || routingsError?.message}
+        {providersError?.message}
       </Alert>
     )
   }
 
-  return (
-    <Stack gap="xl">
-      <ProviderList providers={providers ?? []} />
-      <Divider />
-      <ModelRoutingSection routings={routings ?? []} providers={providers ?? []} />
-    </Stack>
-  )
+  return <ProviderList providers={providers ?? []} />
 }
 
 // --- Provider List ---
@@ -212,6 +199,7 @@ function ProviderList({ providers }: { providers: LlmProviderDto[] }) {
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Type</Table.Th>
                 <Table.Th>Default Model</Table.Th>
+                <Table.Th>URL</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>API Key</Table.Th>
                 <Table.Th w={160}>Actions</Table.Th>
@@ -229,6 +217,11 @@ function ProviderList({ providers }: { providers: LlmProviderDto[] }) {
                   <Table.Td>
                     <Text size="sm" c="dimmed">
                       {provider.defaultModel || '--'}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed" lineClamp={1} maw={220} title={provider.baseUrl}>
+                      {provider.baseUrl || '--'}
                     </Text>
                   </Table.Td>
                   <Table.Td>
@@ -389,218 +382,3 @@ function ProviderList({ providers }: { providers: LlmProviderDto[] }) {
   )
 }
 
-// --- Model Routing Section ---
-
-function ModelRoutingSection({
-  routings,
-  providers,
-}: {
-  routings: ModelRoutingDto[]
-  providers: LlmProviderDto[]
-}) {
-  const createMutation = useCreateModelRouting()
-  const updateMutation = useUpdateModelRouting()
-  const deleteMutation = useDeleteModelRouting()
-
-  const [editModalOpen, setEditModalOpen] = useState(false)
-  const [editingRouting, setEditingRouting] = useState<ModelRoutingDto | null>(null)
-
-  const [formStageName, setFormStageName] = useState('')
-  const [formModelName, setFormModelName] = useState('')
-  const [formProviderId, setFormProviderId] = useState('')
-  const [formError, setFormError] = useState<string | null>(null)
-
-  const providerOptions = providers.map((p) => ({
-    value: p.id,
-    label: `${p.name} (${PROVIDER_TYPE_LABELS[p.providerType] ?? 'Unknown'})`,
-  }))
-
-  const openCreateModal = () => {
-    setEditingRouting(null)
-    setFormStageName('')
-    setFormModelName('')
-    setFormProviderId(providers[0]?.id ?? '')
-    setFormError(null)
-    setEditModalOpen(true)
-  }
-
-  const openEditModal = (routing: ModelRoutingDto) => {
-    setEditingRouting(routing)
-    setFormStageName(routing.stageName)
-    setFormModelName(routing.modelName)
-    setFormProviderId(routing.providerId)
-    setFormError(null)
-    setEditModalOpen(true)
-  }
-
-  const handleSave = async () => {
-    setFormError(null)
-    try {
-      if (editingRouting) {
-        await updateMutation.mutateAsync({
-          id: editingRouting.id,
-          data: {
-            stageName: formStageName,
-            modelName: formModelName,
-            providerId: formProviderId,
-          },
-        })
-      } else {
-        await createMutation.mutateAsync({
-          stageName: formStageName,
-          modelName: formModelName,
-          providerId: formProviderId,
-        })
-      }
-      setEditModalOpen(false)
-    } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'body' in err) {
-        const apiErr = err as { body: unknown }
-        if (apiErr.body && typeof apiErr.body === 'object' && 'errors' in apiErr.body) {
-          const errors = (apiErr.body as { errors: Record<string, string[]> }).errors
-          const messages = Object.values(errors).flat().join('. ')
-          setFormError(messages)
-          return
-        }
-        if (apiErr.body && typeof apiErr.body === 'object' && 'detail' in apiErr.body) {
-          setFormError((apiErr.body as { detail: string }).detail)
-          return
-        }
-      }
-      setFormError('An unexpected error occurred.')
-    }
-  }
-
-  const handleDeleteRouting = async (id: string) => {
-    await deleteMutation.mutateAsync(id)
-  }
-
-  const isSaving = createMutation.isPending || updateMutation.isPending
-
-  return (
-    <Stack>
-      <Group justify="space-between">
-        <div>
-          <Text fw={500}>Model Routing</Text>
-          <Text size="sm" c="dimmed">
-            Map workflow stages to specific models and providers (e.g., Opus for architecture, Sonnet
-            for implementation).
-          </Text>
-        </div>
-        <Button
-          leftSection={<TbPlus />}
-          variant="light"
-          onClick={openCreateModal}
-          disabled={providers.length === 0}
-        >
-          Add Routing Rule
-        </Button>
-      </Group>
-
-      {routings.length > 0 ? (
-        <Paper withBorder>
-          <Table striped highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Stage Name</Table.Th>
-                <Table.Th>Model</Table.Th>
-                <Table.Th>Provider</Table.Th>
-                <Table.Th w={100}>Actions</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {routings.map((routing) => {
-                const provider = providers.find((p) => p.id === routing.providerId)
-                return (
-                  <Table.Tr key={routing.id}>
-                    <Table.Td fw={500}>{routing.stageName}</Table.Td>
-                    <Table.Td>{routing.modelName}</Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c="dimmed">
-                        {provider?.name ?? 'Unknown'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap="xs">
-                        <Tooltip label="Edit">
-                          <ActionIcon variant="subtle" onClick={() => openEditModal(routing)}>
-                            <TbEdit />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip label="Delete">
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            loading={
-                              deleteMutation.isPending && deleteMutation.variables === routing.id
-                            }
-                            onClick={() => handleDeleteRouting(routing.id)}
-                          >
-                            <TbTrash />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                )
-              })}
-            </Table.Tbody>
-          </Table>
-        </Paper>
-      ) : (
-        <Paper withBorder p="xl">
-          <Text ta="center" c="dimmed">
-            {providers.length === 0
-              ? 'Add a provider first, then configure model routing rules.'
-              : 'No routing rules configured. Click "Add Routing Rule" to map stages to models.'}
-          </Text>
-        </Paper>
-      )}
-
-      {/* Create / Edit Routing Modal */}
-      <Modal
-        opened={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
-        title={editingRouting ? 'Edit Routing Rule' : 'Add Routing Rule'}
-        size="md"
-      >
-        <Stack>
-          {formError && (
-            <Alert color="red" icon={<TbAlertCircle />}>
-              {formError}
-            </Alert>
-          )}
-          <TextInput
-            label="Stage Name"
-            placeholder="architecture"
-            required
-            value={formStageName}
-            onChange={(e) => setFormStageName(e.currentTarget.value)}
-          />
-          <TextInput
-            label="Model Name"
-            placeholder="claude-opus-4-20250514"
-            required
-            value={formModelName}
-            onChange={(e) => setFormModelName(e.currentTarget.value)}
-          />
-          <Select
-            label="Provider"
-            required
-            data={providerOptions}
-            value={formProviderId}
-            onChange={(v) => setFormProviderId(v ?? '')}
-          />
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setEditModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} loading={isSaving}>
-              {editingRouting ? 'Save Changes' : 'Create Rule'}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </Stack>
-  )
-}
