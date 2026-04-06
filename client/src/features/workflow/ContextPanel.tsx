@@ -1,11 +1,13 @@
 import { useRef, useCallback } from 'react'
-import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table } from '@mantine/core'
+import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table, Tooltip } from '@mantine/core'
 import { VscFile, VscInfo, VscComment, VscDiff, VscHistory } from 'react-icons/vsc'
-import { ConversationTimeline } from './ConversationTimeline'
+import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse, TbColumns2 } from 'react-icons/tb'
+import { WorkflowOutputsTab } from './WorkflowOutputsTab'
+import { BranchDiffViewer } from './BranchDiffViewer'
 import { ArtifactDiffViewer } from '../artifact'
 import { useAuditQuery } from '../../api/audit'
 import type { AuditQueryResult, CostByModelDto } from '../../api/audit'
-import type { TimelineMessage, ArtifactDto } from './types'
+import type { TimelineMessage } from './types'
 import type { StageDto } from '../../api/workflows'
 
 export type ContextTab = 'outputs' | 'stage-info' | 'conversation' | 'diff' | 'audit'
@@ -13,10 +15,6 @@ export type ContextTab = 'outputs' | 'stage-info' | 'conversation' | 'diff' | 'a
 interface ContextPanelProps {
   activeTab: ContextTab
   onTabChange: (tab: ContextTab) => void
-  /** Artifacts for the Outputs tab */
-  artifacts?: ArtifactDto[]
-  /** Called when an artifact is clicked in the Outputs tab */
-  onArtifactClick?: (artifact: ArtifactDto) => void
   /** Current stage info */
   currentStage?: StageDto | null
   /** All stages for the pipeline mini-view */
@@ -35,7 +33,15 @@ interface ContextPanelProps {
   diffOldLabel?: string
   /** Label for new version in diff */
   diffNewLabel?: string
+  layoutMode?: 'split' | 'panel' | 'conversation'
+  onLayoutModeChange?: (mode: 'split' | 'panel' | 'conversation') => void
 }
+
+const LAYOUT_BUTTONS = [
+  { mode: 'panel' as const, icon: <TbLayoutSidebarLeftCollapse size={14} />, label: 'Panel view' },
+  { mode: 'split' as const, icon: <TbColumns2 size={14} />, label: 'Split view' },
+  { mode: 'conversation' as const, icon: <TbLayoutSidebarRightCollapse size={14} />, label: 'Conversation view' },
+]
 
 const TAB_CONFIG: { value: ContextTab; label: string; icon: React.ReactNode }[] = [
   { value: 'outputs', label: 'Outputs', icon: <VscFile size={14} /> },
@@ -44,65 +50,6 @@ const TAB_CONFIG: { value: ContextTab; label: string; icon: React.ReactNode }[] 
   { value: 'diff', label: 'Diff', icon: <VscDiff size={14} /> },
   { value: 'audit', label: 'Audit', icon: <VscHistory size={14} /> },
 ]
-
-function OutputsTab({
-  artifacts,
-  onArtifactClick,
-}: {
-  artifacts?: ArtifactDto[]
-  onArtifactClick?: (artifact: ArtifactDto) => void
-}) {
-  if (!artifacts || artifacts.length === 0) {
-    return (
-      <Text c="dimmed" size="sm">
-        No outputs yet.
-      </Text>
-    )
-  }
-
-  // Sort: primary first, then by stage name
-  const sorted = [...artifacts].sort((a, b) => {
-    if (a.isPrimary && !b.isPrimary) return -1
-    if (!a.isPrimary && b.isPrimary) return 1
-    return a.stageName.localeCompare(b.stageName)
-  })
-
-  return (
-    <Stack gap="xs">
-      {sorted.map((artifact) => (
-        <UnstyledButton
-          key={artifact.id}
-          onClick={() => onArtifactClick?.(artifact)}
-          style={{
-            padding: 'var(--mantine-spacing-xs)',
-            borderRadius: 'var(--mantine-radius-sm)',
-            border: '1px solid var(--mantine-color-dark-4)',
-            backgroundColor: 'var(--mantine-color-dark-7)',
-          }}
-        >
-          <Group gap="xs" wrap="nowrap">
-            <VscFile size={16} />
-            <Box style={{ flex: 1 }}>
-              <Group gap="xs">
-                <Text size="sm" fw={500}>
-                  {artifact.fileName}
-                </Text>
-                {artifact.isPrimary && (
-                  <Badge size="xs" color="active" variant="light">
-                    Primary
-                  </Badge>
-                )}
-              </Group>
-              <Text size="xs" c="dimmed">
-                {artifact.stageName} - v{artifact.version}
-              </Text>
-            </Box>
-          </Group>
-        </UnstyledButton>
-      ))}
-    </Stack>
-  )
-}
 
 function StageInfoTab({
   currentStage,
@@ -377,12 +324,28 @@ function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: stri
                   variant="light"
                   color={
                     record.eventType === 'LlmCall'
-                      ? 'active'
+                      ? 'blue'
                       : record.eventType === 'ToolInvocation'
                         ? 'grape'
                         : record.eventType === 'GoBack' || record.eventType === 'UpdateBasedOnDiff'
-                          ? 'warning'
-                          : 'gray'
+                          ? 'yellow'
+                        : record.eventType === 'WorkflowOpened'
+                          ? 'teal'
+                        : record.eventType === 'WorkflowClosed'
+                          ? 'pink'
+                        : record.eventType === 'SessionDisconnected'
+                          ? 'red'
+                        : record.eventType === 'WorkflowCreated'
+                          ? 'green'
+                        : record.eventType === 'GateApproved'
+                          ? 'green'
+                        : record.eventType === 'GateRejected'
+                          ? 'red'
+                        : record.eventType === 'WorkflowCompleted'
+                          ? 'teal'
+                        : record.eventType === 'WorkflowAbandoned' || record.eventType === 'WorkflowPaused'
+                          ? 'orange'
+                        : 'gray'
                   }
                 >
                   {record.eventType}
@@ -417,11 +380,105 @@ function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: stri
   )
 }
 
+const MESSAGE_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  'agent':        { label: 'Agent',   color: 'blue' },
+  'tool-call':    { label: 'Tool',    color: 'grape' },
+  'user-prompt':  { label: 'Prompt',  color: 'green' },
+  'user-comment': { label: 'Comment', color: 'orange' },
+  'system-event': { label: 'System',  color: 'gray' },
+}
+
+function ConversationCompactList({
+  messages,
+  currentStageId,
+}: {
+  messages: TimelineMessage[]
+  currentStageId?: string
+}) {
+  if (messages.length === 0) {
+    return (
+      <Stack align="center" justify="center" style={{ height: '100%' }}>
+        <VscComment size={32} color="var(--mantine-color-dimmed)" />
+        <Text c="dimmed" size="sm">No conversation yet.</Text>
+      </Stack>
+    )
+  }
+
+  // Group by stage maintaining order
+  const stageOrder: string[] = []
+  const stageMap = new Map<string, { stageName: string; messages: TimelineMessage[] }>()
+  for (const msg of messages) {
+    if (!stageMap.has(msg.stageId)) {
+      stageMap.set(msg.stageId, { stageName: msg.stageName, messages: [] })
+      stageOrder.push(msg.stageId)
+    }
+    stageMap.get(msg.stageId)!.messages.push(msg)
+  }
+
+  return (
+    <Stack gap={2} p="sm">
+      {stageOrder.map((stageId) => {
+        const group = stageMap.get(stageId)!
+        const isCurrent = stageId === currentStageId
+        return (
+          <Box key={stageId}>
+            {/* Stage header */}
+            <Text
+              size="xs"
+              fw={600}
+              c={isCurrent ? 'active' : 'dimmed'}
+              mb={4}
+              mt={stageOrder.indexOf(stageId) > 0 ? 'xs' : 0}
+            >
+              {group.stageName}
+            </Text>
+            <Stack gap={2}>
+              {group.messages.map((msg) => {
+                const typeConfig = MESSAGE_TYPE_CONFIG[msg.type] ?? { label: msg.type, color: 'gray' }
+                const label = msg.type === 'tool-call' && msg.toolName
+                  ? `Tool: ${msg.toolName}`
+                  : typeConfig.label
+                const content = msg.type === 'tool-call'
+                  ? (msg.toolOutput ?? msg.toolInput ?? '')
+                  : msg.content
+
+                return (
+                  <Box
+                    key={msg.id}
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: 'var(--mantine-radius-xs)',
+                      border: '1px solid var(--mantine-color-dark-5)',
+                      backgroundColor: 'var(--mantine-color-dark-7)',
+                    }}
+                  >
+                    <Group gap="xs" justify="space-between">
+                      <Badge size="xs" variant="light" color={typeConfig.color}>
+                        {label}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </Text>
+                    </Group>
+                    {content && (
+                      <Text size="xs" mt={2} lineClamp={3} style={{ wordBreak: 'break-word' }}>
+                        {content}
+                      </Text>
+                    )}
+                  </Box>
+                )
+              })}
+            </Stack>
+          </Box>
+        )
+      })}
+    </Stack>
+  )
+}
+
 export function ContextPanel({
   activeTab,
   onTabChange,
-  artifacts,
-  onArtifactClick,
   currentStage,
   stages,
   messages,
@@ -431,7 +488,11 @@ export function ContextPanel({
   diffNewContent,
   diffOldLabel,
   diffNewLabel,
+  layoutMode = 'split',
+  onLayoutModeChange,
 }: ContextPanelProps) {
+  const collapsed = layoutMode === 'conversation'
+  const expanded = layoutMode === 'panel'
   // Per-tab scroll preservation
   const scrollPositions = useRef<Record<string, number>>({})
 
@@ -455,10 +516,82 @@ export function ContextPanel({
     [activeTab, onTabChange],
   )
 
+  // Collapsed: show only a narrow strip with tab icons + expand button
+  if (collapsed) {
+    return (
+      <Box
+        style={{
+          width: 32,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          height: '100%',
+          borderLeft: '1px solid var(--mantine-color-dark-4)',
+          backgroundColor: 'var(--mantine-color-dark-7)',
+          paddingTop: 4,
+          gap: 2,
+        }}
+      >
+        {/* Layout mode icons */}
+        {LAYOUT_BUTTONS.map(({ mode, icon, label }) => (
+          <Tooltip key={mode} label={label} position="left" withArrow>
+            <UnstyledButton
+              onClick={() => onLayoutModeChange?.(mode)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 24,
+                height: 24,
+                borderRadius: 'var(--mantine-radius-xs)',
+                color: layoutMode === mode ? 'var(--mantine-color-active-4)' : 'var(--mantine-color-dimmed)',
+                backgroundColor: layoutMode === mode ? 'var(--mantine-color-active-9)' : 'transparent',
+              }}
+            >
+              {icon}
+            </UnstyledButton>
+          </Tooltip>
+        ))}
+
+        {/* Tab icon shortcuts */}
+        {TAB_CONFIG.map((tab) => (
+          <Tooltip key={tab.value} label={tab.label} position="left" withArrow>
+            <UnstyledButton
+              onClick={() => {
+                onLayoutModeChange?.('split')
+                onTabChange(tab.value)
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 24,
+                height: 24,
+                borderRadius: 'var(--mantine-radius-xs)',
+                color:
+                  activeTab === tab.value
+                    ? 'var(--mantine-color-active-4)'
+                    : 'var(--mantine-color-dimmed)',
+                backgroundColor:
+                  activeTab === tab.value
+                    ? 'var(--mantine-color-active-9)'
+                    : 'transparent',
+              }}
+            >
+              {tab.icon}
+            </UnstyledButton>
+          </Tooltip>
+        ))}
+      </Box>
+    )
+  }
+
   return (
     <Box
       style={{
-        width: 360,
+        width: expanded ? undefined : 360,
+        flex: expanded ? 1 : undefined,
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
@@ -471,7 +604,7 @@ export function ContextPanel({
         onChange={handleTabChange}
         style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
       >
-        <Tabs.List>
+        <Tabs.List style={{ position: 'relative' }}>
           {TAB_CONFIG.map((tab) => (
             <Tabs.Tab
               key={tab.value}
@@ -482,6 +615,28 @@ export function ContextPanel({
               {tab.label}
             </Tabs.Tab>
           ))}
+          {/* Layout mode buttons — same 3 icons as conversation header, in sync */}
+          <Group gap={2} ml="auto" pr={4} style={{ flexShrink: 0 }}>
+            {LAYOUT_BUTTONS.map(({ mode, icon, label }) => (
+              <Tooltip key={mode} label={label} position="left" withArrow>
+                <UnstyledButton
+                  onClick={() => onLayoutModeChange?.(mode)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 26,
+                    height: 26,
+                    borderRadius: 'var(--mantine-radius-xs)',
+                    color: layoutMode === mode ? 'var(--mantine-color-active-4)' : 'var(--mantine-color-dimmed)',
+                    backgroundColor: layoutMode === mode ? 'var(--mantine-color-active-9)' : 'transparent',
+                  }}
+                >
+                  {icon}
+                </UnstyledButton>
+              </Tooltip>
+            ))}
+          </Group>
         </Tabs.List>
 
         {/* Outputs Tab */}
@@ -491,10 +646,9 @@ export function ContextPanel({
           style={{
             flex: 1,
             overflow: 'auto',
-            padding: 'var(--mantine-spacing-sm)',
           }}
         >
-          <OutputsTab artifacts={artifacts} onArtifactClick={onArtifactClick} />
+          <WorkflowOutputsTab workflowId={workflowId} />
         </Tabs.Panel>
 
         {/* Stage Info Tab */}
@@ -510,7 +664,7 @@ export function ContextPanel({
           <StageInfoTab currentStage={currentStage} stages={stages} />
         </Tabs.Panel>
 
-        {/* Conversation Tab -- renders the shared ConversationTimeline */}
+        {/* Conversation Tab -- compact audit-style list */}
         <Tabs.Panel
           value="conversation"
           data-context-panel-content
@@ -521,7 +675,7 @@ export function ContextPanel({
             flexDirection: 'column',
           }}
         >
-          <ConversationTimeline
+          <ConversationCompactList
             messages={messages ?? []}
             currentStageId={currentStageId}
           />
@@ -536,20 +690,19 @@ export function ContextPanel({
             overflow: 'auto',
           }}
         >
-          {diffOldContent != null && diffNewContent != null ? (
-            <ArtifactDiffViewer
-              oldContent={diffOldContent}
-              newContent={diffNewContent}
-              oldLabel={diffOldLabel}
-              newLabel={diffNewLabel}
-            />
-          ) : (
-            <Stack align="center" justify="center" style={{ height: '100%', padding: 'var(--mantine-spacing-sm)' }}>
-              <VscDiff size={32} color="var(--mantine-color-dimmed)" />
-              <Text c="dimmed" size="sm">
-                No diff available yet.
-              </Text>
-            </Stack>
+          {/* Branch diff (base branch vs workflow branch) */}
+          <BranchDiffViewer workflowId={workflowId} />
+
+          {/* Artifact version diff (shown when two versions are selected) */}
+          {diffOldContent != null && diffNewContent != null && (
+            <Box mt="xs">
+              <ArtifactDiffViewer
+                oldContent={diffOldContent}
+                newContent={diffNewContent}
+                oldLabel={diffOldLabel}
+                newLabel={diffNewLabel}
+              />
+            </Box>
           )}
         </Tabs.Panel>
 
