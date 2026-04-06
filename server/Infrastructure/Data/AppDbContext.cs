@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<StageExecution> StageExecutions => Set<StageExecution>();
     public DbSet<AuditRecord> AuditRecords => Set<AuditRecord>();
     public DbSet<CostLedgerEntry> CostLedgerEntries => Set<CostLedgerEntry>();
+    public DbSet<TemplateGroup> TemplateGroups => Set<TemplateGroup>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +53,19 @@ public class AppDbContext : DbContext
             });
         });
 
+        modelBuilder.Entity<TemplateGroup>(entity =>
+        {
+            entity.ToTable("TemplateGroups");
+            entity.HasKey(g => g.Id);
+            entity.Property(g => g.Name).IsRequired().HasMaxLength(200);
+            entity.Property(g => g.Description).IsRequired().HasMaxLength(2000);
+            entity.Property(g => g.IsBuiltIn).IsRequired();
+            entity.Property(g => g.CreatedAt).IsRequired();
+            entity.Property(g => g.UpdatedAt).IsRequired();
+
+            entity.HasIndex(g => g.Name).IsUnique().HasDatabaseName("IX_TemplateGroups_Name");
+        });
+
         modelBuilder.Entity<WorkflowTemplate>(entity =>
         {
             entity.ToTable("WorkflowTemplates");
@@ -64,6 +78,11 @@ public class AppDbContext : DbContext
             entity.Property(t => t.UpdatedAt).IsRequired();
 
             entity.HasIndex(t => t.Name).IsUnique();
+
+            entity.HasOne(t => t.TemplateGroup)
+                .WithMany(g => g.Templates)
+                .HasForeignKey(t => t.TemplateGroupId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<LlmProvider>(entity =>
@@ -95,8 +114,17 @@ public class AppDbContext : DbContext
             entity.Property(r => r.ModelName).IsRequired().HasMaxLength(200);
             entity.Property(r => r.ProviderId).IsRequired();
             entity.Property(r => r.CreatedAt).IsRequired();
+            entity.Property(r => r.WorkflowTemplateId);
 
-            entity.HasIndex(r => r.StageName).IsUnique();
+            // Composite unique: same stage name can exist for different templates
+            entity.HasIndex(r => new { r.WorkflowTemplateId, r.StageName })
+                .IsUnique()
+                .HasDatabaseName("IX_ModelRoutings_WorkflowTemplateId_StageName");
+
+            entity.HasOne(r => r.WorkflowTemplate)
+                .WithMany()
+                .HasForeignKey(r => r.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Project>(entity =>
@@ -105,8 +133,10 @@ public class AppDbContext : DbContext
             entity.HasKey(p => p.Id);
             entity.Property(p => p.Name).IsRequired().HasMaxLength(200);
             entity.Property(p => p.GitRepositoryUrl).IsRequired().HasMaxLength(500);
+            entity.Property(p => p.LocalRepositoryPath).HasMaxLength(1000);
+            entity.Property(p => p.BaseBranch).IsRequired().HasMaxLength(200).HasDefaultValue("master");
             entity.Property(p => p.ConstitutionPath).IsRequired().HasMaxLength(500)
-                .HasDefaultValue("project-context.md");
+                .HasDefaultValue("AGENTS.md;CLAUDE.md;README.md");
             entity.Property(p => p.GitHubIntegrationEnabled).IsRequired();
             entity.Property(p => p.NotificationsEnabled).IsRequired();
             entity.Property(p => p.CreatedAt).IsRequired();
@@ -125,6 +155,7 @@ public class AppDbContext : DbContext
             entity.Property(w => w.ProjectId).IsRequired();
             entity.Property(w => w.Status).IsRequired();
             entity.Property(w => w.InitialContext).IsRequired();
+            entity.Property(w => w.FeatureName).HasMaxLength(200);
             entity.Property(w => w.GitBranchName).IsRequired().HasMaxLength(500);
             entity.Property(w => w.CreatedAt).IsRequired();
             entity.Property(w => w.UpdatedAt).IsRequired();
@@ -132,6 +163,8 @@ public class AppDbContext : DbContext
             entity.HasIndex(w => w.ProjectId).HasDatabaseName("IX_Workflows_ProjectId");
             entity.HasIndex(w => w.TemplateId).HasDatabaseName("IX_Workflows_TemplateId");
             entity.HasIndex(w => w.Status).HasDatabaseName("IX_Workflows_Status");
+            entity.HasIndex(w => new { w.ProjectId, w.FeatureName })
+                .HasDatabaseName("IX_Workflows_ProjectId_FeatureName");
 
             entity.HasOne(w => w.Template)
                 .WithMany()

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://127.0.0.1:0",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://127.0.0.1:0",
+        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:22060",
+        "DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS": "true",
+        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
+        "NO_PROXY": "127.0.0.1,localhost"
+      }
+    }
+  }
+}

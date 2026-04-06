@@ -263,12 +263,16 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<Guid?>("WorkflowTemplateId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProviderId");
 
-                    b.HasIndex("StageName")
-                        .IsUnique();
+                    b.HasIndex("WorkflowTemplateId", "StageName")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ModelRoutings_WorkflowTemplateId_StageName");
 
                     b.ToTable("ModelRoutings", (string)null);
                 });
@@ -279,12 +283,19 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("BaseBranch")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasDefaultValue("master");
+
                     b.Property<string>("ConstitutionPath")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
-                        .HasDefaultValue("project-context.md");
+                        .HasDefaultValue("AGENTS.md;CLAUDE.md;README.md");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -296,6 +307,10 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
+
+                    b.Property<string>("LocalRepositoryPath")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -397,6 +412,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("OutputContent")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("StageId")
                         .HasColumnType("uuid");
 
@@ -431,6 +449,40 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_StageExecutions_StageId_Version");
 
                     b.ToTable("StageExecutions", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TemplateGroup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<bool>("IsBuiltIn")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TemplateGroups_Name");
+
+                    b.ToTable("TemplateGroups", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.User", b =>
@@ -496,6 +548,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("FeatureName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<string>("GitBranchName")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -535,6 +591,9 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("TemplateId")
                         .HasDatabaseName("IX_Workflows_TemplateId");
 
+                    b.HasIndex("ProjectId", "FeatureName")
+                        .HasDatabaseName("IX_Workflows_ProjectId_FeatureName");
+
                     b.ToTable("Workflows", (string)null);
                 });
 
@@ -560,6 +619,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<Guid?>("TemplateGroupId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -571,6 +633,8 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("Name")
                         .IsUnique();
+
+                    b.HasIndex("TemplateGroupId");
 
                     b.ToTable("WorkflowTemplates", (string)null);
                 });
@@ -674,7 +738,14 @@ namespace Antiphon.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("Antiphon.Server.Domain.Entities.WorkflowTemplate", "WorkflowTemplate")
+                        .WithMany()
+                        .HasForeignKey("WorkflowTemplateId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.Navigation("Provider");
+
+                    b.Navigation("WorkflowTemplate");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Stage", b =>
@@ -733,6 +804,16 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Template");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.WorkflowTemplate", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.TemplateGroup", "TemplateGroup")
+                        .WithMany("Templates")
+                        .HasForeignKey("TemplateGroupId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("TemplateGroup");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.LlmProvider", b =>
                 {
                     b.Navigation("ModelRoutings");
@@ -743,6 +824,11 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("GateDecisions");
 
                     b.Navigation("StageExecutions");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TemplateGroup", b =>
+                {
+                    b.Navigation("Templates");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Workflow", b =>

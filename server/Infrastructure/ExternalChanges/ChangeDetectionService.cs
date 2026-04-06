@@ -92,7 +92,7 @@ public class ChangeDetectionService : BackgroundService
 
         foreach (var workflow in activeWorkflows)
         {
-            var repoPath = workflow.Project.GitRepositoryUrl;
+            var repoPath = workflow.Project.LocalRepositoryPath;
             if (string.IsNullOrEmpty(repoPath))
                 continue;
 

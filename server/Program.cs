@@ -1,4 +1,7 @@
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Npgsql;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
@@ -25,15 +28,21 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     // Serilog — structured logging with correlation enrichment (NFR19)
-    builder.Host.UseSerilog((ctx, lc) => lc
-        .ReadFrom.Configuration(ctx.Configuration)
-        .Enrich.FromLogContext()
-        .WriteTo.Console(outputTemplate:
-            "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-        .WriteTo.File("logs/antiphon-.log",
-            rollingInterval: RollingInterval.Day,
-            outputTemplate:
-                "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"));
+    builder.Host.UseSerilog((ctx, lc) =>
+    {
+        var logPath = ctx.Configuration["Serilog:LogPath"] ?? "logs";
+        lc
+            .ReadFrom.Configuration(ctx.Configuration)
+            .Enrich.FromLogContext()
+            .WriteTo.Console(outputTemplate:
+                "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+            .WriteTo.File(
+                Path.Combine(logPath, "antiphon-.log"),
+                rollingInterval: RollingInterval.Day,
+                outputTemplate:
+                    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
+            );
+    });
 
     // Database
     var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -53,6 +62,12 @@ try
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
+
+    // JSON serialization — serialize enums as strings for API responses
+    builder.Services.ConfigureHttpJsonOptions(options =>
+    {
+        options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 
     // Health checks (NFR21)
     var healthChecks = builder.Services.AddHealthChecks();
@@ -85,9 +100,12 @@ try
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
+    builder.Services.AddScoped<FeatureStatusService>();
 
     // GitHub integration (FR59-FR64) — feature-flagged per project
     builder.Services.AddHttpClient<IGitHubService, GitHubService>();
+    builder.Services.AddSingleton<GitHubRepoCache>();
+    builder.Services.AddHostedService<GitHubRepoCacheWarmupService>();
     // Background services for GitHub PR monitoring and external change detection
     builder.Services.AddHostedService<GitHubMonitorService>();
     builder.Services.AddHostedService<ChangeDetectionService>();
@@ -115,12 +133,30 @@ try
     app.UseMiddleware<ExceptionMiddleware>();
     app.UseMiddleware<AuditMiddleware>();
 
-    // Auto-migrate database on startup and seed data
+    // Create database if it doesn't exist, then migrate and seed
+    var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+    var masterConnStr = new NpgsqlConnectionStringBuilder(rawConnectionString) { Database = "postgres" }.ConnectionString;
+    var targetDb = new NpgsqlConnectionStringBuilder(rawConnectionString).Database;
+    await using (var adminConn = new NpgsqlConnection(masterConnStr))
+    {
+        await adminConn.OpenAsync();
+        await using var checkCmd = new NpgsqlCommand(
+            $"SELECT 1 FROM pg_database WHERE datname = '{targetDb}'", adminConn);
+        var exists = await checkCmd.ExecuteScalarAsync() is not null;
+        if (!exists)
+        {
+            Log.Information("Creating database {Database}", targetDb);
+            await using var createCmd = new NpgsqlCommand($"CREATE DATABASE \"{targetDb}\"", adminConn);
+            await createCmd.ExecuteNonQueryAsync();
+        }
+    }
+
     using (var scope = app.Services.CreateScope())
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
-        await DatabaseSeeder.SeedAsync(dbContext, CancellationToken.None);
+        await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
     }
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
@@ -134,6 +170,7 @@ try
     app.MapCascadeEndpoints();
     app.MapArtifactEndpoints();
     app.MapAuditEndpoints();
+    app.MapGitHubEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");

@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Server", "server\Antiphon.Server.csproj", "{A115090E-AB30-463F-B0ED-ACE6D6089917}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.AppHost", "Antiphon.AppHost\Antiphon.AppHost.csproj", "{D4470F2B-6E93-4F5C-AE73-1C2D3E4F5A6B}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Tests", "tests\Antiphon.Tests\Antiphon.Tests.csproj", "{B2250E0F-4C91-4D3A-9F71-1A8E5F3B7C01}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.E2E", "tests\Antiphon.E2E\Antiphon.E2E.csproj", "{C3360F1A-5D82-4E4B-AF82-2B9F6E4D8E02}"
@@ -30,5 +32,9 @@ Global
 		{C3360F1A-5D82-4E4B-AF82-2B9F6E4D8E02}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C3360F1A-5D82-4E4B-AF82-2B9F6E4D8E02}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C3360F1A-5D82-4E4B-AF82-2B9F6E4D8E02}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4470F2B-6E93-4F5C-AE73-1C2D3E4F5A6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4470F2B-6E93-4F5C-AE73-1C2D3E4F5A6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4470F2B-6E93-4F5C-AE73-1C2D3E4F5A6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4470F2B-6E93-4F5C-AE73-1C2D3E4F5A6B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
