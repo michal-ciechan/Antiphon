@@ -1,7 +1,9 @@
 import { useCallback, useRef, useEffect, useState } from 'react'
-import { Card, Badge, Group, Text, Box } from '@mantine/core'
+import { Card, Badge, Group, Text, Box, ActionIcon, Tooltip, Modal, Button } from '@mantine/core'
+import { TbTrash } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
 import type { WorkflowDto, WorkflowStatus } from '../../api/workflows'
+import { useDeleteWorkflow } from '../../api/workflows'
 import { MiniPipeline, type MiniPipelineStage } from './MiniPipeline'
 
 interface WorkflowCardProps {
@@ -94,7 +96,9 @@ function buildMiniStages(wf: WorkflowDto): MiniPipelineStage[] {
 export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps) {
   const navigate = useNavigate()
   const [isHighlighted, setIsHighlighted] = useState(!!highlight)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const deleteWorkflow = useDeleteWorkflow()
 
   // When highlight prop becomes true, start the glow animation
   useEffect(() => {
@@ -148,14 +152,32 @@ export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps)
         transition: 'box-shadow 200ms ease, transform 100ms ease',
       }}
     >
-      {/* Row 1: Title + Status Badge */}
+      {/* Row 1: Title + Status Badge + Delete */}
       <Group justify="space-between" mb="xs" wrap="nowrap">
         <Text fw={600} size="md" lineClamp={1} style={{ flex: 1 }}>
           {workflow.name}
         </Text>
-        <Badge color={STATUS_COLORS[workflow.status]} variant="light" size="sm" style={{ flexShrink: 0 }}>
-          {STATUS_LABELS[workflow.status]}
-        </Badge>
+        <Group gap={4} style={{ flexShrink: 0 }}>
+          <Badge color={STATUS_COLORS[workflow.status]} variant="light" size="sm">
+            {STATUS_LABELS[workflow.status]}
+          </Badge>
+          {workflow.status !== 'Running' && (
+            <Tooltip label="Delete workflow" withArrow>
+              <ActionIcon
+                variant="subtle"
+                color="red"
+                size="sm"
+                aria-label="Delete workflow"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setDeleteConfirmOpen(true)
+                }}
+              >
+                <TbTrash size={14} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
       </Group>
 
       {/* Row 2: MiniPipeline */}
@@ -182,6 +204,33 @@ export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps)
           {formatRelativeTime(workflow.updatedAt)}
         </Text>
       </Group>
+
+      <Modal
+        opened={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        title="Delete workflow"
+        onClick={(e) => e.stopPropagation()}
+        size="sm"
+      >
+        <Text size="sm" mb="lg">
+          Are you sure you want to delete this workflow? This cannot be undone.
+        </Text>
+        <Group justify="flex-end" gap="sm">
+          <Button variant="default" onClick={() => setDeleteConfirmOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            loading={deleteWorkflow.isPending}
+            onClick={() => {
+              deleteWorkflow.mutate(workflow.id)
+              setDeleteConfirmOpen(false)
+            }}
+          >
+            Delete
+          </Button>
+        </Group>
+      </Modal>
     </Card>
   )
 }

@@ -15,6 +15,7 @@ public class Workflow
     public WorkflowStatus Status { get; set; }
     public Guid? CurrentStageId { get; set; }
     public string InitialContext { get; set; } = string.Empty;
+    public string? FeatureName { get; set; }
     public string GitBranchName { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

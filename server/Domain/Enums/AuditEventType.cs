@@ -19,5 +19,8 @@ public enum AuditEventType
     WorkflowPaused = 11,
     WorkflowResumed = 12,
     WorkflowAbandoned = 13,
-    WorkflowCompleted = 14
+    WorkflowCompleted = 14,
+    WorkflowOpened = 15,
+    WorkflowClosed = 16,
+    SessionDisconnected = 17
 }

@@ -16,45 +16,19 @@ import { useConnectionStore, type ConnectionStatus } from '../../stores/connecti
 export function useToastNotifications() {
   const status = useConnectionStore((s) => s.status)
   const prevStatusRef = useRef<ConnectionStatus>(status)
-  const disconnectToastId = 'signalr-disconnect'
-
   useEffect(() => {
     const prevStatus = prevStatusRef.current
     prevStatusRef.current = status
 
-    if (status === 'reconnecting' && prevStatus === 'connected') {
-      // Show persistent disconnection warning
+    // Connection status is shown via the header indicator — no toasts for connect/disconnect.
+    // Only show a brief toast when fully reconnected after a disruption.
+    if (status === 'connected' && prevStatus === 'reconnecting') {
       notifications.show({
-        id: disconnectToastId,
-        title: 'Connection lost',
-        message: 'Reconnecting to server...',
-        color: 'orange',
-        autoClose: false,
-        withCloseButton: false,
+        title: 'Reconnected',
+        message: 'Real-time updates restored.',
+        color: 'green',
+        autoClose: 3000,
       })
-    } else if (status === 'disconnected' && prevStatus !== 'disconnected') {
-      // Hard disconnect
-      notifications.show({
-        id: disconnectToastId,
-        title: 'Connection lost',
-        message: 'Unable to connect to server. Retrying...',
-        color: 'red',
-        autoClose: false,
-        withCloseButton: true,
-      })
-    } else if (status === 'connected' && (prevStatus === 'reconnecting' || prevStatus === 'connecting')) {
-      // Hide disconnect toast and show reconnected
-      notifications.hide(disconnectToastId)
-
-      // Only show "Reconnected" if we were previously disconnected/reconnecting (not initial connect)
-      if (prevStatus === 'reconnecting') {
-        notifications.show({
-          title: 'Reconnected',
-          message: 'Real-time updates restored.',
-          color: 'green',
-          autoClose: 3000,
-        })
-      }
     }
   }, [status])
 }

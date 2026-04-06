@@ -7,7 +7,8 @@ namespace Antiphon.Server.Domain.ValueObjects;
 public sealed record WorkflowDefinition(
     string Name,
     string Description,
-    IReadOnlyList<StageDefinition> Stages);
+    IReadOnlyList<StageDefinition> Stages,
+    bool SelectableStages);
 
 /// <summary>
 /// A single stage within a workflow definition, parsed from YAML.

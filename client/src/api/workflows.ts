@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, apiDelete } from './client'
 
 // --- Workflow types ---
 
@@ -25,6 +25,7 @@ export interface WorkflowDto {
   templateName: string
   projectId: string
   projectName: string
+  featureName: string | null
   stageCount: number
   completedStageCount: number
   availableTransitions: WorkflowStatus[]
@@ -50,6 +51,14 @@ export interface CreateWorkflowRequest {
   projectId: string
   name?: string
   initialContext?: string
+  stageModelOverrides?: Record<string, string>
+  featureName?: string
+  selectedStages?: string[]
+}
+
+export interface FeatureStatusDto {
+  featureName: string
+  completedStages: string[]
 }
 
 // --- Workflow hooks ---
@@ -109,5 +118,24 @@ export function useAbandonWorkflow() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
     },
+  })
+}
+
+export function useDeleteWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/workflows/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
+    },
+  })
+}
+
+export function useFeatureStatus(projectId: string | null, featureName: string | null) {
+  return useQuery({
+    queryKey: ['feature-status', projectId, featureName],
+    queryFn: () =>
+      apiGet<FeatureStatusDto>(`/projects/${projectId}/feature-status/${featureName}`),
+    enabled: projectId !== null && featureName !== null && featureName.length >= 2,
   })
 }

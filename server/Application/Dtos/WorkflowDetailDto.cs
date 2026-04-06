@@ -16,5 +16,6 @@ public record WorkflowDetailDto(
     int CompletedStageCount,
     IReadOnlyList<WorkflowStatus> AvailableTransitions,
     IReadOnlyList<StageDto> Stages,
+    string? FeatureName,
     DateTime CreatedAt,
     DateTime UpdatedAt);

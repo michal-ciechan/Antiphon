@@ -1,11 +1,15 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using YamlDotNet.RepresentationModel;
 
 namespace Antiphon.Server.Application.Services;
@@ -20,13 +24,26 @@ public class WorkflowEngine
     private readonly IStageExecutor _stageExecutor;
     private readonly IEventBus _eventBus;
     private readonly IGitService _gitService;
+    private readonly GitSettings _gitSettings;
+    private readonly ILogger<WorkflowEngine> _logger;
+    private readonly AuditService _auditService;
 
-    public WorkflowEngine(AppDbContext db, IStageExecutor stageExecutor, IEventBus eventBus, IGitService gitService)
+    public WorkflowEngine(
+        AppDbContext db,
+        IStageExecutor stageExecutor,
+        IEventBus eventBus,
+        IGitService gitService,
+        IOptions<GitSettings> gitSettings,
+        ILogger<WorkflowEngine> logger,
+        AuditService auditService)
     {
         _db = db;
         _stageExecutor = stageExecutor;
         _eventBus = eventBus;
         _gitService = gitService;
+        _gitSettings = gitSettings.Value;
+        _logger = logger;
+        _auditService = auditService;
     }
 
     /// <summary>
@@ -53,6 +70,8 @@ public class WorkflowEngine
 
         var name = GetScalarValue(rootMapping, "name") ?? "Unnamed Workflow";
         var description = GetScalarValue(rootMapping, "description") ?? string.Empty;
+        var selectableStagesStr = GetScalarValue(rootMapping, "selectableStages");
+        var selectableStages = string.Equals(selectableStagesStr, "true", StringComparison.OrdinalIgnoreCase);
 
         var stagesKey = new YamlScalarNode("stages");
         if (!rootMapping.Children.ContainsKey(stagesKey) ||
@@ -98,7 +117,7 @@ public class WorkflowEngine
             });
         }
 
-        return new WorkflowDefinition(name, description, stages);
+        return new WorkflowDefinition(name, description, stages, selectableStages);
     }
 
     /// <summary>
@@ -106,8 +125,12 @@ public class WorkflowEngine
     /// Transitions workflow to Running and begins executing the first stage.
     /// </summary>
     public async Task<Workflow> CreateWorkflowAsync(
-        Guid templateId, Guid projectId, string initialContext, CancellationToken ct)
+        CreateWorkflowRequest request,
+        CancellationToken ct)
     {
+        var templateId = request.TemplateId;
+        var projectId = request.ProjectId;
+
         var template = await _db.WorkflowTemplates
             .FirstOrDefaultAsync(t => t.Id == templateId, ct)
             ?? throw new NotFoundException(nameof(WorkflowTemplate), templateId);
@@ -118,26 +141,45 @@ public class WorkflowEngine
 
         var definition = ParseYamlDefinition(template.YamlDefinition);
 
+        // Filter stages when the template supports selectable stages and the caller specified a subset
+        var stagesToCreate = (definition.SelectableStages
+            && request.SelectedStages != null
+            && request.SelectedStages.Count > 0)
+            ? definition.Stages
+                .Where(s => request.SelectedStages.Contains(s.Name))
+                .ToList()
+            : definition.Stages.ToList();
+
+        // Load template model routings to resolve default models per stage
+        var templateRoutings = await _db.ModelRoutings
+            .Where(r => r.WorkflowTemplateId == templateId)
+            .ToListAsync(ct);
+
         var workflow = new Workflow
         {
             Id = Guid.NewGuid(),
             Name = definition.Name,
             Description = definition.Description,
+            FeatureName = request.FeatureName,
             TemplateId = templateId,
             ProjectId = projectId,
             Status = WorkflowStatus.Created,
-            InitialContext = initialContext,
-            GitBranchName = $"antiphon/workflow-{Guid.NewGuid():N}",
+            InitialContext = request.InitialContext ?? string.Empty,
+            GitBranchName = $"antiphon/{SanitizeBranchName(request.FeatureName ?? Guid.NewGuid().ToString("N"))}",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
+        // Save workflow first with CurrentStageId null to avoid circular FK dependency
+        // (Workflow.CurrentStageId -> Stage, Stage.WorkflowId -> Workflow)
         _db.Workflows.Add(workflow);
+        await _db.SaveChangesAsync(ct);
 
-        // Create Stage entities from definition
-        for (var i = 0; i < definition.Stages.Count; i++)
+        // Create Stage entities from definition (reindexed after any filtering)
+        Stage? firstStage = null;
+        for (var i = 0; i < stagesToCreate.Count; i++)
         {
-            var stageDef = definition.Stages[i];
+            var stageDef = stagesToCreate[i];
             var stage = new Stage
             {
                 Id = Guid.NewGuid(),
@@ -147,25 +189,30 @@ public class WorkflowEngine
                 StageOrder = i,
                 Status = StageStatus.Pending,
                 ExecutorType = stageDef.ExecutorType,
-                ModelName = stageDef.ModelName,
+                ModelName = request.StageModelOverrides?.GetValueOrDefault(stageDef.Name)
+                    ?? stageDef.ModelName
+                    ?? templateRoutings.FirstOrDefault(r => r.StageName == stageDef.Name)?.ModelName,
                 GateRequired = stageDef.GateRequired,
                 CreatedAt = DateTime.UtcNow
             };
 
             _db.Stages.Add(stage);
 
-            // Set the first stage as current
             if (i == 0)
             {
-                workflow.CurrentStageId = stage.Id;
+                firstStage = stage;
             }
         }
 
+        workflow.CurrentStageId = firstStage?.Id;
         await _db.SaveChangesAsync(ct);
 
         // Initialize git workflow branches (FR28)
-        var repoPath = project.GitRepositoryUrl;
-        await _gitService.InitializeWorkflowBranchesAsync(workflow.Id, repoPath, ct);
+        var repoPath = await ResolveLocalRepoPathAsync(project, ct);
+        if (!string.IsNullOrEmpty(repoPath))
+        {
+            await _gitService.InitializeWorkflowBranchesAsync(workflow.Id, repoPath, ct);
+        }
 
         // Transition to Running
         TransitionWorkflow(workflow, WorkflowStatus.Running);
@@ -214,6 +261,19 @@ public class WorkflowEngine
             workflow.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
+            await _auditService.RecordEventAsync(
+                AuditEventType.WorkflowCompleted,
+                workflowId,
+                stageId: null,
+                stageExecutionId: null,
+                summary: "Workflow completed",
+                clientIp: null,
+                userId: null,
+                gitTagName: null,
+                fullContentJson: null,
+                cancellationToken: ct
+            );
+
             await _eventBus.PublishToGroupAsync(
                 $"workflow-{workflow.Id}",
                 "WorkflowCompleted",
@@ -242,11 +302,28 @@ public class WorkflowEngine
         _db.StageExecutions.Add(execution);
         await _db.SaveChangesAsync(ct);
 
+        await _auditService.RecordEventAsync(
+            AuditEventType.StageStarted,
+            workflowId,
+            nextStage.Id,
+            execution.Id,
+            summary: $"Stage '{nextStage.Name}' started (v{nextStage.CurrentVersion})",
+            clientIp: null,
+            userId: null,
+            gitTagName: null,
+            fullContentJson: null,
+            cancellationToken: ct
+        );
+
         // Create stage branch for execution (FR29)
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
-        var repoPath = project.GitRepositoryUrl;
-        await _gitService.CreateStageBranchAsync(workflowId, nextStage.Name, repoPath, ct);
+
+        var repoPath = await ResolveLocalRepoPathAsync(project, ct);
+        if (!string.IsNullOrEmpty(repoPath))
+        {
+            await _gitService.CreateStageBranchAsync(workflowId, nextStage.Name, repoPath, ct);
+        }
 
         // Push StageStarted event
         await _eventBus.PublishToGroupAsync(
@@ -269,13 +346,16 @@ public class WorkflowEngine
         var context = new StageExecutionContext(
             WorkflowId: workflowId,
             StageId: nextStage.Id,
+            StageExecutionId: execution.Id,
             StageName: nextStage.Name,
             ExecutorType: nextStage.ExecutorType,
             ModelName: nextStage.ModelName,
             SystemPrompt: nextStage.Description,
             UpstreamArtifacts: upstreamArtifacts,
             Constitution: null, // Will be loaded from project repo in future stories
-            StageInstructions: nextStage.Description);
+            StageInstructions: nextStage.Description,
+            InitialContext: workflow.InitialContext,
+            BranchName: workflow.GitBranchName);
 
         // Execute via IStageExecutor
         StageExecutionResult result;
@@ -295,30 +375,66 @@ public class WorkflowEngine
             workflow.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
+            await _auditService.RecordEventAsync(
+                AuditEventType.StageFailed,
+                workflowId,
+                nextStage.Id,
+                execution.Id,
+                summary: $"Stage '{nextStage.Name}' failed: {ex.Message}",
+                clientIp: null,
+                userId: null,
+                gitTagName: null,
+                fullContentJson: null,
+                cancellationToken: ct
+            );
+
             throw;
         }
 
-        // Commit artifacts to stage branch (FR30, FR33)
-        foreach (var artifactFilePath in result.ArtifactPaths)
+        // Commit artifacts to stage branch and tag (FR30, FR31, FR33) - only when local repo is configured
+        string? tagName = null;
+        if (!string.IsNullOrEmpty(repoPath))
         {
-            await _gitService.CommitArtifactAsync(
-                workflowId, nextStage.Name, result.OutputContent, artifactFilePath, repoPath, ct);
-        }
+            foreach (var artifactFilePath in result.ArtifactPaths)
+            {
+                await _gitService.CommitArtifactAsync(
+                    workflowId, nextStage.Name, result.OutputContent, artifactFilePath, repoPath, ct);
+            }
 
-        // Tag the stage commit (FR31)
-        var tagName = await _gitService.TagStageAsync(
-            workflowId, nextStage.Name, nextStage.CurrentVersion, repoPath, ct);
+            tagName = await _gitService.TagStageAsync(
+                workflowId, nextStage.Name, nextStage.CurrentVersion, repoPath, ct);
+        }
 
         // Mark stage execution as completed
         execution.Status = StageStatus.Completed;
         execution.CompletedAt = DateTime.UtcNow;
         execution.GitTagName = tagName;
+        execution.OutputContent = result.OutputContent;
+
+        _logger.LogInformation(
+            "Stage {StageName} completed. OutputContent length={Length}, GitTagName={GitTagName}",
+            nextStage.Name,
+            result.OutputContent?.Length ?? 0,
+            tagName ?? "(none)");
 
         // Mark stage as completed
         nextStage.Status = StageStatus.Completed;
         nextStage.CompletedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(ct);
+
+        await _auditService.RecordEventAsync(
+            AuditEventType.StageCompleted,
+            workflowId,
+            nextStage.Id,
+            execution.Id,
+            summary: $"Stage '{nextStage.Name}' completed (v{nextStage.CurrentVersion})",
+            clientIp: null,
+            userId: null,
+            gitTagName: tagName,
+            fullContentJson: null,
+            cancellationToken: ct
+        );
 
         // Push StageCompleted event
         await _eventBus.PublishToGroupAsync(
@@ -367,16 +483,16 @@ public class WorkflowEngine
         // Merge the approved stage branch into workflow master (FR32)
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
-        var repoPath = project.GitRepositoryUrl;
 
         // Find the most recently completed stage (the one that triggered the gate)
         var approvedStage = workflow.Stages
             .OrderByDescending(s => s.StageOrder)
             .FirstOrDefault(s => s.Status == StageStatus.Completed);
 
-        if (approvedStage is not null)
+        var resumeRepoPath = await ResolveLocalRepoPathAsync(project, ct);
+        if (approvedStage is not null && !string.IsNullOrEmpty(resumeRepoPath))
         {
-            await _gitService.MergeStageBranchAsync(workflowId, approvedStage.Name, repoPath, ct);
+            await _gitService.MergeStageBranchAsync(workflowId, approvedStage.Name, resumeRepoPath, ct);
         }
 
         // Transition back to Running
@@ -413,7 +529,6 @@ public class WorkflowEngine
 
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
-        var repoPath = project.GitRepositoryUrl;
 
         // Find the completed stage that triggered the gate
         var approvedStage = workflow.Stages
@@ -421,14 +536,33 @@ public class WorkflowEngine
             .FirstOrDefault(s => s.Status == StageStatus.Completed)
             ?? throw new ConflictException("No completed stage found for gate approval.");
 
-        // Tag the stage commit (FR31) and merge into workflow master (FR32)
-        await _gitService.TagStageAsync(workflowId, approvedStage.Name, approvedStage.CurrentVersion, repoPath, ct);
-        await _gitService.MergeStageBranchAsync(workflowId, approvedStage.Name, repoPath, ct);
+        // Tag the stage commit (FR31) and merge into workflow master (FR32) - only when local repo is configured
+        var approveRepoPath = await ResolveLocalRepoPathAsync(project, ct);
+        if (!string.IsNullOrEmpty(approveRepoPath))
+        {
+            await _gitService.TagStageAsync(
+                workflowId, approvedStage.Name, approvedStage.CurrentVersion, approveRepoPath, ct);
+            await _gitService.MergeStageBranchAsync(
+                workflowId, approvedStage.Name, approveRepoPath, ct);
+        }
 
         // Transition back to Running and advance to next stage
         TransitionWorkflow(workflow, WorkflowStatus.Running);
         workflow.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+
+        await _auditService.RecordEventAsync(
+            AuditEventType.GateApproved,
+            workflowId,
+            approvedStage.Id,
+            stageExecutionId: null,
+            summary: $"Gate approved for stage '{approvedStage.Name}'",
+            clientIp: null,
+            userId: null,
+            gitTagName: null,
+            fullContentJson: null,
+            cancellationToken: ct
+        );
 
         await _eventBus.PublishToGroupAsync(
             $"workflow-{workflowId}",
@@ -472,6 +606,19 @@ public class WorkflowEngine
         TransitionWorkflow(workflow, WorkflowStatus.Running);
         workflow.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+
+        await _auditService.RecordEventAsync(
+            AuditEventType.GateRejected,
+            workflowId,
+            rejectedStage.Id,
+            stageExecutionId: null,
+            summary: $"Gate rejected for stage '{rejectedStage.Name}'" + (string.IsNullOrEmpty(feedback) ? "" : $": {feedback}"),
+            clientIp: null,
+            userId: null,
+            gitTagName: null,
+            fullContentJson: null,
+            cancellationToken: ct
+        );
 
         await _eventBus.PublishToGroupAsync(
             $"workflow-{workflowId}",
@@ -586,6 +733,19 @@ public class WorkflowEngine
         await _db.SaveChangesAsync(ct);
 
         // Record go-back in audit trail (FR42, FR53)
+        await _auditService.RecordEventAsync(
+            AuditEventType.GoBack,
+            workflowId,
+            targetStage.Id,
+            stageExecutionId: null,
+            summary: $"Go-back to stage '{targetStage.Name}' (v{targetStage.CurrentVersion - 1} → v{targetStage.CurrentVersion}), {affectedStages.Count} downstream stage(s) affected",
+            clientIp: null,
+            userId: null,
+            gitTagName: null,
+            fullContentJson: null,
+            cancellationToken: ct
+        );
+
         await _eventBus.PublishToGroupAsync(
             $"workflow-{workflowId}",
             "GateActioned",
@@ -714,6 +874,35 @@ public class WorkflowEngine
             ct);
     }
 
+    /// <summary>
+    /// Deletes a workflow and all its associated stages and executions.
+    /// Throws if the workflow is currently running.
+    /// </summary>
+    public async Task DeleteWorkflowAsync(Guid workflowId, CancellationToken ct)
+    {
+        var workflow = await _db.Workflows
+            .Include(w => w.Stages)
+                .ThenInclude(s => s.StageExecutions)
+            .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
+            ?? throw new NotFoundException(nameof(Workflow), workflowId);
+
+        // Cannot delete a running workflow
+        if (workflow.Status == WorkflowStatus.Running)
+            throw new InvalidOperationException("Cannot delete a workflow that is currently running. Abandon it first.");
+
+        // Clear CurrentStageId to break the circular FK before deleting stages
+        workflow.CurrentStageId = null;
+        await _db.SaveChangesAsync(ct);
+
+        // Remove stage executions, then stages, then workflow
+        foreach (var stage in workflow.Stages)
+            _db.StageExecutions.RemoveRange(stage.StageExecutions);
+
+        _db.Stages.RemoveRange(workflow.Stages);
+        _db.Workflows.Remove(workflow);
+        await _db.SaveChangesAsync(ct);
+    }
+
     private static void TransitionWorkflow(Workflow workflow, WorkflowStatus newStatus)
     {
         if (!WorkflowStateMachine.CanTransition(workflow.Status, newStatus))
@@ -723,6 +912,54 @@ public class WorkflowEngine
         }
 
         workflow.Status = newStatus;
+    }
+
+    /// <summary>
+    /// Resolves the local repository path for a project.
+    /// If LocalRepositoryPath is explicitly set, returns it directly.
+    /// Otherwise, if WorkspacePath is configured, computes a path under the workspace,
+    /// calls EnsureCloneAsync to clone/fetch the repo, and returns the computed path.
+    /// Returns null if neither is available.
+    /// </summary>
+    private async Task<string?> ResolveLocalRepoPathAsync(Project project, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(project.LocalRepositoryPath))
+            return project.LocalRepositoryPath;
+
+        if (string.IsNullOrEmpty(_gitSettings.WorkspacePath))
+            return null;
+
+        // Resolve relative workspace path against the app base directory
+        var workspacePath = Path.IsPathRooted(_gitSettings.WorkspacePath)
+            ? _gitSettings.WorkspacePath
+            : Path.Combine(AppContext.BaseDirectory, _gitSettings.WorkspacePath);
+
+        var slug = SanitizeBranchName(project.Name);
+        var repoPath = Path.Combine(workspacePath, slug);
+
+        try
+        {
+            await _gitService.EnsureCloneAsync(project.GitRepositoryUrl, repoPath, ct);
+            return repoPath;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to clone/fetch repository {Url} to {Path}. Git operations will be skipped.",
+                project.GitRepositoryUrl,
+                repoPath
+            );
+            return null;
+        }
+    }
+
+    private static string SanitizeBranchName(string name)
+    {
+        // Replace spaces and special chars with hyphens, lowercase, trim hyphens
+        var sanitized = System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant(), @"[^a-z0-9\-]", "-");
+        sanitized = System.Text.RegularExpressions.Regex.Replace(sanitized, @"-+", "-");
+        return sanitized.Trim('-');
     }
 
     private static string? GetScalarValue(YamlMappingNode mapping, string key)

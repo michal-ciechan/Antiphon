@@ -1,8 +1,10 @@
-import { useState, useMemo, useCallback } from 'react'
-import { Box, Text, Title, Badge, Group, Loader, Stack } from '@mantine/core'
-import { useParams } from 'react-router'
-import { useWorkflow, type StageDto, type WorkflowStatus } from '../../api/workflows'
+import { useState, useMemo, useCallback, useEffect } from 'react'
+import { Box, Text, Title, Badge, Group, Loader, Stack, Tooltip, UnstyledButton, Menu, ActionIcon, Modal, Button } from '@mantine/core'
+import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse, TbColumns2, TbSettings, TbTrash } from 'react-icons/tb'
+import { useParams, useNavigate } from 'react-router'
+import { useWorkflow, useDeleteWorkflow, type StageDto, type WorkflowStatus } from '../../api/workflows'
 import { useWorkflowArtifacts } from '../../api/artifacts'
+import { useBranchDiff } from '../../api/projects'
 import { useApproveGate, useRejectGate, usePromptAgent, useAddComment } from '../../api/gates'
 import { useGoBack, useAffectedStages, useSubmitCascade, type AffectedStageDto, type CascadeDecision } from '../../api/cascade'
 import { StagePipeline } from './StagePipeline'
@@ -14,7 +16,7 @@ import { InlineTransitionCard } from './InlineTransitionCard'
 import { GateActionBar } from '../gate/GateActionBar'
 import { useStreamingStore } from '../../stores/streamingStore'
 import type { TimelineMessage, ArtifactDto } from './types'
-import type { ArtifactVersion } from '../artifact'
+import { ArtifactModal, type ArtifactVersion } from '../artifact'
 
 type PageMode = 'conversation' | 'gate' | 'cascade'
 
@@ -40,8 +42,11 @@ function defaultTab(mode: PageMode): ContextTab {
 
 export function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { data: workflow, isLoading, error } = useWorkflow(id)
   const { data: artifacts } = useWorkflowArtifacts(id)
+
+  const deleteWorkflow = useDeleteWorkflow()
 
   // Gate mutations
   const approveGate = useApproveGate(id)
@@ -76,15 +81,37 @@ export function WorkflowDetailPage() {
     setModeOverride(null)
   }
 
-  // Track the active context panel tab; default depends on mode
+  // Branch diff — used to determine if there are outputs to default to
+  const { data: branchDiff } = useBranchDiff(id)
+  const hasOutputs = (branchDiff?.files?.length ?? 0) > 0
+
+  // Track the active context panel tab; default to 'outputs' when outputs exist
   const [activeTab, setActiveTab] = useState<ContextTab | null>(null)
-  const effectiveTab = activeTab ?? defaultTab(mode)
+  const effectiveTab = activeTab ?? (hasOutputs ? 'outputs' : defaultTab(mode))
 
   // Selected completed stage artifact (for clicking pipeline stages)
   const [_selectedStage, setSelectedStage] = useState<StageDto | null>(null)
 
   // Version selection for artifact viewer
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+
+  // Layout mode: 'split' = default, 'panel' = right panel fills width, 'conversation' = left fills width
+  const [layoutMode, setLayoutMode] = useState<'split' | 'panel' | 'conversation'>('split')
+
+  // Artifact modal state — opened when user clicks an artifact in the Outputs tab
+  const [modalArtifact, setModalArtifact] = useState<ArtifactDto | null>(null)
+
+  // Delete confirmation modal
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+
+  // Track workflow page visits for audit trail
+  useEffect(() => {
+    if (!id) return
+    fetch(`/api/workflows/${id}/visit`, { method: 'POST' }).catch(() => {})
+    return () => {
+      navigator.sendBeacon(`/api/workflows/${id}/close`)
+    }
+  }, [id])
 
   // Streaming store integration — messages from SignalR streaming events
   const streamingMessages = useStreamingStore((s) => s.messages)
@@ -102,9 +129,8 @@ export function WorkflowDetailPage() {
     }
   }
 
-  const handleArtifactClick = useCallback((_artifact: ArtifactDto) => {
-    // Future: load artifact content in main area
-    setActiveTab('outputs')
+  const handleArtifactClick = useCallback((artifact: ArtifactDto) => {
+    setModalArtifact(artifact)
   }, [])
 
   // Gate action handlers — no confirmation dialogs (UX-DR25, recoverable actions)
@@ -276,9 +302,54 @@ export function WorkflowDetailPage() {
               {workflow.status}
             </Badge>
           </Group>
-          <Text size="sm" c="dimmed">
-            {workflow.templateName} / {workflow.projectName}
-          </Text>
+          <Group gap={4}>
+            <Text size="sm" c="dimmed">
+              {workflow.templateName} / {workflow.projectName}
+            </Text>
+            <Group gap={2} ml="xs">
+              {(
+                [
+                  { mode: 'panel', icon: <TbLayoutSidebarLeftCollapse size={16} />, label: 'Panel view' },
+                  { mode: 'split', icon: <TbColumns2 size={16} />, label: 'Split view' },
+                  { mode: 'conversation', icon: <TbLayoutSidebarRightCollapse size={16} />, label: 'Conversation view' },
+                ] as const
+              ).map(({ mode, icon, label }) => (
+                <Tooltip key={mode} label={label} withArrow>
+                  <UnstyledButton
+                    onClick={() => setLayoutMode(mode)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 26,
+                      height: 26,
+                      borderRadius: 'var(--mantine-radius-xs)',
+                      color: layoutMode === mode ? 'var(--mantine-color-active-4)' : 'var(--mantine-color-dimmed)',
+                      backgroundColor: layoutMode === mode ? 'var(--mantine-color-active-9)' : 'transparent',
+                    }}
+                  >
+                    {icon}
+                  </UnstyledButton>
+                </Tooltip>
+              ))}
+            </Group>
+            <Menu shadow="md" width={200} position="bottom-end">
+              <Menu.Target>
+                <ActionIcon variant="subtle" size="sm" aria-label="Workflow settings">
+                  <TbSettings size={16} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  color="red"
+                  leftSection={<TbTrash size={14} />}
+                  onClick={() => setConfirmDeleteOpen(true)}
+                >
+                  Delete Workflow
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
         </Group>
 
         <StagePipeline stages={workflow.stages} onStageClick={handleStageClick} />
@@ -291,7 +362,7 @@ export function WorkflowDetailPage() {
           style={{
             flex: 1,
             minWidth: 0,
-            display: 'flex',
+            display: layoutMode === 'panel' ? 'none' : 'flex',
             flexDirection: 'column',
             overflow: 'auto',
           }}
@@ -333,8 +404,6 @@ export function WorkflowDetailPage() {
         <ContextPanel
           activeTab={effectiveTab}
           onTabChange={setActiveTab}
-          artifacts={artifacts}
-          onArtifactClick={handleArtifactClick}
           currentStage={currentStage}
           stages={workflow.stages}
           messages={messages}
@@ -344,6 +413,8 @@ export function WorkflowDetailPage() {
           diffNewContent={diffNewContent}
           diffOldLabel={diffOldLabel}
           diffNewLabel={diffNewLabel}
+          layoutMode={layoutMode}
+          onLayoutModeChange={setLayoutMode}
         />
       </Box>
 
@@ -356,6 +427,40 @@ export function WorkflowDetailPage() {
         onSendToAgent={handleSendToAgent}
         onAddComment={handleAddComment}
         disabled={isMutating}
+      />
+
+      {/* Delete workflow confirmation modal */}
+      <Modal
+        opened={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        title="Delete Workflow"
+        centered
+        size="sm"
+      >
+        <Text size="sm">Are you sure you want to delete this workflow? This cannot be undone.</Text>
+        <Group justify="flex-end" mt="md" gap="sm">
+          <Button variant="default" onClick={() => setConfirmDeleteOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            loading={deleteWorkflow.isPending}
+            onClick={() => {
+              deleteWorkflow.mutate(id!, {
+                onSuccess: () => navigate('/'),
+              })
+            }}
+          >
+            Delete
+          </Button>
+        </Group>
+      </Modal>
+
+      {/* Artifact viewer modal — opened when clicking an output in the Outputs tab */}
+      <ArtifactModal
+        artifact={modalArtifact}
+        workflowId={id}
+        onClose={() => setModalArtifact(null)}
       />
     </Box>
   )

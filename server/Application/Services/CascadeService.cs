@@ -93,8 +93,6 @@ public class CascadeService
             .FirstOrDefaultAsync(p => p.Id == workflow.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), workflow.ProjectId);
 
-        var repoPath = project.GitRepositoryUrl;
-
         // Find the target stage (the one the user went back to) — it's the most recently
         // completed stage that was reset to Pending during the go-back
         var goBackStage = workflow.Stages
@@ -103,7 +101,9 @@ public class CascadeService
 
         // Get the previous and current version tags for the go-back stage to compute diffs
         string? diffOutput = null;
-        if (goBackStage is not null && goBackStage.CurrentVersion > 1)
+        if (goBackStage is not null
+            && goBackStage.CurrentVersion > 1
+            && !string.IsNullOrEmpty(project.LocalRepositoryPath))
         {
             var oldTag = $"antiphon/workflow-{workflowId}/{goBackStage.Name}-v{goBackStage.CurrentVersion - 1}";
             var newTag = $"antiphon/workflow-{workflowId}/{goBackStage.Name}-v{goBackStage.CurrentVersion}";
@@ -112,7 +112,7 @@ public class CascadeService
             try
             {
                 diffOutput = await _gitService.GetDiffBetweenTagsAsync(
-                    oldTag, newTag, repoPath, pathFilter, ct);
+                    oldTag, newTag, project.LocalRepositoryPath, pathFilter, ct);
             }
             catch
             {
@@ -186,8 +186,6 @@ public class CascadeService
         Workflow workflow, Stage stage, Project project,
         string? systemPromptOverride, CancellationToken ct)
     {
-        var repoPath = project.GitRepositoryUrl;
-
         stage.Status = StageStatus.Running;
         await _db.SaveChangesAsync(ct);
 
@@ -203,8 +201,11 @@ public class CascadeService
         _db.StageExecutions.Add(execution);
         await _db.SaveChangesAsync(ct);
 
-        // Create stage branch for re-execution
-        await _gitService.CreateStageBranchAsync(workflow.Id, stage.Name, repoPath, ct);
+        // Create stage branch for re-execution - only when a local repo path is configured
+        if (!string.IsNullOrEmpty(project.LocalRepositoryPath))
+        {
+            await _gitService.CreateStageBranchAsync(workflow.Id, stage.Name, project.LocalRepositoryPath, ct);
+        }
 
         // Gather upstream artifacts
         var upstreamArtifacts = await _db.StageExecutions
@@ -219,13 +220,16 @@ public class CascadeService
         var context = new StageExecutionContext(
             WorkflowId: workflow.Id,
             StageId: stage.Id,
+            StageExecutionId: execution.Id,
             StageName: stage.Name,
             ExecutorType: stage.ExecutorType,
             ModelName: stage.ModelName,
             SystemPrompt: systemPromptOverride ?? stage.Description,
             UpstreamArtifacts: upstreamArtifacts,
             Constitution: null,
-            StageInstructions: stage.Description);
+            StageInstructions: stage.Description,
+            InitialContext: workflow.InitialContext,
+            BranchName: workflow.GitBranchName);
 
         StageExecutionResult result;
         try
@@ -242,20 +246,25 @@ public class CascadeService
             throw;
         }
 
-        // Commit artifacts
-        foreach (var artifactFilePath in result.ArtifactPaths)
+        // Commit artifacts and tag the new version (FR41 — version preserved)
+        // Only when a local repo path is configured
+        string? tagName = null;
+        if (!string.IsNullOrEmpty(project.LocalRepositoryPath))
         {
-            await _gitService.CommitArtifactAsync(
-                workflow.Id, stage.Name, result.OutputContent, artifactFilePath, repoPath, ct);
-        }
+            foreach (var artifactFilePath in result.ArtifactPaths)
+            {
+                await _gitService.CommitArtifactAsync(
+                    workflow.Id, stage.Name, result.OutputContent, artifactFilePath, project.LocalRepositoryPath, ct);
+            }
 
-        // Tag the new version (FR41 — version preserved)
-        var tagName = await _gitService.TagStageAsync(
-            workflow.Id, stage.Name, stage.CurrentVersion, repoPath, ct);
+            tagName = await _gitService.TagStageAsync(
+                workflow.Id, stage.Name, stage.CurrentVersion, project.LocalRepositoryPath, ct);
+        }
 
         execution.Status = StageStatus.Completed;
         execution.CompletedAt = DateTime.UtcNow;
         execution.GitTagName = tagName;
+        execution.OutputContent = result.OutputContent;
 
         stage.Status = StageStatus.Completed;
         stage.CompletedAt = DateTime.UtcNow;
