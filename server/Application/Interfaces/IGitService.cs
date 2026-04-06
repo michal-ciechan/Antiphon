@@ -43,4 +43,30 @@ public interface IGitService
     /// Used for cascade update context where only _antiphon/artifacts/ changes matter.
     /// </summary>
     Task<string> GetDiffBetweenTagsAsync(string tag1, string tag2, string repoPath, string pathFilter, CancellationToken ct);
+
+    /// <summary>
+    /// Ensures a git repository exists at the given path. Clones from gitUrl if the directory
+    /// does not exist; otherwise fetches all remotes to get latest branches.
+    /// Returns the absolute path to the repository.
+    /// </summary>
+    Task<string> EnsureCloneAsync(string gitUrl, string targetPath, CancellationToken ct);
+
+    /// <summary>
+    /// Returns the three-dot diff between baseBranch and headBranch in the given repo.
+    /// Uses "git diff {baseBranch}...{headBranch}" which shows changes since the branches diverged.
+    /// </summary>
+    Task<string> GetBranchDiffAsync(string baseBranch, string headBranch, string repoPath, CancellationToken ct);
+
+    /// <summary>
+    /// Finds the remote branch containing the most recent commit authored by the Antiphon agent.
+    /// Returns the branch name (e.g. "origin/feature/antiphon-documentation") or null if not found.
+    /// Used as a fallback when workflow.GitBranchName doesn't exist in the remote.
+    /// </summary>
+    Task<string?> FindAgentBranchAsync(string repoPath, CancellationToken ct);
+
+    /// <summary>
+    /// Returns the content of a file at the specified branch using "git show {branch}:{filePath}".
+    /// Throws InvalidOperationException if the file or branch doesn't exist.
+    /// </summary>
+    Task<string> GetFileContentAsync(string branch, string filePath, string repoPath, CancellationToken ct);
 }

@@ -9,7 +9,9 @@ public class Project
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string GitRepositoryUrl { get; set; } = string.Empty;
-    public string ConstitutionPath { get; set; } = "project-context.md";
+    public string? LocalRepositoryPath { get; set; }
+    public string BaseBranch { get; set; } = "master";
+    public string ConstitutionPath { get; set; } = "AGENTS.md;CLAUDE.md;README.md";
     public bool GitHubIntegrationEnabled { get; set; }
     public bool NotificationsEnabled { get; set; }
     public DateTime CreatedAt { get; set; }

@@ -14,9 +14,14 @@ public class GitService : IGitService
     private readonly ILogger<GitService> _logger;
 
     /// <summary>
-    /// Timeout for git operations — must complete within 5 seconds for repos under 1GB (NFR5).
+    /// Timeout for standard git operations (fetch, diff, checkout, etc.).
     /// </summary>
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Timeout for git clone — large repositories can take several minutes on first clone.
+    /// </summary>
+    private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
     public GitService(ILogger<GitService> logger)
     {
@@ -145,6 +150,79 @@ public class GitService : IGitService
         return result;
     }
 
+    public async Task<string> EnsureCloneAsync(string gitUrl, string targetPath, CancellationToken ct)
+    {
+        if (Directory.Exists(Path.Combine(targetPath, ".git")))
+        {
+            _logger.LogInformation("Repository already exists at {Path}, fetching latest", targetPath);
+            await RunGitAsync(targetPath, "fetch --all --prune", ct, GitTimeout);
+        }
+        else
+        {
+            _logger.LogInformation("Cloning {Url} into {Path}", gitUrl, targetPath);
+            Directory.CreateDirectory(targetPath);
+            await RunGitAsync(targetPath, $"clone {gitUrl} .", ct, CloneTimeout);
+        }
+
+        return targetPath;
+    }
+
+    public async Task<string> GetBranchDiffAsync(string baseBranch, string headBranch, string repoPath, CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Computing branch diff: {Base}...{Head} in {RepoPath}",
+            baseBranch, headBranch, repoPath
+        );
+
+        var result = await RunGitAsync(repoPath, $"diff {baseBranch}...{headBranch}", ct);
+        return result;
+    }
+
+    public async Task<string?> FindAgentBranchAsync(string repoPath, CancellationToken ct)
+    {
+        // Find the most recent commit authored by the Antiphon agent across all remote branches.
+        // "git log --author=Antiphon --all --pretty=%D -n1" outputs the ref list of the first matching commit.
+        // Example output: "origin/feature/antiphon-documentation"
+        try
+        {
+            var refs = await RunGitAsync(repoPath, "log --author=Antiphon --all --pretty=%D -n1", ct);
+            if (string.IsNullOrWhiteSpace(refs)) return null;
+
+            // Parse comma-separated refs: "HEAD -> origin/foo, origin/foo, tag: ..."
+            foreach (var part in refs.Split(','))
+            {
+                var trimmed = part.Trim();
+                // Strip "HEAD -> " prefix if present
+                if (trimmed.StartsWith("HEAD -> ", StringComparison.Ordinal))
+                    trimmed = trimmed["HEAD -> ".Length..];
+
+                // Only return remote-tracking refs
+                if (trimmed.StartsWith("origin/", StringComparison.Ordinal) &&
+                    !trimmed.StartsWith("origin/HEAD", StringComparison.Ordinal))
+                {
+                    _logger.LogInformation("Found Antiphon agent branch via fallback: {Branch}", trimmed);
+                    return trimmed;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "FindAgentBranchAsync failed; skipping fallback");
+        }
+
+        return null;
+    }
+
+    public async Task<string> GetFileContentAsync(string branch, string filePath, string repoPath, CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Reading file {FilePath} from branch {Branch} in {RepoPath}",
+            filePath, branch, repoPath
+        );
+        // git show supports both local branch names and remote-tracking refs (origin/...)
+        return await RunGitAsync(repoPath, $"show {branch}:{filePath}", ct);
+    }
+
     /// <summary>
     /// Builds git commit arguments with the [antiphon] trailer (FR30).
     /// Uses --trailer to add [antiphon] as a proper git trailer.
@@ -159,10 +237,14 @@ public class GitService : IGitService
     /// <summary>
     /// Runs a git command in the specified repo directory and returns stdout.
     /// </summary>
-    private async Task<string> RunGitAsync(string workingDirectory, string arguments, CancellationToken ct)
+    private async Task<string> RunGitAsync(
+        string workingDirectory,
+        string arguments,
+        CancellationToken ct,
+        TimeSpan? timeout = null)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(GitTimeout);
+        cts.CancelAfter(timeout ?? GitTimeout);
 
         var psi = new ProcessStartInfo
         {

@@ -5,4 +5,6 @@ public record CreateProjectRequest(
     string GitRepositoryUrl,
     string? ConstitutionPath,
     bool GitHubIntegrationEnabled,
-    bool NotificationsEnabled);
+    bool NotificationsEnabled,
+    string? LocalRepositoryPath,
+    string? BaseBranch);

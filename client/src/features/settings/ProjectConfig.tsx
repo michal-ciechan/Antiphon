@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Button,
   Group,
@@ -14,6 +14,10 @@ import {
   Tooltip,
   Alert,
   Loader,
+  Combobox,
+  InputBase,
+  useCombobox,
+  ScrollArea,
 } from '@mantine/core'
 import {
   TbPlus,
@@ -23,6 +27,7 @@ import {
   TbPlugConnected,
   TbCheck,
   TbX,
+  TbRefresh,
 } from 'react-icons/tb'
 import {
   useProjects,
@@ -30,6 +35,8 @@ import {
   useUpdateProject,
   useDeleteProject,
   useTestGitConnectivity,
+  useGitHubRepos,
+  useRefreshGitHubRepos,
   type ProjectDto,
 } from '../../api/projects'
 
@@ -60,6 +67,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const updateMutation = useUpdateProject()
   const deleteMutation = useDeleteProject()
   const testMutation = useTestGitConnectivity()
+  const { data: githubRepos } = useGitHubRepos()
+  const refreshReposMutation = useRefreshGitHubRepos()
 
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
@@ -72,16 +81,32 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
   const [formName, setFormName] = useState('')
   const [formGitUrl, setFormGitUrl] = useState('')
-  const [formConstitutionPath, setFormConstitutionPath] = useState('project-context.md')
+  const [formLocalRepoPath, setFormLocalRepoPath] = useState('')
+  const [formBaseBranch, setFormBaseBranch] = useState('master')
+  const [repoSearch, setRepoSearch] = useState('')
+  const [formConstitutionPath, setFormConstitutionPath] = useState('AGENTS.md;CLAUDE.md;README.md')
   const [formGitHubEnabled, setFormGitHubEnabled] = useState(false)
   const [formNotificationsEnabled, setFormNotificationsEnabled] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+  })
+
+  const filteredRepos = useMemo(() => {
+    if (!githubRepos) return []
+    const q = repoSearch.toLowerCase()
+    return githubRepos.filter((r) => r.fullName.toLowerCase().includes(q)).slice(0, 50)
+  }, [githubRepos, repoSearch])
 
   const openCreateModal = () => {
     setEditingProject(null)
     setFormName('')
     setFormGitUrl('')
-    setFormConstitutionPath('project-context.md')
+    setFormLocalRepoPath('')
+    setFormBaseBranch('master')
+    setRepoSearch('')
+    setFormConstitutionPath('AGENTS.md;CLAUDE.md;README.md')
     setFormGitHubEnabled(false)
     setFormNotificationsEnabled(false)
     setFormError(null)
@@ -93,6 +118,9 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setEditingProject(project)
     setFormName(project.name)
     setFormGitUrl(project.gitRepositoryUrl)
+    setFormLocalRepoPath(project.localRepositoryPath ?? '')
+    setFormBaseBranch(project.baseBranch ?? 'master')
+    setRepoSearch('')
     setFormConstitutionPath(project.constitutionPath)
     setFormGitHubEnabled(project.gitHubIntegrationEnabled)
     setFormNotificationsEnabled(project.notificationsEnabled)
@@ -125,6 +153,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           data: {
             name: formName,
             gitRepositoryUrl: formGitUrl,
+            localRepositoryPath: formLocalRepoPath || undefined,
+            baseBranch: formBaseBranch || 'master',
             constitutionPath: formConstitutionPath || undefined,
             gitHubIntegrationEnabled: formGitHubEnabled,
             notificationsEnabled: formNotificationsEnabled,
@@ -134,6 +164,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
         await createMutation.mutateAsync({
           name: formName,
           gitRepositoryUrl: formGitUrl,
+          localRepositoryPath: formLocalRepoPath || undefined,
+          baseBranch: formBaseBranch || 'master',
           constitutionPath: formConstitutionPath || undefined,
           gitHubIntegrationEnabled: formGitHubEnabled,
           notificationsEnabled: formNotificationsEnabled,
@@ -175,7 +207,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     <Stack>
       <Group justify="space-between">
         <Text size="sm" c="dimmed">
-          Configure projects pointing at git repositories. Each project loads its constitution from
+          Configure projects pointing at git repositories. Each project loads context files from
           the repository and supports per-project feature flags.
         </Text>
         <Button leftSection={<TbPlus />} onClick={openCreateModal}>
@@ -190,7 +222,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Repository</Table.Th>
-                <Table.Th>Constitution</Table.Th>
+                <Table.Th>Default Context</Table.Th>
                 <Table.Th>Features</Table.Th>
                 <Table.Th w={100}>Actions</Table.Th>
               </Table.Tr>
@@ -279,6 +311,70 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             value={formName}
             onChange={(e) => setFormName(e.currentTarget.value)}
           />
+          {githubRepos && githubRepos.length > 0 && (
+            <Combobox
+              store={combobox}
+              onOptionSubmit={(val) => {
+                const repo = githubRepos.find((r) => r.cloneUrl === val)
+                if (repo) {
+                  setFormGitUrl(repo.cloneUrl)
+                  setRepoSearch(repo.fullName)
+                  if (!formName) setFormName(repo.fullName.split('/')[1] ?? repo.fullName)
+                }
+                combobox.closeDropdown()
+              }}
+            >
+              <Combobox.Target>
+                <InputBase
+                  label="Repository"
+                  placeholder="Search repos..."
+                  value={repoSearch}
+                  onChange={(e) => {
+                    setRepoSearch(e.currentTarget.value)
+                    combobox.openDropdown()
+                    combobox.updateSelectedOptionIndex()
+                  }}
+                  onClick={() => combobox.openDropdown()}
+                  onFocus={() => combobox.openDropdown()}
+                  onBlur={() => combobox.closeDropdown()}
+                  rightSection={
+                    <Tooltip label="Refresh repos">
+                      <ActionIcon
+                        variant="subtle"
+                        loading={refreshReposMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          refreshReposMutation.mutate()
+                        }}
+                      >
+                        <TbRefresh />
+                      </ActionIcon>
+                    </Tooltip>
+                  }
+                />
+              </Combobox.Target>
+              <Combobox.Dropdown>
+                <Combobox.Options>
+                  <ScrollArea.Autosize mah={200}>
+                    {filteredRepos.length > 0 ? (
+                      filteredRepos.map((repo) => (
+                        <Combobox.Option key={repo.cloneUrl} value={repo.cloneUrl}>
+                          {repo.fullName}
+                          {repo.isPrivate && (
+                            <Text span size="xs" c="dimmed" ml={4}>
+                              (private)
+                            </Text>
+                          )}
+                        </Combobox.Option>
+                      ))
+                    ) : (
+                      <Combobox.Empty>No repos found</Combobox.Empty>
+                    )}
+                  </ScrollArea.Autosize>
+                </Combobox.Options>
+              </Combobox.Dropdown>
+            </Combobox>
+          )}
           <TextInput
             label="Git Repository URL"
             placeholder="https://github.com/org/repo.git"
@@ -311,9 +407,23 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             </Alert>
           )}
           <TextInput
-            label="Constitution Path"
-            placeholder="project-context.md"
-            description="Path to the project constitution file in the repository."
+            label="Local Repository Path"
+            placeholder="D:\src\MyProject"
+            description="Absolute path to the local git clone. Leave empty to auto-clone under the workspace folder."
+            value={formLocalRepoPath}
+            onChange={(e) => setFormLocalRepoPath(e.currentTarget.value)}
+          />
+          <TextInput
+            label="Base Branch"
+            placeholder="master"
+            description="The branch to compare workflow changes against in the Diff tab."
+            value={formBaseBranch}
+            onChange={(e) => setFormBaseBranch(e.currentTarget.value)}
+          />
+          <TextInput
+            label="Default Context"
+            placeholder="AGENTS.md;CLAUDE.md;README.md"
+            description="Semicolon-separated list of files loaded as context for AI agents."
             value={formConstitutionPath}
             onChange={(e) => setFormConstitutionPath(e.currentTarget.value)}
           />

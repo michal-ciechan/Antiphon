@@ -189,6 +189,124 @@ public class GitHubService : IGitHubService
             HeadBranch: root.GetProperty("head").GetProperty("ref").GetString() ?? string.Empty);
     }
 
+    public async Task<(bool Success, string? Login, string? Error)> CheckConnectivityAsync(CancellationToken ct)
+    {
+        try
+        {
+            var json = await _httpClient.GetStringAsync("user", ct);
+            using var doc = JsonDocument.Parse(json);
+            var login = doc.RootElement.TryGetProperty("login", out var loginProp)
+                ? loginProp.GetString()
+                : null;
+            return (true, login, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "GitHub connectivity check failed");
+            return (false, null, ex.Message);
+        }
+    }
+
+    public async Task<IReadOnlyList<GitHubRepoDto>> GetRepositoriesAsync(CancellationToken ct)
+    {
+        _logger.LogInformation("Fetching all repositories from GitHub");
+
+        var repos = new List<GitHubRepoDto>();
+        var page = 1;
+        const int perPage = 100;
+
+        while (true)
+        {
+            var json = await _httpClient.GetStringAsync(
+                $"user/repos?per_page={perPage}&page={page}&type=all", ct);
+
+            using var doc = JsonDocument.Parse(json);
+            var array = doc.RootElement;
+
+            if (array.GetArrayLength() == 0)
+                break;
+
+            foreach (var element in array.EnumerateArray())
+            {
+                repos.Add(new GitHubRepoDto(
+                    FullName: element.GetProperty("full_name").GetString() ?? string.Empty,
+                    CloneUrl: element.GetProperty("clone_url").GetString() ?? string.Empty,
+                    HtmlUrl: element.GetProperty("html_url").GetString() ?? string.Empty,
+                    IsPrivate: element.GetProperty("private").GetBoolean()));
+            }
+
+            if (array.GetArrayLength() < perPage)
+                break;
+
+            page++;
+        }
+
+        _logger.LogInformation("Fetched {Count} repositories", repos.Count);
+        return repos;
+    }
+
+    public async Task<IReadOnlyList<GitHubBranchDto>> GetBranchesAsync(
+        string owner, string repo, CancellationToken ct)
+    {
+        _logger.LogDebug("Fetching branches for {Owner}/{Repo}", owner, repo);
+
+        var json = await _httpClient.GetStringAsync(
+            $"repos/{owner}/{repo}/branches?per_page=100", ct);
+
+        using var doc = JsonDocument.Parse(json);
+        var branches = new List<GitHubBranchDto>();
+        foreach (var element in doc.RootElement.EnumerateArray())
+        {
+            branches.Add(new GitHubBranchDto(
+                Name: element.GetProperty("name").GetString() ?? string.Empty,
+                Sha: element.GetProperty("commit").GetProperty("sha").GetString() ?? string.Empty,
+                IsProtected: element.GetProperty("protected").GetBoolean()
+            ));
+        }
+
+        return branches;
+    }
+
+    public async Task<PullRequestInfo?> FindPullRequestForBranchAsync(
+        string owner, string repo, string headBranch, CancellationToken ct)
+    {
+        _logger.LogDebug(
+            "Looking for PR with head branch {Branch} in {Owner}/{Repo}",
+            headBranch, owner, repo);
+
+        try
+        {
+            // Search open PRs first, then closed (to surface active PRs first)
+            foreach (var state in new[] { "open", "closed" })
+            {
+                var encodedBranch = Uri.EscapeDataString(headBranch);
+                var json = await _httpClient.GetStringAsync(
+                    $"repos/{owner}/{repo}/pulls?state={state}&head={owner}:{encodedBranch}&per_page=1", ct);
+
+                using var doc = JsonDocument.Parse(json);
+                var array = doc.RootElement;
+
+                if (array.GetArrayLength() == 0)
+                    continue;
+
+                var pr = array[0];
+                return new PullRequestInfo(
+                    Number: pr.GetProperty("number").GetInt32(),
+                    Title: pr.GetProperty("title").GetString() ?? string.Empty,
+                    State: pr.GetProperty("state").GetString() ?? "unknown",
+                    BaseBranch: pr.GetProperty("base").GetProperty("ref").GetString() ?? string.Empty,
+                    HtmlUrl: pr.GetProperty("html_url").GetString() ?? string.Empty);
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to look up PR for branch {Branch} in {Owner}/{Repo}", headBranch, owner, repo);
+            return null;
+        }
+    }
+
     private static PullRequestComment ParseComment(JsonElement element, bool isReviewComment)
     {
         return new PullRequestComment(

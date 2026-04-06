@@ -1,9 +1,12 @@
+using System.Net.Http.Headers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -11,15 +14,18 @@ public class ProjectService
 {
     private readonly AppDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly GithubSettings _githubSettings;
     private readonly ILogger<ProjectService> _logger;
 
     public ProjectService(
         AppDbContext db,
         IHttpClientFactory httpClientFactory,
+        IOptions<GithubSettings> githubSettings,
         ILogger<ProjectService> logger)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
+        _githubSettings = githubSettings.Value;
         _logger = logger;
     }
 
@@ -52,7 +58,11 @@ public class ProjectService
             Id = Guid.NewGuid(),
             Name = request.Name,
             GitRepositoryUrl = request.GitRepositoryUrl,
-            ConstitutionPath = request.ConstitutionPath ?? "project-context.md",
+            LocalRepositoryPath = string.IsNullOrWhiteSpace(request.LocalRepositoryPath)
+                ? null
+                : request.LocalRepositoryPath,
+            BaseBranch = string.IsNullOrWhiteSpace(request.BaseBranch) ? "master" : request.BaseBranch,
+            ConstitutionPath = request.ConstitutionPath ?? "AGENTS.md;CLAUDE.md;README.md",
             GitHubIntegrationEnabled = request.GitHubIntegrationEnabled,
             NotificationsEnabled = request.NotificationsEnabled,
             CreatedAt = DateTime.UtcNow,
@@ -78,7 +88,11 @@ public class ProjectService
 
         project.Name = request.Name;
         project.GitRepositoryUrl = request.GitRepositoryUrl;
-        project.ConstitutionPath = request.ConstitutionPath ?? "project-context.md";
+        project.LocalRepositoryPath = string.IsNullOrWhiteSpace(request.LocalRepositoryPath)
+            ? null
+            : request.LocalRepositoryPath;
+        project.BaseBranch = string.IsNullOrWhiteSpace(request.BaseBranch) ? "master" : request.BaseBranch;
+        project.ConstitutionPath = request.ConstitutionPath ?? "AGENTS.md;CLAUDE.md;README.md";
         project.GitHubIntegrationEnabled = request.GitHubIntegrationEnabled;
         project.NotificationsEnabled = request.NotificationsEnabled;
         project.UpdatedAt = DateTime.UtcNow;
@@ -123,7 +137,6 @@ public class ProjectService
                 var client = _httpClientFactory.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(10);
 
-                // Try HEAD first; some git hosts respond to GET on the repo URL
                 var url = gitRepositoryUrl.TrimEnd('/');
                 if (!url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
                 {
@@ -132,6 +145,21 @@ public class ProjectService
                 url += "/info/refs?service=git-upload-pack";
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+                // Add PAT auth directly on the request if the URL is on the configured GitHub host
+                if (_githubSettings.Enabled && !string.IsNullOrEmpty(_githubSettings.PersonalAccessToken))
+                {
+                    var repoHost = new Uri(gitRepositoryUrl).Host;
+                    var githubHost = new Uri(_githubSettings.BaseUrl).Host;
+                    if (string.Equals(repoHost, githubHost, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var credentials = Convert.ToBase64String(
+                            System.Text.Encoding.ASCII.GetBytes($"x:{_githubSettings.PersonalAccessToken}"));
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+                        _logger.LogDebug("Added Basic auth for git connectivity test to {Host}", repoHost);
+                    }
+                }
+
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
                 if (response.IsSuccessStatusCode)
@@ -201,6 +229,8 @@ public class ProjectService
             entity.Id,
             entity.Name,
             entity.GitRepositoryUrl,
+            entity.LocalRepositoryPath,
+            entity.BaseBranch,
             entity.ConstitutionPath,
             entity.GitHubIntegrationEnabled,
             entity.NotificationsEnabled,
