@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Microsoft.AspNetCore.SignalR;
 using Serilog;
 
@@ -11,6 +13,12 @@ namespace Antiphon.Server.Infrastructure.Realtime;
 public class AntiphonHub : Hub
 {
     private static readonly Serilog.ILogger _logger = Log.ForContext<AntiphonHub>();
+    private readonly AuditService _auditService;
+
+    public AntiphonHub(AuditService auditService)
+    {
+        _auditService = auditService;
+    }
 
     public async Task JoinGroup(string groupName)
     {
@@ -34,6 +42,20 @@ public class AntiphonHub : Hub
     {
         _logger.Information("Client disconnected: {ConnectionId}, Exception: {Exception}",
             Context.ConnectionId, exception?.Message);
+
+        await _auditService.RecordEventAsync(
+            AuditEventType.SessionDisconnected,
+            workflowId: null,
+            stageId: null,
+            stageExecutionId: null,
+            summary: $"Client disconnected: {Context.ConnectionId}",
+            clientIp: null,
+            userId: null,
+            gitTagName: null,
+            fullContentJson: null,
+            CancellationToken.None
+        );
+
         await base.OnDisconnectedAsync(exception);
     }
 }

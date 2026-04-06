@@ -14,12 +14,13 @@ public sealed class GitTool : IAgentTool
     private static readonly HashSet<string> AllowedSubcommands = new(StringComparer.OrdinalIgnoreCase)
     {
         "status", "log", "diff", "show", "branch", "add", "commit", "tag",
-        "stash", "checkout", "rev-parse", "ls-files", "blame"
+        "stash", "checkout", "rev-parse", "ls-files", "blame",
+        "clone", "push", "pull", "fetch", "remote", "init", "config"
     };
 
     private static readonly HashSet<string> BlockedFlags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "--force", "-f", "--hard", "--no-verify"
+        "--hard", "--no-verify"
     };
 
     public GitTool(string worktreeRoot)
@@ -29,7 +30,7 @@ public sealed class GitTool : IAgentTool
 
     public string Name => "git";
 
-    public string Description => "Executes git commands within the worktree. Supports a safe subset of git operations: status, log, diff, show, branch, add, commit, tag, stash, checkout, rev-parse, ls-files, blame.";
+    public string Description => "Executes git commands within the worktree. Supports: status, log, diff, show, branch, add, commit, tag, stash, checkout, rev-parse, ls-files, blame, clone, push, pull, fetch, remote, init, config.";
 
     public string ParametersSchema => """
         {
@@ -75,7 +76,7 @@ public sealed class GitTool : IAgentTool
         };
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromSeconds(30));
+        cts.CancelAfter(TimeSpan.FromMinutes(5));
 
         using var process = new Process { StartInfo = psi };
         process.Start();

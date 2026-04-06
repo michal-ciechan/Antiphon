@@ -1,6 +1,8 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenAI;
+using System.ClientModel;
 using Antiphon.Server.Application.Settings;
 
 namespace Antiphon.Server.Infrastructure.Agents;
@@ -41,14 +43,11 @@ public class LlmClientFactory
                 "No LLM model configured. Set a default model in Llm:DefaultModel or specify a model in the workflow stage.");
         }
 
-        var provider = _settings.Providers.FirstOrDefault(
-            p => p.Name.Equals(resolvedProvider, StringComparison.OrdinalIgnoreCase));
-
-        if (provider is null)
+        if (!_settings.Providers.TryGetValue(resolvedProvider, out var provider))
         {
             throw new InvalidOperationException(
                 $"LLM provider '{resolvedProvider}' is not configured. " +
-                $"Available providers: {string.Join(", ", _settings.Providers.Select(p => p.Name))}");
+                $"Available providers: {string.Join(", ", _settings.Providers.Keys)}");
         }
 
         if (string.IsNullOrEmpty(provider.ApiKey))
@@ -70,21 +69,30 @@ public class LlmClientFactory
             "Creating IChatClient for provider={Provider}, model={Model}",
             resolvedProvider, resolvedModel);
 
-        return CreateProviderClient(provider, resolvedModel);
+        return CreateProviderClient(resolvedProvider, provider, resolvedModel);
     }
 
-    private IChatClient CreateProviderClient(LlmProviderSettings provider, string model)
+    private IChatClient CreateProviderClient(string providerName, LlmProviderSettings provider, string model)
     {
-        var httpClient = _httpClientFactory.CreateClient($"llm-{provider.Name}");
-
-        if (!string.IsNullOrEmpty(provider.BaseUrl))
+        if (providerName.Equals("openai", StringComparison.OrdinalIgnoreCase))
         {
-            httpClient.BaseAddress = new Uri(provider.BaseUrl);
+            var openAiClient = new OpenAIClient(
+                new ApiKeyCredential(provider.ApiKey),
+                new OpenAIClientOptions
+                {
+                    Endpoint = !string.IsNullOrEmpty(provider.BaseUrl)
+                        ? new Uri(provider.BaseUrl)
+                        : null
+                }
+            );
+            return openAiClient.GetChatClient(model).AsIChatClient();
         }
 
-        // Return a placeholder adapter. In production, replace with the provider-specific
-        // IChatClient (e.g., from Microsoft.Extensions.AI.OpenAI or an Anthropic package).
-        return new PlaceholderChatClient(httpClient, provider.ApiKey, model, provider.Name);
+        // Fallback — PlaceholderChatClient for other providers not yet implemented
+        var httpClient = _httpClientFactory.CreateClient($"llm-{providerName}");
+        if (!string.IsNullOrEmpty(provider.BaseUrl))
+            httpClient.BaseAddress = new Uri(provider.BaseUrl);
+        return new PlaceholderChatClient(httpClient, provider.ApiKey, model, providerName);
     }
 }
 

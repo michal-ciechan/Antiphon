@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -29,7 +30,7 @@ public static class ArtifactEndpoints
             var artifactDtos = workflow.Stages
                 .Where(s => s.Status == StageStatus.Completed)
                 .SelectMany(stage => stage.StageExecutions
-                    .Where(e => e.Status == StageStatus.Completed && !string.IsNullOrEmpty(e.GitTagName))
+                    .Where(e => e.Status == StageStatus.Completed && (!string.IsNullOrEmpty(e.GitTagName) || !string.IsNullOrEmpty(e.OutputContent)))
                     .Select(execution => new ArtifactListItemDto(
                         execution.Id,
                         stage.Id,
@@ -45,33 +46,65 @@ public static class ArtifactEndpoints
             return Results.Ok(artifactDtos);
         });
 
-        // GET /api/workflows/{id}/artifacts/{stageId} — get latest artifact content for a stage
+        // GET /api/workflows/{id}/artifacts/{stageId}?version={version} — get artifact content for a stage
         artifacts.MapGet("/{stageId:guid}", async (
             Guid id,
             Guid stageId,
+            int? version,
             AppDbContext db,
             CancellationToken cancellationToken) =>
         {
-            var stage = await db.Stages
-                .Include(s => s.StageExecutions)
-                .FirstOrDefaultAsync(s => s.Id == stageId && s.WorkflowId == id, cancellationToken)
+            var workflow = await db.Workflows
+                .Include(w => w.Project)
+                .Include(w => w.Stages)
+                    .ThenInclude(s => s.StageExecutions)
+                .FirstOrDefaultAsync(w => w.Id == id, cancellationToken)
+                ?? throw new NotFoundException(nameof(Workflow), id);
+
+            var stage = workflow.Stages.FirstOrDefault(s => s.Id == stageId)
                 ?? throw new NotFoundException(nameof(Stage), stageId);
 
-            var latestExecution = stage.StageExecutions
-                .Where(e => e.Status == StageStatus.Completed)
-                .OrderByDescending(e => e.Version)
-                .FirstOrDefault()
-                ?? throw new NotFoundException("Completed execution", stageId);
+            var completedExecutions = stage.StageExecutions
+                .Where(e => e.Status == StageStatus.Completed);
+
+            var execution = version.HasValue
+                ? completedExecutions.FirstOrDefault(e => e.Version == version.Value)
+                    ?? throw new NotFoundException($"Completed execution v{version.Value}", stageId)
+                : completedExecutions
+                    .OrderByDescending(e => e.Version)
+                    .FirstOrDefault()
+                    ?? throw new NotFoundException("Completed execution", stageId);
+
+            var localRepoPath = workflow.Project?.LocalRepositoryPath;
+            var artifactFileName = $"{stage.Name}-v{execution.Version}.md";
+
+            string content;
+            if (!string.IsNullOrEmpty(localRepoPath))
+            {
+                var artifactDir = GitService.GetArtifactDirectory(id);
+                var filePath = Path.Combine(
+                    localRepoPath,
+                    artifactDir,
+                    artifactFileName
+                );
+                content = File.Exists(filePath)
+                    ? await File.ReadAllTextAsync(filePath, cancellationToken)
+                    : execution.OutputContent ?? string.Empty;  // fall back to stored content
+            }
+            else
+            {
+                content = execution.OutputContent ?? string.Empty;
+            }
 
             var dto = new ArtifactDetailDto(
-                latestExecution.Id,
+                execution.Id,
                 stage.Id,
                 stage.Name,
-                $"{stage.Name}-v{latestExecution.Version}.md",
-                latestExecution.GitTagName ?? string.Empty,
-                latestExecution.Version,
+                artifactFileName,
+                content,
+                execution.Version,
                 stage.StageOrder == 0,
-                latestExecution.CompletedAt ?? latestExecution.StartedAt);
+                execution.CompletedAt ?? execution.StartedAt);
 
             return Results.Ok(dto);
         });

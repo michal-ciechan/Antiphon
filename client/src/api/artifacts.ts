@@ -12,10 +12,15 @@ export function useWorkflowArtifacts(workflowId: string | undefined) {
   })
 }
 
-export function useStageArtifact(workflowId: string | undefined, stageId: string | undefined) {
+export function useStageArtifact(
+  workflowId: string | undefined,
+  stageId: string | undefined,
+  version?: number,
+) {
+  const versionParam = version != null ? `?version=${version}` : ''
   return useQuery({
-    queryKey: ['workflow', workflowId, 'artifacts', stageId],
-    queryFn: () => apiGet<ArtifactDto>(`/workflows/${workflowId}/artifacts/${stageId}`),
+    queryKey: ['workflow', workflowId, 'artifacts', stageId, version],
+    queryFn: () => apiGet<ArtifactDto>(`/workflows/${workflowId}/artifacts/${stageId}${versionParam}`),
     enabled: !!workflowId && !!stageId,
   })
 }

@@ -16,6 +16,7 @@ public class StageExecution
     public DateTime? CompletedAt { get; set; }
     public string? ErrorDetails { get; set; }
     public string? GitTagName { get; set; }
+    public string? OutputContent { get; set; }
     public long TokensIn { get; set; }
     public long TokensOut { get; set; }
     public decimal EstimatedCostUsd { get; set; }

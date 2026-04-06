@@ -1,0 +1,219 @@
+/* TipTap editor prose styling — dark theme */
+
+.tiptap-editor-wrapper .tiptap {
+  outline: none;
+  padding: var(--mantine-spacing-md);
+}
+
+.tiptap-editor-wrapper .tiptap h1,
+.tiptap-editor-wrapper .tiptap h2,
+.tiptap-editor-wrapper .tiptap h3,
+.tiptap-editor-wrapper .tiptap h4,
+.tiptap-editor-wrapper .tiptap h5,
+.tiptap-editor-wrapper .tiptap h6 {
+  color: var(--mantine-color-text);
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+}
+
+.tiptap-editor-wrapper .tiptap h1 { font-size: 1.75rem; }
+.tiptap-editor-wrapper .tiptap h2 { font-size: 1.4rem; }
+.tiptap-editor-wrapper .tiptap h3 { font-size: 1.2rem; }
+.tiptap-editor-wrapper .tiptap h4 { font-size: 1.05rem; }
+
+.tiptap-editor-wrapper .tiptap p {
+  margin-bottom: 0.75em;
+}
+
+.tiptap-editor-wrapper .tiptap ul,
+.tiptap-editor-wrapper .tiptap ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+
+.tiptap-editor-wrapper .tiptap li {
+  margin-bottom: 0.25em;
+}
+
+.tiptap-editor-wrapper .tiptap code {
+  background-color: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-xs);
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+}
+
+.tiptap-editor-wrapper .tiptap pre {
+  background-color: var(--mantine-color-dark-7);
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-text);
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin-bottom: 1em;
+  overflow-x: auto;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+}
+
+.tiptap-editor-wrapper .tiptap pre code {
+  background: none;
+  border: none;
+  font-size: inherit;
+  padding: 0;
+}
+
+.tiptap-editor-wrapper .tiptap blockquote {
+  border-left: 3px solid var(--mantine-color-dark-3);
+  color: var(--mantine-color-dimmed);
+  margin: 0.75em 0;
+  padding-left: 1em;
+}
+
+.tiptap-editor-wrapper .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--mantine-color-dark-4);
+  margin: 1.5em 0;
+}
+
+.tiptap-editor-wrapper .tiptap a {
+  color: var(--mantine-color-active-4);
+  text-decoration: underline;
+}
+
+.tiptap-editor-wrapper .tiptap strong {
+  font-weight: 600;
+}
+
+.tiptap-editor-wrapper .tiptap em {
+  font-style: italic;
+}
+
+/* Read-only markdown viewer (WorkflowOutputsTab) */
+
+.tiptap-readonly .tiptap {
+  outline: none;
+}
+
+.tiptap-readonly .tiptap p {
+  margin-bottom: 0.75em;
+}
+
+.tiptap-readonly .tiptap ul,
+.tiptap-readonly .tiptap ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+
+.tiptap-readonly .tiptap li {
+  margin-bottom: 0.25em;
+}
+
+.tiptap-readonly .tiptap code {
+  background-color: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-xs);
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+}
+
+.tiptap-readonly .tiptap pre {
+  background-color: var(--mantine-color-dark-7);
+  border-radius: var(--mantine-radius-sm);
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin-bottom: 1em;
+  overflow-x: auto;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+}
+
+.tiptap-readonly .tiptap pre code {
+  background: none;
+  border: none;
+  font-size: inherit;
+  padding: 0;
+}
+
+.tiptap-readonly .tiptap blockquote {
+  border-left: 3px solid var(--mantine-color-dark-3);
+  color: var(--mantine-color-dimmed);
+  margin: 0.75em 0;
+  padding-left: 1em;
+}
+
+.tiptap-readonly .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--mantine-color-dark-4);
+  margin: 1.5em 0;
+}
+
+.tiptap-readonly .tiptap a {
+  color: var(--mantine-color-active-4);
+  text-decoration: underline;
+}
+
+.tiptap-readonly .tiptap strong {
+  font-weight: 600;
+}
+
+.tiptap-readonly .tiptap em {
+  font-style: italic;
+}
+
+/* Coloured headings — each level gets its own hue */
+
+.tiptap-readonly .tiptap h1,
+.tiptap-readonly .tiptap h2,
+.tiptap-readonly .tiptap h3,
+.tiptap-readonly .tiptap h4,
+.tiptap-readonly .tiptap h5,
+.tiptap-readonly .tiptap h6 {
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 1.25em;
+  margin-bottom: 0.4em;
+}
+
+.tiptap-readonly .tiptap h1 {
+  font-size: 1.6rem;
+  color: var(--mantine-color-cyan-4);
+}
+
+.tiptap-readonly .tiptap h2 {
+  font-size: 1.3rem;
+  color: var(--mantine-color-teal-4);
+}
+
+.tiptap-readonly .tiptap h3 {
+  font-size: 1.1rem;
+  color: var(--mantine-color-violet-4);
+}
+
+.tiptap-readonly .tiptap h4 {
+  font-size: 1rem;
+  color: var(--mantine-color-orange-4);
+}
+
+.tiptap-readonly .tiptap h5 {
+  font-size: 0.9rem;
+  color: var(--mantine-color-pink-4);
+}
+
+.tiptap-readonly .tiptap h6 {
+  font-size: 0.85rem;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Editable mode — visible border and focus ring */
+.tiptap-editor-wrapper.editable .tiptap {
+  border: 1px solid var(--mantine-color-dark-4);
+  border-radius: var(--mantine-radius-sm);
+  min-height: 200px;
+}
+
+.tiptap-editor-wrapper.editable .tiptap:focus {
+  border-color: var(--mantine-color-active-5);
+  box-shadow: 0 0 0 2px var(--mantine-color-active-9);
+}

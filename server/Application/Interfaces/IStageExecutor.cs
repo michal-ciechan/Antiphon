@@ -15,13 +15,16 @@ public interface IStageExecutor
 public sealed record StageExecutionContext(
     Guid WorkflowId,
     Guid StageId,
+    Guid StageExecutionId,
     string StageName,
     string ExecutorType,
     string? ModelName,
     string? SystemPrompt,
     IReadOnlyList<string> UpstreamArtifacts,
     string? Constitution,
-    string? StageInstructions);
+    string? StageInstructions,
+    string? InitialContext,
+    string? BranchName);
 
 /// <summary>
 /// Result produced by a stage executor after execution.
