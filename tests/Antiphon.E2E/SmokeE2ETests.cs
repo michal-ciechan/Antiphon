@@ -9,6 +9,7 @@ namespace Antiphon.E2E;
 /// Smoke E2E test that verifies the full stack: browser -> React -> API -> DB.
 /// Uses AntiphonAppFixture for the backend and PlaywrightFixture for the browser.
 /// </summary>
+[Collection("E2E")]
 public class SmokeE2ETests : IAsyncLifetime
 {
     private readonly AntiphonAppFixture _appFixture = new();
@@ -36,16 +37,15 @@ public class SmokeE2ETests : IAsyncLifetime
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "Requires 'npm run build' to have been run and Playwright browsers installed. " +
-                 "Run 'npx playwright install chromium' and 'cd client && npm run build' first.")]
+    [Fact]
     public async Task Full_stack_smoke_test_browser_to_api_to_db()
     {
         // This test verifies the full stack: Playwright browser -> React SPA -> API -> PostgreSQL
         var (page, context) = await _playwrightFixture.NewPageAsync();
         try
         {
-            // Navigate to the app root served by WebApplicationFactory
-            var response = await page.GotoAsync(_appFixture.BaseAddress);
+            // Navigate to the app root served by Kestrel (real TCP endpoint)
+            var response = await page.GotoAsync(_appFixture.PlaywrightAddress);
             Assert.NotNull(response);
             response!.Status.Should().BeLessThan(500);
 
@@ -53,7 +53,7 @@ public class SmokeE2ETests : IAsyncLifetime
             await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.DOMContentLoaded);
 
             // Verify API connectivity from the browser context
-            var healthResponse = await page.APIRequest.GetAsync($"{_appFixture.BaseAddress}/health");
+            var healthResponse = await page.APIRequest.GetAsync($"{_appFixture.PlaywrightAddress}/health");
             healthResponse.Status.Should().Be(200);
         }
         finally

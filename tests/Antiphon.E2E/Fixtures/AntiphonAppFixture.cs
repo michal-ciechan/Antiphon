@@ -1,19 +1,25 @@
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
 using Testcontainers.PostgreSql;
 
 namespace Antiphon.E2E.Fixtures;
 
 /// <summary>
-/// WebApplicationFactory-based fixture for E2E tests.
-/// Provides a real ASP.NET Core host backed by a PostgreSQL testcontainer.
-/// Supports UsePrebuiltFrontend flag to toggle between serving static files
-/// (from client/dist) or expecting a Vite dev server to be running.
+/// Fixture for E2E tests backed by a PostgreSQL testcontainer.
+/// Starts the real Antiphon app on a random TCP port via Kestrel
+/// so both HttpClient and Playwright can connect to it.
 /// </summary>
 public class AntiphonAppFixture : IAsyncLifetime
 {
@@ -24,19 +30,30 @@ public class AntiphonAppFixture : IAsyncLifetime
         .WithPassword("test")
         .Build();
 
-    private WebApplicationFactory<Program> _factory = null!;
+    private IHost? _kestrelHost;
+    private WebApplicationFactory<Program>? _factory;
 
     /// <summary>
     /// When true, the app serves prebuilt React assets from wwwroot (client/dist).
-    /// When false, E2E tests should point the browser at the Vite dev server
-    /// which proxies API calls to this host.
     /// </summary>
     public bool UsePrebuiltFrontend { get; set; }
 
     /// <summary>
-    /// The base address of the test server.
+    /// When true, replaces AgentExecutor with MockExecutor so stages complete
+    /// immediately without requiring real LLM credentials. Use in tests that
+    /// need completed stages/artifacts.
     /// </summary>
-    public string BaseAddress => _factory.Server.BaseAddress.ToString().TrimEnd('/');
+    public bool UseMockExecutor { get; set; }
+
+    /// <summary>
+    /// The real TCP address that both HttpClient and Playwright can use.
+    /// </summary>
+    public string BaseAddress { get; private set; } = null!;
+
+    /// <summary>
+    /// Alias for BaseAddress — a real TCP endpoint Playwright Chromium can navigate to.
+    /// </summary>
+    public string PlaywrightAddress => BaseAddress;
 
     public HttpClient HttpClient { get; private set; } = null!;
 
@@ -44,57 +61,66 @@ public class AntiphonAppFixture : IAsyncLifetime
     {
         await _container.StartAsync();
 
-        _factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
-            {
-                if (UsePrebuiltFrontend)
-                {
-                    builder.UseWebRoot(Path.Combine(FindClientDistPath(), "dist"));
-                }
+        var connectionString = _container.GetConnectionString();
+        var port = GetRandomAvailablePort();
 
-                builder.ConfigureServices(services =>
-                {
-                    // Remove existing DbContext registration
-                    var descriptor = services.SingleOrDefault(
-                        d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));
-                    if (descriptor is not null)
-                    {
-                        services.Remove(descriptor);
-                    }
+        _factory = new KestrelWebApplicationFactory(
+            UsePrebuiltFrontend ? FindClientDistPath() : null,
+            connectionString,
+            port,
+            UseMockExecutor
+        );
 
-                    // Add testcontainer PostgreSQL
-                    services.AddDbContext<AppDbContext>(options =>
-                        options.UseNpgsql(_container.GetConnectionString(), npgsql =>
-                        {
-                            npgsql.MigrationsAssembly("Antiphon.Server");
-                            npgsql.SetPostgresVersion(16, 0);
-                        }));
-                });
-            });
+        // Trigger host creation (WAF builds host on first access)
+        // CreateClient() accesses the dummy TestServer host; we ignore its result.
+        try
+        {
+            _factory.CreateClient();
+        }
+        catch
+        {
+            // The dummy host has no real endpoints — that's fine.
+        }
 
-        HttpClient = _factory.CreateClient();
+        var kestrelFactory = (KestrelWebApplicationFactory)_factory;
+        _kestrelHost = kestrelFactory.KestrelHost
+            ?? throw new InvalidOperationException("Kestrel host was not started.");
+
+        BaseAddress = $"http://127.0.0.1:{port}";
+        HttpClient = new HttpClient { BaseAddress = new Uri(BaseAddress) };
     }
 
     public async Task DisposeAsync()
     {
         HttpClient.Dispose();
-        await _factory.DisposeAsync();
+
+        if (_kestrelHost is not null)
+        {
+            await _kestrelHost.StopAsync();
+            _kestrelHost.Dispose();
+        }
+
+        if (_factory is not null)
+        {
+            await _factory.DisposeAsync();
+        }
+
         await _container.DisposeAsync();
     }
 
     /// <summary>
-    /// Creates a new HttpClient for the test server (useful for parallel requests).
+    /// Creates a new HttpClient pointed at the real Kestrel endpoint.
     /// </summary>
-    public HttpClient CreateClient() => _factory.CreateClient();
+    public HttpClient CreateClient() => new() { BaseAddress = new Uri(BaseAddress) };
 
     /// <summary>
-    /// Provides access to the DI container for resolving services in tests.
+    /// Provides access to the DI container from the Kestrel host.
     /// </summary>
-    public IServiceProvider Services => _factory.Services;
+    public IServiceProvider Services => _kestrelHost?.Services
+        ?? throw new InvalidOperationException("Host not initialized.");
 
     private static string FindClientDistPath()
     {
-        // Walk up from the test assembly location to find the client directory
         var dir = AppContext.BaseDirectory;
         while (dir is not null)
         {
@@ -108,5 +134,118 @@ public class AntiphonAppFixture : IAsyncLifetime
 
         throw new DirectoryNotFoundException(
             "Could not find client/ directory. Ensure the frontend has been built with 'npm run build'.");
+    }
+
+    private static int GetRandomAvailablePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    /// <summary>
+    /// Custom WebApplicationFactory that starts the real app on Kestrel
+    /// instead of TestServer. WAF applies all ConfigureWebHost overrides
+    /// (DB replacement etc.) to the host builder. In CreateHost, we override
+    /// TestServer with Kestrel so the app listens on a real TCP port.
+    /// A dummy TestServer host is returned to satisfy WAF internals.
+    /// </summary>
+    private sealed class KestrelWebApplicationFactory : WebApplicationFactory<Program>
+    {
+        private readonly string? _clientDistPath;
+        private readonly string _connectionString;
+        private readonly int _port;
+        private readonly bool _useMockExecutor;
+
+        public IHost? KestrelHost { get; private set; }
+
+        public KestrelWebApplicationFactory(
+            string? clientDistPath,
+            string connectionString,
+            int port,
+            bool useMockExecutor = false
+        )
+        {
+            _clientDistPath = clientDistPath;
+            _connectionString = connectionString;
+            _port = port;
+            _useMockExecutor = useMockExecutor;
+        }
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            if (_clientDistPath is not null)
+            {
+                builder.UseWebRoot(Path.Combine(_clientDistPath, "dist"));
+            }
+
+            builder.ConfigureServices(services =>
+            {
+                var descriptor = services.SingleOrDefault(
+                    d => d.ServiceType == typeof(DbContextOptions<AppDbContext>)
+                );
+                if (descriptor is not null)
+                {
+                    services.Remove(descriptor);
+                }
+
+                services.AddDbContext<AppDbContext>(options =>
+                    options.UseNpgsql(_connectionString, npgsql =>
+                    {
+                        npgsql.MigrationsAssembly("Antiphon.Server");
+                        npgsql.SetPostgresVersion(16, 0);
+                    })
+                );
+
+                if (_useMockExecutor)
+                {
+                    // Remove the real IStageExecutor and replace with MockExecutor
+                    var executorDescriptor = services.SingleOrDefault(
+                        d => d.ServiceType == typeof(IStageExecutor)
+                    );
+                    if (executorDescriptor is not null)
+                        services.Remove(executorDescriptor);
+
+                    services.AddScoped<IStageExecutor, MockExecutor>();
+                }
+            });
+        }
+
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            // WAF has already added UseTestServer() to the builder.
+            // Override it with Kestrel so the app listens on a real TCP port.
+            // ConfigureWebHost callbacks run in order; ours runs AFTER WAF's,
+            // so UseKestrel() replaces TestServer.
+            builder.ConfigureWebHost(wb =>
+            {
+                wb.UseKestrel();
+                wb.UseUrls($"http://127.0.0.1:{_port}");
+            });
+
+            KestrelHost = builder.Build();
+            KestrelHost.Start();
+
+            // WAF calls GetTestServer() on the returned host.
+            // Return a dummy host with TestServer to satisfy that.
+            var dummyBuilder = new HostBuilder();
+            dummyBuilder.ConfigureWebHost(wb =>
+            {
+                wb.UseTestServer();
+                wb.Configure(app => { });
+            });
+            var dummyHost = dummyBuilder.Build();
+            dummyHost.Start();
+
+            return dummyHost;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            // Don't dispose KestrelHost here — the outer fixture handles it
+            base.Dispose(disposing);
+        }
     }
 }
