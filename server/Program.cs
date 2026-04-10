@@ -133,12 +133,16 @@ try
     app.UseMiddleware<ExceptionMiddleware>();
     app.UseMiddleware<AuditMiddleware>();
 
-    // Create database if it doesn't exist, then migrate and seed
+    // Create database if it doesn't exist, then migrate and seed.
+    // Wrapped in try-catch: in managed environments (k8s, shared postgres) the app user
+    // may not have access to the postgres admin DB or CREATEDB privilege — that's fine if
+    // the database already exists.
     var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
-    var masterConnStr = new NpgsqlConnectionStringBuilder(rawConnectionString) { Database = "postgres" }.ConnectionString;
-    var targetDb = new NpgsqlConnectionStringBuilder(rawConnectionString).Database;
-    await using (var adminConn = new NpgsqlConnection(masterConnStr))
+    try
     {
+        var masterConnStr = new NpgsqlConnectionStringBuilder(rawConnectionString) { Database = "postgres" }.ConnectionString;
+        var targetDb = new NpgsqlConnectionStringBuilder(rawConnectionString).Database;
+        await using var adminConn = new NpgsqlConnection(masterConnStr);
         await adminConn.OpenAsync();
         await using var checkCmd = new NpgsqlCommand(
             $"SELECT 1 FROM pg_database WHERE datname = '{targetDb}'", adminConn);
@@ -149,6 +153,10 @@ try
             await using var createCmd = new NpgsqlCommand($"CREATE DATABASE \"{targetDb}\"", adminConn);
             await createCmd.ExecuteNonQueryAsync();
         }
+    }
+    catch (Exception ex)
+    {
+        Log.Warning(ex, "Could not auto-create database (may already exist or user lacks CREATEDB permission) — continuing");
     }
 
     using (var scope = app.Services.CreateScope())
