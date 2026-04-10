@@ -1,0 +1,16 @@
+**/.git
+**/.gitignore
+**/node_modules
+**/dist
+**/.idea
+**/.vs
+**/obj
+**/bin
+client/.env*
+server/appsettings.Development.json
+workspace/
+analysis/
+tests/
+*.md
+*.ps1
+.github/
