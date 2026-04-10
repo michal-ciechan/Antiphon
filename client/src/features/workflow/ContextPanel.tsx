@@ -1,7 +1,7 @@
 import { useRef, useCallback } from 'react'
-import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table, Tooltip } from '@mantine/core'
+import { Box, Tabs, Text, Stack, Badge, Group, UnstyledButton, Loader, Table, Tooltip, Anchor } from '@mantine/core'
 import { VscFile, VscInfo, VscComment, VscDiff, VscHistory } from 'react-icons/vsc'
-import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse, TbColumns2 } from 'react-icons/tb'
+import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse, TbColumns2, TbGitBranch, TbExternalLink } from 'react-icons/tb'
 import { WorkflowOutputsTab } from './WorkflowOutputsTab'
 import { BranchDiffViewer } from './BranchDiffViewer'
 import { ArtifactDiffViewer } from '../artifact'
@@ -9,6 +9,7 @@ import { useAuditQuery } from '../../api/audit'
 import type { AuditQueryResult, CostByModelDto } from '../../api/audit'
 import type { TimelineMessage } from './types'
 import type { StageDto } from '../../api/workflows'
+import type { BranchDiffDto } from '../../api/projects'
 
 export type ContextTab = 'outputs' | 'stage-info' | 'conversation' | 'diff' | 'audit'
 
@@ -25,6 +26,8 @@ interface ContextPanelProps {
   currentStageId?: string
   /** Workflow ID for audit queries */
   workflowId?: string
+  /** Branch diff data for branch/PR info in Stage Info tab */
+  branchDiff?: BranchDiffDto | null
   /** Old artifact content for diff tab */
   diffOldContent?: string
   /** New artifact content for diff tab */
@@ -51,12 +54,20 @@ const TAB_CONFIG: { value: ContextTab; label: string; icon: React.ReactNode }[] 
   { value: 'audit', label: 'Audit', icon: <VscHistory size={14} /> },
 ]
 
+const PR_STATE_COLORS: Record<string, string> = {
+  open: 'green',
+  closed: 'red',
+  merged: 'violet',
+}
+
 function StageInfoTab({
   currentStage,
   stages,
+  branchDiff,
 }: {
   currentStage?: StageDto | null
   stages?: StageDto[]
+  branchDiff?: BranchDiffDto | null
 }) {
   return (
     <Stack gap="sm">
@@ -162,6 +173,58 @@ function StageInfoTab({
         <Text c="dimmed" size="sm">
           No stage information available.
         </Text>
+      )}
+
+      {/* Branch + PR info */}
+      {branchDiff?.headBranch && (
+        <Box>
+          <Text size="xs" fw={600} mb={4}>
+            Branch
+          </Text>
+          <Stack gap={4}>
+            <Group gap="xs" wrap="nowrap">
+              <Text size="xs" c="dimmed" style={{ flexShrink: 0, minWidth: 36 }}>Base:</Text>
+              <TbGitBranch size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
+              <Text size="xs" style={{ wordBreak: 'break-all' }}>
+                {branchDiff.baseBranch.replace(/^origin\//, '')}
+              </Text>
+            </Group>
+            <Group gap="xs" wrap="nowrap">
+              <Text size="xs" c="dimmed" style={{ flexShrink: 0, minWidth: 36 }}>Head:</Text>
+              <TbGitBranch size={13} color="var(--mantine-color-active-4)" style={{ flexShrink: 0 }} />
+              <Text size="xs" style={{ wordBreak: 'break-all' }}>
+                {branchDiff.headBranch.replace(/^origin\//, '')}
+              </Text>
+            </Group>
+            {branchDiff.prNumber != null && (
+              <>
+                <Group gap="xs" align="center" wrap="nowrap">
+                  <Text size="xs" c="dimmed" style={{ flexShrink: 0, minWidth: 36 }}>PR:</Text>
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={PR_STATE_COLORS[branchDiff.prState?.toLowerCase() ?? ''] ?? 'gray'}
+                  >
+                    {branchDiff.prState ?? 'unknown'}
+                  </Badge>
+                  {branchDiff.prUrl ? (
+                    <Anchor href={branchDiff.prUrl} target="_blank" size="xs" style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      #{branchDiff.prNumber}
+                      <TbExternalLink size={11} />
+                    </Anchor>
+                  ) : (
+                    <Text size="xs">#{branchDiff.prNumber}</Text>
+                  )}
+                </Group>
+                {branchDiff.prTitle && (
+                  <Text size="xs" c="dimmed" lineClamp={2} style={{ paddingLeft: 42 }}>
+                    {branchDiff.prTitle}
+                  </Text>
+                )}
+              </>
+            )}
+          </Stack>
+        </Box>
       )}
     </Stack>
   )
@@ -484,6 +547,7 @@ export function ContextPanel({
   messages,
   currentStageId,
   workflowId,
+  branchDiff,
   diffOldContent,
   diffNewContent,
   diffOldLabel,
@@ -661,7 +725,7 @@ export function ContextPanel({
             padding: 'var(--mantine-spacing-sm)',
           }}
         >
-          <StageInfoTab currentStage={currentStage} stages={stages} />
+          <StageInfoTab currentStage={currentStage} stages={stages} branchDiff={branchDiff} />
         </Tabs.Panel>
 
         {/* Conversation Tab -- compact audit-style list */}
