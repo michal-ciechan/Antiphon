@@ -1,10 +1,11 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { Box, Text, Title, Badge, Group, Loader, Stack, Tooltip, UnstyledButton, Menu, ActionIcon, Modal, Button } from '@mantine/core'
+import { Box, Text, Title, Badge, Group, Loader, Stack, Tooltip, UnstyledButton, Menu, ActionIcon } from '@mantine/core'
 import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse, TbColumns2, TbSettings, TbTrash } from 'react-icons/tb'
 import { useParams, useNavigate } from 'react-router'
-import { useWorkflow, useDeleteWorkflow, type StageDto, type WorkflowStatus } from '../../api/workflows'
+import { useWorkflow, type StageDto, type WorkflowStatus } from '../../api/workflows'
 import { useWorkflowArtifacts } from '../../api/artifacts'
 import { useBranchDiff } from '../../api/projects'
+import { DeleteWorkflowModal } from './DeleteWorkflowModal'
 import { useApproveGate, useRejectGate, usePromptAgent, useAddComment } from '../../api/gates'
 import { useGoBack, useAffectedStages, useSubmitCascade, type AffectedStageDto, type CascadeDecision } from '../../api/cascade'
 import { StagePipeline } from './StagePipeline'
@@ -45,8 +46,6 @@ export function WorkflowDetailPage() {
   const navigate = useNavigate()
   const { data: workflow, isLoading, error } = useWorkflow(id)
   const { data: artifacts } = useWorkflowArtifacts(id)
-
-  const deleteWorkflow = useDeleteWorkflow()
 
   // Gate mutations
   const approveGate = useApproveGate(id)
@@ -128,10 +127,6 @@ export function WorkflowDetailPage() {
       setActiveTab('outputs')
     }
   }
-
-  const handleArtifactClick = useCallback((artifact: ArtifactDto) => {
-    setModalArtifact(artifact)
-  }, [])
 
   // Gate action handlers — no confirmation dialogs (UX-DR25, recoverable actions)
   const handleApprove = useCallback(() => {
@@ -409,6 +404,7 @@ export function WorkflowDetailPage() {
           messages={messages}
           currentStageId={currentStage?.id}
           workflowId={id}
+          branchDiff={branchDiff}
           diffOldContent={diffOldContent}
           diffNewContent={diffNewContent}
           diffOldLabel={diffOldLabel}
@@ -430,31 +426,12 @@ export function WorkflowDetailPage() {
       />
 
       {/* Delete workflow confirmation modal */}
-      <Modal
+      <DeleteWorkflowModal
+        workflowId={id!}
         opened={confirmDeleteOpen}
         onClose={() => setConfirmDeleteOpen(false)}
-        title="Delete Workflow"
-        centered
-        size="sm"
-      >
-        <Text size="sm">Are you sure you want to delete this workflow? This cannot be undone.</Text>
-        <Group justify="flex-end" mt="md" gap="sm">
-          <Button variant="default" onClick={() => setConfirmDeleteOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            color="red"
-            loading={deleteWorkflow.isPending}
-            onClick={() => {
-              deleteWorkflow.mutate(id!, {
-                onSuccess: () => navigate('/'),
-              })
-            }}
-          >
-            Delete
-          </Button>
-        </Group>
-      </Modal>
+        onDeleted={() => navigate('/')}
+      />
 
       {/* Artifact viewer modal — opened when clicking an output in the Outputs tab */}
       <ArtifactModal

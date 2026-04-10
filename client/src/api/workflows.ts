@@ -61,6 +61,16 @@ export interface FeatureStatusDto {
   completedStages: string[]
 }
 
+export interface WorkflowDeletePeerDto {
+  id: string
+  name: string
+}
+
+export interface WorkflowDeleteInfoDto {
+  branchName: string
+  peerWorkflows: WorkflowDeletePeerDto[]
+}
+
 // --- Workflow hooks ---
 
 const WORKFLOWS_KEY = ['workflows'] as const
@@ -121,10 +131,24 @@ export function useAbandonWorkflow() {
   })
 }
 
+export function useWorkflowDeleteInfo(id: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['workflow-delete-info', id],
+    queryFn: () => apiGet<WorkflowDeleteInfoDto>(`/workflows/${id}/delete-info`),
+    enabled: !!id && enabled,
+  })
+}
+
 export function useDeleteWorkflow() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiDelete(`/workflows/${id}`),
+    mutationFn: ({ id, deleteBranch, branchName }: { id: string; deleteBranch?: boolean; branchName?: string }) => {
+      const params = new URLSearchParams()
+      if (deleteBranch) params.set('deleteBranch', 'true')
+      if (branchName) params.set('branchName', branchName)
+      const qs = params.toString()
+      return apiDelete(`/workflows/${id}${qs ? `?${qs}` : ''}`)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: WORKFLOWS_KEY })
     },

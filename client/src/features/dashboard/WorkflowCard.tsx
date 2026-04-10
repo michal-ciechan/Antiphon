@@ -1,10 +1,10 @@
 import { useCallback, useRef, useEffect, useState } from 'react'
-import { Card, Badge, Group, Text, Box, ActionIcon, Tooltip, Modal, Button } from '@mantine/core'
+import { Card, Badge, Group, Text, Box, ActionIcon, Tooltip } from '@mantine/core'
 import { TbTrash } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
 import type { WorkflowDto, WorkflowStatus } from '../../api/workflows'
-import { useDeleteWorkflow } from '../../api/workflows'
 import { MiniPipeline, type MiniPipelineStage } from './MiniPipeline'
+import { DeleteWorkflowModal } from '../workflow/DeleteWorkflowModal'
 
 interface WorkflowCardProps {
   workflow: WorkflowDto
@@ -98,7 +98,6 @@ export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps)
   const [isHighlighted, setIsHighlighted] = useState(!!highlight)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const deleteWorkflow = useDeleteWorkflow()
 
   // When highlight prop becomes true, start the glow animation
   useEffect(() => {
@@ -205,32 +204,14 @@ export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps)
         </Text>
       </Group>
 
-      <Modal
-        opened={deleteConfirmOpen}
-        onClose={() => setDeleteConfirmOpen(false)}
-        title="Delete workflow"
-        onClick={(e) => e.stopPropagation()}
-        size="sm"
-      >
-        <Text size="sm" mb="lg">
-          Are you sure you want to delete this workflow? This cannot be undone.
-        </Text>
-        <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={() => setDeleteConfirmOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            color="red"
-            loading={deleteWorkflow.isPending}
-            onClick={() => {
-              deleteWorkflow.mutate(workflow.id)
-              setDeleteConfirmOpen(false)
-            }}
-          >
-            Delete
-          </Button>
-        </Group>
-      </Modal>
+      {/* Stop propagation so clicks inside the modal (Cancel, X, overlay) don't navigate */}
+      <div onClick={(e) => e.stopPropagation()}>
+        <DeleteWorkflowModal
+          workflowId={workflow.id}
+          opened={deleteConfirmOpen}
+          onClose={() => setDeleteConfirmOpen(false)}
+        />
+      </div>
     </Card>
   )
 }

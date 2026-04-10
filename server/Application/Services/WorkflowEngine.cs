@@ -877,18 +877,26 @@ public class WorkflowEngine
     /// <summary>
     /// Deletes a workflow and all its associated stages and executions.
     /// Throws if the workflow is currently running.
+    /// Optionally deletes the git branch if deleteBranch is true and no other workflows share it.
     /// </summary>
-    public async Task DeleteWorkflowAsync(Guid workflowId, CancellationToken ct)
+    public async Task DeleteWorkflowAsync(Guid workflowId, bool deleteBranch, string? branchNameOverride, CancellationToken ct)
     {
         var workflow = await _db.Workflows
             .Include(w => w.Stages)
                 .ThenInclude(s => s.StageExecutions)
+            .Include(w => w.Project)
             .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
             ?? throw new NotFoundException(nameof(Workflow), workflowId);
 
         // Cannot delete a running workflow
         if (workflow.Status == WorkflowStatus.Running)
             throw new InvalidOperationException("Cannot delete a workflow that is currently running. Abandon it first.");
+
+        // Use the UI-resolved branch name (actual agent branch) if provided, else fall back to DB field
+        var branchName = !string.IsNullOrEmpty(branchNameOverride)
+            ? branchNameOverride
+            : workflow.GitBranchName;
+        var project = workflow.Project;
 
         // Clear CurrentStageId to break the circular FK before deleting stages
         workflow.CurrentStageId = null;
@@ -901,6 +909,16 @@ public class WorkflowEngine
         _db.Stages.RemoveRange(workflow.Stages);
         _db.Workflows.Remove(workflow);
         await _db.SaveChangesAsync(ct);
+
+        // Optionally delete the git branch (best-effort — only if no other workflows use it)
+        if (deleteBranch && !string.IsNullOrEmpty(branchName))
+        {
+            var repoPath = await ResolveLocalRepoPathAsync(project, ct);
+            if (repoPath is not null)
+            {
+                await _gitService.DeleteBranchAsync(branchName, repoPath, ct);
+            }
+        }
     }
 
     private static void TransitionWorkflow(Workflow workflow, WorkflowStatus newStatus)

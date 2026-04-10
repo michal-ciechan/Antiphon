@@ -133,11 +133,56 @@ public static class WorkflowEndpoints
 
         workflows.MapDelete("/{id:guid}", async (
             Guid id,
+            bool deleteBranch,
+            string? branchName,
             WorkflowEngine engine,
+            AppDbContext db,
             CancellationToken cancellationToken) =>
         {
-            await engine.DeleteWorkflowAsync(id, cancellationToken);
+            // Guard: if deleteBranch requested, verify no other workflows share the branch
+            if (deleteBranch)
+            {
+                var workflow = await db.Workflows.FindAsync([id], cancellationToken);
+                if (workflow is not null && !string.IsNullOrEmpty(workflow.GitBranchName))
+                {
+                    var peerCount = await db.Workflows
+                        .CountAsync(
+                            w => w.Id != id && w.GitBranchName == workflow.GitBranchName,
+                            cancellationToken
+                        );
+                    if (peerCount > 0)
+                        return Results.Problem(
+                            "Cannot delete branch: other workflows share this branch.",
+                            statusCode: 409
+                        );
+                }
+            }
+
+            // branchName override: the UI resolves the actual agent-used branch (may differ from GitBranchName)
+            await engine.DeleteWorkflowAsync(id, deleteBranch, branchName, cancellationToken);
             return Results.NoContent();
+        });
+
+        // Delete info — returns the branch name and any peer workflows sharing the same branch.
+        // Used by the UI to show the "delete branch" checkbox and its disabled state.
+        workflows.MapGet("/{id:guid}/delete-info", async (
+            Guid id,
+            AppDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var workflow = await db.Workflows.FindAsync([id], cancellationToken);
+            if (workflow is null) return Results.NotFound();
+
+            var branchName = workflow.GitBranchName;
+
+            var peers = string.IsNullOrEmpty(branchName)
+                ? []
+                : await db.Workflows
+                    .Where(w => w.Id != id && w.GitBranchName == branchName)
+                    .Select(w => new WorkflowDeletePeerDto(w.Id, w.Name))
+                    .ToListAsync(cancellationToken);
+
+            return Results.Ok(new WorkflowDeleteInfoDto(branchName, peers));
         });
 
         // Workflow visit — records when a user opens the workflow detail page
@@ -296,6 +341,14 @@ public static class WorkflowEndpoints
                 catch (InvalidOperationException ex2)
                 {
                     return Results.Problem(ex2.Message, statusCode: 422);
+                }
+
+                // Persist the discovered branch name so delete-info peer detection works correctly
+                var cleanBranch = agentBranch.Replace("origin/", "");
+                if (workflow.GitBranchName != cleanBranch)
+                {
+                    workflow.GitBranchName = cleanBranch;
+                    await db.SaveChangesAsync(cancellationToken);
                 }
             }
             catch (InvalidOperationException ex)

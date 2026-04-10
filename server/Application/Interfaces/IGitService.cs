@@ -69,4 +69,10 @@ public interface IGitService
     /// Throws InvalidOperationException if the file or branch doesn't exist.
     /// </summary>
     Task<string> GetFileContentAsync(string branch, string filePath, string repoPath, CancellationToken ct);
+
+    /// <summary>
+    /// Deletes a local branch and attempts to push the deletion to the remote (best-effort).
+    /// Does not throw if the branch does not exist.
+    /// </summary>
+    Task DeleteBranchAsync(string branchName, string repoPath, CancellationToken ct);
 }

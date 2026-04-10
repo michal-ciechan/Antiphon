@@ -223,6 +223,19 @@ public class GitService : IGitService
         return await RunGitAsync(repoPath, $"show {branch}:{filePath}", ct);
     }
 
+    public async Task DeleteBranchAsync(string branchName, string repoPath, CancellationToken ct)
+    {
+        _logger.LogInformation("Deleting branch {Branch} in {RepoPath}", branchName, repoPath);
+
+        // Delete local branch (force — ignore if it doesn't exist)
+        try { await RunGitAsync(repoPath, $"branch -D {branchName}", ct); }
+        catch (InvalidOperationException ex) { _logger.LogWarning(ex, "Local branch delete failed (may not exist): {Branch}", branchName); }
+
+        // Delete remote branch (best-effort — remote may not have this branch)
+        try { await RunGitAsync(repoPath, $"push origin --delete {branchName}", ct); }
+        catch (InvalidOperationException ex) { _logger.LogWarning(ex, "Remote branch delete failed (may not exist): {Branch}", branchName); }
+    }
+
     /// <summary>
     /// Builds git commit arguments with the [antiphon] trailer (FR30).
     /// Uses --trailer to add [antiphon] as a proper git trailer.
