@@ -133,11 +133,11 @@ public static class WorkflowEndpoints
 
         workflows.MapDelete("/{id:guid}", async (
             Guid id,
-            bool deleteBranch,
-            string? branchName,
             WorkflowEngine engine,
             AppDbContext db,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            bool deleteBranch = false,
+            string? branchName = null) =>
         {
             // Guard: if deleteBranch requested, verify no other workflows share the branch
             if (deleteBranch)

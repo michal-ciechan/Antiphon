@@ -244,7 +244,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
         try
         {
             // Navigate directly to the workflow detail page
-            var detailUrl = $"{_appFixture.PlaywrightAddress}/workflows/{workflowId}";
+            var detailUrl = $"{_appFixture.PlaywrightAddress}/workflow/{workflowId}";
             var response = await page.GotoAsync(detailUrl);
             Assert.NotNull(response);
             response!.Status.Should().BeLessThan(500);
@@ -257,7 +257,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
             // Click the settings gear icon
             var settingsButton = page.GetByRole(
                 Microsoft.Playwright.AriaRole.Button,
-                new Microsoft.Playwright.LocatorGetByRoleOptions { Name = "Workflow settings" }
+                new Microsoft.Playwright.PageGetByRoleOptions { Name = "Workflow settings" }
             );
             await settingsButton.WaitForAsync(new Microsoft.Playwright.LocatorWaitForOptions { Timeout = 10_000 });
             await settingsButton.ClickAsync();
@@ -268,7 +268,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
             // Click "Delete Workflow" in the dropdown
             var deleteMenuItem = page.GetByRole(
                 Microsoft.Playwright.AriaRole.Menuitem,
-                new Microsoft.Playwright.LocatorGetByRoleOptions { Name = "Delete Workflow" }
+                new Microsoft.Playwright.PageGetByRoleOptions { Name = "Delete Workflow" }
             );
             await deleteMenuItem.WaitForAsync(new Microsoft.Playwright.LocatorWaitForOptions { Timeout = 5_000 });
             await deleteMenuItem.ClickAsync();
