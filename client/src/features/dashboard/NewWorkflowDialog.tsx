@@ -241,7 +241,7 @@ export function NewWorkflowDialog({ opened, onClose }: NewWorkflowDialogProps) {
     description: p.gitRepositoryUrl,
   }))
 
-  const canCreate = !!templateId && !!projectId && !createWorkflow.isPending
+  const canCreate = !!templateId && !!projectId
 
   const effectiveSelected = getEffectiveSelectedStages()
 
