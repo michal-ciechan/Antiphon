@@ -75,8 +75,8 @@ internal sealed class EventEmittingToolWrapper : IAgentTool
             fullContentJson: System.Text.Json.JsonSerializer.Serialize(new
             {
                 tool = _inner.Name,
-                input = jsonInput.Length > 2000 ? jsonInput[..2000] + "..." : jsonInput,
-                output = toolOutput.Length > 2000 ? toolOutput[..2000] + "..." : toolOutput
+                input = jsonInput,
+                output = toolOutput
             }),
             ct
         );

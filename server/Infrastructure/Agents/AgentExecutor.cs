@@ -154,10 +154,14 @@ public class AgentExecutor : IStageExecutor
                     stage = context.StageName,
                     tokensIn,
                     tokensOut,
-                    outputLength = outputContent.Length,
-                    outputPreview = outputContent.Length > 500
-                        ? outputContent.ToString()[..500] + "..."
-                        : outputContent.ToString()
+                    prompt = messages.Select(m => new
+                    {
+                        role = m.Role.Value,
+                        content = m.Text ?? string.Join("", (m.Contents ?? [])
+                            .OfType<Microsoft.Extensions.AI.TextContent>()
+                            .Select(tc => tc.Text ?? ""))
+                    }).ToArray(),
+                    output = outputContent.ToString()
                 }),
                 ct
             );
