@@ -888,10 +888,6 @@ public class WorkflowEngine
             .FirstOrDefaultAsync(w => w.Id == workflowId, ct)
             ?? throw new NotFoundException(nameof(Workflow), workflowId);
 
-        // Cannot delete a running workflow
-        if (workflow.Status == WorkflowStatus.Running)
-            throw new InvalidOperationException("Cannot delete a workflow that is currently running. Abandon it first.");
-
         // Use the UI-resolved branch name (actual agent branch) if provided, else fall back to DB field
         var branchName = !string.IsNullOrEmpty(branchNameOverride)
             ? branchNameOverride
