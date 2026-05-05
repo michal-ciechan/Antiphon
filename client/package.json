@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@mantine/code-highlight": "^8.3.17",
@@ -39,6 +41,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@storybook/addon-essentials": "^8.6.14",
+    "@storybook/react": "^10.3.5",
+    "@storybook/react-vite": "^10.3.5",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -56,6 +61,7 @@
     "postcss": "^8.5.8",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
+    "storybook": "^10.3.5",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.0",
