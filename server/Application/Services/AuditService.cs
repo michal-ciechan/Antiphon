@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -134,6 +135,87 @@ public class AuditService
         _db.AuditRecords.Add(record);
         await _db.SaveChangesAsync(cancellationToken);
         return record;
+    }
+
+    /// <summary>
+    /// Reconstruct the conversation timeline for a workflow from LlmCall and ToolInvocation
+    /// audit records. Used to populate the conversation view for completed stages.
+    /// </summary>
+    public async Task<List<ConversationEntryDto>> GetConversationAsync(
+        Guid workflowId,
+        CancellationToken cancellationToken)
+    {
+        var records = await _db.AuditRecords
+            .Where(r => r.WorkflowId == workflowId &&
+                        (r.EventType == AuditEventType.LlmCall ||
+                         r.EventType == AuditEventType.ToolInvocation))
+            .Include(r => r.Stage)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var result = new List<ConversationEntryDto>();
+
+        foreach (var record in records)
+        {
+            var stageName = record.Stage?.Name ?? "";
+
+            if (record.EventType == AuditEventType.ToolInvocation)
+            {
+                string? toolName = null, toolInput = null, toolOutput = null;
+                if (record.FullContent != null)
+                {
+                    try
+                    {
+                        var fc = JsonSerializer.Deserialize<JsonElement>(record.FullContent);
+                        toolName = fc.TryGetProperty("tool", out var t) ? t.GetString() : null;
+                        toolInput = fc.TryGetProperty("input", out var inp) ? inp.GetString() : null;
+                        toolOutput = fc.TryGetProperty("output", out var outp) ? outp.GetString() : null;
+                    }
+                    catch { /* malformed JSON — degrade gracefully */ }
+                }
+
+                result.Add(new ConversationEntryDto(
+                    record.Id,
+                    "tool-call",
+                    toolName ?? record.Summary,
+                    record.CreatedAt.ToString("O"),
+                    record.StageId,
+                    stageName,
+                    toolName,
+                    toolInput,
+                    toolOutput,
+                    record.FullContent
+                ));
+            }
+            else if (record.EventType == AuditEventType.LlmCall)
+            {
+                string? output = null;
+                if (record.FullContent != null)
+                {
+                    try
+                    {
+                        var fc = JsonSerializer.Deserialize<JsonElement>(record.FullContent);
+                        output = fc.TryGetProperty("output", out var outp) ? outp.GetString() : null;
+                    }
+                    catch { /* malformed JSON — degrade gracefully */ }
+                }
+
+                result.Add(new ConversationEntryDto(
+                    record.Id,
+                    "agent",
+                    output ?? record.Summary,
+                    record.CreatedAt.ToString("O"),
+                    record.StageId,
+                    stageName,
+                    null,
+                    null,
+                    null,
+                    record.FullContent
+                ));
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

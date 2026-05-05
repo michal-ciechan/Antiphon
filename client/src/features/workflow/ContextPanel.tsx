@@ -6,7 +6,7 @@ import { WorkflowOutputsTab } from './WorkflowOutputsTab'
 import { BranchDiffViewer } from './BranchDiffViewer'
 import { ArtifactDiffViewer } from '../artifact'
 import { useAuditQuery } from '../../api/audit'
-import type { AuditQueryResult, CostByModelDto } from '../../api/audit'
+import type { AuditQueryResult, AuditRecordDto, CostByModelDto } from '../../api/audit'
 import type { TimelineMessage } from './types'
 import type { StageDto } from '../../api/workflows'
 import type { BranchDiffDto } from '../../api/projects'
@@ -38,6 +38,8 @@ interface ContextPanelProps {
   diffNewLabel?: string
   layoutMode?: 'split' | 'panel' | 'conversation'
   onLayoutModeChange?: (mode: 'split' | 'panel' | 'conversation') => void
+  /** Called when user clicks a clickable audit record (LlmCall or ToolInvocation) */
+  onSelectAuditRecord?: (record: AuditRecordDto) => void
 }
 
 const LAYOUT_BUTTONS = [
@@ -266,7 +268,44 @@ function CostByModelRow({ model }: { model: CostByModelDto }) {
   )
 }
 
-function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: string }) {
+function getAuditToolSubtitle(fullContent: string | null): string | null {
+  if (!fullContent) return null
+  try {
+    const c = JSON.parse(fullContent)
+    const input = c.input ?? {}
+    switch ((c.tool ?? '').toLowerCase()) {
+      case 'git': return input.args ?? null
+      case 'glob': return input.path ? `${input.pattern} in ${input.path}` : (input.pattern ?? null)
+      case 'grep': return input.path ? `${input.pattern} in ${input.path}` : (input.pattern ?? null)
+      case 'bash': return input.command ?? null
+      case 'file_read':
+      case 'file_write':
+      case 'file_edit': return input.path ?? null
+      default: return null
+    }
+  } catch { return null }
+}
+
+function getLlmCallPreview(fullContent: string | null): { prompt: string | null; response: string | null } {
+  if (!fullContent) return { prompt: null, response: null }
+  try {
+    const c = JSON.parse(fullContent)
+    const firstUser = (c.prompt ?? []).find((m: { role: string; content: string }) => m.role === 'user')
+    const prompt = firstUser?.content?.split('\n').find((l: string) => l.trim())?.trim() ?? null
+    const response = (c.output ?? '').split('\n').find((l: string) => l.trim())?.trim() ?? null
+    return { prompt, response }
+  } catch { return { prompt: null, response: null } }
+}
+
+function AuditTab({
+  workflowId,
+  stageId,
+  onSelectRecord,
+}: {
+  workflowId?: string
+  stageId?: string
+  onSelectRecord?: (record: AuditRecordDto) => void
+}) {
   const { data, isLoading, error } = useAuditQuery({
     workflowId,
     stageId,
@@ -374,12 +413,31 @@ function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: stri
           {records.map((record) => (
             <Box
               key={record.id}
+              onClick={
+                (record.eventType === 'LlmCall' || record.eventType === 'ToolInvocation') && onSelectRecord
+                  ? () => onSelectRecord(record)
+                  : undefined
+              }
               style={{
                 padding: '4px 8px',
                 borderRadius: 'var(--mantine-radius-xs)',
                 border: '1px solid var(--mantine-color-dark-5)',
                 backgroundColor: 'var(--mantine-color-dark-7)',
+                cursor: (record.eventType === 'LlmCall' || record.eventType === 'ToolInvocation') && onSelectRecord
+                  ? 'pointer'
+                  : 'default',
+                transition: 'background-color 0.1s',
               }}
+              onMouseEnter={
+                (record.eventType === 'LlmCall' || record.eventType === 'ToolInvocation') && onSelectRecord
+                  ? (e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--mantine-color-dark-6)' }
+                  : undefined
+              }
+              onMouseLeave={
+                (record.eventType === 'LlmCall' || record.eventType === 'ToolInvocation') && onSelectRecord
+                  ? (e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--mantine-color-dark-7)' }
+                  : undefined
+              }
             >
               <Group gap="xs" justify="space-between">
                 <Badge
@@ -418,6 +476,19 @@ function AuditTab({ workflowId, stageId }: { workflowId?: string; stageId?: stri
                 </Text>
               </Group>
               <Text size="xs" mt={2}>{record.summary}</Text>
+              {record.eventType === 'ToolInvocation' && (() => {
+                const sub = getAuditToolSubtitle(record.fullContent)
+                return sub ? <Text size="xs" c="dimmed" mt={1} style={{ fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</Text> : null
+              })()}
+              {record.eventType === 'LlmCall' && (() => {
+                const { prompt, response } = getLlmCallPreview(record.fullContent)
+                return (
+                  <>
+                    {prompt && <Text size="xs" c="dimmed" mt={1} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Prompt: {prompt.slice(0, 80)}</Text>}
+                    {response && <Text size="xs" c="dimmed" mt={1} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Response: {response.slice(0, 80)}</Text>}
+                  </>
+                )
+              })()}
               {record.tokensIn > 0 && (
                 <Group gap="xs" mt={2}>
                   <Text size="xs" c="dimmed">
@@ -554,6 +625,7 @@ export function ContextPanel({
   diffNewLabel,
   layoutMode = 'split',
   onLayoutModeChange,
+  onSelectAuditRecord,
 }: ContextPanelProps) {
   const collapsed = layoutMode === 'conversation'
   const expanded = layoutMode === 'panel'
@@ -780,7 +852,7 @@ export function ContextPanel({
             padding: 'var(--mantine-spacing-sm)',
           }}
         >
-          <AuditTab workflowId={workflowId} stageId={currentStage?.id} />
+          <AuditTab workflowId={workflowId} stageId={currentStage?.id} onSelectRecord={onSelectAuditRecord} />
         </Tabs.Panel>
       </Tabs>
     </Box>

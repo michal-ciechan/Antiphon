@@ -86,6 +86,16 @@ public static class AuditEndpoints
             return Results.Ok(entries);
         });
 
+        // GET /api/audit/conversation — Reconstruct conversation timeline from audit records
+        audit.MapGet("/conversation", async (
+            Guid workflowId,
+            AuditService auditService,
+            CancellationToken cancellationToken) =>
+        {
+            var entries = await auditService.GetConversationAsync(workflowId, cancellationToken);
+            return Results.Ok(entries);
+        });
+
         // DELETE /api/audit/archive — Archive (clean up) full audit content older than specified days (NFR24)
         audit.MapDelete("/archive", async (
             int? olderThanDays,

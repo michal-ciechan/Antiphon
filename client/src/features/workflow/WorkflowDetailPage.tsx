@@ -18,6 +18,10 @@ import { GateActionBar } from '../gate/GateActionBar'
 import { useStreamingStore } from '../../stores/streamingStore'
 import type { TimelineMessage, ArtifactDto } from './types'
 import { ArtifactModal, type ArtifactVersion } from '../artifact'
+import { useConversation } from '../../api/conversation'
+import type { ConversationEntryDto } from '../../api/conversation'
+import { AuditDetailView } from './AuditDetailView'
+import type { AuditRecordDto } from '../../api/audit'
 
 type PageMode = 'conversation' | 'gate' | 'cascade'
 
@@ -103,6 +107,9 @@ export function WorkflowDetailPage() {
   // Delete confirmation modal
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
+  // Selected audit record for detail view in main content area
+  const [selectedAuditRecord, setSelectedAuditRecord] = useState<AuditRecordDto | null>(null)
+
   // Track workflow page visits for audit trail
   useEffect(() => {
     if (!id) return
@@ -116,10 +123,34 @@ export function WorkflowDetailPage() {
   const streamingMessages = useStreamingStore((s) => s.messages)
   const storeIsStreaming = useStreamingStore((s) => s.isStreaming)
 
-  // Combined messages: will include both persisted messages (future) and streaming messages
+  // Load persisted conversation history from audit records
+  const { data: conversationHistory } = useConversation(id)
+
+  // Map persisted conversation entries to TimelineMessage format
+  const historicalMessages = useMemo<TimelineMessage[]>(() => {
+    if (!conversationHistory) return []
+    return conversationHistory.map((entry: ConversationEntryDto) => ({
+      id: entry.id,
+      type: entry.type as 'agent' | 'tool-call',
+      content: entry.content,
+      timestamp: entry.timestamp,
+      stageId: entry.stageId ?? '',
+      stageName: entry.stageName,
+      toolName: entry.toolName ?? undefined,
+      toolInput: entry.toolInput ?? undefined,
+      toolOutput: entry.toolOutput ?? undefined,
+    }))
+  }, [conversationHistory])
+
+  // Combined: historical (from DB) + streaming (live) — streaming messages override/extend history
   const messages = useMemo<TimelineMessage[]>(() => {
-    return streamingMessages
-  }, [streamingMessages])
+    // During streaming, show streaming messages only (they are real-time)
+    // After streaming, historical messages populate from the API
+    if (storeIsStreaming || streamingMessages.length > 0) {
+      return streamingMessages
+    }
+    return historicalMessages
+  }, [historicalMessages, streamingMessages, storeIsStreaming])
 
   const handleStageClick = (stage: StageDto) => {
     if (stage.status === 'Completed') {
@@ -192,6 +223,14 @@ export function WorkflowDetailPage() {
   // Switch back to conversation mode (from gate view "View conversation" link)
   const handleViewConversation = useCallback(() => {
     setModeOverride('conversation')
+  }, [])
+
+  const handleSelectAuditRecord = useCallback((record: AuditRecordDto) => {
+    setSelectedAuditRecord(record)
+  }, [])
+
+  const handleCloseAuditDetail = useCallback(() => {
+    setSelectedAuditRecord(null)
   }, [])
 
   // Find the current stage object
@@ -362,7 +401,9 @@ export function WorkflowDetailPage() {
             overflow: 'auto',
           }}
         >
-          {mode === 'cascade' ? (
+          {selectedAuditRecord ? (
+            <AuditDetailView record={selectedAuditRecord} onBack={handleCloseAuditDetail} />
+          ) : mode === 'cascade' ? (
             <CascadeDecisionCard
               affectedStages={goBackAffectedStages ?? affectedStages ?? []}
               onConfirm={handleCascadeConfirm}
@@ -411,6 +452,7 @@ export function WorkflowDetailPage() {
           diffNewLabel={diffNewLabel}
           layoutMode={layoutMode}
           onLayoutModeChange={setLayoutMode}
+          onSelectAuditRecord={handleSelectAuditRecord}
         />
       </Box>
 
