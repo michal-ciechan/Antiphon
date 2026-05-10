@@ -11,7 +11,7 @@
 
 | ID  | Epic | Requirements | Stories | Status |
 |-----|------|--------------|---------|--------|
-| E01 | Pty.Net spike + Windows headed-agent proof | FR-04, NFR-01 | [E_01-stories.md](epics/E_01-stories.md) | `[ ]` |
+| E01 | PTY substrate + Windows headed-agent proof (`Antiphon.Agents.Pty` library) | FR-04, FR-06, FR-07, FR-09, NFR-01, NFR-06, NFR-08 | [E_01-stories.md](epics/E_01-stories.md) | `[~]` |
 | E02 | Agent abstraction (`IPtyAgentRunner` + `IAgentProtocolAdapter`) | FR-04, FR-05, FR-06, NFR-01 | [E_02-stories.md](epics/E_02-stories.md) | `[ ]` |
 | E03 | Worktree manager + safety invariants | FR-04, FR-08, FR-20, NFR-03, NFR-04 | [E_03-stories.md](epics/E_03-stories.md) | `[ ]` |
 | E04 | Domain model + EF migration (Board / Card / AgentSession / RunAttempt / Worktree / WorkflowDefinition) | FR-01, FR-02, NFR-02, NFR-12 | [E_04-stories.md](epics/E_04-stories.md) | `[ ]` |
@@ -24,6 +24,7 @@
 | E11 | amux channels + atomic claim + watchdog | FR-16, FR-17, FR-18 | [E_11-stories.md](epics/E_11-stories.md) | `[ ]` |
 | E12 | DiffReview + GitHub PR open (Review → Done flow) | FR-10, FR-11 | [E_12-stories.md](epics/E_12-stories.md) | `[ ]` |
 | E13 | Snapshot / observability API + ops dashboard | FR-19, NFR-05 | [E_13-stories.md](epics/E_13-stories.md) | `[ ]` |
+| E14 | Migrate test suites from xUnit → TUnit + FluentAssertions → Shouldly (run **early** — after E01-S01 lands, before E02 substantial work) | NFR-* (testability) | [E_14-stories.md](epics/E_14-stories.md) | `[ ]` |
 
 ---
 
@@ -45,3 +46,4 @@ E13 attaches after E07 (needs orchestrator + session state to snapshot).
 - **Critical path:** E01 → E02 → E04 → E05 → E07 → E08 (first usable end-to-end).
 - **Parallelisable after E04:** E03, E06 can land independently.
 - **Post-MVP:** E09–E13 in any order once E07 + E08 land.
+- **E14 (TUnit migration):** sequence between E01-S01 (proof shipped on xUnit) and the bulk of E02. Cheap to migrate while suite is small; expensive once E02–E07 add hundreds of tests.
