@@ -174,13 +174,14 @@ public class WorkflowStateMachineTests
     }
 
     [Test]
-    public void GetAvailableTransitions_GateWaiting_ReturnsThreeOptions()
+    public void GetAvailableTransitions_GateWaiting_ReturnsFourOptions()
     {
         WorkflowStateMachine.GetAvailableTransitions(WorkflowStatus.GateWaiting)
             .ShouldBe([
                 WorkflowStatus.Running,
                 WorkflowStatus.Paused,
-                WorkflowStatus.Abandoned
+                WorkflowStatus.Abandoned,
+                WorkflowStatus.CascadeWaiting
             ]);
     }
 
