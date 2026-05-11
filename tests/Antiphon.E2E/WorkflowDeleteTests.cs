@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit;
+using TUnit.Core;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -17,8 +17,8 @@ namespace Antiphon.E2E;
 /// Covers API-level delete semantics, running-workflow guard, branch name format,
 /// and the browser-side confirmation flow.
 /// </summary>
-[Collection("E2E")]
-public class WorkflowDeleteTests : IAsyncLifetime
+[NotInParallel]
+public class WorkflowDeleteTests
 {
     // Seeded template IDs (from DatabaseSeeder)
     private static readonly Guid DocProjectTemplateId = new("b0000000-0000-0000-0000-000000000003");
@@ -33,14 +33,16 @@ public class WorkflowDeleteTests : IAsyncLifetime
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly PlaywrightFixture _playwrightFixture = new();
 
-    public async Task InitializeAsync()
+    [Before(Test)]
+    public async Task SetupAsync()
     {
         _appFixture.UsePrebuiltFrontend = true;
         await _appFixture.InitializeAsync();
         await _playwrightFixture.InitializeAsync();
     }
 
-    public async Task DisposeAsync()
+    [After(Test)]
+    public async Task TeardownAsync()
     {
         await _playwrightFixture.DisposeAsync();
         await _appFixture.DisposeAsync();
@@ -118,7 +120,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
     // Test 1: API delete returns 204, subsequent GET returns 404
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Delete_workflow_via_api_returns_no_content()
     {
         // Arrange
@@ -134,7 +136,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
         );
 
         // Assert — 204 No Content
-        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        deleteResponse.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         // Act — GET after delete
         var getResponse = await _appFixture.HttpClient.GetAsync(
@@ -142,14 +144,14 @@ public class WorkflowDeleteTests : IAsyncLifetime
         );
 
         // Assert — 404 Not Found
-        getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        getResponse.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
     // -------------------------------------------------------------------------
     // Test 2: Deleting a running workflow is rejected
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Delete_running_workflow_returns_error_status()
     {
         // Arrange — create a workflow, then force its status to Running via the DB.
@@ -175,20 +177,20 @@ public class WorkflowDeleteTests : IAsyncLifetime
         );
 
         // Assert — must not be 2xx; the service throws InvalidOperationException
-        ((int)deleteResponse.StatusCode).Should().BeGreaterThanOrEqualTo(400);
+        ((int)deleteResponse.StatusCode).ShouldBeGreaterThanOrEqualTo(400);
 
         // Assert — workflow still exists after the failed delete
         var getAfterResponse = await _appFixture.HttpClient.GetAsync(
             $"/api/workflows/{workflowId}"
         );
-        getAfterResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        getAfterResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
     // -------------------------------------------------------------------------
     // Test 3: GitBranchName follows "antiphon/<sanitized>" format
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Create_workflow_uses_antiphon_prefixed_branch_name()
     {
         // Arrange
@@ -201,11 +203,11 @@ public class WorkflowDeleteTests : IAsyncLifetime
         var workflow = await db.Workflows.FindAsync(workflowId);
 
         // Assert
-        workflow.Should().NotBeNull();
-        workflow!.GitBranchName.Should().Be("antiphon/my-test-feature");
+        workflow.ShouldNotBeNull();
+        workflow!.GitBranchName.ShouldBe("antiphon/my-test-feature");
     }
 
-    [Fact]
+    [Test]
     public async Task Create_workflow_sanitizes_special_chars_in_branch_name()
     {
         // Arrange — feature name with mixed casing and special characters
@@ -218,20 +220,20 @@ public class WorkflowDeleteTests : IAsyncLifetime
         var workflow = await db.Workflows.FindAsync(workflowId);
 
         // Assert — special chars become hyphens, consecutive hyphens collapsed, lowercase
-        workflow.Should().NotBeNull();
-        workflow!.GitBranchName.Should().StartWith("antiphon/");
-        workflow.GitBranchName.Should().NotContain(" ");
-        workflow.GitBranchName.Should().NotContain("#");
-        workflow.GitBranchName.Should().NotContain(":");
-        workflow.GitBranchName.Should().NotContain("'");
-        workflow.GitBranchName.Should().Be("antiphon/fix-bug-42-user-s-login");
+        workflow.ShouldNotBeNull();
+        workflow!.GitBranchName.ShouldStartWith("antiphon/");
+        workflow.GitBranchName.ShouldNotContain(" ");
+        workflow.GitBranchName.ShouldNotContain("#");
+        workflow.GitBranchName.ShouldNotContain(":");
+        workflow.GitBranchName.ShouldNotContain("'");
+        workflow.GitBranchName.ShouldBe("antiphon/fix-bug-42-user-s-login");
     }
 
     // -------------------------------------------------------------------------
     // Test 4: Browser — settings gear on detail page opens delete confirmation
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Delete_workflow_via_settings_button_in_detail_page_navigates_to_dashboard()
     {
         // Arrange
@@ -246,8 +248,8 @@ public class WorkflowDeleteTests : IAsyncLifetime
             // Navigate directly to the workflow detail page
             var detailUrl = $"{_appFixture.PlaywrightAddress}/workflow/{workflowId}";
             var response = await page.GotoAsync(detailUrl);
-            Assert.NotNull(response);
-            response!.Status.Should().BeLessThan(500);
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
 
             await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
@@ -294,11 +296,11 @@ public class WorkflowDeleteTests : IAsyncLifetime
             await PlaywrightFixture.CapturePageAsync(page, "04_dashboard_after_delete");
 
             // Assert we're on the dashboard (no longer on the detail page)
-            page.Url.Should().NotContain($"/workflows/{workflowId}");
+            page.Url.ShouldNotContain($"/workflows/{workflowId}");
 
             // Assert the workflow no longer exists via API
             var getResponse = await _appFixture.HttpClient.GetAsync($"/api/workflows/{workflowId}");
-            getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            getResponse.StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
             passed = true;
         }
@@ -313,7 +315,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
     // Test 5: Browser — delete button shows confirmation modal and removes card
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Delete_workflow_button_shows_confirm_and_removes_card()
     {
         // Arrange — create a workflow through the API so we have a known state
@@ -329,8 +331,8 @@ public class WorkflowDeleteTests : IAsyncLifetime
         {
             // Navigate to the dashboard
             var response = await page.GotoAsync(_appFixture.PlaywrightAddress);
-            Assert.NotNull(response);
-            response!.Status.Should().BeLessThan(500);
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
 
             await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
@@ -398,7 +400,7 @@ public class WorkflowDeleteTests : IAsyncLifetime
                 .Filter(new Microsoft.Playwright.LocatorFilterOptions { HasText = "UI Delete Test Project" })
                 .CountAsync();
 
-            remainingCards.Should().Be(0);
+            remainingCards.ShouldBe(0);
         }
         finally
         {

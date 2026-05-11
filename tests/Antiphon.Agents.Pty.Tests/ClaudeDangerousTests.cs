@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -10,13 +10,13 @@ namespace Antiphon.Agents.Pty.Tests;
 /// Eligible when ANTIPHON_HEADED_TESTS=1 and either cl.ps1 or the global `claude`
 /// binary is on PATH. cl.ps1 is preferred; claude is the fallback.
 /// </summary>
-[Collection("Headed")]
-[Trait("Category", "Headed")]
+[NotInParallel("Headed")]
+[Category("Headed")]
 public class ClaudeDangerousTests
 {
     // ---------- S19: --dangerously-skip-permissions + --version smoke ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_version_exits_zero_with_version_string()
     {
         ClSession.SkipIfNotEligible();
@@ -26,15 +26,15 @@ public class ClaudeDangerousTests
         await runner.StartAsync(app, args);
 
         var exit = await runner.Exited.WaitAsync(TimeSpan.FromSeconds(30));
-        exit.Should().Be(0);
+        exit.ShouldBe(0);
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.Should().MatchRegex(@"\d+\.\d+\.\d+", "version string should appear");
+        clean.ShouldMatch(@"\d+\.\d+\.\d+", "version string should appear");
     }
 
     // ---------- S20: --dangerously-skip-permissions + -p print mode ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_print_returns_pong()
     {
         ClSession.SkipIfNotEligible();
@@ -45,15 +45,15 @@ public class ClaudeDangerousTests
         await runner.StartAsync(app, args);
 
         var exit = await runner.Exited.WaitAsync(TimeSpan.FromMinutes(2));
-        exit.Should().Be(0);
+        exit.ShouldBe(0);
 
         var clean = (AnsiStripper.Clean(runner.SnapshotText()) ?? "").ToUpperInvariant();
-        clean.Should().Contain("PONG");
+        clean.ShouldContain("PONG");
     }
 
     // ---------- S21: TUI ready with --dangerously-skip-permissions ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_tui_reaches_ready_within_30s()
     {
         ClSession.SkipIfNotEligible();
@@ -63,7 +63,7 @@ public class ClaudeDangerousTests
         await runner.StartAsync(app, args, cols: 200, rows: 60);
 
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
-        ready.Should().BeTrue();
+        ready.ShouldBeTrue();
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -72,7 +72,7 @@ public class ClaudeDangerousTests
 
     // ---------- S22: single prompt round-trip ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_single_prompt_returns_response()
     {
         ClSession.SkipIfNotEligible();
@@ -86,10 +86,10 @@ public class ClaudeDangerousTests
         runner.ClearLiveBuffer();
         await runner.SendLineAsync("Say HELLO-MARKER and stop.");
         var done = await new ClaudeDoneDetector().WaitAsync(runner);
-        done.Should().BeTrue();
+        done.ShouldBeTrue();
 
         var clean = (AnsiStripper.Clean(runner.SnapshotText()) ?? "").ToUpperInvariant();
-        clean.Should().Contain("HELLO-MARKER");
+        clean.ShouldContain("HELLO-MARKER");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -98,7 +98,7 @@ public class ClaudeDangerousTests
 
     // ---------- S23: tool use executes without permission prompt ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_tool_use_executes_without_permission_prompt()
     {
         ClSession.SkipIfNotEligible();
@@ -113,14 +113,14 @@ public class ClaudeDangerousTests
         await runner.SendLineAsync(
             "Run the PowerShell command `echo TOOL-EXECUTED` via Bash and report what it printed.");
         var done = await new ClaudeDoneDetector { MaxWait = TimeSpan.FromMinutes(3) }.WaitAsync(runner);
-        done.Should().BeTrue();
+        done.ShouldBeTrue();
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
         // --dangerously-skip-permissions should prevent any confirmation prompts
         string[] permissionKeywords = ["Allow", "Deny", "[y/N]"];
-        clean.Should().NotContainAny(permissionKeywords,
-            "--dangerously-skip-permissions should bypass all prompts");
-        clean.Should().Contain("TOOL-EXECUTED");
+        foreach (var keyword in permissionKeywords)
+            clean.ShouldNotContain(keyword);
+        clean.ShouldContain("TOOL-EXECUTED");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -129,7 +129,7 @@ public class ClaudeDangerousTests
 
     // ---------- S24: sequential prompts share context ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_sequential_prompts_share_context()
     {
         ClSession.SkipIfNotEligible();
@@ -145,7 +145,7 @@ public class ClaudeDangerousTests
         var firstAck = await runner.WaitForOutputAsync(
             text => (AnsiStripper.Clean(text) ?? "").Contains("OK"),
             TimeSpan.FromMinutes(2));
-        firstAck.Should().BeTrue("Claude should acknowledge the first prompt");
+        firstAck.ShouldBeTrue("Claude should acknowledge the first prompt");
 
         // Brief settle so the TUI reaches the idle prompt before we type again.
         await Task.Delay(500);
@@ -155,7 +155,7 @@ public class ClaudeDangerousTests
         var found = await runner.WaitForOutputAsync(
             text => (AnsiStripper.Clean(text) ?? "").Contains("4357"),
             TimeSpan.FromMinutes(2));
-        found.Should().BeTrue("Claude should recall the seeded number in the same session");
+        found.ShouldBeTrue("Claude should recall the seeded number in the same session");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -164,7 +164,7 @@ public class ClaudeDangerousTests
 
     // ---------- S26: slow bash task — ClaudeCrunchedDetector waits through sleep ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_cruncheddetector_waits_through_slow_bash_task()
     {
         ClSession.SkipIfNotEligible();
@@ -185,13 +185,13 @@ public class ClaudeDangerousTests
             .WaitAsync(runner);
         sw.Stop();
 
-        crunched.Should().BeTrue("Crunched signal must appear after the task finishes");
-        sw.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(9),
+        crunched.ShouldBeTrue("Crunched signal must appear after the task finishes");
+        sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(9),
             "detector must not fire before the 10-second sleep completes " +
             $"(actual: {sw.Elapsed.TotalSeconds:F1}s)");
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.Should().Contain("SLOW-TASK-DONE");
+        clean.ShouldContain("SLOW-TASK-DONE");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -200,7 +200,7 @@ public class ClaudeDangerousTests
 
     // ---------- S27: detect when Claude asks the user a clarifying question ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_detects_claude_asking_a_question()
     {
         ClSession.SkipIfNotEligible();
@@ -218,10 +218,10 @@ public class ClaudeDangerousTests
             "Output only the question itself. Do not answer it or add any other text.");
 
         var crunched = await new ClaudeCrunchedDetector().WaitAsync(runner);
-        crunched.Should().BeTrue("Claude must complete its question turn");
+        crunched.ShouldBeTrue("Claude must complete its question turn");
 
         ClaudeResponseAnalyzer.IsAskingQuestion(runner.SnapshotText())
-            .Should().BeTrue("Claude's response should contain a question mark");
+            .ShouldBeTrue("Claude's response should contain a question mark");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -230,7 +230,7 @@ public class ClaudeDangerousTests
 
     // ---------- S28: answer Claude's question, verify it processes the reply ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_can_answer_claude_question_and_receive_acknowledgement()
     {
         ClSession.SkipIfNotEligible();
@@ -248,9 +248,9 @@ public class ClaudeDangerousTests
             "Output only the question. Wait for my answer before saying anything else.");
 
         var firstCrunched = await new ClaudeCrunchedDetector().WaitAsync(runner);
-        firstCrunched.Should().BeTrue("Claude should complete its question turn");
+        firstCrunched.ShouldBeTrue("Claude should complete its question turn");
         ClaudeResponseAnalyzer.IsAskingQuestion(runner.SnapshotText())
-            .Should().BeTrue("first response must be a question");
+            .ShouldBeTrue("first response must be a question");
 
         // Brief settle so the TUI is at the idle prompt before we type.
         await Task.Delay(500);
@@ -261,11 +261,10 @@ public class ClaudeDangerousTests
 
         var secondCrunched = await new ClaudeCrunchedDetector { MaxWait = TimeSpan.FromMinutes(2) }
             .WaitAsync(runner);
-        secondCrunched.Should().BeTrue("Claude should process the answer and respond");
+        secondCrunched.ShouldBeTrue("Claude should process the answer and respond");
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.ToLowerInvariant().Should().Contain("tab",
-            "Claude should acknowledge the tabs preference in its follow-up");
+        clean.ToLowerInvariant().ShouldContain("tab");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -274,7 +273,7 @@ public class ClaudeDangerousTests
 
     // ---------- S25: kill mid-flight, no orphans ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Claude_dangerous_kill_midflight_no_orphans()
     {
         ClSession.SkipIfNotEligible();
@@ -294,12 +293,12 @@ public class ClaudeDangerousTests
             await Task.Delay(TimeSpan.FromSeconds(2));
 
             var killed = await runner.KillAsync(TimeSpan.FromSeconds(5));
-            killed.Should().BeTrue();
+            killed.ShouldBeTrue();
         }
 
         await Task.Delay(2000);
         var orphansAfter = Process.GetProcessesByName("claude").Length;
-        (orphansAfter - orphansBefore).Should().BeLessThan(2,
+        (orphansAfter - orphansBefore).ShouldBeLessThan(2,
             $"claude.exe should not orphan after kill. before={orphansBefore} after={orphansAfter}");
     }
 }

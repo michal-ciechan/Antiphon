@@ -1,22 +1,27 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-[Trait("Category", "Pty")]
+[NotInParallel("Headed")]
+[Category("Pty")]
 public class PtyAgentRunnerTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
-    private static void SkipIfNotWindows() => Skip.IfNot(IsWindows, "ConPTY only on Windows");
+    private static void SkipIfNotWindows()
+    {
+        if (!(IsWindows)) throw new SkipTestException("ConPTY only on Windows");
+    }
 
     // ---------- S01: spawn + capture ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Spawn_and_capture_known_exit_code()
     {
         SkipIfNotWindows();
@@ -26,13 +31,13 @@ public class PtyAgentRunnerTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
         var exit = await runner.Exited.WaitAsync(TimeSpan.FromSeconds(15));
-        exit.Should().Be(42);
-        runner.SnapshotText().Should().Contain("marker-xyz");
+        exit.ShouldBe(42);
+        runner.SnapshotText().ShouldContain("marker-xyz");
     }
 
     // ---------- S05: lifecycle ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Kill_terminates_within_2s()
     {
         SkipIfNotWindows();
@@ -44,26 +49,26 @@ public class PtyAgentRunnerTests
         var killed = await runner.KillAsync(TimeSpan.FromSeconds(2));
         sw.Stop();
 
-        killed.Should().BeTrue();
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2.5));
+        killed.ShouldBeTrue();
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2.5));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Pid_null_before_start_set_after()
     {
         SkipIfNotWindows();
         await using var runner = new PtyAgentRunner();
-        runner.Pid.Should().BeNull();
+        runner.Pid.ShouldBeNull();
 
         using var bat = new TempBatch("@echo off\r\nexit /b 0\r\n");
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
-        runner.Pid.Should().NotBeNull();
-        runner.Pid!.Value.Should().BeGreaterThan(0);
+        runner.Pid.ShouldNotBeNull();
+        runner.Pid!.Value.ShouldBeGreaterThan(0);
 
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task StartAsync_called_twice_throws()
     {
         SkipIfNotWindows();
@@ -71,31 +76,31 @@ public class PtyAgentRunnerTests
         using var bat = new TempBatch("@echo off\r\nping -n 30 127.0.0.1 > nul\r\n");
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Should.ThrowAsync<InvalidOperationException>(
             () => runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path }));
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task WriteAsync_before_StartAsync_throws()
     {
         SkipIfNotWindows();
         await using var runner = new PtyAgentRunner();
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Should.ThrowAsync<InvalidOperationException>(
             () => runner.WriteAsync("hi"));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Resize_before_StartAsync_throws()
     {
         SkipIfNotWindows();
         await using var runner = new PtyAgentRunner();
-        Assert.Throws<InvalidOperationException>(() => runner.Resize(80, 24));
+        Should.Throw<InvalidOperationException>(() => runner.Resize(80, 24));
         await Task.CompletedTask;
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Exited_completes_exactly_once()
     {
         SkipIfNotWindows();
@@ -105,12 +110,12 @@ public class PtyAgentRunnerTests
 
         var exit1 = await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
         var exit2 = await runner.Exited; // re-await same task
-        exit1.Should().Be(7);
-        exit2.Should().Be(7);
-        runner.Exited.IsCompleted.Should().BeTrue();
+        exit1.ShouldBe(7);
+        exit2.ShouldBe(7);
+        runner.Exited.IsCompleted.ShouldBeTrue();
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Dispose_mid_read_returns_within_3s()
     {
         SkipIfNotWindows();
@@ -121,12 +126,12 @@ public class PtyAgentRunnerTests
         var sw = Stopwatch.StartNew();
         await runner.DisposeAsync();
         sw.Stop();
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(3));
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
     }
 
     // ---------- S02: streaming + ring buffer + OnData ----------
 
-    [SkippableFact]
+    [Test]
     public async Task OnData_fires_for_each_chunk()
     {
         SkipIfNotWindows();
@@ -139,11 +144,11 @@ public class PtyAgentRunnerTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
-        hits.Should().BeGreaterThan(0);
-        lock (buf) buf.ToString().Should().Contain("onecho");
+        hits.ShouldBeGreaterThan(0);
+        lock (buf) buf.ToString().ShouldContain("onecho");
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Multiple_OnData_subscribers_each_receive_chunks()
     {
         SkipIfNotWindows();
@@ -157,11 +162,12 @@ public class PtyAgentRunnerTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
-        a.Should().BeGreaterThan(0);
-        a.Should().Be(b).And.Be(c);
+        a.ShouldBeGreaterThan(0);
+        a.ShouldBe(b);
+        a.ShouldBe(c);
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Output_ringbuffer_keeps_chunks_for_replay()
     {
         SkipIfNotWindows();
@@ -171,11 +177,11 @@ public class PtyAgentRunnerTests
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
         var snap = runner.Output.Snapshot();
-        snap.Length.Should().BeGreaterThan(0);
-        string.Concat(snap).Should().Contain("replay-marker");
+        snap.Length.ShouldBeGreaterThan(0);
+        string.Concat(snap).ShouldContain("replay-marker");
     }
 
-    [SkippableFact]
+    [Test]
     public async Task SnapshotText_returns_concatenated_chunks()
     {
         SkipIfNotWindows();
@@ -188,13 +194,13 @@ public class PtyAgentRunnerTests
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(15));
 
         var text = runner.SnapshotText();
-        text.Should().Contain("marker-aaa");
-        text.Should().Contain("marker-bbb");
+        text.ShouldContain("marker-aaa");
+        text.ShouldContain("marker-bbb");
         text.IndexOf("marker-aaa", StringComparison.Ordinal)
-            .Should().BeLessThan(text.IndexOf("marker-bbb", StringComparison.Ordinal));
+            .ShouldBeLessThan(text.IndexOf("marker-bbb", StringComparison.Ordinal));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task ClearLiveBuffer_resets_snapshot_only()
     {
         SkipIfNotWindows();
@@ -203,17 +209,17 @@ public class PtyAgentRunnerTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
-        runner.SnapshotText().Should().Contain("before");
+        runner.SnapshotText().ShouldContain("before");
         var ringBefore = runner.Output.Snapshot().Length;
 
         runner.ClearLiveBuffer();
-        runner.SnapshotText().Should().BeEmpty();
-        runner.Output.Snapshot().Length.Should().Be(ringBefore, "ring buffer is independent of live buffer");
+        runner.SnapshotText().ShouldBeEmpty();
+        runner.Output.Snapshot().Length.ShouldBe(ringBefore, "ring buffer is independent of live buffer");
     }
 
     // ---------- S03: stdin ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Stdin_round_trip_via_pwsh()
     {
         SkipIfNotWindows();
@@ -222,19 +228,19 @@ public class PtyAgentRunnerTests
 
         // wait for prompt
         var ready = await runner.WaitForOutputAsync(s => s.Contains(">"), TimeSpan.FromSeconds(10));
-        ready.Should().BeTrue("pwsh prompt should appear within 10s");
+        ready.ShouldBeTrue("pwsh prompt should appear within 10s");
 
         runner.ClearLiveBuffer();
         await runner.SendLineAsync("'echo-token-9F3X'");
         var matched = await runner.WaitForOutputAsync(
             s => s.Contains("echo-token-9F3X"), TimeSpan.FromSeconds(5));
-        matched.Should().BeTrue();
+        matched.ShouldBeTrue();
 
         await runner.SendLineAsync("exit");
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Stdin_large_write_64KB_does_not_truncate()
     {
         SkipIfNotWindows();
@@ -248,7 +254,7 @@ public class PtyAgentRunnerTests
 
         var matched = await runner.WaitForOutputAsync(
             s => s.Contains("60000"), TimeSpan.FromSeconds(30));
-        matched.Should().BeTrue();
+        matched.ShouldBeTrue();
 
         await runner.SendLineAsync("exit");
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
@@ -256,7 +262,7 @@ public class PtyAgentRunnerTests
 
     // ---------- S04: resize ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Resize_after_start_does_not_throw()
     {
         SkipIfNotWindows();
@@ -272,7 +278,7 @@ public class PtyAgentRunnerTests
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Resize_rejects_invalid_dimensions()
     {
         SkipIfNotWindows();
@@ -280,15 +286,15 @@ public class PtyAgentRunnerTests
         using var bat = new TempBatch("@echo off\r\nping -n 5 127.0.0.1 > nul\r\nexit /b 0\r\n");
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => runner.Resize(0, 24));
-        Assert.Throws<ArgumentOutOfRangeException>(() => runner.Resize(80, -1));
+        Should.Throw<ArgumentOutOfRangeException>(() => runner.Resize(0, 24));
+        Should.Throw<ArgumentOutOfRangeException>(() => runner.Resize(80, -1));
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
     // ---------- S06: wait helpers ----------
 
-    [SkippableFact]
+    [Test]
     public async Task WaitForOutput_matches_within_budget()
     {
         SkipIfNotWindows();
@@ -298,11 +304,11 @@ public class PtyAgentRunnerTests
 
         var matched = await runner.WaitForOutputAsync(
             s => s.Contains("TARGET-MARKER"), TimeSpan.FromSeconds(10));
-        matched.Should().BeTrue();
+        matched.ShouldBeTrue();
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task WaitForOutput_returns_false_on_timeout()
     {
         SkipIfNotWindows();
@@ -312,11 +318,11 @@ public class PtyAgentRunnerTests
 
         var matched = await runner.WaitForOutputAsync(
             s => s.Contains("NEVER-WILL-APPEAR"), TimeSpan.FromMilliseconds(500));
-        matched.Should().BeFalse();
+        matched.ShouldBeFalse();
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task WaitForQuiet_detects_quiet_after_burst()
     {
         SkipIfNotWindows();
@@ -327,11 +333,11 @@ public class PtyAgentRunnerTests
         var quiet = await runner.WaitForQuietAsync(
             quietPeriod: TimeSpan.FromMilliseconds(800),
             maxWait: TimeSpan.FromSeconds(10));
-        quiet.Should().BeTrue();
+        quiet.ShouldBeTrue();
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task WaitForQuiet_returns_false_under_continuous_output()
     {
         SkipIfNotWindows();
@@ -342,11 +348,11 @@ public class PtyAgentRunnerTests
         var quiet = await runner.WaitForQuietAsync(
             quietPeriod: TimeSpan.FromSeconds(2),
             maxWait: TimeSpan.FromSeconds(3));
-        quiet.Should().BeFalse();
+        quiet.ShouldBeFalse();
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Wait_helpers_honour_cancellation_token()
     {
         SkipIfNotWindows();
@@ -359,15 +365,15 @@ public class PtyAgentRunnerTests
         var result = await runner.WaitForOutputAsync(
             s => s.Contains("NEVER"), TimeSpan.FromSeconds(30), cts.Token);
         sw.Stop();
-        result.Should().BeFalse();
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2));
+        result.ShouldBeFalse();
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
     // ---------- S07: env + cwd ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Env_vars_propagate_to_child()
     {
         SkipIfNotWindows();
@@ -380,10 +386,10 @@ public class PtyAgentRunnerTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path }, env: env);
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
-        runner.SnapshotText().Should().Contain("marker-7K9X");
+        runner.SnapshotText().ShouldContain("marker-7K9X");
     }
 
-    [SkippableFact]
+    [Test]
     public async Task Cwd_honoured_by_child()
     {
         SkipIfNotWindows();
@@ -396,7 +402,7 @@ public class PtyAgentRunnerTests
             await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path }, cwd: temp);
             await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
 
-            runner.SnapshotText().Should().Contain(temp);
+            runner.SnapshotText().ShouldContain(temp);
         }
         finally
         {

@@ -2,8 +2,8 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Agents;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
@@ -42,48 +42,48 @@ public class WorkflowEngineParsingTests
 
     #region YAML Parsing
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_ValidYaml_ReturnsWorkflowDefinition()
     {
         var definition = WorkflowEngine.ParseYamlDefinition(TwoStageYaml);
 
-        definition.Name.Should().Be("Test Workflow");
-        definition.Description.Should().Be("A test workflow with two stages");
-        definition.Stages.Should().HaveCount(2);
-        definition.Stages[0].Name.Should().Be("Stage One");
-        definition.Stages[0].ExecutorType.Should().Be("mock");
-        definition.Stages[0].GateRequired.Should().BeFalse();
-        definition.Stages[0].SystemPrompt.Should().Be("Do stage one work");
-        definition.Stages[1].Name.Should().Be("Stage Two");
+        definition.Name.ShouldBe("Test Workflow");
+        definition.Description.ShouldBe("A test workflow with two stages");
+        definition.Stages.Count().ShouldBe(2);
+        definition.Stages[0].Name.ShouldBe("Stage One");
+        definition.Stages[0].ExecutorType.ShouldBe("mock");
+        definition.Stages[0].GateRequired.ShouldBeFalse();
+        definition.Stages[0].SystemPrompt.ShouldBe("Do stage one work");
+        definition.Stages[1].Name.ShouldBe("Stage Two");
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_GateRequired_ParsedCorrectly()
     {
         var definition = WorkflowEngine.ParseYamlDefinition(GatedWorkflowYaml);
 
-        definition.Stages[0].GateRequired.Should().BeTrue();
-        definition.Stages[1].GateRequired.Should().BeFalse();
+        definition.Stages[0].GateRequired.ShouldBeTrue();
+        definition.Stages[1].GateRequired.ShouldBeFalse();
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_EmptyYaml_ThrowsValidationException()
     {
         var act = () => WorkflowEngine.ParseYamlDefinition("");
 
-        act.Should().Throw<ValidationException>();
+        Should.Throw<ValidationException>(act);
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_NoStages_ThrowsValidationException()
     {
         var yaml = "name: No stages workflow";
         var act = () => WorkflowEngine.ParseYamlDefinition(yaml);
 
-        act.Should().Throw<ValidationException>();
+        Should.Throw<ValidationException>(act);
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_WithModelName_ParsedCorrectly()
     {
         var yaml = """
@@ -97,10 +97,10 @@ public class WorkflowEngineParsingTests
 
         var definition = WorkflowEngine.ParseYamlDefinition(yaml);
 
-        definition.Stages[0].ModelName.Should().Be("claude-opus");
+        definition.Stages[0].ModelName.ShouldBe("claude-opus");
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_MissingStageName_ThrowsValidationException()
     {
         var yaml = """
@@ -112,10 +112,10 @@ public class WorkflowEngineParsingTests
 
         var act = () => WorkflowEngine.ParseYamlDefinition(yaml);
 
-        act.Should().Throw<ValidationException>();
+        Should.Throw<ValidationException>(act);
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_MissingExecutorType_ThrowsValidationException()
     {
         var yaml = """
@@ -127,10 +127,10 @@ public class WorkflowEngineParsingTests
 
         var act = () => WorkflowEngine.ParseYamlDefinition(yaml);
 
-        act.Should().Throw<ValidationException>();
+        Should.Throw<ValidationException>(act);
     }
 
-    [Fact]
+    [Test]
     public void ParseYamlDefinition_EmptyStagesArray_ThrowsValidationException()
     {
         var yaml = """
@@ -140,38 +140,41 @@ public class WorkflowEngineParsingTests
 
         var act = () => WorkflowEngine.ParseYamlDefinition(yaml);
 
-        act.Should().Throw<ValidationException>();
+        Should.Throw<ValidationException>(act);
     }
 
     #endregion
 
     #region MockExecutor
 
-    [Fact]
+    [Test]
     public async Task MockExecutor_ProducesPlaceholderOutput()
     {
         var executor = new MockExecutor();
         var context = new StageExecutionContext(
             WorkflowId: Guid.NewGuid(),
             StageId: Guid.NewGuid(),
+            StageExecutionId: Guid.NewGuid(),
             StageName: "Architecture",
             ExecutorType: "mock",
             ModelName: "claude-opus",
             SystemPrompt: "Design the architecture",
             UpstreamArtifacts: [],
             Constitution: null,
-            StageInstructions: "Design the architecture");
+            StageInstructions: "Design the architecture",
+            InitialContext: null,
+            BranchName: null);
 
         var result = await executor.ExecuteAsync(context, CancellationToken.None);
 
-        result.OutputContent.Should().Contain("Architecture Output");
-        result.OutputContent.Should().Contain("MockExecutor");
-        result.ArtifactPaths.Should().HaveCount(1);
-        result.ArtifactPaths[0].Should().Contain("Architecture.md");
-        result.SuggestedActions.Should().BeNull();
+        result.OutputContent.ShouldContain("Architecture Output");
+        result.OutputContent.ShouldContain("MockExecutor");
+        result.ArtifactPaths.Count.ShouldBe(1);
+        result.ArtifactPaths[0].ShouldContain("Architecture.md");
+        result.SuggestedActions.ShouldBeNull();
     }
 
-    [Fact]
+    [Test]
     public async Task MockExecutor_RespectsCalcellationToken()
     {
         var executor = new MockExecutor();
@@ -181,17 +184,20 @@ public class WorkflowEngineParsingTests
         var context = new StageExecutionContext(
             WorkflowId: Guid.NewGuid(),
             StageId: Guid.NewGuid(),
+            StageExecutionId: Guid.NewGuid(),
             StageName: "Test",
             ExecutorType: "mock",
             ModelName: null,
             SystemPrompt: null,
             UpstreamArtifacts: [],
             Constitution: null,
-            StageInstructions: null);
+            StageInstructions: null,
+            InitialContext: null,
+            BranchName: null);
 
         var act = () => executor.ExecuteAsync(context, cts.Token);
 
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await Should.ThrowAsync<OperationCanceledException>(act);
     }
 
     #endregion

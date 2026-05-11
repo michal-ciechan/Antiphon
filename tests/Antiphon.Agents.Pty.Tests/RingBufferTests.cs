@@ -1,75 +1,75 @@
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-[Trait("Category", "Unit")]
+[Category("Unit")]
 public class RingBufferTests
 {
-    [Fact]
+    [Test]
     public void Overwrites_oldest_when_full()
     {
         var rb = new RingBuffer<int>(3);
         rb.Add(1); rb.Add(2); rb.Add(3); rb.Add(4); rb.Add(5);
-        rb.Count.Should().Be(3);
-        rb.Snapshot().Should().Equal(3, 4, 5);
+        rb.Count.ShouldBe(3);
+        rb.Snapshot().ShouldBe([3, 4, 5]);
     }
 
-    [Fact]
+    [Test]
     public void Under_capacity_returns_in_order()
     {
         var rb = new RingBuffer<string>(5);
         rb.Add("a"); rb.Add("b");
-        rb.Snapshot().Should().Equal("a", "b");
+        rb.Snapshot().ShouldBe(["a", "b"]);
     }
 
-    [Fact]
+    [Test]
     public void Exactly_at_capacity_no_overwrite()
     {
         var rb = new RingBuffer<int>(3);
         rb.Add(10); rb.Add(20); rb.Add(30);
-        rb.Count.Should().Be(3);
-        rb.Snapshot().Should().Equal(10, 20, 30);
+        rb.Count.ShouldBe(3);
+        rb.Snapshot().ShouldBe([10, 20, 30]);
     }
 
-    [Fact]
+    [Test]
     public void Capacity_immutable_count_clamped()
     {
         var rb = new RingBuffer<int>(2);
-        rb.Capacity.Should().Be(2);
+        rb.Capacity.ShouldBe(2);
         for (int i = 0; i < 100; i++) rb.Add(i);
-        rb.Count.Should().Be(2);
-        rb.Capacity.Should().Be(2);
+        rb.Count.ShouldBe(2);
+        rb.Capacity.ShouldBe(2);
     }
 
-    [Fact]
+    [Test]
     public void Snapshot_returns_independent_copy()
     {
         var rb = new RingBuffer<int>(3);
         rb.Add(1); rb.Add(2);
         var snap = rb.Snapshot();
         rb.Add(3);
-        snap.Should().Equal(1, 2);
-        rb.Snapshot().Should().Equal(1, 2, 3);
+        snap.ShouldBe([1, 2]);
+        rb.Snapshot().ShouldBe([1, 2, 3]);
     }
 
-    [Fact]
+    [Test]
     public void Empty_snapshot_returns_empty_array()
     {
         var rb = new RingBuffer<int>(5);
-        rb.Snapshot().Should().BeEmpty();
-        rb.Count.Should().Be(0);
+        rb.Snapshot().ShouldBeEmpty();
+        rb.Count.ShouldBe(0);
     }
 
-    [Fact]
+    [Test]
     public void Constructor_rejects_zero_or_negative_capacity()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new RingBuffer<int>(0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new RingBuffer<int>(-1));
+        Should.Throw<ArgumentOutOfRangeException>(() => new RingBuffer<int>(0));
+        Should.Throw<ArgumentOutOfRangeException>(() => new RingBuffer<int>(-1));
     }
 
-    [Fact]
+    [Test]
     public async Task Concurrent_adds_and_snapshots_do_not_throw()
     {
         var rb = new RingBuffer<int>(64);
@@ -84,11 +84,11 @@ public class RingBufferTests
             while (!cts.IsCancellationRequested)
             {
                 var snap = rb.Snapshot();
-                snap.Length.Should().BeLessThanOrEqualTo(64);
+                snap.Length.ShouldBeLessThanOrEqualTo(64);
             }
         })).ToArray();
 
         await Task.WhenAll(writers.Concat(readers));
-        rb.Count.Should().BeLessThanOrEqualTo(64);
+        rb.Count.ShouldBeLessThanOrEqualTo(64);
     }
 }

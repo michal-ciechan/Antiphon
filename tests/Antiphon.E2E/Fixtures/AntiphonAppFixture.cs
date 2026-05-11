@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Xunit;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
@@ -21,7 +20,7 @@ namespace Antiphon.E2E.Fixtures;
 /// Starts the real Antiphon app on a random TCP port via Kestrel
 /// so both HttpClient and Playwright can connect to it.
 /// </summary>
-public class AntiphonAppFixture : IAsyncLifetime
+public class AntiphonAppFixture
 {
     private readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
         .WithImage("postgres:16-alpine")

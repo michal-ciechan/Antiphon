@@ -1,6 +1,6 @@
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -13,8 +13,8 @@ namespace Antiphon.Agents.Pty.Tests;
 /// actually appear.  The screen buffer lets us reliably detect the menu text despite
 /// cursor-forward repaint optimisations.
 /// </summary>
-[Collection("Headed")]
-[Trait("Category", "Headed")]
+[NotInParallel("Headed")]
+[Category("Headed")]
 public class ClaudeInteractionTests
 {
 	// ── I01: screen buffer detects permission prompt ──────────────────────────
@@ -29,7 +29,7 @@ public class ClaudeInteractionTests
 	/// auto-approved by Claude Code without a prompt; `systeminfo` is a
 	/// system-information command that reliably triggers the permission menu.
 	/// </summary>
-	[SkippableFact]
+	[Test]
 	public async Task Screen_detects_permission_prompt_for_bash_tool()
 	{
 		ClSession.SkipIfNotEligible();
@@ -51,15 +51,15 @@ public class ClaudeInteractionTests
 			                          StringComparison.OrdinalIgnoreCase),
 			TimeSpan.FromSeconds(30));
 
-		promptVisible.Should().BeTrue(
+		promptVisible.ShouldBeTrue(
 			$"permission prompt should appear on screen within 30s.\n" +
 			$"Screen:\n{runner.SnapshotScreen()}");
 
 		// Confirm the numbered options are also present.
 		var screen = runner.SnapshotScreen();
-		screen.Should().Contain("1.", "option 1 (Yes) must be present");
-		screen.Should().Contain("2.", "option 2 (Yes, don't ask again) must be present");
-		screen.Should().Contain("3.", "option 3 (No) must be present");
+		screen.ShouldContain("1.");
+		screen.ShouldContain("2.");
+		screen.ShouldContain("3.");
 
 		await runner.KillAsync(TimeSpan.FromSeconds(2));
 	}
@@ -71,7 +71,7 @@ public class ClaudeInteractionTests
 	/// sending "1" (Yes) and verify the tool executes and the response contains
 	/// the expected output.
 	/// </summary>
-	[SkippableFact]
+	[Test]
 	public async Task Approve_permission_prompt_via_numbered_choice_executes_tool()
 	{
 		ClSession.SkipIfNotEligible();
@@ -89,7 +89,7 @@ public class ClaudeInteractionTests
 			screen => screen.Contains("Do you want to proceed?",
 			                          StringComparison.OrdinalIgnoreCase),
 			TimeSpan.FromSeconds(30));
-		promptVisible.Should().BeTrue("permission prompt should appear");
+		promptVisible.ShouldBeTrue("permission prompt should appear");
 
 		// Approve: send "1" then Enter.  Small delay lets the prompt fully settle.
 		await Task.Delay(300);
@@ -98,12 +98,11 @@ public class ClaudeInteractionTests
 
 		// Wait for Claude to finish — systeminfo can take 15-20 s on a cold system.
 		var done = await new ClaudeDoneDetector { MaxWait = TimeSpan.FromMinutes(3) }.WaitAsync(runner);
-		done.Should().BeTrue("Claude should respond after permission granted");
+		done.ShouldBeTrue("Claude should respond after permission granted");
 
 		// systeminfo output always contains "Windows" in the OS Name field.
 		var responseScreen = runner.SnapshotScreen();
-		responseScreen.Should().Contain("Windows",
-			"systeminfo must have executed and its OS Name reflected in Claude's response");
+		responseScreen.ShouldContain("Windows");
 
 		await runner.SendLineAsync("/exit");
 		await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -116,7 +115,7 @@ public class ClaudeInteractionTests
 	/// Sends option "3" (No) to deny the permission prompt and verifies that
 	/// the tool does NOT execute (no systeminfo-specific output in the response).
 	/// </summary>
-	[SkippableFact]
+	[Test]
 	public async Task Deny_permission_prompt_via_numbered_choice_skips_tool()
 	{
 		ClSession.SkipIfNotEligible();
@@ -133,7 +132,7 @@ public class ClaudeInteractionTests
 			screen => screen.Contains("Do you want to proceed?",
 			                          StringComparison.OrdinalIgnoreCase),
 			TimeSpan.FromSeconds(30));
-		promptVisible.Should().BeTrue("permission prompt should appear");
+		promptVisible.ShouldBeTrue("permission prompt should appear");
 
 		// Deny: send "3" (No).
 		await Task.Delay(300);
@@ -142,12 +141,11 @@ public class ClaudeInteractionTests
 
 		// Claude should still respond (explaining it couldn't run the tool).
 		var done = await new ClaudeDoneDetector { MaxWait = TimeSpan.FromMinutes(2) }.WaitAsync(runner);
-		done.Should().BeTrue("Claude should respond even when permission is denied");
+		done.ShouldBeTrue("Claude should respond even when permission is denied");
 
 		// systeminfo output contains "OS Name:" — must NOT appear if tool was denied.
 		var responseScreen = runner.SnapshotScreen();
-		responseScreen.Should().NotContain("OS Name:",
-			"systeminfo was denied so its raw output must not appear on screen");
+		responseScreen.ShouldNotContain("OS Name:");
 
 		await runner.SendLineAsync("/exit");
 		await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));

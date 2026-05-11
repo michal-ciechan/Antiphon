@@ -1,7 +1,5 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Playwright;
-using Xunit;
-using Xunit.Abstractions;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -15,7 +13,7 @@ namespace Antiphon.E2E.Fixtures;
 /// - Browser console log recording
 /// - Visual comparison against baselines stored in TestOutput/Baselines/
 /// </summary>
-public class PlaywrightFixture : IAsyncLifetime
+public class PlaywrightFixture
 {
     private IPlaywright _playwright = null!;
     private IBrowser _browser = null!;
@@ -176,7 +174,7 @@ public class PlaywrightFixture : IAsyncLifetime
             var diffPath = Path.Combine(ScreenshotRoot, Sanitize(testName), $"{Sanitize(baselineName)}_{diffLabel}.png");
             File.Copy(actualPath, diffPath, overwrite: true);
 
-            throw new Xunit.Sdk.XunitException(
+            throw new Exception(
                 $"Screenshot '{baselineName}' differs from baseline by {diff:F2}% " +
                 $"(threshold: {maxDiffPercent}%). Actual: {actualPath} Baseline: {baselinePath}");
         }
@@ -206,7 +204,7 @@ public class PlaywrightFixture : IAsyncLifetime
 
         if (diff > maxDiffPercent)
         {
-            throw new Xunit.Sdk.XunitException(
+            throw new Exception(
                 $"Component '{baselineName}' differs from baseline by {diff:F2}% " +
                 $"(threshold: {maxDiffPercent}%). Actual: {actualPath} Baseline: {baselinePath}");
         }

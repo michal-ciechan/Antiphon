@@ -1,9 +1,9 @@
 using System.Net;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit;
+using TUnit.Core;
 using Antiphon.Server.Infrastructure.Data;
 using Testcontainers.PostgreSql;
 
@@ -13,7 +13,7 @@ namespace Antiphon.Tests;
 /// Basic smoke tests that verify the app starts and critical endpoints respond.
 /// Uses a real PostgreSQL testcontainer via WebApplicationFactory.
 /// </summary>
-public class SmokeTests : IAsyncLifetime
+public class SmokeTests
 {
     private readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
         .WithImage("postgres:16-alpine")
@@ -25,7 +25,8 @@ public class SmokeTests : IAsyncLifetime
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
 
-    public async Task InitializeAsync()
+    [Before(Test)]
+    public async Task SetupAsync()
     {
         await _container.StartAsync();
 
@@ -55,30 +56,31 @@ public class SmokeTests : IAsyncLifetime
         _client = _factory.CreateClient();
     }
 
-    public async Task DisposeAsync()
+    [After(Test)]
+    public async Task TeardownAsync()
     {
         _client.Dispose();
         await _factory.DisposeAsync();
         await _container.DisposeAsync();
     }
 
-    [Fact]
+    [Test]
     public async Task Health_endpoint_returns_healthy()
     {
         var response = await _client.GetAsync("/health");
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        content.Should().Be("Healthy");
+        content.ShouldBe("Healthy");
     }
 
-    [Fact]
+    [Test]
     public async Task App_starts_successfully()
     {
         // If we get here without exception, the app started successfully
         // with testcontainer DB and all middleware registered.
         var response = await _client.GetAsync("/health");
 
-        response.StatusCode.Should().NotBe(HttpStatusCode.InternalServerError);
+        response.StatusCode.ShouldNotBe(HttpStatusCode.InternalServerError);
     }
 }

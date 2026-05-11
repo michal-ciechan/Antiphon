@@ -1,19 +1,19 @@
 using System.Diagnostics;
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;
 
 // Headed tests spawn real Claude TUI sessions — run them serially to avoid
 // parallel API quota contention and quiet-period detector interference.
-[Collection("Headed")]
-[Trait("Category", "Headed")]
+[NotInParallel("Headed")]
+[Category("Headed")]
 public class ClaudeHeadedTests
 {
     // ---------- S11: cl --version smoke ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_version_via_pty_exits_zero_with_version_string()
     {
         ClSession.SkipIfNotEligible();
@@ -22,15 +22,15 @@ public class ClaudeHeadedTests
         await runner.StartAsync(app, args);
 
         var exit = await runner.Exited.WaitAsync(TimeSpan.FromSeconds(60));
-        exit.Should().Be(0);
+        exit.ShouldBe(0);
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.Should().MatchRegex(@"\d+\.\d+\.\d+", "version string should appear");
+        clean.ShouldMatch(@"\d+\.\d+\.\d+", "version string should appear");
     }
 
     // ---------- S12: cl --print non-interactive prompt ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_print_mode_returns_response()
     {
         ClSession.SkipIfNotEligible();
@@ -39,15 +39,15 @@ public class ClaudeHeadedTests
         await runner.StartAsync(app, args);
 
         var exit = await runner.Exited.WaitAsync(TimeSpan.FromMinutes(2));
-        exit.Should().Be(0);
+        exit.ShouldBe(0);
 
         var clean = (AnsiStripper.Clean(runner.SnapshotText()) ?? "").ToUpperInvariant();
-        clean.Should().Contain("PONG");
+        clean.ShouldContain("PONG");
     }
 
     // ---------- S13: TUI ready detection ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_tui_reaches_ready_within_30s()
     {
         ClSession.SkipIfNotEligible();
@@ -57,7 +57,7 @@ public class ClaudeHeadedTests
 
         var detector = new ClaudeReadyDetector();
         var ready = await detector.WaitAsync(runner);
-        ready.Should().BeTrue();
+        ready.ShouldBeTrue();
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -66,7 +66,7 @@ public class ClaudeHeadedTests
 
     // ---------- S14: single prompt round-trip ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_single_prompt_returns_response()
     {
         ClSession.SkipIfNotEligible();
@@ -79,10 +79,10 @@ public class ClaudeHeadedTests
         runner.ClearLiveBuffer();
         await runner.SendLineAsync("Say HELLO-MARKER and stop.");
         var done = await new ClaudeDoneDetector().WaitAsync(runner);
-        done.Should().BeTrue();
+        done.ShouldBeTrue();
 
         var clean = (AnsiStripper.Clean(runner.SnapshotText()) ?? "").ToUpperInvariant();
-        clean.Should().Contain("HELLO-MARKER");
+        clean.ShouldContain("HELLO-MARKER");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -91,7 +91,7 @@ public class ClaudeHeadedTests
 
     // ---------- S15: sequential two-prompt session shares context ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_sequential_prompts_share_context()
     {
         ClSession.SkipIfNotEligible();
@@ -110,7 +110,7 @@ public class ClaudeHeadedTests
         await new ClaudeDoneDetector().WaitAsync(runner);
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.Should().Contain("7919");
+        clean.ShouldContain("7919");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -119,7 +119,7 @@ public class ClaudeHeadedTests
 
     // ---------- S16: tool use ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_tool_use_returns_systeminfo()
     {
         ClSession.SkipIfNotEligible();
@@ -133,10 +133,10 @@ public class ClaudeHeadedTests
         runner.ClearLiveBuffer();
         await runner.SendLineAsync("Run `systeminfo` via Bash and tell me the OS Name in one short sentence.");
         var done = await new ClaudeDoneDetector { MaxWait = TimeSpan.FromMinutes(3) }.WaitAsync(runner);
-        done.Should().BeTrue();
+        done.ShouldBeTrue();
 
         var clean = AnsiStripper.Clean(runner.SnapshotText()) ?? "";
-        clean.Should().Contain("Windows");
+        clean.ShouldContain("Windows");
 
         await runner.SendLineAsync("/exit");
         await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -145,7 +145,7 @@ public class ClaudeHeadedTests
 
     // ---------- S17a: /exit clean shutdown ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_exit_command_completes_in_5s()
     {
         ClSession.SkipIfNotEligible();
@@ -160,12 +160,12 @@ public class ClaudeHeadedTests
         var exited = await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5))) == runner.Exited;
         sw.Stop();
 
-        exited.Should().BeTrue($"/exit should complete within 5s (took {sw.Elapsed})");
+        exited.ShouldBeTrue($"/exit should complete within 5s (took {sw.Elapsed})");
     }
 
     // ---------- S17b: kill mid-flight, no orphans ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_kill_midflight_no_orphans()
     {
         ClSession.SkipIfNotEligible();
@@ -184,23 +184,23 @@ public class ClaudeHeadedTests
             await Task.Delay(TimeSpan.FromSeconds(2)); // let claude start streaming
 
             var killed = await runner.KillAsync(TimeSpan.FromSeconds(5));
-            killed.Should().BeTrue();
+            killed.ShouldBeTrue();
         }
 
         await Task.Delay(2000);
         var orphansAfter = Process.GetProcessesByName("claude").Length;
-        (orphansAfter - orphansBefore).Should().BeLessThan(2,
+        (orphansAfter - orphansBefore).ShouldBeLessThan(2,
             $"claude.exe should not orphan after kill. before={orphansBefore} after={orphansAfter}");
     }
 }
 
-[Collection("Headed")]
-[Trait("Category", "HeadedLong")]
+[NotInParallel("Headed")]
+[Category("HeadedLong")]
 public class ClaudeHeadedLongTests
 {
     // ---------- S18: --resume preserves context across runner instances ----------
 
-    [SkippableFact]
+    [Test]
     public async Task Cl_headed_resume_preserves_context_across_runner_instances()
     {
         ClSession.SkipIfNotEligible();
@@ -225,11 +225,11 @@ public class ClaudeHeadedLongTests
             // claude prints `claude --resume <id>` near the end on /exit.
             var match = System.Text.RegularExpressions.Regex.Match(
                 transcript, @"--resume\s+([0-9a-f-]{8,})");
-            match.Success.Should().BeTrue($"could not find resume id. tail:\n{transcript[^Math.Min(500, transcript.Length)..]}");
+            match.Success.ShouldBeTrue($"could not find resume id. tail:\n{transcript[^Math.Min(500, transcript.Length)..]}");
             sessionId = match.Groups[1].Value;
         }
 
-        sessionId.Should().NotBeNullOrEmpty();
+        sessionId.ShouldNotBeNullOrEmpty();
 
         // Run 2: --resume and ask for the codeword.
         await using (var runner2 = new PtyAgentRunner())
@@ -245,7 +245,7 @@ public class ClaudeHeadedLongTests
             await new ClaudeDoneDetector().WaitAsync(runner2);
 
             var clean = (AnsiStripper.Clean(runner2.SnapshotText()) ?? "").ToUpperInvariant();
-            clean.Should().Contain("BANANA-ZULU-9");
+            clean.ShouldContain("BANANA-ZULU-9");
 
             await runner2.SendLineAsync("/exit");
             await Task.WhenAny(runner2.Exited, Task.Delay(TimeSpan.FromSeconds(5)));

@@ -1,7 +1,7 @@
 using Antiphon.Server.Infrastructure.Git;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
+using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -14,60 +14,60 @@ public class GitServiceTests
 
     // --- Branch/Tag name generation tests ---
 
-    [Fact]
+    [Test]
     public void GetWorkflowMasterBranch_ReturnsCorrectFormat()
     {
         var branch = GitService.GetWorkflowMasterBranch(TestWorkflowId);
 
-        branch.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
+        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
     }
 
-    [Fact]
+    [Test]
     public void GetStageBranch_ReturnsCorrectFormat()
     {
         var branch = GitService.GetStageBranch(TestWorkflowId, "architecture");
 
-        branch.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
+        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
     }
 
-    [Fact]
+    [Test]
     public void GetStageTag_ReturnsCorrectFormat()
     {
         var tag = GitService.GetStageTag(TestWorkflowId, "architecture", 1);
 
-        tag.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
+        tag.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
     }
 
-    [Fact]
+    [Test]
     public void GetStageTag_VersionIncrements()
     {
         var tag1 = GitService.GetStageTag(TestWorkflowId, "design", 1);
         var tag2 = GitService.GetStageTag(TestWorkflowId, "design", 2);
 
-        tag1.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v1");
-        tag2.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v2");
+        tag1.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v1");
+        tag2.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/design-v2");
     }
 
-    [Fact]
+    [Test]
     public void GetArtifactDirectory_ReturnsCorrectFormat()
     {
         var dir = GitService.GetArtifactDirectory(TestWorkflowId);
 
-        dir.Should().Be("_antiphon/artifacts/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        dir.ShouldBe("_antiphon/artifacts/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     }
 
-    [Fact]
+    [Test]
     public void GetStageBranch_WithSpacesInName_IncludesSpaces()
     {
         // Stage names with spaces are used as-is in branch names
         var branch = GitService.GetStageBranch(TestWorkflowId, "stage-one");
 
-        branch.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-stage-one");
+        branch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-stage-one");
     }
 
     // --- Integration tests for actual git operations ---
 
-    [Fact]
+    [Test]
     public async Task InitializeWorkflowBranchesAsync_CreatesWorkflowMasterBranch()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -77,11 +77,11 @@ public class GitServiceTests
 
             // Verify the branch was created
             var branches = await RunGit(repoPath, "branch --list");
-            branches.Should().Contain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
+            branches.ShouldContain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
 
             // Verify artifact directory exists
             var artifactDir = Path.Combine(repoPath, "_antiphon", "artifacts", $"workflow-{TestWorkflowId}");
-            Directory.Exists(artifactDir).Should().BeTrue();
+            Directory.Exists(artifactDir).ShouldBeTrue();
         }
         finally
         {
@@ -89,7 +89,7 @@ public class GitServiceTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task CreateStageBranchAsync_CreatesBranchFromWorkflowMaster()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -99,7 +99,7 @@ public class GitServiceTests
             await service.CreateStageBranchAsync(TestWorkflowId, "architecture", repoPath, CancellationToken.None);
 
             var branches = await RunGit(repoPath, "branch --list");
-            branches.Should().Contain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
+            branches.ShouldContain("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/stage-architecture");
         }
         finally
         {
@@ -107,7 +107,7 @@ public class GitServiceTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task CommitArtifactAsync_CreatesFileAndCommitsWithAntiphonTrailer()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -123,12 +123,12 @@ public class GitServiceTests
             // Verify file exists
             var artifactPath = Path.Combine(repoPath, "_antiphon", "artifacts",
                 $"workflow-{TestWorkflowId}", "architecture.md");
-            File.Exists(artifactPath).Should().BeTrue();
-            (await File.ReadAllTextAsync(artifactPath)).Should().Contain("Design doc content");
+            File.Exists(artifactPath).ShouldBeTrue();
+            (await File.ReadAllTextAsync(artifactPath)).ShouldContain("Design doc content");
 
             // Verify commit message has [antiphon] trailer
             var log = await RunGit(repoPath, "log -1 --format=%B");
-            log.Should().Contain("antiphon: true");
+            log.ShouldContain("antiphon: true");
         }
         finally
         {
@@ -136,7 +136,7 @@ public class GitServiceTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task TagStageAsync_CreatesVersionedTag()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -149,10 +149,10 @@ public class GitServiceTests
 
             var tagName = await service.TagStageAsync(TestWorkflowId, "architecture", 1, repoPath, CancellationToken.None);
 
-            tagName.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
+            tagName.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/architecture-v1");
 
             var tags = await RunGit(repoPath, "tag --list");
-            tags.Should().Contain(tagName);
+            tags.ShouldContain(tagName);
         }
         finally
         {
@@ -160,7 +160,7 @@ public class GitServiceTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task MergeStageBranchAsync_MergesIntoWorkflowMaster()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -176,12 +176,12 @@ public class GitServiceTests
 
             // We should be on the workflow master branch after merge
             var currentBranch = (await RunGit(repoPath, "branch --show-current")).Trim();
-            currentBranch.Should().Be("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
+            currentBranch.ShouldBe("antiphon/workflow-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/master");
 
             // The artifact file should exist on workflow master
             var artifactPath = Path.Combine(repoPath, "_antiphon", "artifacts",
                 $"workflow-{TestWorkflowId}", "doc.md");
-            File.Exists(artifactPath).Should().BeTrue();
+            File.Exists(artifactPath).ShouldBeTrue();
         }
         finally
         {
@@ -189,7 +189,7 @@ public class GitServiceTests
         }
     }
 
-    [Fact]
+    [Test]
     public async Task GetDiffBetweenTagsAsync_ReturnsDiff()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -213,8 +213,8 @@ public class GitServiceTests
                 GitService.GetStageTag(TestWorkflowId, "architecture", 2),
                 repoPath, CancellationToken.None);
 
-            diff.Should().Contain("version 1 content");
-            diff.Should().Contain("version 2 content");
+            diff.ShouldContain("version 1 content");
+            diff.ShouldContain("version 2 content");
         }
         finally
         {

@@ -1,7 +1,7 @@
 using Antiphon.Server.Infrastructure.Git;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
+using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
@@ -24,7 +24,7 @@ public class GitDiffSpikeTests
     /// Core spike test: compute path-filtered diff between {stage}-v1 and {stage}-v2 tags.
     /// Verifies that only changes in _antiphon/artifacts/ are included.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PathFilteredDiff_BetweenStageTags_CapturesOnlyArtifactChanges()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -42,7 +42,7 @@ public class GitDiffSpikeTests
 
             // 3. Tag as v1
             var tagV1 = await service.TagStageAsync(TestWorkflowId, "architecture", 1, repoPath, CancellationToken.None);
-            tagV1.Should().Be(GitService.GetStageTag(TestWorkflowId, "architecture", 1));
+            tagV1.ShouldBe(GitService.GetStageTag(TestWorkflowId, "architecture", 1));
 
             // 4. Also add a non-artifact file on the same branch (simulating code changes)
             var nonArtifactPath = Path.Combine(repoPath, "src", "Program.cs");
@@ -64,27 +64,27 @@ public class GitDiffSpikeTests
 
             // 7. Tag as v2
             var tagV2 = await service.TagStageAsync(TestWorkflowId, "architecture", 2, repoPath, CancellationToken.None);
-            tagV2.Should().Be(GitService.GetStageTag(TestWorkflowId, "architecture", 2));
+            tagV2.ShouldBe(GitService.GetStageTag(TestWorkflowId, "architecture", 2));
 
             // 8. Compute PATH-FILTERED diff (only _antiphon/artifacts/)
             var artifactPath = GitService.GetArtifactDirectory(TestWorkflowId);
             var filteredDiff = await service.GetDiffBetweenTagsAsync(tagV1, tagV2, repoPath, artifactPath, CancellationToken.None);
 
             // Verify: diff DOES contain artifact changes
-            filteredDiff.Should().Contain("Architecture v1");
-            filteredDiff.Should().Contain("Architecture v2");
-            filteredDiff.Should().Contain("event sourcing");
-            filteredDiff.Should().Contain("Message Queue");
-            filteredDiff.Should().Contain("Event Store");
+            filteredDiff.ShouldContain("Architecture v1");
+            filteredDiff.ShouldContain("Architecture v2");
+            filteredDiff.ShouldContain("event sourcing");
+            filteredDiff.ShouldContain("Message Queue");
+            filteredDiff.ShouldContain("Event Store");
 
             // Verify: diff does NOT contain non-artifact changes
-            filteredDiff.Should().NotContain("Program.cs");
-            filteredDiff.Should().NotContain("non-artifact");
+            filteredDiff.ShouldNotContain("Program.cs");
+            filteredDiff.ShouldNotContain("non-artifact");
 
             // 9. Compare with unfiltered diff (should contain both)
             var unfilteredDiff = await service.GetDiffBetweenTagsAsync(tagV1, tagV2, repoPath, CancellationToken.None);
-            unfilteredDiff.Should().Contain("Program.cs");
-            unfilteredDiff.Should().Contain("architecture.md");
+            unfilteredDiff.ShouldContain("Program.cs");
+            unfilteredDiff.ShouldContain("architecture.md");
         }
         finally
         {
@@ -95,7 +95,7 @@ public class GitDiffSpikeTests
     /// <summary>
     /// Verifies that the diff output is in standard unified diff format, which is parseable.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PathFilteredDiff_OutputIsStandardUnifiedFormat()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -120,14 +120,14 @@ public class GitDiffSpikeTests
             var diff = await service.GetDiffBetweenTagsAsync(tagV1, tagV2, repoPath, artifactPath, CancellationToken.None);
 
             // Unified diff format markers
-            diff.Should().Contain("diff --git");
-            diff.Should().Contain("---");
-            diff.Should().Contain("+++");
-            diff.Should().Contain("@@");
+            diff.ShouldContain("diff --git");
+            diff.ShouldContain("---");
+            diff.ShouldContain("+++");
+            diff.ShouldContain("@@");
 
             // The diff should contain added/removed lines (+ and - prefixed)
-            diff.Should().Contain("+")
-                .And.Contain("-");
+            diff.ShouldContain("+");
+            diff.ShouldContain("-");
         }
         finally
         {
@@ -138,7 +138,7 @@ public class GitDiffSpikeTests
     /// <summary>
     /// Verifies that diff computation completes quickly (NFR5: under 5 seconds for repos under 1GB).
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PathFilteredDiff_CompletesWithinFiveSeconds()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -175,13 +175,13 @@ public class GitDiffSpikeTests
             sw.Stop();
 
             // NFR5: under 5 seconds
-            sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5),
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
                 "path-filtered diff should complete within 5 seconds for repos under 1GB");
 
             // Verify diff is non-empty and meaningful
-            diff.Should().NotBeNullOrWhiteSpace();
-            diff.Should().Contain("REVISED architecture document");
-            diff.Should().Contain("microservice");
+            diff.ShouldNotBeNullOrWhiteSpace();
+            diff.ShouldContain("REVISED architecture document");
+            diff.ShouldContain("microservice");
         }
         finally
         {
@@ -192,7 +192,7 @@ public class GitDiffSpikeTests
     /// <summary>
     /// Verifies that diff works correctly when multiple artifact files change between versions.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PathFilteredDiff_HandlesMultipleArtifactFiles()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -219,15 +219,15 @@ public class GitDiffSpikeTests
             var diff = await service.GetDiffBetweenTagsAsync(tagV1, tagV2, repoPath, artifactPath, CancellationToken.None);
 
             // Should show changes to prd.md
-            diff.Should().Contain("prd.md");
-            diff.Should().Contain("PRD v2 - Updated");
+            diff.ShouldContain("prd.md");
+            diff.ShouldContain("PRD v2 - Updated");
 
             // Should show new test-plan.md
-            diff.Should().Contain("test-plan.md");
-            diff.Should().Contain("Test Plan v1");
+            diff.ShouldContain("test-plan.md");
+            diff.ShouldContain("Test Plan v1");
 
             // ux-spec.md was not changed, so it should NOT appear in the diff
-            diff.Should().NotContain("ux-spec.md");
+            diff.ShouldNotContain("ux-spec.md");
         }
         finally
         {
@@ -238,7 +238,7 @@ public class GitDiffSpikeTests
     /// <summary>
     /// Verifies that diff provides enough context lines for AI cascade updates.
     /// </summary>
-    [Fact]
+    [Test]
     public async Task PathFilteredDiff_ProvidesContextForAiCascade()
     {
         var (service, repoPath) = await CreateTestRepo();
@@ -288,18 +288,18 @@ public class GitDiffSpikeTests
             var diff = await service.GetDiffBetweenTagsAsync(tagV1, tagV2, repoPath, artifactPath, CancellationToken.None);
 
             // Diff should capture what was removed
-            diff.Should().Contain("-Monolithic architecture using Express.js.");
-            diff.Should().Contain("-PostgreSQL with Prisma ORM.");
+            diff.ShouldContain("-Monolithic architecture using Express.js.");
+            diff.ShouldContain("-PostgreSQL with Prisma ORM.");
 
             // Diff should capture what was added
-            diff.Should().Contain("+Microservices architecture using ASP.NET Core.");
-            diff.Should().Contain("+PostgreSQL with Entity Framework Core.");
-            diff.Should().Contain("+## New: Event Bus");
-            diff.Should().Contain("+RabbitMQ");
+            diff.ShouldContain("+Microservices architecture using ASP.NET Core.");
+            diff.ShouldContain("+PostgreSQL with Entity Framework Core.");
+            diff.ShouldContain("+## New: Event Bus");
+            diff.ShouldContain("+RabbitMQ");
 
             // Context lines (unchanged lines near changes) should be present for AI understanding
-            diff.Should().Contain("## Overview");
-            diff.Should().Contain("## Data Layer");
+            diff.ShouldContain("## Overview");
+            diff.ShouldContain("## Data Layer");
         }
         finally
         {

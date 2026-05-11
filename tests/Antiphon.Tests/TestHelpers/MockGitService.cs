@@ -54,6 +54,36 @@ public class MockGitService : IGitService
         return Task.FromResult($"filtered diff between {tag1} and {tag2} at {pathFilter}");
     }
 
+    public Task<string> EnsureCloneAsync(string gitUrl, string targetPath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("EnsureClone", Guid.Empty, null, gitUrl, targetPath));
+        return Task.FromResult(targetPath);
+    }
+
+    public Task<string> GetBranchDiffAsync(string baseBranch, string headBranch, string repoPath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("GetBranchDiff", Guid.Empty, null, $"{baseBranch}...{headBranch}", repoPath));
+        return Task.FromResult($"diff {baseBranch}...{headBranch}");
+    }
+
+    public Task<string?> FindAgentBranchAsync(string repoPath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("FindAgentBranch", Guid.Empty, null, null, repoPath));
+        return Task.FromResult<string?>(null);
+    }
+
+    public Task<string> GetFileContentAsync(string branch, string filePath, string repoPath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("GetFileContent", Guid.Empty, null, $"{branch}:{filePath}", repoPath));
+        return Task.FromResult(string.Empty);
+    }
+
+    public Task DeleteBranchAsync(string branchName, string repoPath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("DeleteBranch", Guid.Empty, branchName, null, repoPath));
+        return Task.CompletedTask;
+    }
+
     public void Clear() => _operations.Clear();
 
     public record GitOperation(string Method, Guid WorkflowId, string? StageName, string? Detail, string RepoPath);

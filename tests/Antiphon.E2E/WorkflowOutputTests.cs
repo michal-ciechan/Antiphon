@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using FluentAssertions;
+using Shouldly;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit;
+using TUnit.Core;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -24,8 +24,8 @@ namespace Antiphon.E2E;
 /// - Browser outputs tab shows artifact entries after completion
 /// - Screenshot capture of the outputs tab for visual inspection
 /// </summary>
-[Collection("E2E")]
-public class WorkflowOutputTests : IAsyncLifetime
+[NotInParallel]
+public class WorkflowOutputTests
 {
     private static readonly Guid DocProjectTemplateId = new("b0000000-0000-0000-0000-000000000003");
 
@@ -39,7 +39,8 @@ public class WorkflowOutputTests : IAsyncLifetime
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly PlaywrightFixture _playwrightFixture = new();
 
-    public async Task InitializeAsync()
+    [Before(Test)]
+    public async Task SetupAsync()
     {
         _appFixture.UsePrebuiltFrontend = true;
         _appFixture.UseMockExecutor = true;
@@ -47,7 +48,8 @@ public class WorkflowOutputTests : IAsyncLifetime
         await _playwrightFixture.InitializeAsync();
     }
 
-    public async Task DisposeAsync()
+    [After(Test)]
+    public async Task TeardownAsync()
     {
         await _playwrightFixture.DisposeAsync();
         await _appFixture.DisposeAsync();
@@ -133,7 +135,7 @@ public class WorkflowOutputTests : IAsyncLifetime
     // Test 1: Artifacts API returns content for all completed stages
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Completed_workflow_artifacts_api_returns_entries()
     {
         // Arrange
@@ -147,19 +149,19 @@ public class WorkflowOutputTests : IAsyncLifetime
         );
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var artifacts = await response.Content.ReadFromJsonAsync<JsonElement[]>(JsonOptions);
-        artifacts.Should().NotBeNull();
-        artifacts!.Should().NotBeEmpty("completed workflow should have at least one artifact");
+        artifacts.ShouldNotBeNull();
+        artifacts!.ShouldNotBeEmpty("completed workflow should have at least one artifact");
 
         // Each artifact should have required fields
         foreach (var artifact in artifacts)
         {
-            artifact.GetProperty("id").GetGuid().Should().NotBeEmpty();
-            artifact.GetProperty("stageName").GetString().Should().NotBeNullOrEmpty();
-            artifact.GetProperty("fileName").GetString().Should().EndWith(".md");
-            artifact.GetProperty("version").GetInt32().Should().BeGreaterThan(0);
+            artifact.GetProperty("id").GetGuid().ShouldNotBe(Guid.Empty);
+            artifact.GetProperty("stageName").GetString().ShouldNotBeNullOrEmpty();
+            artifact.GetProperty("fileName").GetString().ShouldEndWith(".md");
+            artifact.GetProperty("version").GetInt32().ShouldBeGreaterThan(0);
         }
     }
 
@@ -167,7 +169,7 @@ public class WorkflowOutputTests : IAsyncLifetime
     // Test 2: Artifact content endpoint returns MockExecutor output
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Artifact_content_endpoint_returns_output_content()
     {
         // Arrange
@@ -182,7 +184,7 @@ public class WorkflowOutputTests : IAsyncLifetime
         listResp.EnsureSuccessStatusCode();
 
         var artifacts = (await listResp.Content.ReadFromJsonAsync<JsonElement[]>(JsonOptions))!;
-        artifacts.Should().NotBeEmpty();
+        artifacts.ShouldNotBeEmpty();
 
         // Act — fetch content of the first (primary) artifact
         var firstArtifact = artifacts.First();
@@ -193,20 +195,20 @@ public class WorkflowOutputTests : IAsyncLifetime
         );
 
         // Assert
-        contentResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        contentResp.StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var detail = await contentResp.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
         var content = detail.GetProperty("content").GetString();
 
-        content.Should().NotBeNullOrEmpty("artifact must have output content from MockExecutor");
-        content.Should().Contain("Output", "MockExecutor includes stage name in output");
+        content.ShouldNotBeNullOrEmpty("artifact must have output content from MockExecutor");
+        content.ShouldContain("Output");
     }
 
     // -------------------------------------------------------------------------
     // Test 3: OutputContent is stored in DB after stage completion
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Stage_execution_stores_output_content_in_db()
     {
         // Arrange
@@ -223,11 +225,11 @@ public class WorkflowOutputTests : IAsyncLifetime
             .ToListAsync();
 
         // Assert
-        executions.Should().NotBeEmpty("workflow should have completed stage executions");
+        executions.ShouldNotBeEmpty("workflow should have completed stage executions");
 
         foreach (var execution in executions)
         {
-            execution.OutputContent.Should().NotBeNullOrEmpty(
+            execution.OutputContent.ShouldNotBeNullOrEmpty(
                 $"StageExecution {execution.Id} should have OutputContent stored"
             );
         }
@@ -237,7 +239,7 @@ public class WorkflowOutputTests : IAsyncLifetime
     // Test 4: Browser outputs tab shows artifact entries — with screenshots
     // -------------------------------------------------------------------------
 
-    [Fact]
+    [Test]
     public async Task Outputs_tab_shows_artifacts_after_workflow_completes()
     {
         // Arrange
@@ -256,8 +258,8 @@ public class WorkflowOutputTests : IAsyncLifetime
             var response = await page.GotoAsync(
                 $"{_appFixture.PlaywrightAddress}/workflow/{workflowId}"
             );
-            Assert.NotNull(response);
-            response!.Status.Should().BeLessThan(500);
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
 
             await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
@@ -295,7 +297,7 @@ public class WorkflowOutputTests : IAsyncLifetime
             });
 
             var count = await artifactItems.CountAsync();
-            count.Should().BeGreaterThan(0, "outputs tab should show at least one artifact");
+            count.ShouldBeGreaterThan(0, "outputs tab should show at least one artifact");
 
             // Screenshot: outputs with artifacts visible
             await PlaywrightFixture.CapturePageAsync(page, "03_outputs_with_artifacts");

@@ -1,19 +1,23 @@
 using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
-using FluentAssertions;
-using Xunit;
+using Shouldly;
+using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
-[Trait("Category", "Pty")]
+[Category("Pty")]
 public class ClaudeDetectorsTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
-    private static void SkipIfNotWindows() => Skip.IfNot(IsWindows, "ConPTY only on Windows");
+    private static void SkipIfNotWindows()
+    {
+        if (!(IsWindows)) throw new SkipTestException("ConPTY only on Windows");
+    }
 
-    [SkippableFact]
+    [Test]
     public async Task ReadyDetector_returns_true_when_runner_settles()
     {
         SkipIfNotWindows();
@@ -27,12 +31,12 @@ public class ClaudeDetectorsTests
             MaxWait = TimeSpan.FromSeconds(8)
         };
         var ready = await detector.WaitAsync(runner);
-        ready.Should().BeTrue();
+        ready.ShouldBeTrue();
 
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task DoneDetector_returns_true_after_burst_settles()
     {
         SkipIfNotWindows();
@@ -46,12 +50,12 @@ public class ClaudeDetectorsTests
             MaxWait = TimeSpan.FromSeconds(8)
         };
         var done = await detector.WaitAsync(runner);
-        done.Should().BeTrue();
+        done.ShouldBeTrue();
 
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
-    [SkippableFact]
+    [Test]
     public async Task DoneDetector_returns_false_under_continuous_output()
     {
         SkipIfNotWindows();
@@ -65,7 +69,7 @@ public class ClaudeDetectorsTests
             MaxWait = TimeSpan.FromSeconds(3)
         };
         var done = await detector.WaitAsync(runner);
-        done.Should().BeFalse();
+        done.ShouldBeFalse();
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }

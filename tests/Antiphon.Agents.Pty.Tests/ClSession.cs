@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
-using Xunit;
+using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -9,12 +10,9 @@ internal static class ClSession
 
     public static void SkipIfNotEligible()
     {
-        Skip.IfNot(RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
-            "Headed tests require Windows ConPTY");
-        Skip.If(Environment.GetEnvironmentVariable(EnvFlag) != "1",
-            $"Set {EnvFlag}=1 to opt in to headed-claude tests");
-        Skip.If(ResolveCl() is null && ResolveClaude() is null,
-            "Neither cl.bat/cl.ps1 nor claude found on PATH; cannot run headed tests");
+        if (!(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))) throw new SkipTestException("Headed tests require Windows ConPTY");
+        if (Environment.GetEnvironmentVariable(EnvFlag) != "1") throw new SkipTestException($"Set {EnvFlag}=1 to opt in to headed-claude tests");
+        if (ResolveCl() is null && ResolveClaude() is null) throw new SkipTestException("Neither cl.bat/cl.ps1 nor claude found on PATH; cannot run headed tests");
     }
 
     /// <summary>
