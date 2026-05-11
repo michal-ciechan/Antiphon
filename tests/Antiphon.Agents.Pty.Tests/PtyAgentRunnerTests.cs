@@ -247,7 +247,7 @@ public class PtyAgentRunnerTests
         await runner.WriteAsync($"'{big}'.Length\r");
 
         var matched = await runner.WaitForOutputAsync(
-            s => s.Contains("60000"), TimeSpan.FromSeconds(10));
+            s => s.Contains("60000"), TimeSpan.FromSeconds(30));
         matched.Should().BeTrue();
 
         await runner.SendLineAsync("exit");

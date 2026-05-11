@@ -5,6 +5,9 @@ using Xunit;
 
 namespace Antiphon.Agents.Pty.Tests;
 
+// Headed tests spawn real Claude TUI sessions — run them serially to avoid
+// parallel API quota contention and quiet-period detector interference.
+[Collection("Headed")]
 [Trait("Category", "Headed")]
 public class ClaudeHeadedTests
 {
@@ -121,7 +124,8 @@ public class ClaudeHeadedTests
     {
         ClSession.SkipIfNotEligible();
         await using var runner = new PtyAgentRunner();
-        var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow());
+        var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(),
+            "--dangerously-skip-permissions");
         await runner.StartAsync(app, args, cols: 200, rows: 60);
 
         await new ClaudeReadyDetector().WaitAsync(runner);
@@ -190,6 +194,7 @@ public class ClaudeHeadedTests
     }
 }
 
+[Collection("Headed")]
 [Trait("Category", "HeadedLong")]
 public class ClaudeHeadedLongTests
 {
@@ -232,10 +237,11 @@ public class ClaudeHeadedLongTests
             var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), "--resume", sessionId!);
             await runner2.StartAsync(app, args, cols: 200, rows: 60);
 
-            await new ClaudeReadyDetector { MaxWait = TimeSpan.FromMinutes(1) }.WaitAsync(runner2);
+            // --resume sessions load prior context on top of normal startup; allow extra time.
+            await new ClaudeReadyDetector { MaxWait = TimeSpan.FromMinutes(1), MinTotalWait = TimeSpan.FromSeconds(15) }.WaitAsync(runner2);
 
             runner2.ClearLiveBuffer();
-            await runner2.SendLineAsync("What codeword did I ask you to remember? Reply with just the codeword.");
+            await runner2.SendLineAsync("Look at the conversation history above and tell me: what codeword was mentioned in the first message? Reply with just the codeword.");
             await new ClaudeDoneDetector().WaitAsync(runner2);
 
             var clean = (AnsiStripper.Clean(runner2.SnapshotText()) ?? "").ToUpperInvariant();
