@@ -16,7 +16,7 @@ dist/
 .vscode/
 .idea/
 *.swp
-.claude/
+.claude/*
 !.claude/settings.json
 server/logs/
 
