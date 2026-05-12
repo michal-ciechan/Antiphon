@@ -9,6 +9,6 @@ builder.AddNpmApp("client", "../client", "dev")
     .WithReference(server)
     .WaitFor(server)
     .WithEnvironment("BROWSER", "none")
-    .WithHttpEndpoint(port: 5173, env: "VITE_PORT");
+    .WithHttpEndpoint(port: 17282, env: "VITE_PORT");
 
 builder.Build().Run();

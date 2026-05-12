@@ -1,6 +1,6 @@
 param([string]$WorkflowId = '949ca541-4169-4ea2-96a5-0468f69f629b')
 
-$baseUrl = 'http://localhost:5000'
+$baseUrl = 'http://localhost:17281'
 $pollInterval = 15
 
 Write-Host "Monitoring workflow $WorkflowId ..."

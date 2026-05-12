@@ -7,12 +7,12 @@ import react from '@vitejs/plugin-react'
 const serverUrl =
   process.env['services__antiphon-server__http__0'] ??
   process.env['services__server__http__0'] ??
-  'http://localhost:5000'
+  'http://localhost:17281'
 
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: parseInt(process.env['VITE_PORT'] ?? '5173'),
+    port: parseInt(process.env['VITE_PORT'] ?? '17282'),
     proxy: {
       '/api': {
         target: serverUrl,

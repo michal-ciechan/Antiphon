@@ -41,7 +41,7 @@ Write-Host "Sending body:"
 Write-Host $body
 
 try {
-    $response = Invoke-RestMethod -Uri 'http://localhost:5000/api/workflows' -Method POST -Body $body -ContentType 'application/json'
+    $response = Invoke-RestMethod -Uri 'http://localhost:17281/api/workflows' -Method POST -Body $body -ContentType 'application/json'
     Write-Host "SUCCESS - Created workflow: $($response.id)"
     $response | ConvertTo-Json
 } catch {

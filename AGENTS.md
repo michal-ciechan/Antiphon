@@ -24,11 +24,11 @@ and architectural decisions that all code must comply with.
    docker compose -f docker-compose.dev.yml up -d
    ```
 
-### Start the backend (ASP.NET Core — port 5000)
+### Start the backend (ASP.NET Core — port 17281)
 
 ```
 cd server
-dotnet run --urls "http://localhost:5000"
+dotnet run --urls "http://localhost:17281"
 ```
 
 Migrations run automatically on startup. The server also seeds initial data.
@@ -42,13 +42,13 @@ Migrations run automatically on startup. The server also seeds initial data.
 3. Restart & verify: `.\restart-server.ps1`
 4. Check `C:\MavLog\Antiphon\antiphon-YYYYMMDD.log` — confirm migration applied with no `[ERR]`/`[FTL]` entries
 
-### Start the frontend (React/Vite — port 5173)
+### Start the frontend (React/Vite — port 17282)
 
 ```
 cd client
 npm run dev
 ```
 
-The Vite dev server proxies `/api` and `/hubs` to `http://localhost:5000`, so the backend must be running first.
+The Vite dev server proxies `/api` and `/hubs` to `http://localhost:17281`, so the backend must be running first.
 
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:17282** in your browser.

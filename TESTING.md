@@ -45,7 +45,7 @@ dotnet run --project tests/Antiphon.Agents.Pty.Tests
 
 - **`dotnet test` does not work** — TUnit's MTP runner conflicts with Microsoft.NET.Test.Sdk (VSTest) on .NET 10 SDK. Always use `dotnet run`.
 - **`--filter` is wrong** — TUnit uses `--treenode-filter`. Using `--filter` silently runs all tests or fails.
-- **Aspire DCP port conflict**: If Postgres auth fails but the container is healthy, check for orphaned `dcpctrl.exe` from a different Aspire project owning port 5432. Fix: `taskkill /F /PID <pid>`.
+- **Aspire DCP port conflict**: If Postgres auth fails but the container is healthy, check for orphaned `dcp.exe` from a different Aspire project owning port 17280. Fix: `Stop-Process -Id <pid> -Force`.
 - **PowerShell env vars invisible to Bash**: Set `ANTIPHON_HEADED_TESTS=1` via PowerShell and run tests via PowerShell — if you switch to the Bash tool, it won't see the env var.
 - **ESC/BEL in test constants**: Literal escape bytes in ANSI test strings must be `\x1b` / `\x07` — they are lost during copy-paste or file migration.
 
