@@ -17,6 +17,7 @@ dist/
 .idea/
 *.swp
 .claude/
+!.claude/settings.json
 server/logs/
 
 # Local working dirs
