@@ -1,6 +1,7 @@
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Agents.Pty.Tests;
 
@@ -39,6 +40,7 @@ public class ClaudeInteractionTests
 		await runner.StartAsync(app, args, cols: 200, rows: 60);
 
 		await new ClaudeReadyDetector().WaitAsync(runner);
+		SkipIfBypassPermissionsEnabled(runner);
 
 		runner.ClearLiveBuffer();
 		await runner.SendLineAsync("Run `systeminfo` via Bash.");
@@ -80,6 +82,7 @@ public class ClaudeInteractionTests
 		await runner.StartAsync(app, args, cols: 200, rows: 60);
 
 		await new ClaudeReadyDetector().WaitAsync(runner);
+		SkipIfBypassPermissionsEnabled(runner);
 
 		runner.ClearLiveBuffer();
 		await runner.SendLineAsync("Run `systeminfo` via Bash and tell me the OS Name in one short sentence.");
@@ -124,6 +127,7 @@ public class ClaudeInteractionTests
 		await runner.StartAsync(app, args, cols: 200, rows: 60);
 
 		await new ClaudeReadyDetector().WaitAsync(runner);
+		SkipIfBypassPermissionsEnabled(runner);
 
 		runner.ClearLiveBuffer();
 		await runner.SendLineAsync("Run `systeminfo` via Bash and tell me the OS Name.");
@@ -150,5 +154,14 @@ public class ClaudeInteractionTests
 		await runner.SendLineAsync("/exit");
 		await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(5)));
 		await runner.KillAsync(TimeSpan.FromSeconds(2));
+	}
+
+	private static void SkipIfBypassPermissionsEnabled(PtyAgentRunner runner)
+	{
+		if (runner.SnapshotScreen().Contains("bypass permissions on", StringComparison.OrdinalIgnoreCase))
+		{
+			throw new SkipTestException(
+				"Claude Code is running with bypass permissions enabled; permission prompts are unavailable.");
+		}
 	}
 }
