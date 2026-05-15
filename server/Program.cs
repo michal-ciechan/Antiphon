@@ -64,6 +64,10 @@ try
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
+    builder.Services.AddSingleton<IValidateOptions<AgentSessionSettings>, AgentSessionSettingsValidator>();
+    builder.Services.AddOptions<AgentSessionSettings>()
+        .Bind(builder.Configuration.GetSection("AgentSessions"))
+        .ValidateOnStart();
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -99,6 +103,8 @@ try
     // Application services
     builder.Services.AddScoped<WorkflowTemplateService>();
     builder.Services.AddScoped<WorkspaceHookService>();
+    builder.Services.AddScoped<AgentSessionService>();
+    builder.Services.AddScoped<RunAttemptStallDetector>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -112,6 +118,7 @@ try
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
     builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
+    builder.Services.AddSingleton<AgentSessionRuntime>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
@@ -124,6 +131,7 @@ try
     builder.Services.AddHostedService<GitHubMonitorService>();
     builder.Services.AddHostedService<ChangeDetectionService>();
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
+    builder.Services.AddHostedService<RunAttemptStallHostedService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
@@ -199,6 +207,7 @@ try
     app.MapArtifactEndpoints();
     app.MapAuditEndpoints();
     app.MapGitHubEndpoints();
+    app.MapSessionEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");

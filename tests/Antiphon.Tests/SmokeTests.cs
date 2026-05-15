@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Shouldly;
 using Microsoft.AspNetCore.Mvc.Testing;
 using TUnit.Core;
@@ -62,5 +63,27 @@ public class SmokeTests
         var response = await _client.GetAsync("/health");
 
         response.StatusCode.ShouldNotBe(HttpStatusCode.InternalServerError);
+    }
+
+    [Test]
+    public async Task Sessions_buffer_unknown_session_returns_not_found()
+    {
+        var response = await _client.GetAsync($"/api/sessions/{Guid.NewGuid()}/buffer");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        var content = await response.Content.ReadAsStringAsync();
+        content.ShouldContain("AgentSession");
+    }
+
+    [Test]
+    public async Task Sessions_resize_rejects_non_positive_terminal_size()
+    {
+        var response = await _client.PostAsJsonAsync(
+            $"/api/sessions/{Guid.NewGuid()}/resize",
+            new { cols = 0, rows = 30 });
+
+        response.StatusCode.ShouldBe((HttpStatusCode)422);
+        var content = await response.Content.ReadAsStringAsync();
+        content.ShouldContain("Terminal cols and rows must be positive.");
     }
 }

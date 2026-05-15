@@ -19,6 +19,12 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
 
     Task SendPromptAsync(string prompt, CancellationToken ct);
 
+    Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct);
+
+    Task SendInputAsync(string input, CancellationToken ct);
+
+    Task ResizeAsync(int cols, int rows, CancellationToken ct);
+
     /// <summary>Raw PTY chunks. Subscribe to fan out via SignalR (FR-06).</summary>
     event Action<string>? OnTextDelta;
 

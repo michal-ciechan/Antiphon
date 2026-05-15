@@ -16,6 +16,7 @@ public sealed class RawPtyAdapter : IAgentProtocolAdapter
     private static readonly TimeSpan TurnMaxWait = TimeSpan.FromSeconds(60);
 
     private readonly PtyAgentRunner _runner = new();
+    private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
 
     public Task<int> Exited => _runner.Exited;
@@ -48,7 +49,35 @@ public sealed class RawPtyAdapter : IAgentProtocolAdapter
     {
         EnsureStarted();
         _runner.ClearLiveBuffer();
+        _firstPromptOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await _runner.SendLineAsync(prompt, ct);
+    }
+
+    public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        EnsureStarted();
+        var firstPromptOutput = _firstPromptOutput
+            ?? throw new InvalidOperationException("No prompt has been sent.");
+        var delay = Task.Delay(timeout, ct);
+        var completed = await Task.WhenAny(firstPromptOutput.Task, delay);
+        if (completed == delay)
+            ct.ThrowIfCancellationRequested();
+
+        return completed == firstPromptOutput.Task;
+    }
+
+    public async Task SendInputAsync(string input, CancellationToken ct)
+    {
+        EnsureStarted();
+        await _runner.WriteAsync(input, ct);
+    }
+
+    public Task ResizeAsync(int cols, int rows, CancellationToken ct)
+    {
+        EnsureStarted();
+        ct.ThrowIfCancellationRequested();
+        _runner.Resize(cols, rows);
+        return Task.CompletedTask;
     }
 
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
@@ -95,5 +124,9 @@ public sealed class RawPtyAdapter : IAgentProtocolAdapter
         if (!_started) throw new InvalidOperationException("RawPtyAdapter not started.");
     }
 
-    private void ForwardData(string chunk) => OnTextDelta?.Invoke(chunk);
+    private void ForwardData(string chunk)
+    {
+        _firstPromptOutput?.TrySetResult();
+        OnTextDelta?.Invoke(chunk);
+    }
 }

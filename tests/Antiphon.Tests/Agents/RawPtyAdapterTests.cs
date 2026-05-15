@@ -68,6 +68,35 @@ public class RawPtyAdapterTests
     }
 
     [Test]
+    public async Task Send_input_writes_raw_keystrokes_to_session()
+    {
+        SkipIfNotWindows();
+        await using var adapter = new RawPtyAdapter();
+
+        await adapter.StartAsync(SpecForCmd(new[] { "/d", "/q", "/k", "@echo off & prompt $G" }), CancellationToken.None);
+        await adapter.WaitForReadyAsync(CancellationToken.None);
+        await adapter.SendInputAsync("echo raw_input_marker_42\r", CancellationToken.None);
+        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        result.RawSnapshot.ShouldContain("raw_input_marker_42");
+    }
+
+    [Test]
+    public async Task Resize_updates_pty_without_throwing()
+    {
+        SkipIfNotWindows();
+        await using var adapter = new RawPtyAdapter();
+
+        await adapter.StartAsync(SpecForCmd(new[] { "/d", "/q", "/k", "@echo off & prompt $G" }), CancellationToken.None);
+
+        await adapter.ResizeAsync(100, 24, CancellationToken.None);
+        await adapter.SendPromptAsync("echo resize_marker_42", CancellationToken.None);
+        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        result.RawSnapshot.ShouldContain("resize_marker_42");
+    }
+
+    [Test]
     public async Task Kill_terminates_within_2s()
     {
         SkipIfNotWindows();

@@ -19,6 +19,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     private readonly AgentRegistrySettings _settings;
     private readonly ClaudeReadyDetector _readyDetector;
     private readonly ClaudeCrunchedDetector _crunchedDetector;
+    private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
 
     public ClaudeAdapter(IOptions<AgentRegistrySettings> options)
@@ -67,7 +68,35 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         // Mandatory per E01 findings: CrunchedDetector matches on prior-turn signals
         // if the buffer isn't reset between sends.
         _runner.ClearLiveBuffer();
+        _firstPromptOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await _runner.SendLineAsync(prompt, ct);
+    }
+
+    public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        EnsureStarted();
+        var firstPromptOutput = _firstPromptOutput
+            ?? throw new InvalidOperationException("No prompt has been sent.");
+        var delay = Task.Delay(timeout, ct);
+        var completed = await Task.WhenAny(firstPromptOutput.Task, delay);
+        if (completed == delay)
+            ct.ThrowIfCancellationRequested();
+
+        return completed == firstPromptOutput.Task;
+    }
+
+    public async Task SendInputAsync(string input, CancellationToken ct)
+    {
+        EnsureStarted();
+        await _runner.WriteAsync(input, ct);
+    }
+
+    public Task ResizeAsync(int cols, int rows, CancellationToken ct)
+    {
+        EnsureStarted();
+        ct.ThrowIfCancellationRequested();
+        _runner.Resize(cols, rows);
+        return Task.CompletedTask;
     }
 
     public Task<bool> WaitForReadyAsync(CancellationToken ct)
@@ -111,5 +140,9 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         if (!_started) throw new InvalidOperationException("ClaudeAdapter not started.");
     }
 
-    private void ForwardData(string chunk) => OnTextDelta?.Invoke(chunk);
+    private void ForwardData(string chunk)
+    {
+        _firstPromptOutput?.TrySetResult();
+        OnTextDelta?.Invoke(chunk);
+    }
 }
