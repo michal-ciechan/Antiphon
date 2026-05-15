@@ -6,7 +6,9 @@
     "WorkspacePath": "",
     "DefaultBranch": "main",
     "PollIntervalSeconds": 30,
-    "WorktreeBasePath": "/tmp/antiphon-worktrees"
+    "WorktreeBasePath": "/tmp/antiphon-worktrees",
+    "WorktreeStaleAfterDays": 7,
+    "WorktreeJanitorIntervalHours": 24
   },
   "Llm": {
     "DefaultProvider": "anthropic",

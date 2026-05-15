@@ -6,4 +6,6 @@ public class GitSettings
     public string DefaultBranch { get; set; } = "main";
     public int PollIntervalSeconds { get; set; } = 30;
     public string WorktreeBasePath { get; set; } = "/tmp/antiphon-worktrees";
+    public int WorktreeStaleAfterDays { get; set; } = 7;
+    public int WorktreeJanitorIntervalHours { get; set; } = 24;
 }

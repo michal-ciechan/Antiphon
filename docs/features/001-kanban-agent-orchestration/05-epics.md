@@ -13,7 +13,7 @@
 |-----|------|--------------|---------|--------|
 | E01 | PTY substrate + Windows headed-agent proof (`Antiphon.Agents.Pty` library) | FR-04, FR-06, FR-07, FR-09, NFR-01, NFR-06, NFR-08 | [E_01-stories.md](epics/E_01-stories.md) | `[~]` |
 | E02 | Agent abstraction (`IAgentProtocolAdapter` + registry) | FR-04, FR-05, FR-06, NFR-01 | [E_02-stories.md](epics/E_02-stories.md) | `[x]` |
-| E03 | Worktree manager + safety invariants | FR-04, FR-08, FR-20, NFR-03, NFR-04 | [E_03-stories.md](epics/E_03-stories.md) | `[ ]` |
+| E03 | Worktree manager + safety invariants | FR-04, FR-08, FR-20, NFR-03, NFR-04 | [E_03-stories.md](epics/E_03-stories.md) | `[x]` |
 | E04 | Domain model + EF migration (Board / Card / AgentSession / RunAttempt / Worktree / WorkflowDefinition) | FR-01, FR-02, NFR-02, NFR-12 | [E_04-stories.md](epics/E_04-stories.md) | `[ ]` |
 | E05 | AgentSession lifecycle + RunAttempt phase machine + SignalR streaming | FR-06, FR-09, NFR-06, NFR-08, NFR-10 | [E_05-stories.md](epics/E_05-stories.md) | `[ ]` |
 | E06 | Workspace hook runner | FR-15 | [E_06-stories.md](epics/E_06-stories.md) | `[ ]` |

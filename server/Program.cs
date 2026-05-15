@@ -64,7 +64,7 @@ try
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
 
-    // Agent registry (E02) - typed config + fail-fast validator + adapter factory
+    // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
     builder.Services.AddOptions<AgentRegistrySettings>()
         .Bind(builder.Configuration.GetSection("Agents"))
@@ -107,6 +107,8 @@ try
     builder.Services.AddSingleton<LlmClientFactory>();
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
@@ -118,6 +120,7 @@ try
     // Background services for GitHub PR monitoring and external change detection
     builder.Services.AddHostedService<GitHubMonitorService>();
     builder.Services.AddHostedService<ChangeDetectionService>();
+    builder.Services.AddHostedService<WorktreeJanitorHostedService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
