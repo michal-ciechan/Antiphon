@@ -18,6 +18,7 @@ using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.Realtime;
+using Antiphon.Server.Infrastructure.WorkspaceHooks;
 
 // Bootstrap Serilog for startup logging (before host is built)
 Log.Logger = new LoggerConfiguration()
@@ -97,6 +98,7 @@ try
 
     // Application services
     builder.Services.AddScoped<WorkflowTemplateService>();
+    builder.Services.AddScoped<WorkspaceHookService>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -109,6 +111,7 @@ try
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
+    builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();

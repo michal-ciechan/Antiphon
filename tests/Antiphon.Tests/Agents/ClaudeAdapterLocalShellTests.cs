@@ -55,13 +55,15 @@ public class ClaudeAdapterLocalShellTests
         await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
 
         // First turn — populate buffer with prior content + done marker.
-        await adapter.SendPromptAsync("echo OLD_CONTENT_X for 1s", CancellationToken.None);
+        // Keep "for Ns" out of the typed command line so the detector only fires
+        // after cmd.exe expands and prints the synthetic completion marker.
+        await adapter.SendPromptAsync("echo OLD_CONTENT_X f^or 1s", CancellationToken.None);
         var first = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
         first.TurnCompleted.ShouldBeTrue();
         first.RawSnapshot.ShouldContain("OLD_CONTENT_X");
 
         // Second turn — ClearLiveBuffer in SendPromptAsync should wipe OLD before NEW lands.
-        await adapter.SendPromptAsync("echo NEW_CONTENT_Y for 1s", CancellationToken.None);
+        await adapter.SendPromptAsync("echo NEW_CONTENT_Y f^or 1s", CancellationToken.None);
         var second = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         second.TurnCompleted.ShouldBeTrue();
@@ -76,7 +78,7 @@ public class ClaudeAdapterLocalShellTests
         await using var adapter = new ClaudeAdapter(FastOptions());
         await adapter.StartAsync(InteractiveCmdSpec(), CancellationToken.None);
 
-        await adapter.SendPromptAsync("echo synthetic_resp_marker for 2s", CancellationToken.None);
+        await adapter.SendPromptAsync("echo synthetic_resp_marker f^or 2s", CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         result.TurnCompleted.ShouldBeTrue();

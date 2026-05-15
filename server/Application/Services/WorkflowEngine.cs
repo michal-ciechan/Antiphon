@@ -20,6 +20,8 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public class WorkflowEngine
 {
+    private const int DefaultHookTimeoutSeconds = 30;
+
     private readonly AppDbContext _db;
     private readonly IStageExecutor _stageExecutor;
     private readonly IEventBus _eventBus;
@@ -72,6 +74,7 @@ public class WorkflowEngine
         var description = GetScalarValue(rootMapping, "description") ?? string.Empty;
         var selectableStagesStr = GetScalarValue(rootMapping, "selectableStages");
         var selectableStages = string.Equals(selectableStagesStr, "true", StringComparison.OrdinalIgnoreCase);
+        var hooks = ParseHooks(rootMapping);
 
         var stagesKey = new YamlScalarNode("stages");
         if (!rootMapping.Children.ContainsKey(stagesKey) ||
@@ -117,7 +120,7 @@ public class WorkflowEngine
             });
         }
 
-        return new WorkflowDefinition(name, description, stages, selectableStages);
+        return new WorkflowDefinition(name, description, stages, selectableStages, hooks);
     }
 
     /// <summary>
@@ -984,5 +987,112 @@ public class WorkflowEngine
             return scalar.Value;
         }
         return null;
+    }
+
+    private static WorkflowHooks ParseHooks(YamlMappingNode rootMapping)
+    {
+        var hooksKey = new YamlScalarNode("hooks");
+        if (!rootMapping.Children.TryGetValue(hooksKey, out var hooksNode))
+            return WorkflowHooks.Empty;
+
+        if (hooksNode is not YamlMappingNode hooksMapping)
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["yaml"] = ["'hooks' must be a mapping."]
+            });
+        }
+
+        var allowedHookNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "after_create",
+            "before_run",
+            "after_run",
+            "before_remove"
+        };
+
+        foreach (var key in hooksMapping.Children.Keys.OfType<YamlScalarNode>())
+        {
+            if (key.Value is not null && !allowedHookNames.Contains(key.Value))
+            {
+                throw new ValidationException(new Dictionary<string, string[]>
+                {
+                    ["yaml"] = [$"Unknown hook '{key.Value}'."]
+                });
+            }
+        }
+
+        return new WorkflowHooks(
+            ParseHook(hooksMapping, "after_create"),
+            ParseHook(hooksMapping, "before_run"),
+            ParseHook(hooksMapping, "after_run"),
+            ParseHook(hooksMapping, "before_remove"));
+    }
+
+    private static WorkspaceHookDefinition? ParseHook(YamlMappingNode hooksMapping, string hookName)
+    {
+        var hookKey = new YamlScalarNode(hookName);
+        if (!hooksMapping.Children.TryGetValue(hookKey, out var hookNode))
+            return null;
+
+        if (hookNode is YamlScalarNode scalar)
+        {
+            return CreateHookDefinition(hookName, scalar.Value, null);
+        }
+
+        if (hookNode is YamlMappingNode hookMapping)
+        {
+            var command = GetScalarValue(hookMapping, "command");
+            var timeoutSeconds = GetOptionalHookScalar(hookMapping, hookName, "timeout_seconds")
+                ?? GetOptionalHookScalar(hookMapping, hookName, "timeoutSeconds");
+
+            return CreateHookDefinition(hookName, command, timeoutSeconds);
+        }
+
+        throw new ValidationException(new Dictionary<string, string[]>
+        {
+            ["yaml"] = [$"Hook '{hookName}' must be a command string or mapping."]
+        });
+    }
+
+    private static string? GetOptionalHookScalar(YamlMappingNode hookMapping, string hookName, string fieldName)
+    {
+        var key = new YamlScalarNode(fieldName);
+        if (!hookMapping.Children.TryGetValue(key, out var node))
+            return null;
+
+        if (node is YamlScalarNode scalar)
+            return scalar.Value;
+
+        throw new ValidationException(new Dictionary<string, string[]>
+        {
+            ["yaml"] = [$"Hook '{hookName}' {fieldName} must be a scalar value."]
+        });
+    }
+
+    private static WorkspaceHookDefinition CreateHookDefinition(
+        string hookName,
+        string? command,
+        string? timeoutSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["yaml"] = [$"Hook '{hookName}' must define a non-empty command."]
+            });
+        }
+
+        var timeout = DefaultHookTimeoutSeconds;
+        if (!string.IsNullOrWhiteSpace(timeoutSeconds)
+            && (!int.TryParse(timeoutSeconds, out timeout) || timeout <= 0))
+        {
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["yaml"] = [$"Hook '{hookName}' timeout_seconds must be a positive integer."]
+            });
+        }
+
+        return new WorkspaceHookDefinition(command, TimeSpan.FromSeconds(timeout));
     }
 }

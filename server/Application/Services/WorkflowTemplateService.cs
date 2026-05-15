@@ -193,6 +193,8 @@ public class WorkflowTemplateService
                     errors.Add($"Stage at index {i} must have an 'executorType' field.");
                 }
             }
+
+            ValidateHooks(rootMapping, errors);
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
@@ -200,6 +202,71 @@ public class WorkflowTemplateService
         }
 
         return errors;
+    }
+
+    private static void ValidateHooks(YamlMappingNode rootMapping, List<string> errors)
+    {
+        var hooksKey = new YamlScalarNode("hooks");
+        if (!rootMapping.Children.TryGetValue(hooksKey, out var hooksNode))
+            return;
+
+        if (hooksNode is not YamlMappingNode hooksMapping)
+        {
+            errors.Add("'hooks' must be a mapping.");
+            return;
+        }
+
+        var allowedHookNames = new[] { "after_create", "before_run", "after_run", "before_remove" };
+        var allowedHookSet = new HashSet<string>(allowedHookNames, StringComparer.Ordinal);
+
+        foreach (var key in hooksMapping.Children.Keys.OfType<YamlScalarNode>())
+        {
+            if (key.Value is not null && !allowedHookSet.Contains(key.Value))
+                errors.Add($"Unknown hook '{key.Value}'.");
+        }
+
+        foreach (var hookName in allowedHookNames)
+        {
+            var hookKey = new YamlScalarNode(hookName);
+            if (!hooksMapping.Children.TryGetValue(hookKey, out var hookNode))
+                continue;
+
+            if (hookNode is YamlScalarNode scalar)
+            {
+                if (string.IsNullOrWhiteSpace(scalar.Value))
+                    errors.Add($"Hook '{hookName}' must define a non-empty command.");
+                continue;
+            }
+
+            if (hookNode is not YamlMappingNode hookMapping)
+            {
+                errors.Add($"Hook '{hookName}' must be a command string or mapping.");
+                continue;
+            }
+
+            var commandKey = new YamlScalarNode("command");
+            if (!hookMapping.Children.TryGetValue(commandKey, out var commandNode)
+                || commandNode is not YamlScalarNode command
+                || string.IsNullOrWhiteSpace(command.Value))
+            {
+                errors.Add($"Hook '{hookName}' must define a non-empty command.");
+            }
+
+            var timeoutKey = hookMapping.Children.Keys
+                .OfType<YamlScalarNode>()
+                .FirstOrDefault(k => k.Value is "timeout_seconds" or "timeoutSeconds");
+            if (timeoutKey is null)
+                continue;
+
+            if (hookMapping.Children[timeoutKey] is not YamlScalarNode timeout
+                || !int.TryParse(timeout.Value, out var timeoutSeconds)
+                || timeoutSeconds <= 0)
+            {
+                errors.Add(hookMapping.Children[timeoutKey] is YamlScalarNode
+                    ? $"Hook '{hookName}' timeout_seconds must be a positive integer."
+                    : $"Hook '{hookName}' {timeoutKey.Value} must be a scalar value.");
+            }
+        }
     }
 
     private static WorkflowTemplateDto ToDto(WorkflowTemplate entity)

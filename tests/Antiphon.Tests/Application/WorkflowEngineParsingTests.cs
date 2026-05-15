@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// Unit tests for WorkflowEngine YAML parsing and MockExecutor — no database required.
 /// </summary>
+[Category("Unit")]
 public class WorkflowEngineParsingTests
 {
     private const string TwoStageYaml = """
@@ -98,6 +99,141 @@ public class WorkflowEngineParsingTests
         var definition = WorkflowEngine.ParseYamlDefinition(yaml);
 
         definition.Stages[0].ModelName.ShouldBe("claude-opus");
+    }
+
+    [Test]
+    public void ParseYamlDefinition_WithHooks_ParsesWorkspaceHookBlock()
+    {
+        var yaml = """
+            name: Hooked Workflow
+            hooks:
+              after_create:
+                command: dotnet restore
+                timeout_seconds: 45
+              before_run: echo before
+              after_run:
+                command: echo after
+                timeoutSeconds: 5
+              before_remove:
+                command: echo remove
+            stages:
+              - name: Stage One
+                executorType: mock
+                gateRequired: false
+            """;
+
+        var definition = WorkflowEngine.ParseYamlDefinition(yaml);
+
+        definition.Hooks.AfterCreate.ShouldNotBeNull();
+        definition.Hooks.AfterCreate.Command.ShouldBe("dotnet restore");
+        definition.Hooks.AfterCreate.Timeout.ShouldBe(TimeSpan.FromSeconds(45));
+        definition.Hooks.BeforeRun.ShouldNotBeNull();
+        definition.Hooks.BeforeRun.Command.ShouldBe("echo before");
+        definition.Hooks.BeforeRun.Timeout.ShouldBe(TimeSpan.FromSeconds(30));
+        definition.Hooks.AfterRun.ShouldNotBeNull();
+        definition.Hooks.AfterRun.Command.ShouldBe("echo after");
+        definition.Hooks.AfterRun.Timeout.ShouldBe(TimeSpan.FromSeconds(5));
+        definition.Hooks.BeforeRemove.ShouldNotBeNull();
+        definition.Hooks.BeforeRemove.Command.ShouldBe("echo remove");
+    }
+
+    [Test]
+    public void ParseYamlDefinition_InvalidHooks_ThrowValidationException()
+    {
+        var invalidHookBlocks = new[]
+        {
+            """
+            hooks:
+              - before_run
+            """,
+            """
+            hooks:
+              beforeRun:
+                command: echo before
+            """,
+            """
+            hooks:
+              before_run:
+                command: ""
+            """,
+            """
+            hooks:
+              before_run:
+                command: echo before
+                timeout_seconds: 0
+            """,
+            """
+            hooks:
+              before_run:
+                command: echo before
+                timeout_seconds: slow
+            """,
+            """
+            hooks:
+              before_run:
+                command: echo before
+                timeout_seconds:
+                  - 30
+            """,
+            """
+            hooks:
+              before_run:
+                - echo before
+            """
+        };
+
+        foreach (var hookBlock in invalidHookBlocks)
+        {
+            var yaml = $"""
+                name: Bad Hook Workflow
+                {hookBlock}
+                stages:
+                  - name: Stage One
+                    executorType: mock
+                """;
+
+            var act = () => WorkflowEngine.ParseYamlDefinition(yaml);
+
+            Should.Throw<ValidationException>(act);
+        }
+    }
+
+    [Test]
+    public void ValidateYamlStructure_ValidatesHookBlocks()
+    {
+        var validYaml = """
+            name: Valid Hook Workflow
+            hooks:
+              before_run:
+                command: echo before
+                timeout_seconds: 30
+              after_run: echo after
+            stages:
+              - name: Stage One
+                executorType: mock
+            """;
+        var invalidYaml = """
+            name: Invalid Hook Workflow
+            hooks:
+              beforeRun:
+                command: echo typo
+              before_run:
+                command: echo before
+                timeout_seconds:
+                  - 30
+              after_run:
+                command: ""
+            stages:
+              - name: Stage One
+                executorType: mock
+            """;
+
+        WorkflowTemplateService.ValidateYamlStructure(validYaml).ShouldBeEmpty();
+
+        var errors = WorkflowTemplateService.ValidateYamlStructure(invalidYaml);
+        errors.ShouldContain("Unknown hook 'beforeRun'.");
+        errors.ShouldContain("Hook 'before_run' timeout_seconds must be a scalar value.");
+        errors.ShouldContain("Hook 'after_run' must define a non-empty command.");
     }
 
     [Test]

@@ -16,7 +16,7 @@
 | E03 | Worktree manager + safety invariants | FR-04, FR-08, FR-20, NFR-03, NFR-04 | [E_03-stories.md](epics/E_03-stories.md) | `[x]` |
 | E04 | Domain model + EF migration (Board / Card / AgentSession / RunAttempt / Worktree / WorkflowDefinition) | FR-01, FR-02, NFR-02, NFR-12 | [E_04-stories.md](epics/E_04-stories.md) | `[x]` |
 | E05 | AgentSession lifecycle + RunAttempt phase machine + SignalR streaming | FR-06, FR-09, NFR-06, NFR-08, NFR-10 | [E_05-stories.md](epics/E_05-stories.md) | `[ ]` |
-| E06 | Workspace hook runner | FR-15 | [E_06-stories.md](epics/E_06-stories.md) | `[ ]` |
+| E06 | Workspace hook runner | FR-15 | [E_06-stories.md](epics/E_06-stories.md) | `[x]` |
 | E07 | Orchestrator (tick loop, eligibility, dispatch, reconcile, retry) — internal tracker only | FR-12, FR-13, FR-17, NFR-09 | [E_07-stories.md](epics/E_07-stories.md) | `[ ]` |
 | E08 | xterm.js terminal pane + Board UI + drag-drop spawn (board-driven mode) | FR-01, FR-02, FR-03, FR-04, FR-06, FR-07 | [E_08-stories.md](epics/E_08-stories.md) | `[ ]` |
 | E09 | WorkflowDefinition loader + hot reload + Monaco editor | FR-14 | [E_09-stories.md](epics/E_09-stories.md) | `[ ]` |
