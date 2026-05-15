@@ -1,6 +1,6 @@
-# PtySpike — Test Strategy
+# Antiphon.Agents.Pty — Test Strategy
 
-> Scope: epic E01 (Pty.Net spike + Windows headed-agent proof). Validates that we can spawn `claude` / `codex` via ConPTY (Porta.Pty), stream I/O, detect lifecycle states, and clean up.
+> Scope: epic E01 (PTY substrate + Windows headed-agent proof). Validates that we can spawn `claude` / `codex` via ConPTY (Porta.Pty), stream I/O, detect lifecycle states, and clean up.
 
 ---
 
@@ -8,43 +8,44 @@
 
 | Project | TFM | Purpose |
 |---------|-----|---------|
-| `tools/PtySpike` | net9.0 | Console host + reusable `PtyAgentRunner`, `RingBuffer`, lifecycle helpers |
-| `tools/PtySpike.Tests` | net9.0 | xUnit suite — fast unit + medium-cost integration |
-| `tools/PtySpike.Headed.Tests` | net9.0 | xUnit suite — slow, real-claude scenarios. Opt-in via env flag (`ANTIPHON_HEADED_TESTS=1`) |
+| `src/Antiphon.Agents.Pty` | net9.0 | Library — `PtyAgentRunner`, `RingBuffer`, `TerminalScreen`, ANSI helpers, claude detectors |
+| `tests/Antiphon.Agents.Pty.Tests` | net9.0 | Single test project covering Unit, Pty, PtyStress, Headed, HeadedLong tiers |
 
 Rationale:
-- Split **Tests** vs **Headed.Tests** so default `dotnet test` runs in seconds; headed suite costs API tokens + needs `cl.bat` on PATH.
-- Both reference `PtySpike` directly; no production code path.
-- `InternalsVisibleTo` to both test assemblies.
+- One test project; tiers separated by TUnit `[Category(...)]` and a runtime `SkipTestException` gate (`ClSession.SkipIfNotEligible`) for headed scenarios.
+- Avoids duplicate csproj plumbing and mirrors the layout of `Antiphon.Tests` / `Antiphon.E2E`.
+- Tests reference the library directly; no production code path.
 
 ---
 
 ## 2. Test Categories
 
-xUnit `[Trait("Category", "<x>")]` for filtering.
+Filter via TUnit `[Category("<x>")]` attribute on test methods/classes.
 
-| Category | Where | Speed | Network/API | Default? |
-|----------|-------|-------|-------------|----------|
-| `Unit` | Tests | <50ms | none | yes |
-| `Pty` | Tests | <2s | none (cmd.exe / pwsh.exe) | yes |
-| `PtyStress` | Tests | up to 30s | none | yes (CI) |
-| `Headed` | Headed.Tests | 10s–3min | LLM proxy + tokens | env-gated |
-| `HeadedLong` | Headed.Tests | up to 10min | LLM proxy + tokens | env-gated, `[Trait("Slow","true")]` |
+| Category | Speed | Network/API | Default? |
+|----------|-------|-------------|----------|
+| `Unit` | <50ms | none | yes |
+| `Pty` | <2s | none (cmd.exe / pwsh.exe) | yes |
+| `PtyStress` | up to 30s | none | yes (CI) |
+| `Headed` | 10s–3min | LLM proxy + tokens | env-gated (skipped at runtime) |
+| `HeadedLong` | up to 10min | LLM proxy + tokens | env-gated (skipped at runtime) |
 
-Filter examples:
+Filter examples (TUnit uses Microsoft Testing Platform — `dotnet run`, not `dotnet test`):
 ```
-dotnet test --filter "Category=Unit|Category=Pty"
-dotnet test tools/PtySpike.Headed.Tests --filter "Category=Headed&Slow!=true"
+dotnet run --project tests/Antiphon.Agents.Pty.Tests -- --treenode-filter "/*/*/*/*[Category=Unit]"
+dotnet run --project tests/Antiphon.Agents.Pty.Tests -- --treenode-filter "/*/*/*/*[Category=Headed]"
 ```
+
+Headed tiers always *compile* in the default suite; they self-skip at runtime via `ClSession.SkipIfNotEligible()` unless the env gate is set.
 
 ---
 
 ## 3. Naming Conventions
 
-- Class: `<Subject>Tests` (e.g. `PtyAgentRunnerTests`, `RingBufferTests`, `ClaudeSessionTests`).
-- Method: `Subject_action_expectedOutcome` (snake-ish per E01 spec; deviation from PascalCase OK for spike).
-- One arrange-act-assert per fact. Theories for parameterised input only.
-- Assertions via FluentAssertions (already in repo) **or** raw xUnit `Assert.*` — never both in same file.
+- Class: `<Subject>Tests` (e.g. `PtyAgentRunnerTests`, `RingBufferTests`, `ClaudeHeadedTests`).
+- Method: `Subject_action_expectedOutcome` (snake-ish per E01 spec).
+- One arrange-act-assert per `[Test]`. Use `[Arguments(...)]` for parameterised input.
+- Assertions via Shouldly (`x.ShouldBe(y)`, `x.ShouldContain(y)`). One assertion library only.
 - Test files mirror SUT layout 1:1.
 
 ---
@@ -90,9 +91,9 @@ dotnet test tools/PtySpike.Headed.Tests --filter "Category=Headed&Slow!=true"
 - 1MB stdout from child: full capture (use bat that loops echo), ring buffer holds last N, no OOM
 - rapid kill (spawn + immediate kill before first read) × 20: all return exit code
 
-### 4.4 Claude headed — Headed.Tests
+### 4.4 Claude headed — Headed
 
-> Requires `cl.bat` on PATH. Uses `--print` mode where possible to keep cost down.
+> Requires `cl.bat`/`cl.ps1` or globally-installed `claude` on PATH. Uses `--print` mode where possible to keep cost down.
 
 | Scenario | Asserts |
 |----------|---------|
@@ -124,23 +125,27 @@ dotnet test tools/PtySpike.Headed.Tests --filter "Category=Headed&Slow!=true"
 - `ClaudeReadyDetector` — wraps `WaitForQuietAsync` with sensible defaults
 - `ClaudeDoneDetector` — quiet-period strategy now, upgrade later to status-line parse (`Opus 4.7 | in:N out:N`) when we have ANSI parser
 - `TempBatch` — disposable helper that writes a `.bat` and deletes on dispose (for exit-code tests, avoids cmd `&` quoting issue)
+- `ClSession` — central headed-eligibility gate (`SkipIfNotEligible`) + `cl`/`claude` binary resolution
 
 ---
 
 ## 6. CI Gates
 
-- PR build: `dotnet test tools/PtySpike.Tests` — `Unit` + `Pty` + `PtyStress`. Hard gate.
-- Nightly: + `tools/PtySpike.Headed.Tests` `Category=Headed`. Soft gate (alert, not block).
-- Manual / pre-release: `Category=Headed|Category=HeadedLong`. Eats tokens; explicit run.
+- PR build: `dotnet run --project tests/Antiphon.Agents.Pty.Tests` — `Unit` + `Pty` + `PtyStress` execute; `Headed`/`HeadedLong` self-skip without `ANTIPHON_HEADED_TESTS=1`. Hard gate.
+- Nightly: same command with `ANTIPHON_HEADED_TESTS=1` set in environment → `Headed` runs. Soft gate (alert, not block).
+- Manual / pre-release: env flag set + `--treenode-filter` selecting `HeadedLong`. Eats tokens; explicit run.
 
 ---
 
-## 7. Skip Conditions (`SkippableFact`)
+## 7. Skip Conditions
 
-- non-Windows → skip all `Pty` + `Headed` (ConPTY only)
-- `cl.bat` not on PATH → skip `Headed`
-- `ANTIPHON_HEADED_TESTS != 1` → skip `Headed` + `HeadedLong` regardless of platform
-- API down (cheap probe `cl --version` first) → skip rest of `Headed` run with explanatory message
+Headed tests call `ClSession.SkipIfNotEligible()` at the top of each test. It throws `TUnit.Core.Exceptions.SkipTestException` (reported as **skipped**, not failed) when:
+
+- non-Windows host (ConPTY only)
+- `ANTIPHON_HEADED_TESTS != 1`
+- neither `cl.bat`/`cl.ps1`/`cl.cmd`/`cl.exe` nor `claude.*` resolvable on PATH
+
+Inline `throw new SkipTestException("...")` is used for ad-hoc per-scenario gates (e.g. API down probe).
 
 ---
 

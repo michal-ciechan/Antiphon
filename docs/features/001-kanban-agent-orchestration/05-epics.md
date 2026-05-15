@@ -24,7 +24,7 @@
 | E11 | amux channels + atomic claim + watchdog | FR-16, FR-17, FR-18 | [E_11-stories.md](epics/E_11-stories.md) | `[ ]` |
 | E12 | DiffReview + GitHub PR open (Review → Done flow) | FR-10, FR-11 | [E_12-stories.md](epics/E_12-stories.md) | `[ ]` |
 | E13 | Snapshot / observability API + ops dashboard | FR-19, NFR-05 | [E_13-stories.md](epics/E_13-stories.md) | `[ ]` |
-| E14 | Migrate test suites from xUnit → TUnit + FluentAssertions → Shouldly (run **early** — after E01-S01 lands, before E02 substantial work) | NFR-* (testability) | [E_14-stories.md](epics/E_14-stories.md) | `[ ]` |
+| E14 | Migrate test suites from xUnit → TUnit + FluentAssertions → Shouldly (run **early** — after E01-S01 lands, before E02 substantial work) | NFR-* (testability) | [E_14-stories.md](epics/E_14-stories.md) | `[x]` |
 
 ---
 
