@@ -16,4 +16,6 @@ public class Project
     public bool NotificationsEnabled { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    public ICollection<Board> Boards { get; set; } = new List<Board>();
 }

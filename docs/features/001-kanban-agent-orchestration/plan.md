@@ -47,9 +47,9 @@ Domain/StateMachine/
   RunAttemptStateMachine.cs  # phase transitions per Symphony spec
 ```
 
-**No `Card` / `Column` entity.** Kanban columns are just the tracker's state strings (`Todo`, `InProgress`, `Review`, `Done`) — `WorkflowDefinition.tracker.active_states` + `terminal_states` configure which appear. UI groups `Issue` rows by `state`. Drag = state mutation via tracker adapter (or internal DB write for `InternalTracker`).
+**E04 implementation decision:** Antiphon persists internal kanban work as `Card` rows grouped by configurable `BoardColumn` rows. External tracker issues map through `ExternalIssueRef`; `Issue` naming stays at adapter boundaries.
 
-Issue → 0..N AgentSessions (forking like amux). Issue → 0..N RunAttempts. Issue → 1 active Worktree. Worktree → 1 git branch.
+Card → 0..N AgentSessions (forking like amux). Card → 0..N RunAttempts. Card → 0..N Worktrees, with 1 current active Worktree. Worktree → 1 git branch.
 
 ---
 

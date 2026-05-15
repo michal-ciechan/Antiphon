@@ -22,6 +22,16 @@ public class AppDbContext : DbContext
     public DbSet<AuditRecord> AuditRecords => Set<AuditRecord>();
     public DbSet<CostLedgerEntry> CostLedgerEntries => Set<CostLedgerEntry>();
     public DbSet<TemplateGroup> TemplateGroups => Set<TemplateGroup>();
+    public DbSet<Board> Boards => Set<Board>();
+    public DbSet<BoardColumn> BoardColumns => Set<BoardColumn>();
+    public DbSet<Card> Cards => Set<Card>();
+    public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
+    public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
+    public DbSet<Worktree> Worktrees => Set<Worktree>();
+    public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
+    public DbSet<ExternalIssueRef> ExternalIssueRefs => Set<ExternalIssueRef>();
+    public DbSet<RetrySchedule> RetrySchedules => Set<RetrySchedule>();
+    public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -348,6 +358,290 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.AuditRecordId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Board>(entity =>
+        {
+            entity.ToTable("Boards");
+            entity.HasKey(b => b.Id);
+            entity.Property(b => b.ProjectId).IsRequired();
+            entity.Property(b => b.Name).IsRequired().HasMaxLength(200);
+            entity.Property(b => b.Description).HasMaxLength(2000);
+            entity.Property(b => b.TrackerKind).IsRequired();
+            entity.Property(b => b.MaxConcurrentSessions).IsRequired();
+            entity.Property(b => b.CreatedAt).IsRequired();
+            entity.Property(b => b.UpdatedAt).IsRequired();
+
+            entity.HasIndex(b => b.ProjectId).HasDatabaseName("IX_Boards_ProjectId");
+            entity.HasIndex(b => new { b.ProjectId, b.Name })
+                .IsUnique()
+                .HasDatabaseName("IX_Boards_ProjectId_Name");
+
+            entity.HasOne(b => b.Project)
+                .WithMany(p => p.Boards)
+                .HasForeignKey(b => b.ProjectId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<BoardColumn>(entity =>
+        {
+            entity.ToTable("BoardColumns");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.BoardId).IsRequired();
+            entity.Property(c => c.StateKey).IsRequired().HasMaxLength(100);
+            entity.Property(c => c.Name).IsRequired().HasMaxLength(200);
+            entity.Property(c => c.ColumnOrder).IsRequired();
+            entity.Property(c => c.CardStatus).IsRequired();
+            entity.Property(c => c.IsActive).IsRequired();
+            entity.Property(c => c.IsTerminal).IsRequired();
+            entity.Property(c => c.MaxConcurrentSessions);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.Property(c => c.UpdatedAt).IsRequired();
+
+            entity.HasIndex(c => new { c.BoardId, c.StateKey })
+                .IsUnique()
+                .HasDatabaseName("IX_BoardColumns_BoardId_StateKey");
+            entity.HasIndex(c => new { c.BoardId, c.ColumnOrder })
+                .IsUnique()
+                .HasDatabaseName("IX_BoardColumns_BoardId_ColumnOrder");
+
+            entity.HasOne(c => c.Board)
+                .WithMany(b => b.Columns)
+                .HasForeignKey(c => c.BoardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Card>(entity =>
+        {
+            entity.ToTable("Cards");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.BoardId).IsRequired();
+            entity.Property(c => c.BoardColumnId).IsRequired();
+            entity.Property(c => c.Identifier).IsRequired().HasMaxLength(100);
+            entity.Property(c => c.Title).IsRequired().HasMaxLength(300);
+            entity.Property(c => c.Description).HasMaxLength(4000);
+            entity.Property(c => c.Priority).IsRequired();
+            entity.Property(c => c.LabelsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(c => c.Status).IsRequired();
+            entity.Property(c => c.ConcurrencyToken).IsConcurrencyToken();
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.Property(c => c.UpdatedAt).IsRequired();
+            entity.Property(c => c.TerminalReason).HasMaxLength(1000);
+
+            entity.HasIndex(c => c.BoardId).HasDatabaseName("IX_Cards_BoardId");
+            entity.HasIndex(c => c.BoardColumnId).HasDatabaseName("IX_Cards_BoardColumnId");
+            entity.HasIndex(c => c.OwnerSessionId).HasDatabaseName("IX_Cards_OwnerSessionId");
+            entity.HasIndex(c => c.CurrentWorktreeId).HasDatabaseName("IX_Cards_CurrentWorktreeId");
+            entity.HasIndex(c => new { c.BoardId, c.Identifier })
+                .IsUnique()
+                .HasDatabaseName("IX_Cards_BoardId_Identifier");
+            entity.HasIndex(c => new { c.BoardId, c.Status })
+                .HasDatabaseName("IX_Cards_BoardId_Status");
+
+            entity.HasOne(c => c.Board)
+                .WithMany(b => b.Cards)
+                .HasForeignKey(c => c.BoardId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(c => c.BoardColumn)
+                .WithMany(c => c.Cards)
+                .HasForeignKey(c => c.BoardColumnId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.OwnerSession)
+                .WithMany()
+                .HasForeignKey(c => c.OwnerSessionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(c => c.CurrentWorktree)
+                .WithMany()
+                .HasForeignKey(c => c.CurrentWorktreeId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentSession>(entity =>
+        {
+            entity.ToTable("AgentSessions");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.CardId).IsRequired();
+            entity.Property(s => s.DefinitionName).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.AgentKind).IsRequired();
+            entity.Property(s => s.Status).IsRequired();
+            entity.Property(s => s.Cwd).IsRequired().HasMaxLength(1000);
+            entity.Property(s => s.Cols).IsRequired();
+            entity.Property(s => s.Rows).IsRequired();
+            entity.Property(s => s.CreatedAt).IsRequired();
+            entity.Property(s => s.StartedAt).IsRequired();
+            entity.Property(s => s.LastSeenAt).IsRequired();
+            entity.Property(s => s.FailureReason).HasMaxLength(2000);
+
+            entity.HasIndex(s => s.CardId).HasDatabaseName("IX_AgentSessions_CardId");
+            entity.HasIndex(s => s.WorktreeId).HasDatabaseName("IX_AgentSessions_WorktreeId");
+            entity.HasIndex(s => new { s.CardId, s.Status })
+                .HasDatabaseName("IX_AgentSessions_CardId_Status");
+
+            entity.HasOne(s => s.Card)
+                .WithMany(c => c.AgentSessions)
+                .HasForeignKey(s => s.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(s => s.Worktree)
+                .WithMany(w => w.AgentSessions)
+                .HasForeignKey(s => s.WorktreeId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<RunAttempt>(entity =>
+        {
+            entity.ToTable("RunAttempts");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.CardId).IsRequired();
+            entity.Property(a => a.AttemptNumber).IsRequired();
+            entity.Property(a => a.Phase).IsRequired();
+            entity.Property(a => a.CreatedAt).IsRequired();
+            entity.Property(a => a.StartedAt).IsRequired();
+            entity.Property(a => a.LastEventAt).IsRequired();
+            entity.Property(a => a.PhaseStartedAt).IsRequired();
+            entity.Property(a => a.PhaseDurationsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(a => a.Prompt).IsRequired();
+            entity.Property(a => a.ErrorDetails).HasMaxLength(4000);
+
+            entity.HasIndex(a => a.CardId).HasDatabaseName("IX_RunAttempts_CardId");
+            entity.HasIndex(a => a.AgentSessionId).HasDatabaseName("IX_RunAttempts_AgentSessionId");
+            entity.HasIndex(a => a.WorktreeId).HasDatabaseName("IX_RunAttempts_WorktreeId");
+            entity.HasIndex(a => a.BoardWorkflowDefinitionId).HasDatabaseName("IX_RunAttempts_BoardWorkflowDefinitionId");
+            entity.HasIndex(a => new { a.CardId, a.AttemptNumber })
+                .IsUnique()
+                .HasDatabaseName("IX_RunAttempts_CardId_AttemptNumber");
+
+            entity.HasOne(a => a.Card)
+                .WithMany(c => c.RunAttempts)
+                .HasForeignKey(a => a.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(a => a.AgentSession)
+                .WithMany(s => s.RunAttempts)
+                .HasForeignKey(a => a.AgentSessionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.Worktree)
+                .WithMany(w => w.RunAttempts)
+                .HasForeignKey(a => a.WorktreeId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.BoardWorkflowDefinition)
+                .WithMany()
+                .HasForeignKey(a => a.BoardWorkflowDefinitionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Worktree>(entity =>
+        {
+            entity.ToTable("Worktrees");
+            entity.HasKey(w => w.Id);
+            entity.Property(w => w.CardId).IsRequired();
+            entity.Property(w => w.RepoPath).IsRequired().HasMaxLength(1000);
+            entity.Property(w => w.Path).IsRequired().HasMaxLength(1000);
+            entity.Property(w => w.Branch).IsRequired().HasMaxLength(500);
+            entity.Property(w => w.BaseRef).IsRequired().HasMaxLength(500);
+            entity.Property(w => w.Status).IsRequired();
+            entity.Property(w => w.CreatedAt).IsRequired();
+            entity.Property(w => w.LastTouchedAt).IsRequired();
+
+            entity.HasIndex(w => w.CardId).HasDatabaseName("IX_Worktrees_CardId");
+            entity.HasIndex(w => w.Path).IsUnique().HasDatabaseName("IX_Worktrees_Path");
+            entity.HasIndex(w => w.Branch).HasDatabaseName("IX_Worktrees_Branch");
+            entity.HasIndex(w => new { w.Status, w.LastTouchedAt })
+                .HasDatabaseName("IX_Worktrees_Status_LastTouchedAt");
+
+            entity.HasOne(w => w.Card)
+                .WithMany(c => c.Worktrees)
+                .HasForeignKey(w => w.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BoardWorkflowDefinition>(entity =>
+        {
+            entity.ToTable("BoardWorkflowDefinitions");
+            entity.HasKey(d => d.Id);
+            entity.Property(d => d.BoardId).IsRequired();
+            entity.Property(d => d.Version).IsRequired();
+            entity.Property(d => d.Name).IsRequired().HasMaxLength(200);
+            entity.Property(d => d.Content).IsRequired();
+            entity.Property(d => d.IsActive).IsRequired();
+            entity.Property(d => d.CreatedAt).IsRequired();
+            entity.Property(d => d.UpdatedAt).IsRequired();
+
+            entity.HasIndex(d => new { d.BoardId, d.Version })
+                .IsUnique()
+                .HasDatabaseName("IX_BoardWorkflowDefinitions_BoardId_Version");
+            entity.HasIndex(d => new { d.BoardId, d.IsActive })
+                .HasDatabaseName("IX_BoardWorkflowDefinitions_BoardId_IsActive");
+
+            entity.HasOne(d => d.Board)
+                .WithMany(b => b.WorkflowDefinitions)
+                .HasForeignKey(d => d.BoardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ExternalIssueRef>(entity =>
+        {
+            entity.ToTable("ExternalIssueRefs");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CardId).IsRequired();
+            entity.Property(r => r.TrackerKind).IsRequired();
+            entity.Property(r => r.ExternalId).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.ExternalKey).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.Url).HasMaxLength(1000);
+            entity.Property(r => r.RawPayloadJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.LastSyncedAt).IsRequired();
+
+            entity.HasIndex(r => r.CardId).IsUnique().HasDatabaseName("IX_ExternalIssueRefs_CardId");
+            entity.HasIndex(r => new { r.TrackerKind, r.ExternalId })
+                .IsUnique()
+                .HasDatabaseName("IX_ExternalIssueRefs_TrackerKind_ExternalId");
+
+            entity.HasOne(r => r.Card)
+                .WithOne(c => c.ExternalIssueRef)
+                .HasForeignKey<ExternalIssueRef>(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RetrySchedule>(entity =>
+        {
+            entity.ToTable("RetrySchedules");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CardId).IsRequired();
+            entity.Property(r => r.AttemptCount).IsRequired();
+            entity.Property(r => r.MaxAttempts).IsRequired();
+            entity.Property(r => r.LastError).HasMaxLength(4000);
+
+            entity.HasIndex(r => r.CardId).IsUnique().HasDatabaseName("IX_RetrySchedules_CardId");
+            entity.HasIndex(r => r.NextRetryAt).HasDatabaseName("IX_RetrySchedules_NextRetryAt");
+
+            entity.HasOne(r => r.Card)
+                .WithOne(c => c.RetrySchedule)
+                .HasForeignKey<RetrySchedule>(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TokenUsage>(entity =>
+        {
+            entity.ToTable("TokenUsages");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.RunAttemptId).IsRequired();
+            entity.Property(t => t.TokensIn).IsRequired();
+            entity.Property(t => t.TokensOut).IsRequired();
+            entity.Property(t => t.CostUsd).IsRequired().HasPrecision(18, 6);
+            entity.Property(t => t.ModelName).IsRequired().HasMaxLength(200);
+            entity.Property(t => t.CreatedAt).IsRequired();
+
+            entity.HasIndex(t => t.RunAttemptId).IsUnique().HasDatabaseName("IX_TokenUsages_RunAttemptId");
+
+            entity.HasOne(t => t.RunAttempt)
+                .WithOne(a => a.TokenUsage)
+                .HasForeignKey<TokenUsage>(t => t.RunAttemptId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
