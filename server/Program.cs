@@ -13,6 +13,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Agents;
+using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.GitHub;
@@ -62,6 +63,14 @@ try
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
+
+    // Agent registry (E02) - typed config + fail-fast validator + adapter factory
+    builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
+    builder.Services.AddOptions<AgentRegistrySettings>()
+        .Bind(builder.Configuration.GetSection("Agents"))
+        .ValidateOnStart();
+    builder.Services.AddSingleton<AgentRegistry>();
+    builder.Services.AddSingleton<IAgentProtocolAdapterFactory, AgentProtocolAdapterFactory>();
 
     // JSON serialization — serialize enums as strings for API responses
     builder.Services.ConfigureHttpJsonOptions(options =>
@@ -126,6 +135,11 @@ try
             .AddConsoleExporter());
 
     var app = builder.Build();
+
+    // Fail-fast on agent DI graph (E02): resolves AgentRegistry + IAgentProtocolAdapterFactory
+    // and runs ValidateOnStart for AgentRegistrySettings. Throws here rather than at first use.
+    _ = app.Services.GetRequiredService<AgentRegistry>();
+    _ = app.Services.GetRequiredService<IAgentProtocolAdapterFactory>();
 
     // Middleware pipeline order: CorrelationId → CurrentUser → ExceptionHandler → routing → endpoints
     app.UseMiddleware<CorrelationIdMiddleware>();

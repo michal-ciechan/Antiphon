@@ -35,4 +35,8 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+  </ItemGroup>
+
 </Project>
