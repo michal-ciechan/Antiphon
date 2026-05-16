@@ -19,6 +19,7 @@ public sealed class OrchestratorService
     private readonly AgentSessionService _sessionService;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly RetryScheduler _retryScheduler;
+    private readonly ExternalTrackerSyncService _externalTrackerSyncService;
     private readonly OrchestratorControlState _controlState;
     private readonly IEventBus _eventBus;
     private readonly OrchestratorSettings _settings;
@@ -31,6 +32,7 @@ public sealed class OrchestratorService
         AgentSessionService sessionService,
         AgentSessionLaunchQueue launchQueue,
         RetryScheduler retryScheduler,
+        ExternalTrackerSyncService externalTrackerSyncService,
         OrchestratorControlState controlState,
         IEventBus eventBus,
         IOptions<OrchestratorSettings> settings,
@@ -42,6 +44,7 @@ public sealed class OrchestratorService
         _sessionService = sessionService;
         _launchQueue = launchQueue;
         _retryScheduler = retryScheduler;
+        _externalTrackerSyncService = externalTrackerSyncService;
         _controlState = controlState;
         _eventBus = eventBus;
         _settings = settings.Value;
@@ -59,6 +62,8 @@ public sealed class OrchestratorService
             await _eventBus.PublishToAllAsync("OrchestratorTick", pausedResult, ct);
             return pausedResult;
         }
+
+        await _externalTrackerSyncService.SyncAsync(now, ct);
 
         var candidates = await LoadEligibleCandidatesAsync(now, ct);
         var activeByBoard = await CountActiveSessionsByBoardAsync(ct);
@@ -154,14 +159,14 @@ public sealed class OrchestratorService
         var activeStatuses = ActiveSessionStatuses();
         var now = UtcNow();
         var runningSessions = await _db.AgentSessions
-            .Where(s => s.Card.Board.TrackerKind == TrackerKind.Internal)
             .Where(s => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+                || s.Card.Board.TrackerKind != TrackerKind.Internal
                 || (s.Card.Board.Project.LocalRepositoryPath != null
                     && s.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
             .CountAsync(s => activeStatuses.Contains(s.Status), ct);
         var retryQueueLength = await _db.RetrySchedules
-            .Where(r => r.Card.Board.TrackerKind == TrackerKind.Internal)
             .Where(r => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+                || r.Card.Board.TrackerKind != TrackerKind.Internal
                 || (r.Card.Board.Project.LocalRepositoryPath != null
                     && r.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
             .CountAsync(r => r.AttemptCount < r.MaxAttempts
@@ -231,8 +236,8 @@ public sealed class OrchestratorService
         var claimedCards = await _db.Cards
             .Include(c => c.BoardColumn)
             .Include(c => c.OwnerSession)
-            .Where(c => c.Board.TrackerKind == TrackerKind.Internal)
             .Where(c => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+                || c.Board.TrackerKind != TrackerKind.Internal
                 || (c.Board.Project.LocalRepositoryPath != null
                     && c.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
             .Where(c => c.OwnerSessionId != null)
@@ -302,8 +307,8 @@ public sealed class OrchestratorService
         var activeStatuses = ActiveSessionStatuses();
         return await _db.Cards
             .AsNoTracking()
-            .Where(c => c.Board.TrackerKind == TrackerKind.Internal)
             .Where(c => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+                || c.Board.TrackerKind != TrackerKind.Internal
                 || (c.Board.Project.LocalRepositoryPath != null
                     && c.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
             .Where(c => c.BoardColumn.IsActive && !c.BoardColumn.IsTerminal)

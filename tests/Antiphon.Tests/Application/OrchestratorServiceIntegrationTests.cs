@@ -64,6 +64,319 @@ public class OrchestratorServiceIntegrationTests
     }
 
     [Test]
+    public async Task PollTick_syncs_external_tracker_issue_into_card_and_dispatches_it()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            graph.Board.Cards.Remove(graph.Card);
+            graph.ActiveColumn.Cards.Remove(graph.Card);
+            graph.Board.TrackerKind = TrackerKind.GitHubIssues;
+            graph.Board.WorkflowDefinitions.Single().Content = """
+                ---
+                tracker:
+                  kind: github_issues
+                  repository: acme/app
+                  active_states: [open]
+                ---
+                Work on {{ issue.identifier }}: {{ issue.title }}
+                """;
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var tracker = new FakeIssueTracker(TrackerKind.GitHubIssues, [
+                new TrackedIssue(
+                    "acme/app#42",
+                    "#42",
+                    "External issue",
+                    "Synced from tracker",
+                    "open",
+                    4,
+                    ["e10", "sync"],
+                    [],
+                    "https://github.test/acme/app/issues/42",
+                    """{"number":42}""")
+            ]);
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "EXTERNAL_OK" };
+            await using var harness = BuildHarness(tempRoot, [adapter], issueTrackers: [tracker]);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            result.Dispatched.ShouldBe(1);
+            tracker.FetchCandidatesCalls.ShouldBe(1);
+            adapter.Started.ShouldBeTrue();
+
+            await using var verify = CreateContext();
+            var syncedCard = await verify.Cards
+                .Include(c => c.ExternalIssueRef)
+                .Include(c => c.AgentSessions)
+                .SingleAsync(c => c.BoardId == graph.Board.Id);
+            syncedCard.Identifier.ShouldBe("#42");
+            syncedCard.Title.ShouldBe("External issue");
+            syncedCard.Priority.ShouldBe(4);
+            syncedCard.ExternalIssueRef.ShouldNotBeNull();
+            syncedCard.ExternalIssueRef!.TrackerKind.ShouldBe(TrackerKind.GitHubIssues);
+            syncedCard.ExternalIssueRef.ExternalId.ShouldBe("acme/app#42");
+            syncedCard.AgentSessions.ShouldContain(s => s.Status == SessionStatus.Stopped);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task External_tracker_sync_updates_existing_card_without_duplicating_reference()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            graph.Board.TrackerKind = TrackerKind.Linear;
+            graph.Board.WorkflowDefinitions.Single().Content = """
+                ---
+                tracker:
+                  kind: linear
+                  project: Antiphon
+                  active_states: [Todo]
+                ---
+                Work on {{ issue.title }}
+                """;
+            graph.Card.Identifier = "ANT-1";
+            graph.Card.Title = "Old title";
+            graph.Card.ExternalIssueRef = new ExternalIssueRef
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                TrackerKind = TrackerKind.Linear,
+                ExternalId = "lin-1",
+                ExternalKey = "ANT-1",
+                Url = "https://linear.test/old",
+                RawPayloadJson = "{}",
+                LastSyncedAt = DateTime.UtcNow,
+                Card = graph.Card
+            };
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var tracker = new FakeIssueTracker(TrackerKind.Linear, [
+                new TrackedIssue(
+                    "lin-1",
+                    "ANT-1",
+                    "Updated title",
+                    "Updated description",
+                    "Todo",
+                    5,
+                    ["linear"],
+                    [],
+                    "https://linear.test/ANT-1",
+                    """{"id":"lin-1"}""")
+            ]);
+            await using var harness = BuildHarness(tempRoot, [], issueTrackers: [tracker]);
+
+            var synced = await harness.Scope.ServiceProvider
+                .GetRequiredService<ExternalTrackerSyncService>()
+                .SyncAsync(DateTime.UtcNow, CancellationToken.None);
+
+            synced.ShouldBe(1);
+            await using var verify = CreateContext();
+            var cards = await verify.Cards
+                .Include(c => c.ExternalIssueRef)
+                .Where(c => c.BoardId == graph.Board.Id)
+                .ToListAsync();
+            cards.Count.ShouldBe(1);
+            cards.Single().Title.ShouldBe("Updated title");
+            cards.Single().Description.ShouldBe("Updated description");
+            cards.Single().Priority.ShouldBe(5);
+            cards.Single().ExternalIssueRef!.Url.ShouldBe("https://linear.test/ANT-1");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task External_tracker_sync_marks_cards_terminal_when_issue_leaves_active_states()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            graph.Board.TrackerKind = TrackerKind.Linear;
+            graph.Board.WorkflowDefinitions.Single().Content = """
+                ---
+                tracker:
+                  kind: linear
+                  project: Antiphon
+                  active_states: [Todo]
+                ---
+                Work on {{ issue.title }}
+                """;
+            graph.Card.Identifier = "ANT-9";
+            graph.Card.ExternalIssueRef = new ExternalIssueRef
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                TrackerKind = TrackerKind.Linear,
+                ExternalId = "lin-9",
+                ExternalKey = "ANT-9",
+                Url = "https://linear.test/ANT-9",
+                RawPayloadJson = "{}",
+                LastSyncedAt = DateTime.UtcNow,
+                Card = graph.Card
+            };
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var tracker = new FakeIssueTracker(TrackerKind.Linear, [])
+            {
+                LookupIssues =
+                [
+                    new TrackedIssue(
+                        "lin-9",
+                        "ANT-9",
+                        "Resolved issue",
+                        "Done upstream",
+                        "Done",
+                        0,
+                        [],
+                        [],
+                        "https://linear.test/ANT-9",
+                        """{"id":"lin-9"}""")
+                ]
+            };
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "SHOULD_NOT_START" };
+            await using var harness = BuildHarness(tempRoot, [adapter], issueTrackers: [tracker]);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+
+            result.Dispatched.ShouldBe(0);
+            adapter.Started.ShouldBeFalse();
+            await using var verify = CreateContext();
+            var card = await verify.Cards.SingleAsync(c => c.Id == graph.Card.Id);
+            card.BoardColumnId.ShouldBe(graph.DoneColumn.Id);
+            card.Status.ShouldBe(CardStatus.Done);
+            card.TerminalReason.ShouldNotBeNull();
+            card.TerminalReason.ShouldContain("Done");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task PollTick_dispatches_external_issue_only_after_blockers_terminal()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            graph.Board.Cards.Remove(graph.Card);
+            graph.ActiveColumn.Cards.Remove(graph.Card);
+            graph.Board.TrackerKind = TrackerKind.Linear;
+            graph.Board.WorkflowDefinitions.Single().Content = """
+                ---
+                tracker:
+                  kind: linear
+                  project: Antiphon
+                  active_states: [Todo]
+                ---
+                Work on {{ issue.title }}
+                """;
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var trackedIssue = new TrackedIssue(
+                "lin-10",
+                "ANT-10",
+                "Blocked issue",
+                "Wait for blocker",
+                "Todo",
+                3,
+                ["linear"],
+                ["lin-blocker"],
+                "https://linear.test/ANT-10",
+                """{"id":"lin-10"}""");
+            var tracker = new FakeIssueTracker(TrackerKind.Linear, [trackedIssue])
+            {
+                LookupIssues =
+                [
+                    new TrackedIssue(
+                        "lin-blocker",
+                        "ANT-8",
+                        "Blocking issue",
+                        "Still active",
+                        "Todo",
+                        1,
+                        [],
+                        [],
+                        "https://linear.test/ANT-8",
+                        """{"id":"lin-blocker"}""")
+                ]
+            };
+            var blockedAdapter = new FakeAgentProtocolAdapter { PromptOutput = "BLOCKED" };
+            await using (var blockedHarness = BuildHarness(tempRoot, [blockedAdapter], issueTrackers: [tracker]))
+            {
+                var blocked = await blockedHarness.Orchestrator.PollTickAsync(CancellationToken.None);
+                await blockedHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+                blocked.Dispatched.ShouldBe(0);
+                blockedAdapter.Started.ShouldBeFalse();
+            }
+
+            await using (var verifyBlocked = CreateContext())
+            {
+                var blockedCard = await verifyBlocked.Cards.SingleAsync(c => c.BoardId == graph.Board.Id);
+                blockedCard.BoardColumnId.ShouldNotBe(graph.ActiveColumn.Id);
+                (await verifyBlocked.AgentSessions.CountAsync(s => s.CardId == blockedCard.Id)).ShouldBe(0);
+            }
+
+            tracker.LookupIssues =
+            [
+                new TrackedIssue(
+                    "lin-blocker",
+                    "ANT-8",
+                    "Blocking issue",
+                    "Resolved",
+                    "Done",
+                    1,
+                    [],
+                    [],
+                    "https://linear.test/ANT-8",
+                    """{"id":"lin-blocker"}""")
+            ];
+            var unblockedAdapter = new FakeAgentProtocolAdapter { PromptOutput = "UNBLOCKED" };
+            await using var unblockedHarness = BuildHarness(tempRoot, [unblockedAdapter], issueTrackers: [tracker]);
+
+            var unblocked = await unblockedHarness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await unblockedHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            unblocked.Dispatched.ShouldBe(1);
+            unblockedAdapter.Started.ShouldBeTrue();
+            await using var verifyUnblocked = CreateContext();
+            var unblockedCard = await verifyUnblocked.Cards.SingleAsync(c => c.BoardId == graph.Board.Id);
+            unblockedCard.BoardColumnId.ShouldBe(graph.ActiveColumn.Id);
+            (await verifyUnblocked.AgentSessions.CountAsync(s => s.CardId == unblockedCard.Id)).ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Orchestrator_skips_card_when_global_concurrency_full()
     {
         await using var db = CreateContext();
@@ -471,7 +784,7 @@ public class OrchestratorServiceIntegrationTests
     }
 
     [Test]
-    public async Task Reconcile_ignores_external_tracker_claims()
+    public async Task Reconcile_handles_external_tracker_claims()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -490,12 +803,13 @@ public class OrchestratorServiceIntegrationTests
 
             var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
 
-            result.Reconciled.ShouldBe(0);
+            result.Reconciled.ShouldBe(1);
             await using var verify = CreateContext();
             var card = await verify.Cards.SingleAsync(c => c.Id == graph.Card.Id);
-            card.OwnerSessionId.ShouldBe(session.Id);
+            card.OwnerSessionId.ShouldBeNull();
             var storedSession = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
-            storedSession.Status.ShouldBe(SessionStatus.Running);
+            storedSession.Status.ShouldBe(SessionStatus.Failed);
+            (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(1);
         }
         finally
         {
@@ -682,7 +996,8 @@ public class OrchestratorServiceIntegrationTests
     private static Harness BuildHarness(
         string tempRoot,
         IReadOnlyList<IAgentProtocolAdapter> adapters,
-        int pollIntervalSeconds = 30)
+        int pollIntervalSeconds = 30,
+        IReadOnlyList<IIssueTracker>? issueTrackers = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -717,6 +1032,8 @@ public class OrchestratorServiceIntegrationTests
             Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = "fake" } }
         }));
         services.AddSingleton<AgentRegistry>();
+        foreach (var issueTracker in issueTrackers ?? [])
+            services.AddSingleton<IIssueTracker>(issueTracker);
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
         services.AddSingleton<IAgentProtocolAdapterFactory>(new QueueAdapterFactory(adapters));
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
@@ -724,6 +1041,7 @@ public class OrchestratorServiceIntegrationTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
+        services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddScoped<OrchestratorService>();
@@ -769,9 +1087,11 @@ public class OrchestratorServiceIntegrationTests
         };
         project.Boards.Add(board);
 
-        var active = NewColumn(board, "in-progress", "In Progress", 0, CardStatus.InProgress, isActive: true, isTerminal: false);
+        var backlog = NewColumn(board, "backlog", "Backlog", 0, CardStatus.Backlog, isActive: false, isTerminal: false);
+        var active = NewColumn(board, "in-progress", "In Progress", 1, CardStatus.InProgress, isActive: true, isTerminal: false);
         active.MaxConcurrentSessions = columnMaxConcurrent;
-        var done = NewColumn(board, "done", "Done", 1, CardStatus.Done, isActive: false, isTerminal: true);
+        var done = NewColumn(board, "done", "Done", 2, CardStatus.Done, isActive: false, isTerminal: true);
+        board.Columns.Add(backlog);
         board.Columns.Add(active);
         board.Columns.Add(done);
 
@@ -994,7 +1314,7 @@ public class OrchestratorServiceIntegrationTests
         }
 
         public ServiceProvider Provider { get; }
-        private IServiceScope Scope { get; }
+        public IServiceScope Scope { get; }
         public OrchestratorService Orchestrator { get; }
         public AgentSessionRuntime Runtime { get; }
         public AgentSessionLaunchQueue LaunchQueue { get; }
@@ -1021,6 +1341,53 @@ public class OrchestratorServiceIntegrationTests
                 return adapter;
 
             throw new InvalidOperationException("No fake adapter was queued for dispatch.");
+        }
+    }
+
+    private sealed class FakeIssueTracker : IIssueTracker
+    {
+        public FakeIssueTracker(TrackerKind kind, IReadOnlyList<TrackedIssue> issues)
+        {
+            Kind = kind;
+            Candidates = issues;
+            LookupIssues = issues;
+        }
+
+        public TrackerKind Kind { get; }
+
+        public IReadOnlyList<TrackedIssue> Candidates { get; set; }
+
+        public IReadOnlyList<TrackedIssue> LookupIssues { get; set; }
+
+        public int FetchCandidatesCalls { get; private set; }
+
+        public int FetchByIdsCalls { get; private set; }
+
+        public Task<IReadOnlyList<TrackedIssue>> FetchCandidatesAsync(
+            IssueTrackerConfig config,
+            CancellationToken ct)
+        {
+            FetchCandidatesCalls++;
+            return Task.FromResult(Candidates);
+        }
+
+        public Task<IReadOnlyList<TrackedIssue>> FetchByStatesAsync(
+            IssueTrackerConfig config,
+            IReadOnlyList<string> states,
+            CancellationToken ct) =>
+            Task.FromResult(Candidates);
+
+        public Task<IReadOnlyList<TrackedIssue>> FetchByIdsAsync(
+            IssueTrackerConfig config,
+            IReadOnlyList<string> externalIds,
+            CancellationToken ct)
+        {
+            FetchByIdsCalls++;
+            var requested = externalIds.ToHashSet(StringComparer.Ordinal);
+            return Task.FromResult<IReadOnlyList<TrackedIssue>>(
+                LookupIssues
+                    .Where(issue => requested.Contains(issue.ExternalId))
+                    .ToList());
         }
     }
 

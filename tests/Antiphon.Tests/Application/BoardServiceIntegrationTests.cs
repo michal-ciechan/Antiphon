@@ -302,6 +302,7 @@ public class BoardServiceIntegrationTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
+        services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddScoped<OrchestratorService>();

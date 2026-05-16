@@ -17,6 +17,7 @@ using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.GitHub;
+using Antiphon.Server.Infrastructure.IssueTrackers;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
@@ -112,6 +113,7 @@ try
     builder.Services.AddScoped<AgentSessionService>();
     builder.Services.AddScoped<RunAttemptStallDetector>();
     builder.Services.AddScoped<OrchestratorService>();
+    builder.Services.AddScoped<ExternalTrackerSyncService>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -119,6 +121,7 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
     builder.Services.AddScoped<CascadeService>();
@@ -140,6 +143,12 @@ try
 
     // GitHub integration (FR59-FR64) — feature-flagged per project
     builder.Services.AddHttpClient<IGitHubService, GitHubService>();
+    builder.Services.AddHttpClient<GitHubIssuesTracker>();
+    builder.Services.AddHttpClient<LinearTracker>();
+    builder.Services.AddHttpClient<JiraTracker>();
+    builder.Services.AddScoped<IIssueTracker>(sp => sp.GetRequiredService<GitHubIssuesTracker>());
+    builder.Services.AddScoped<IIssueTracker>(sp => sp.GetRequiredService<LinearTracker>());
+    builder.Services.AddScoped<IIssueTracker>(sp => sp.GetRequiredService<JiraTracker>());
     builder.Services.AddSingleton<GitHubRepoCache>();
     builder.Services.AddHostedService<GitHubRepoCacheWarmupService>();
     // Background services for GitHub PR monitoring and external change detection

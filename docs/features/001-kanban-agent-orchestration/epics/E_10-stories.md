@@ -11,19 +11,19 @@
 
 ## Stories
 
-- **E10-S01** `[ ]` `IIssueTracker` abstraction.
+- **E10-S01** `[x]` `IIssueTracker` abstraction.
   - Work items:
     - `FetchCandidates`, `FetchByStates`, `FetchByIds`. *TDD:* contract test `IIssueTracker_contract` runs against fake tracker.
-- **E10-S02** `[ ]` `LinearTracker` (GraphQL).
+- **E10-S02** `[x]` `LinearTracker` (GraphQL).
   - Work items:
     - GraphQL query for active states + project filter. *TDD:* test `LinearTracker_fetch_candidates_normalises_response` against recorded fixture.
     - Blocker derivation from inverse `blocks`. *TDD:* test `LinearTracker_blockers_derived_from_inverse_blocks`.
-- **E10-S03** `[ ]` `GitHubIssuesTracker`.
+- **E10-S03** `[x]` `GitHubIssuesTracker`.
   - Work items:
     - REST fetch; map labels lowercase; priority from label convention. *TDD:* test `GitHubIssuesTracker_normalises_priority_from_label_convention`.
-- **E10-S04** `[ ]` `JiraTracker` (reuse existing Jira MCP integration as inspiration).
+- **E10-S04** `[x]` `JiraTracker` (reuse existing Jira MCP integration as inspiration).
   - Work items:
     - JQL fetch; map status. *TDD:* test `JiraTracker_jql_filters_to_active_states`.
-- **E10-S05** `[ ]` Single-fetch-per-tick + in-tick cache (NFR-07).
+- **E10-S05** `[x]` Single-fetch-per-tick + in-tick cache (NFR-07).
   - Work items:
     - `TrackerCache` scoped to tick. *TDD:* test `TrackerCache_dedupes_same_id_lookup_within_tick`.

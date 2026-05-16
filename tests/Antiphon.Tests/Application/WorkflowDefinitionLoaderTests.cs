@@ -95,6 +95,7 @@ public class WorkflowDefinitionLoaderTests
                 fileStore,
                 new FakeFileSystemWatcher(),
                 eventBus,
+                new WorkflowDefinitionVersionGate(),
                 TimeProvider.System);
 
             var result = await loader.ReloadFromFileAsync(graph.Board.Id, CancellationToken.None);
@@ -153,6 +154,7 @@ public class WorkflowDefinitionLoaderTests
                 new FakeWorkflowFileStore { Content = fileContent },
                 new FakeFileSystemWatcher(),
                 new MockEventBus(),
+                new WorkflowDefinitionVersionGate(),
                 TimeProvider.System);
 
             var result = await loader.GetAsync(graph.Board.Id, CancellationToken.None);
@@ -161,6 +163,74 @@ public class WorkflowDefinitionLoaderTests
             result.Name.ShouldBe("From Disk");
             result.Content.ShouldBe(fileContent);
 
+            await using var verify = CreateContext();
+            var definitions = await verify.BoardWorkflowDefinitions
+                .Where(d => d.BoardId == graph.Board.Id)
+                .OrderBy(d => d.Version)
+                .ToListAsync();
+            definitions.Count.ShouldBe(2);
+            definitions[0].IsActive.ShouldBeFalse();
+            definitions[1].IsActive.ShouldBeTrue();
+            definitions[1].Content.ShouldBe(fileContent);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Loader_concurrent_reload_deduplicates_same_file_content()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            var activeContent = """
+                ---
+                name: Last Good
+                ---
+                Work on {{ issue.title }}.
+                """;
+            var fileContent = """
+                ---
+                name: From Disk
+                ---
+                Work on {{ workspace.branch }}.
+                """;
+
+            await using (var setup = CreateContext())
+            {
+                NewDefinition(graph.Board, version: 1, activeContent, isActive: true);
+                setup.Add(graph.Project);
+                await setup.SaveChangesAsync();
+            }
+
+            var gate = new WorkflowDefinitionVersionGate();
+            var fileStore = new FakeWorkflowFileStore { Content = fileContent };
+            await using var firstDb = CreateContext();
+            await using var secondDb = CreateContext();
+            var firstLoader = new WorkflowDefinitionLoader(
+                firstDb,
+                fileStore,
+                new FakeFileSystemWatcher(),
+                new MockEventBus(),
+                gate,
+                TimeProvider.System);
+            var secondLoader = new WorkflowDefinitionLoader(
+                secondDb,
+                fileStore,
+                new FakeFileSystemWatcher(),
+                new MockEventBus(),
+                gate,
+                TimeProvider.System);
+
+            var results = await Task.WhenAll(
+                firstLoader.GetAsync(graph.Board.Id, CancellationToken.None),
+                secondLoader.GetAsync(graph.Board.Id, CancellationToken.None));
+
+            results.Select(r => r.Version).ShouldAllBe(version => version == 2);
             await using var verify = CreateContext();
             var definitions = await verify.BoardWorkflowDefinitions
                 .Where(d => d.BoardId == graph.Board.Id)
@@ -194,6 +264,7 @@ public class WorkflowDefinitionLoaderTests
                 new WorkflowFileStore(),
                 new FakeFileSystemWatcher(),
                 new MockEventBus(),
+                new WorkflowDefinitionVersionGate(),
                 TimeProvider.System);
 
             var ex = await Should.ThrowAsync<ValidationException>(() =>

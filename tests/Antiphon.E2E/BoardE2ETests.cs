@@ -92,7 +92,7 @@ public class BoardE2ETests
             var cardDialog = page.GetByRole(AriaRole.Dialog);
             await Expect(cardDialog).ToBeVisibleAsync();
             await Expect(cardDialog.GetByText(cardTitle)).ToBeVisibleAsync();
-            await Expect(cardDialog.GetByText("e2e")).ToBeVisibleAsync();
+            await Expect(cardDialog.GetByText("e2e", new LocatorGetByTextOptions { Exact = true })).ToBeVisibleAsync();
             await Expect(cardDialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Spawn" })).ToBeVisibleAsync();
 
             passed = true;
@@ -135,7 +135,7 @@ public class BoardE2ETests
                 NameRegex = new Regex(cardTitle)
             })).ToBeVisibleAsync();
 
-            await DragToAsync(page, page.GetByLabel("Drag CARD-0001"), reviewColumn);
+            await DragToAndWaitForMoveAsync(page, page.GetByLabel("Drag CARD-0001"), reviewColumn);
 
             await Expect(reviewColumn.GetByRole(AriaRole.Article, new LocatorGetByRoleOptions
             {
@@ -184,7 +184,7 @@ public class BoardE2ETests
                 NameRegex = new Regex(cardTitle)
             })).ToBeVisibleAsync();
 
-            await DragToAsync(page, page.GetByLabel("Drag CARD-0001"), activeColumn);
+            await DragToAndWaitForMoveAsync(page, page.GetByLabel("Drag CARD-0001"), activeColumn);
 
             var movedCard = activeColumn.GetByRole(AriaRole.Article, new LocatorGetByRoleOptions
             {
@@ -457,5 +457,19 @@ public class BoardE2ETests
         await page.Mouse.MoveAsync(startX + 10, startY + 10, new MouseMoveOptions { Steps = 5 });
         await page.Mouse.MoveAsync(endX, endY, new MouseMoveOptions { Steps = 20 });
         await page.Mouse.UpAsync();
+    }
+
+    private static async Task DragToAndWaitForMoveAsync(IPage page, ILocator source, ILocator target)
+    {
+        var response = await page.RunAndWaitForResponseAsync(
+            () => DragToAsync(page, source, target),
+            response => response.Url.Contains("/api/cards/", StringComparison.Ordinal)
+                && response.Request.Method.Equals("PATCH", StringComparison.OrdinalIgnoreCase));
+        if (response.Status >= 300)
+        {
+            var responseBody = await response.TextAsync();
+            throw new InvalidOperationException(
+                $"Card move failed with HTTP {response.Status}: {responseBody}");
+        }
     }
 }

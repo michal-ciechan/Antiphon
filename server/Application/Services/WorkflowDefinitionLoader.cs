@@ -21,6 +21,7 @@ public sealed partial class WorkflowDefinitionLoader
     private readonly IWorkflowFileStore _fileStore;
     private readonly IFileSystemWatcher _fileWatcher;
     private readonly IEventBus _eventBus;
+    private readonly WorkflowDefinitionVersionGate _versionGate;
     private readonly TimeProvider _timeProvider;
 
     public WorkflowDefinitionLoader(
@@ -28,12 +29,14 @@ public sealed partial class WorkflowDefinitionLoader
         IWorkflowFileStore fileStore,
         IFileSystemWatcher fileWatcher,
         IEventBus eventBus,
+        WorkflowDefinitionVersionGate versionGate,
         TimeProvider timeProvider)
     {
         _db = db;
         _fileStore = fileStore;
         _fileWatcher = fileWatcher;
         _eventBus = eventBus;
+        _versionGate = versionGate;
         _timeProvider = timeProvider;
     }
 
@@ -285,14 +288,25 @@ public sealed partial class WorkflowDefinitionLoader
         string name,
         CancellationToken ct)
     {
+        using var lease = await _versionGate.EnterAsync(board.Id, ct);
         var now = UtcNow();
-        var active = GetActiveDefinition(board);
-        if (active is not null)
-            active.IsActive = false;
+        var definitions = await _db.BoardWorkflowDefinitions
+            .Where(d => d.BoardId == board.Id)
+            .OrderBy(d => d.Version)
+            .ToListAsync(ct);
+        var active = definitions
+            .Where(d => d.IsActive)
+            .OrderByDescending(d => d.Version)
+            .FirstOrDefault();
+        if (active is not null && active.Content == content)
+            return active;
 
-        var nextVersion = board.WorkflowDefinitions.Count == 0
+        foreach (var activeDefinition in definitions.Where(d => d.IsActive))
+            activeDefinition.IsActive = false;
+
+        var nextVersion = definitions.Count == 0
             ? 1
-            : board.WorkflowDefinitions.Max(d => d.Version) + 1;
+            : definitions.Max(d => d.Version) + 1;
         var definition = new BoardWorkflowDefinition
         {
             Id = Guid.NewGuid(),
