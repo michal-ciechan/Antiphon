@@ -86,4 +86,20 @@ public class SmokeTests
         var content = await response.Content.ReadAsStringAsync();
         content.ShouldContain("Terminal cols and rows must be positive.");
     }
+
+    [Test]
+    public async Task Orchestrator_pause_resume_api_updates_state()
+    {
+        var pause = await _client.PostAsync("/api/orchestrator/pause", content: null);
+        pause.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await pause.Content.ReadAsStringAsync()).ShouldContain("\"paused\":true");
+
+        var pausedState = await _client.GetAsync("/api/orchestrator/state");
+        pausedState.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await pausedState.Content.ReadAsStringAsync()).ShouldContain("\"paused\":true");
+
+        var resume = await _client.PostAsync("/api/orchestrator/resume", content: null);
+        resume.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await resume.Content.ReadAsStringAsync()).ShouldContain("\"paused\":false");
+    }
 }

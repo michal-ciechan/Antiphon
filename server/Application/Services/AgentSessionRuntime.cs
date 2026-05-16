@@ -100,10 +100,11 @@ public sealed class AgentSessionRuntime
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
+        var session = GetSession(sessionId);
         if (string.IsNullOrEmpty(input))
             return;
 
-        await GetSession(sessionId).Adapter.SendInputAsync(input, ct);
+        await session.Adapter.SendInputAsync(input, ct);
     }
 
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>

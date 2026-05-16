@@ -10,7 +10,8 @@ public sealed record StartAgentSessionRequest(
     int Cols = 120,
     int Rows = 30,
     IReadOnlyList<string>? ExtraArgs = null,
-    IReadOnlyDictionary<string, string>? ExtraEnv = null);
+    IReadOnlyDictionary<string, string>? ExtraEnv = null,
+    Guid? PreclaimedSessionId = null);
 
 public sealed record AgentSessionStartResult(
     Guid SessionId,

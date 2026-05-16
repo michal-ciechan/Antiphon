@@ -11,21 +11,28 @@
 
 ## Stories
 
-- **E07-S01** `[ ]` `IOrchestrator` + `OrchestratorTickHostedService`.
+- **E07-S01** `[x]` `OrchestratorService` + `OrchestratorTickHostedService`.
   - Work items:
-    - `PollTick()` runs every `PollIntervalSeconds`. *TDD:* test `OrchestratorTick_invokes_dispatch_at_configured_interval` with fake `IHostApplicationLifetime` + fake clock.
+    - `PollTick()` runs every `PollIntervalSeconds`. *TDD:* test `OrchestratorTick_invokes_dispatch_at_configured_interval`.
     - Eligibility: active state, not running, not claimed, slot available. *TDD:* test `Orchestrator_skips_card_when_global_concurrency_full`.
     - Per-column concurrency override. *TDD:* test `Orchestrator_respects_max_concurrent_by_column`.
-- **E07-S02** `[ ]` Atomic claim with optimistic concurrency token.
+- **E07-S02** `[x]` Atomic claim with optimistic concurrency token.
   - Work items:
-    - `Card.OwnerSessionId` + `RowVersion`. *TDD:* test `Orchestrator_two_parallel_dispatches_only_one_wins` (DbUpdateConcurrencyException path).
-- **E07-S03** `[ ]` Retry scheduler.
+    - `Card.OwnerSessionId` + `ConcurrencyToken`. *TDD:* test `Orchestrator_two_parallel_dispatches_only_one_wins`.
+- **E07-S03** `[x]` Retry scheduler.
   - Work items:
     - Continuation 1s, failure `10s × 2^(n-1)` capped at 5m. *TDD:* test `RetryScheduler_backoff_matches_spec` for n=1..10.
     - Persist `RetrySchedule` (NFR-09 deviation from Symphony — Antiphon persists). *TDD:* test `RetryScheduler_survives_restart` (drop service, reload, due retries fire).
-- **E07-S04** `[ ]` Reconcile loop.
+- **E07-S04** `[x]` Reconcile loop.
   - Work items:
     - On tick: refresh state for running attempts; cancel stalled. *TDD:* test `Reconcile_cancels_attempt_when_card_externally_terminal`.
-- **E07-S05** `[ ]` Pause / resume API.
+- **E07-S05** `[x]` Pause / resume API.
   - Work items:
     - `POST /api/orchestrator/pause` / `resume`. *TDD:* test `Orchestrator_pause_skips_dispatch_until_resume`.
+
+## Implementation notes
+
+- `OrchestratorService` is a concrete application service per project conventions; no repository wrappers or `IOrchestrator` service pair were added.
+- Atomic claims pre-create a `Starting` `AgentSession`, set `Card.OwnerSessionId`, and rotate `Card.ConcurrencyToken` before enqueueing launch work.
+- Session launch runs through `AgentSessionLaunchQueue` so ticks do not block on full agent turns.
+- E07 uses the internal tracker path only: active `BoardColumn` rows drive eligibility, and `Board.MaxConcurrentSessions` / `BoardColumn.MaxConcurrentSessions` drive caps.

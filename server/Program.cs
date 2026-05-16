@@ -17,6 +17,7 @@ using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.GitHub;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 
@@ -68,6 +69,10 @@ try
     builder.Services.AddOptions<AgentSessionSettings>()
         .Bind(builder.Configuration.GetSection("AgentSessions"))
         .ValidateOnStart();
+    builder.Services.AddSingleton<IValidateOptions<OrchestratorSettings>, OrchestratorSettingsValidator>();
+    builder.Services.AddOptions<OrchestratorSettings>()
+        .Bind(builder.Configuration.GetSection("Orchestrator"))
+        .ValidateOnStart();
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -105,6 +110,10 @@ try
     builder.Services.AddScoped<WorkspaceHookService>();
     builder.Services.AddScoped<AgentSessionService>();
     builder.Services.AddScoped<RunAttemptStallDetector>();
+    builder.Services.AddScoped<OrchestratorService>();
+    builder.Services.AddScoped<RetryScheduler>();
+    builder.Services.AddSingleton<OrchestratorControlState>();
+    builder.Services.AddSingleton<AgentSessionLaunchQueue>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -132,6 +141,7 @@ try
     builder.Services.AddHostedService<ChangeDetectionService>();
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
+    builder.Services.AddHostedService<OrchestratorTickHostedService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
@@ -208,6 +218,7 @@ try
     app.MapAuditEndpoints();
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
+    app.MapOrchestratorEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");

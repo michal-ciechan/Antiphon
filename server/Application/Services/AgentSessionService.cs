@@ -60,7 +60,8 @@ public sealed class AgentSessionService
             s => s.CardId == card.Id
                 && (s.Status == SessionStatus.Starting
                     || s.Status == SessionStatus.Running
-                    || s.Status == SessionStatus.Stopping),
+                    || s.Status == SessionStatus.Stopping)
+                && (request.PreclaimedSessionId == null || s.Id != request.PreclaimedSessionId.Value),
             ct);
         if (hasActiveSession)
             throw new ConflictException($"Card '{card.Identifier}' already has an active agent session.");
@@ -112,24 +113,7 @@ public sealed class AgentSessionService
             RunAttemptStateMachine.Transition(attempt, RunPhase.LaunchingAgent, UtcNow());
             await _db.SaveChangesAsync(ct);
 
-            session = new AgentSession
-            {
-                Id = Guid.NewGuid(),
-                CardId = card.Id,
-                WorktreeId = worktree.Id,
-                DefinitionName = request.DefinitionName,
-                AgentKind = request.AgentKind,
-                Status = SessionStatus.Starting,
-                Cwd = worktree.Path,
-                Cols = request.Cols,
-                Rows = request.Rows,
-                CreatedAt = UtcNow(),
-                StartedAt = UtcNow(),
-                LastSeenAt = UtcNow(),
-                Card = card,
-                Worktree = worktree
-            };
-            _db.AgentSessions.Add(session);
+            session = await ResolveSessionAsync(request, card, worktree, ct);
             card.OwnerSessionId = session.Id;
             attempt.AgentSessionId = session.Id;
             attempt.AgentSession = session;
@@ -319,6 +303,53 @@ public sealed class AgentSessionService
             .Include(c => c.CurrentWorktree)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct)
             ?? throw new NotFoundException(nameof(Card), cardId);
+    }
+
+    private async Task<AgentSession> ResolveSessionAsync(
+        StartAgentSessionRequest request,
+        Card card,
+        Worktree worktree,
+        CancellationToken ct)
+    {
+        var now = UtcNow();
+        if (request.PreclaimedSessionId is Guid preclaimedSessionId)
+        {
+            var preclaimed = await _db.AgentSessions
+                .FirstOrDefaultAsync(s => s.Id == preclaimedSessionId && s.CardId == card.Id, ct)
+                ?? throw new NotFoundException(nameof(AgentSession), preclaimedSessionId);
+            if (preclaimed.Status != SessionStatus.Starting)
+                throw new ConflictException($"Preclaimed agent session '{preclaimedSessionId}' is not in Starting state.");
+
+            preclaimed.WorktreeId = worktree.Id;
+            preclaimed.DefinitionName = request.DefinitionName;
+            preclaimed.AgentKind = request.AgentKind;
+            preclaimed.Cwd = worktree.Path;
+            preclaimed.Cols = request.Cols;
+            preclaimed.Rows = request.Rows;
+            preclaimed.LastSeenAt = now;
+            preclaimed.Worktree = worktree;
+            return preclaimed;
+        }
+
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            CardId = card.Id,
+            WorktreeId = worktree.Id,
+            DefinitionName = request.DefinitionName,
+            AgentKind = request.AgentKind,
+            Status = SessionStatus.Starting,
+            Cwd = worktree.Path,
+            Cols = request.Cols,
+            Rows = request.Rows,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+            Card = card,
+            Worktree = worktree
+        };
+        _db.AgentSessions.Add(session);
+        return session;
     }
 
     private async Task<(Worktree Worktree, bool Created)> ResolveOrCreateWorktreeAsync(
