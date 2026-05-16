@@ -4,7 +4,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 
-namespace Antiphon.Server.Infrastructure.Agents.Pty;
+namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// Concrete (no interface — not an external I/O seam) lookup + resolution helper for

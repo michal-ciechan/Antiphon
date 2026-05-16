@@ -14,6 +14,7 @@ import { SuspenseBoundary } from './shared/SuspenseBoundary'
 import { DashboardPage } from './features/dashboard/DashboardPage'
 import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
 import { SettingsPage } from './features/settings/SettingsPage'
+import { BoardPage } from './features/board/BoardPage'
 
 const queryClient = new QueryClient()
 
@@ -49,6 +50,26 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Workflow error">
                       <SuspenseBoundary variant="page">
                         <WorkflowDetailPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="boards"
+                  element={
+                    <ErrorBoundary fallbackTitle="Board error">
+                      <SuspenseBoundary variant="page">
+                        <BoardPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="boards/:id"
+                  element={
+                    <ErrorBoundary fallbackTitle="Board error">
+                      <SuspenseBoundary variant="page">
+                        <BoardPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

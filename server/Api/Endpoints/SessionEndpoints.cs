@@ -1,7 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
-using Antiphon.Server.Infrastructure.Agents.Pty;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -41,8 +40,7 @@ public static class SessionEndpoints
             AgentSessionService service,
             CancellationToken cancellationToken) =>
         {
-            var buffer = await service.GetBufferAsync(id, cancellationToken);
-            return Results.Ok(new AgentSessionBufferDto(id, buffer));
+            return Results.Ok(await service.GetBufferAsync(id, cancellationToken));
         });
 
         sessions.MapPost("/{id:guid}/input", async (

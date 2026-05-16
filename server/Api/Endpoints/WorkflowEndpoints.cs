@@ -312,43 +312,61 @@ public static class WorkflowEndpoints
             catch (InvalidOperationException ex) when (
                 ex.Message.Contains("unknown revision") || ex.Message.Contains("ambiguous argument"))
             {
-                // Branch doesn't exist — maybe the agent used a different name. Try finding it.
-                var agentBranch = await gitService.FindAgentBranchAsync(repoPath, cancellationToken);
-                if (agentBranch is null)
-                    return Results.Problem(
-                        "Workflow branch not yet initialized. The branch will be created when the first stage runs.",
-                        statusCode: 404
-                    );
-
-                headBranch = agentBranch;
-
-                // Re-resolve PR for the discovered branch
-                if (project.GitHubIntegrationEnabled && pr is null)
-                {
-                    var ownerRepo = ParseOwnerRepo(project.GitRepositoryUrl);
-                    if (ownerRepo is var (owner2, repo2))
-                        pr = await gitHubService.FindPullRequestForBranchAsync(
-                            owner2, repo2, headBranch.Replace("origin/", ""), cancellationToken);
-                }
-
-                resolvedBase = pr?.BaseBranch ?? project.BaseBranch;
-                baseBranch = $"origin/{resolvedBase}";
-
+                var workflowMasterBranch = GitService.GetWorkflowMasterBranch(id);
                 try
                 {
-                    rawDiff = await gitService.GetBranchDiffAsync(baseBranch, headBranch, repoPath, cancellationToken);
+                    rawDiff = await gitService.GetBranchDiffAsync(
+                        baseBranch,
+                        workflowMasterBranch,
+                        repoPath,
+                        cancellationToken);
+                    headBranch = workflowMasterBranch;
+                }
+                catch (InvalidOperationException ex2) when (
+                    ex2.Message.Contains("unknown revision") || ex2.Message.Contains("ambiguous argument"))
+                {
+                    // Branch doesn't exist — maybe the agent used a different name. Try finding it.
+                    var agentBranch = await gitService.FindAgentBranchAsync(repoPath, cancellationToken);
+                    if (agentBranch is null)
+                        return Results.Problem(
+                            "Workflow branch not yet initialized. The branch will be created when the first stage runs.",
+                            statusCode: 404
+                        );
+
+                    headBranch = agentBranch;
+
+                    // Re-resolve PR for the discovered branch
+                    if (project.GitHubIntegrationEnabled && pr is null)
+                    {
+                        var ownerRepo = ParseOwnerRepo(project.GitRepositoryUrl);
+                        if (ownerRepo is var (owner2, repo2))
+                            pr = await gitHubService.FindPullRequestForBranchAsync(
+                                owner2, repo2, headBranch.Replace("origin/", ""), cancellationToken);
+                    }
+
+                    resolvedBase = pr?.BaseBranch ?? project.BaseBranch;
+                    baseBranch = $"origin/{resolvedBase}";
+
+                    try
+                    {
+                        rawDiff = await gitService.GetBranchDiffAsync(baseBranch, headBranch, repoPath, cancellationToken);
+                    }
+                    catch (InvalidOperationException ex3)
+                    {
+                        return Results.Problem(ex3.Message, statusCode: 422);
+                    }
+
+                    // Persist the discovered branch name so delete-info peer detection works correctly
+                    var cleanBranch = agentBranch.Replace("origin/", "");
+                    if (workflow.GitBranchName != cleanBranch)
+                    {
+                        workflow.GitBranchName = cleanBranch;
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
                 }
                 catch (InvalidOperationException ex2)
                 {
                     return Results.Problem(ex2.Message, statusCode: 422);
-                }
-
-                // Persist the discovered branch name so delete-info peer detection works correctly
-                var cleanBranch = agentBranch.Replace("origin/", "");
-                if (workflow.GitBranchName != cleanBranch)
-                {
-                    workflow.GitBranchName = cleanBranch;
-                    await db.SaveChangesAsync(cancellationToken);
                 }
             }
             catch (InvalidOperationException ex)
@@ -423,19 +441,27 @@ public static class WorkflowEndpoints
             }
             catch (InvalidOperationException)
             {
-                // Branch may not exist — try fallback discovery
-                var agentBranch = await gitService.FindAgentBranchAsync(repoPath, cancellationToken);
-                if (agentBranch is null)
-                    return Results.NotFound();
-
-                headBranch = agentBranch;
+                headBranch = GitService.GetWorkflowMasterBranch(id);
                 try
                 {
                     content = await gitService.GetFileContentAsync(headBranch, path, repoPath, cancellationToken);
                 }
                 catch (InvalidOperationException ex2)
                 {
-                    return Results.Problem(ex2.Message, statusCode: 404);
+                    // Branch may not exist — try fallback discovery
+                    var agentBranch = await gitService.FindAgentBranchAsync(repoPath, cancellationToken);
+                    if (agentBranch is null)
+                        return Results.Problem(ex2.Message, statusCode: 404);
+
+                    headBranch = agentBranch;
+                    try
+                    {
+                        content = await gitService.GetFileContentAsync(headBranch, path, repoPath, cancellationToken);
+                    }
+                    catch (InvalidOperationException ex3)
+                    {
+                        return Results.Problem(ex3.Message, statusCode: 404);
+                    }
                 }
             }
 

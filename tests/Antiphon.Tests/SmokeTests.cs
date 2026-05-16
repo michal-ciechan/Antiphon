@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Shouldly;
 using Microsoft.AspNetCore.Mvc.Testing;
 using TUnit.Core;
@@ -101,5 +102,94 @@ public class SmokeTests
         var resume = await _client.PostAsync("/api/orchestrator/resume", content: null);
         resume.StatusCode.ShouldBe(HttpStatusCode.OK);
         (await resume.Content.ReadAsStringAsync()).ShouldContain("\"paused\":false");
+    }
+
+    [Test]
+    public async Task Board_and_agent_endpoints_respond()
+    {
+        var agents = await _client.GetAsync("/api/agents");
+        agents.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await agents.Content.ReadAsStringAsync()).ShouldContain("\"defaultDefinition\"");
+
+        var boards = await _client.GetAsync("/api/boards");
+        boards.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await boards.Content.ReadAsStringAsync()).ShouldStartWith("[");
+    }
+
+    [Test]
+    public async Task Board_card_move_api_requires_concurrency_token_and_round_trips_card()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-board-api-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            var projectResponse = await _client.PostAsJsonAsync("/api/projects", new
+            {
+                name = $"Board API {Guid.NewGuid():N}",
+                gitRepositoryUrl = "https://github.com/example/board-api.git",
+                localRepositoryPath = tempRoot,
+                baseBranch = "main",
+                constitutionPath = (string?)null,
+                gitHubIntegrationEnabled = false,
+                notificationsEnabled = false
+            });
+            projectResponse.EnsureSuccessStatusCode();
+            var projectJson = await projectResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var projectId = projectJson.GetProperty("id").GetGuid();
+
+            var boardResponse = await _client.PostAsJsonAsync("/api/boards", new
+            {
+                projectId,
+                name = "Endpoint Board"
+            });
+            boardResponse.EnsureSuccessStatusCode();
+            var boardJson = await boardResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var boardId = boardJson.GetProperty("id").GetGuid();
+
+            var cardResponse = await _client.PostAsJsonAsync($"/api/boards/{boardId}/cards", new
+            {
+                title = "Move through HTTP"
+            });
+            cardResponse.EnsureSuccessStatusCode();
+            var cardJson = await cardResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var cardId = cardJson.GetProperty("id").GetGuid();
+            var columnId = cardJson.GetProperty("boardColumnId").GetGuid();
+            var concurrencyToken = cardJson.GetProperty("concurrencyToken").GetGuid();
+
+            var missingToken = await _client.PatchAsJsonAsync($"/api/cards/{cardId}", new
+            {
+                boardColumnId = columnId
+            });
+            missingToken.StatusCode.ShouldBe((HttpStatusCode)422);
+            (await missingToken.Content.ReadAsStringAsync()).ShouldContain("Card concurrency token is required.");
+
+            var staleToken = await _client.PatchAsJsonAsync($"/api/cards/{cardId}", new
+            {
+                boardColumnId = columnId,
+                concurrencyToken = Guid.NewGuid()
+            });
+            staleToken.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+            var moveResponse = await _client.PatchAsJsonAsync($"/api/cards/{cardId}", new
+            {
+                boardColumnId = columnId,
+                concurrencyToken
+            });
+            moveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var movedJson = await moveResponse.Content.ReadFromJsonAsync<JsonElement>();
+            movedJson.GetProperty("id").GetGuid().ShouldBe(cardId);
+            movedJson.GetProperty("boardColumnId").GetGuid().ShouldBe(columnId);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup for test temp directory.
+            }
+        }
     }
 }

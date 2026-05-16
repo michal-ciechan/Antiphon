@@ -70,6 +70,9 @@ public sealed class AgentSessionRuntime
 
     public long GetDeltaSequence(Guid sessionId) => GetSession(sessionId).DeltaSequence;
 
+    public long GetDeltaSequenceOrDefault(Guid sessionId) =>
+        _sessions.TryGetValue(sessionId, out var session) ? session.DeltaSequence : 0;
+
     public async Task<bool> WaitForDeltaAfterAsync(
         Guid sessionId,
         long sequence,
@@ -193,7 +196,6 @@ public sealed class AgentSessionRuntime
                 SingleWriter = false
             });
         private long _deltaSequence;
-        private long _publishSequence;
 
         public RuntimeSession(
             Guid sessionId,
@@ -246,14 +248,13 @@ public sealed class AgentSessionRuntime
                     for (var offset = 0; offset < delta.Text.Length; offset += maxChunkChars)
                     {
                         var chunk = delta.Text.Substring(offset, Math.Min(maxChunkChars, delta.Text.Length - offset));
-                        var sequence = Interlocked.Increment(ref _publishSequence);
                         await _eventBus.PublishToGroupAsync(
                             AgentSessionGroups.Session(_sessionId),
                             "AgentTextDelta",
                             new
                             {
                                 sessionId = _sessionId,
-                                sequence,
+                                sequence = delta.DeltaSequence,
                                 text = chunk
                             });
                     }

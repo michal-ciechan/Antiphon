@@ -10,6 +10,8 @@ import { useQueryClient } from '@tanstack/react-query'
 
 interface EventPayload {
   workflowId?: string
+  boardId?: string
+  cardId?: string
   [key: string]: unknown
 }
 
@@ -50,6 +52,22 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
         ? [['workflow', p.workflowId, 'stages'], ['workflow', p.workflowId]]
         : []),
     ],
+  },
+  {
+    event: 'BoardChanged',
+    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+  },
+  {
+    event: 'CardChanged',
+    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+  },
+  {
+    event: 'SessionStarted',
+    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+  },
+  {
+    event: 'SessionExited',
+    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },
 ]
 

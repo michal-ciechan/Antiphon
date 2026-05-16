@@ -6,7 +6,9 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Agents;
@@ -31,6 +33,7 @@ public class AntiphonAppFixture
 
     private IHost? _kestrelHost;
     private WebApplicationFactory<Program>? _factory;
+    private string? _workspacePath;
 
     /// <summary>
     /// When true, the app serves prebuilt React assets from wwwroot (client/dist).
@@ -62,36 +65,41 @@ public class AntiphonAppFixture
 
         var connectionString = _container.GetConnectionString();
         var port = GetRandomAvailablePort();
+        _workspacePath = Path.Combine(Path.GetTempPath(), "antiphon-e2e", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_workspacePath);
 
         _factory = new KestrelWebApplicationFactory(
             UsePrebuiltFrontend ? FindClientDistPath() : null,
             connectionString,
             port,
-            UseMockExecutor
+            UseMockExecutor,
+            _workspacePath
         );
 
         // Trigger host creation (WAF builds host on first access)
         // CreateClient() accesses the dummy TestServer host; we ignore its result.
+        Exception? startupException = null;
         try
         {
             _factory.CreateClient();
         }
-        catch
+        catch (Exception ex)
         {
             // The dummy host has no real endpoints — that's fine.
+            startupException = ex;
         }
 
         var kestrelFactory = (KestrelWebApplicationFactory)_factory;
         _kestrelHost = kestrelFactory.KestrelHost
-            ?? throw new InvalidOperationException("Kestrel host was not started.");
+            ?? throw new InvalidOperationException("Kestrel host was not started.", startupException);
 
         BaseAddress = $"http://127.0.0.1:{port}";
-        HttpClient = new HttpClient { BaseAddress = new Uri(BaseAddress) };
+        HttpClient = CreateClient();
     }
 
     public async Task DisposeAsync()
     {
-        HttpClient.Dispose();
+        HttpClient?.Dispose();
 
         if (_kestrelHost is not null)
         {
@@ -105,12 +113,20 @@ public class AntiphonAppFixture
         }
 
         await _container.DisposeAsync();
+
+        if (_workspacePath is not null && Directory.Exists(_workspacePath))
+        {
+            await DeleteDirectoryBestEffortAsync(_workspacePath);
+        }
     }
 
     /// <summary>
     /// Creates a new HttpClient pointed at the real Kestrel endpoint.
     /// </summary>
-    public HttpClient CreateClient() => new() { BaseAddress = new Uri(BaseAddress) };
+    public HttpClient CreateClient() => new(new SocketsHttpHandler { UseProxy = false })
+    {
+        BaseAddress = new Uri(BaseAddress)
+    };
 
     /// <summary>
     /// Provides access to the DI container from the Kestrel host.
@@ -144,6 +160,28 @@ public class AntiphonAppFixture
         return port;
     }
 
+    private static async Task DeleteDirectoryBestEffortAsync(string path)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                    return;
+
+                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(file, FileAttributes.Normal);
+
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            }
+        }
+    }
+
     /// <summary>
     /// Custom WebApplicationFactory that starts the real app on Kestrel
     /// instead of TestServer. WAF applies all ConfigureWebHost overrides
@@ -157,6 +195,7 @@ public class AntiphonAppFixture
         private readonly string _connectionString;
         private readonly int _port;
         private readonly bool _useMockExecutor;
+        private readonly string _workspacePath;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -164,13 +203,15 @@ public class AntiphonAppFixture
             string? clientDistPath,
             string connectionString,
             int port,
-            bool useMockExecutor = false
+            bool useMockExecutor,
+            string workspacePath
         )
         {
             _clientDistPath = clientDistPath;
             _connectionString = connectionString;
             _port = port;
             _useMockExecutor = useMockExecutor;
+            _workspacePath = workspacePath;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -180,8 +221,27 @@ public class AntiphonAppFixture
                 builder.UseWebRoot(Path.Combine(_clientDistPath, "dist"));
             }
 
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:DefaultConnection"] = _connectionString,
+                    ["Git:WorkspacePath"] = _workspacePath,
+                    ["Git:WorktreeBasePath"] = Path.Combine(_workspacePath, "worktrees"),
+                    ["GitHub:Enabled"] = "false",
+                    ["Agents:DefaultDefinition"] = "e2e-raw",
+                    ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
+                    ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                });
+            });
+
             builder.ConfigureServices(services =>
             {
+                services.Configure<HealthCheckServiceOptions>(options =>
+                {
+                    options.Registrations.Clear();
+                });
+
                 var descriptor = services.SingleOrDefault(
                     d => d.ServiceType == typeof(DbContextOptions<AppDbContext>)
                 );

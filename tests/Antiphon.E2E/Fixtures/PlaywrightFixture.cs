@@ -46,8 +46,12 @@ public class PlaywrightFixture
 
     public async Task DisposeAsync()
     {
-        await _browser.DisposeAsync();
-        _playwright.Dispose();
+        if (_browser is not null)
+        {
+            await _browser.DisposeAsync();
+        }
+
+        _playwright?.Dispose();
     }
 
     /// <summary>

@@ -825,6 +825,11 @@ public class WorkflowEngine
             : workflow.GitBranchName;
         var project = workflow.Project;
 
+        if (workflow.Status == WorkflowStatus.Running)
+        {
+            throw new ConflictException("Running workflows cannot be deleted. Abandon or complete the workflow first.");
+        }
+
         // Clear CurrentStageId to break the circular FK before deleting stages
         workflow.CurrentStageId = null;
         await _db.SaveChangesAsync(ct);

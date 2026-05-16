@@ -116,6 +116,8 @@ try
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddScoped<BoardService>();
+    builder.Services.AddScoped<CardService>();
     builder.Services.AddScoped<WorkflowEngine>();
     builder.Services.AddScoped<CascadeService>();
     // Agent execution — AgentExecutor is the real IStageExecutor; MockExecutor is available for testing.
@@ -211,6 +213,9 @@ try
     // API endpoints
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
+    app.MapBoardEndpoints();
+    app.MapCardEndpoints();
+    app.MapAgentEndpoints();
     app.MapWorkflowEndpoints();
     app.MapGateEndpoints();
     app.MapCascadeEndpoints();

@@ -21,7 +21,8 @@ public sealed record AgentSessionStartResult(
 
 public sealed record AgentSessionBufferDto(
     Guid SessionId,
-    string Buffer);
+    string Buffer,
+    long LastSequence);
 
 public sealed record SendSessionInputRequest(string Input);
 

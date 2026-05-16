@@ -26,7 +26,20 @@ public sealed class AgentSessionLaunchQueue
 
     public void Enqueue(StartAgentSessionRequest request, AgentLaunchSpec spec)
     {
-        var launch = Task.Run(() => LaunchAsync(request, spec));
+        Enqueue(request, spec, AgentSessionLaunchBehavior.Orchestrated);
+    }
+
+    public void EnqueueInteractive(StartAgentSessionRequest request, AgentLaunchSpec spec)
+    {
+        Enqueue(request, spec, AgentSessionLaunchBehavior.Interactive);
+    }
+
+    private void Enqueue(
+        StartAgentSessionRequest request,
+        AgentLaunchSpec spec,
+        AgentSessionLaunchBehavior behavior)
+    {
+        var launch = Task.Run(() => LaunchAsync(request, spec, behavior));
         lock (_gate)
             _launches.Add(launch);
 
@@ -62,7 +75,10 @@ public sealed class AgentSessionLaunchQueue
         }
     }
 
-    private async Task LaunchAsync(StartAgentSessionRequest request, AgentLaunchSpec spec)
+    private async Task LaunchAsync(
+        StartAgentSessionRequest request,
+        AgentLaunchSpec spec,
+        AgentSessionLaunchBehavior behavior)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -80,18 +96,24 @@ public sealed class AgentSessionLaunchQueue
 
             if (attempt.Phase == RunPhase.Succeeded)
             {
-                await retryScheduler.ScheduleContinuationAsync(db, request.CardId, now, CancellationToken.None);
-                await StopCompletedSessionAsync(service, result.SessionId, CancellationToken.None);
-                await CompleteClaimAsync(db, request.CardId, SessionStatus.Stopped, null, now, CancellationToken.None);
+                if (behavior.ScheduleContinuationOnSuccess)
+                    await retryScheduler.ScheduleContinuationAsync(db, request.CardId, now, CancellationToken.None);
+                if (behavior.StopOnSuccess)
+                    await StopCompletedSessionAsync(service, result.SessionId, CancellationToken.None);
+                if (behavior.ReleaseClaimOnSuccess)
+                    await CompleteClaimAsync(db, request.CardId, SessionStatus.Stopped, null, now, CancellationToken.None);
             }
             else if (RunAttemptStateMachine.IsTerminal(attempt.Phase))
             {
-                await retryScheduler.ScheduleFailureAsync(
-                    db,
-                    request.CardId,
-                    attempt.ErrorDetails ?? $"Run attempt ended in phase {attempt.Phase}.",
-                    now,
-                    CancellationToken.None);
+                if (behavior.ScheduleRetryOnFailure)
+                {
+                    await retryScheduler.ScheduleFailureAsync(
+                        db,
+                        request.CardId,
+                        attempt.ErrorDetails ?? $"Run attempt ended in phase {attempt.Phase}.",
+                        now,
+                        CancellationToken.None);
+                }
                 await CompleteClaimAsync(
                     db,
                     request.CardId,
@@ -106,7 +128,8 @@ public sealed class AgentSessionLaunchQueue
         catch (Exception ex)
         {
             var now = timeProvider.GetUtcNow().UtcDateTime;
-            await retryScheduler.ScheduleFailureAsync(db, request.CardId, ex.Message, now, CancellationToken.None);
+            if (behavior.ScheduleRetryOnFailure)
+                await retryScheduler.ScheduleFailureAsync(db, request.CardId, ex.Message, now, CancellationToken.None);
             await CompleteClaimAsync(db, request.CardId, SessionStatus.Failed, ex.Message, now, CancellationToken.None);
             await db.SaveChangesAsync(CancellationToken.None);
             throw;
@@ -153,5 +176,26 @@ public sealed class AgentSessionLaunchQueue
         card.OwnerSessionId = null;
         card.ConcurrencyToken = Guid.NewGuid();
         card.UpdatedAt = utcNow;
+    }
+
+    private sealed record AgentSessionLaunchBehavior(
+        bool StopOnSuccess,
+        bool ReleaseClaimOnSuccess,
+        bool ScheduleContinuationOnSuccess,
+        bool ScheduleRetryOnFailure)
+    {
+        public static AgentSessionLaunchBehavior Orchestrated { get; } =
+            new(
+                StopOnSuccess: true,
+                ReleaseClaimOnSuccess: true,
+                ScheduleContinuationOnSuccess: true,
+                ScheduleRetryOnFailure: true);
+
+        public static AgentSessionLaunchBehavior Interactive { get; } =
+            new(
+                StopOnSuccess: false,
+                ReleaseClaimOnSuccess: false,
+                ScheduleContinuationOnSuccess: false,
+                ScheduleRetryOnFailure: false);
     }
 }

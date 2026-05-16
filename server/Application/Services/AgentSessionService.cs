@@ -147,6 +147,10 @@ public sealed class AgentSessionService
                 "SessionStarted",
                 new { sessionId = session.Id, cardId = card.Id, runAttemptId = attempt.Id },
                 ct);
+            await _eventBus.PublishToAllAsync(
+                "CardChanged",
+                new { boardId = card.BoardId, cardId = card.Id },
+                ct);
 
             await adapter.SendPromptAsync(request.Prompt, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
@@ -271,6 +275,18 @@ public sealed class AgentSessionService
             "SessionExited",
             new { sessionId, status = session.Status.ToString(), session.ExitCode },
             ct);
+        var card = await _db.Cards
+            .AsNoTracking()
+            .Where(c => c.Id == session.CardId)
+            .Select(c => new { c.BoardId, c.Id })
+            .FirstOrDefaultAsync(ct);
+        if (card is not null)
+        {
+            await _eventBus.PublishToAllAsync(
+                "CardChanged",
+                new { boardId = card.BoardId, cardId = card.Id },
+                ct);
+        }
     }
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
@@ -286,13 +302,16 @@ public sealed class AgentSessionService
 
     public string GetBuffer(Guid sessionId) => _runtime.GetBuffer(sessionId);
 
-    public async Task<string> GetBufferAsync(Guid sessionId, CancellationToken ct)
+    public async Task<AgentSessionBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
         var exists = await _db.AgentSessions.AnyAsync(s => s.Id == sessionId, ct);
         if (!exists)
             throw new NotFoundException(nameof(AgentSession), sessionId);
 
-        return _runtime.GetBuffer(sessionId);
+        return new AgentSessionBufferDto(
+            sessionId,
+            _runtime.GetBuffer(sessionId),
+            _runtime.GetDeltaSequenceOrDefault(sessionId));
     }
 
     private async Task<Card> LoadCardAsync(Guid cardId, CancellationToken ct)

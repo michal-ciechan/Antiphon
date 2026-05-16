@@ -1,0 +1,34 @@
+import { Select } from '@mantine/core'
+import { useEffect } from 'react'
+import { useAgents } from '../../api/agents'
+
+interface AgentPickerProps {
+  value: string | null
+  onChange: (value: string | null) => void
+}
+
+export function AgentPicker({ value, onChange }: AgentPickerProps) {
+  const { data, isLoading } = useAgents()
+  const options = (data?.definitions ?? []).map((agent) => ({
+    value: agent.name,
+    label: agent.isDefault ? `${agent.name} (${agent.kind}, default)` : `${agent.name} (${agent.kind})`,
+  }))
+
+  useEffect(() => {
+    if (!value && data?.defaultDefinition) {
+      onChange(data.defaultDefinition)
+    }
+  }, [data?.defaultDefinition, onChange, value])
+
+  return (
+    <Select
+      label="Agent"
+      data={options}
+      value={value}
+      onChange={onChange}
+      disabled={isLoading || options.length === 0}
+      searchable
+      allowDeselect={false}
+    />
+  )
+}

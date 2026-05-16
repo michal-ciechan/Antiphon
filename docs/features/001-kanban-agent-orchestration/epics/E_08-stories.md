@@ -11,19 +11,20 @@
 
 ## Stories
 
-- **E08-S01** `[ ]` `BoardPage.tsx` + dnd-kit columns.
+- **E08-S01** `[x]` `BoardPage.tsx` + dnd-kit columns.
   - Work items:
-    - Column grid; drag card between columns calls `PATCH /api/cards/{id}`. *TDD:* RTL test `BoardPage_drag_card_between_columns_invokes_patch`.
-    - Optimistic update + invalidate `['boards', id]` on success. *TDD:* RTL test `BoardPage_optimistic_move_reverts_on_api_error`.
-- **E08-S02** `[ ]` `CardModal.tsx` + `AgentPicker.tsx`.
+    - Column grid; drag card between columns calls `PATCH /api/cards/{id}` with required concurrency token. Covered by RTL mutation tests, HTTP integration tests, and Playwright drag/reload E2E.
+    - Optimistic update + invalidate `['boards', id]` on success; rollback + refetch on error.
+- **E08-S02** `[x]` `CardModal.tsx` + `AgentPicker.tsx`.
   - Work items:
-    - Modal shows card detail; spawn button posts `/api/cards/{id}/spawn`. *TDD:* RTL test `CardModal_spawn_calls_api_with_selected_agent`.
-    - Picker pulls registry from `GET /api/agents`. *TDD:* RTL test `AgentPicker_renders_options_from_registry`.
-- **E08-S03** `[ ]` `SessionTerminal.tsx` (xterm.js).
+    - Modal shows card detail; spawn button posts `/api/cards/{id}/spawn`.
+    - Picker pulls sanitized registry definitions from `GET /api/agents`.
+- **E08-S03** `[x]` `SessionTerminal.tsx` (xterm.js).
   - Work items:
-    - Mount xterm; pull `/buffer` for backlog; subscribe SignalR `AgentTextDelta` filtered by sessionId. *TDD:* RTL test `SessionTerminal_renders_buffer_then_appends_live_deltas` with mocked hub.
-    - Keystroke → `POST /api/sessions/{id}/input`. *TDD:* RTL test `SessionTerminal_sends_keystrokes_to_input_endpoint`.
-    - Resize → `POST /api/sessions/{id}/resize` on viewport change. *TDD:* RTL test `SessionTerminal_resize_posts_new_dimensions`.
-- **E08-S04** `[ ]` `SessionTabs.tsx` (multi-session per card).
+    - Mount xterm; join `session-{id}`, pull `/buffer` with `lastSequence`, and append matching live deltas without backlog/live reordering.
+    - Keystroke → `POST /api/sessions/{id}/input`.
+    - Resize → `POST /api/sessions/{id}/resize` on viewport change.
+- **E08-S04** `[x]` `SessionTabs.tsx` (session history per card).
   - Work items:
-    - Tab strip; fork button creates new session. *TDD:* RTL test `SessionTabs_fork_button_calls_fork_endpoint_and_adds_tab`.
+    - Tab strip for active and historical sessions on a card.
+    - Forking is FR-08 and intentionally remains outside E08's FR-01/02/03/04/06/07 slice.

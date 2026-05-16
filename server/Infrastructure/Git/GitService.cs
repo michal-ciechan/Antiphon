@@ -115,6 +115,29 @@ public class GitService : IGitService
         // Ensure we're on the stage branch
         await RunGitAsync(repoPath, $"checkout {stageBranch}", ct);
 
+        var headCommit = (await RunGitAsync(repoPath, "rev-parse HEAD", ct)).Trim();
+        var tagProbe = await TryRunGitAsync(repoPath, $"rev-list -n 1 {tagName}", ct);
+        if (tagProbe.ExitCode != 0
+            && !tagProbe.Stderr.Contains("unknown revision", StringComparison.OrdinalIgnoreCase)
+            && !tagProbe.Stderr.Contains("ambiguous argument", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"git rev-list -n 1 {tagName} failed with exit code {tagProbe.ExitCode}: {tagProbe.Stderr}");
+        }
+
+        var existingCommit = tagProbe.Stdout.Trim();
+        if (!string.IsNullOrEmpty(existingCommit))
+        {
+            if (existingCommit == headCommit)
+            {
+                _logger.LogInformation("Stage tag {Tag} already exists at HEAD; treating as idempotent", tagName);
+                return tagName;
+            }
+
+            throw new InvalidOperationException(
+                $"Git tag '{tagName}' already exists at '{existingCommit}', expected '{headCommit}'.");
+        }
+
         // Create the tag at the current HEAD of the stage branch
         await RunGitAsync(repoPath, $"tag {tagName}", ct);
 
@@ -305,6 +328,51 @@ public class GitService : IGitService
 
         _logger.LogDebug("git {Arguments} completed successfully", arguments);
         return stdout;
+    }
+
+    private async Task<(int ExitCode, string Stdout, string Stderr)> TryRunGitAsync(
+        string workingDirectory,
+        string arguments,
+        CancellationToken ct,
+        TimeSpan? timeout = null)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout ?? GitTimeout);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start git process.");
+
+        var stdoutBuilder = new StringBuilder();
+        var stderrBuilder = new StringBuilder();
+
+        var stdoutTask = ReadStreamAsync(process.StandardOutput, stdoutBuilder, cts.Token);
+        var stderrTask = ReadStreamAsync(process.StandardError, stderrBuilder, cts.Token);
+
+        try
+        {
+            await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
+            throw;
+        }
+
+        await Task.WhenAll(stdoutTask, stderrTask);
+        return (process.ExitCode, stdoutBuilder.ToString(), stderrBuilder.ToString());
     }
 
     private static async Task ReadStreamAsync(StreamReader reader, StringBuilder builder, CancellationToken ct)
