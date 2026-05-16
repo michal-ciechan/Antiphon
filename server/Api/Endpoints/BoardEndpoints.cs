@@ -43,5 +43,22 @@ public static class BoardEndpoints
             var card = await service.CreateAsync(id, request, cancellationToken);
             return Results.Created($"/api/cards/{card.Id}", card);
         });
+
+        boards.MapGet("/{id:guid}/workflow", async (
+            Guid id,
+            WorkflowDefinitionLoader loader,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await loader.GetAsync(id, cancellationToken));
+        });
+
+        boards.MapPut("/{id:guid}/workflow", async (
+            Guid id,
+            UpdateBoardWorkflowRequest request,
+            WorkflowDefinitionLoader loader,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await loader.UpdateAsync(id, request, cancellationToken));
+        });
     }
 }

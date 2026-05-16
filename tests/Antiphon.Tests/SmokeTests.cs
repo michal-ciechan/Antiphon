@@ -34,6 +34,7 @@ public class SmokeTests
         // affects both the DbContext registration and the AddNpgSql health check.
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection",
             _container.GetConnectionString());
+        Environment.SetEnvironmentVariable("GitHub__Enabled", "false");
 
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
@@ -46,6 +47,7 @@ public class SmokeTests
         await _factory.DisposeAsync();
         await _container.DisposeAsync();
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection", null);
+        Environment.SetEnvironmentVariable("GitHub__Enabled", null);
     }
 
     [Test]

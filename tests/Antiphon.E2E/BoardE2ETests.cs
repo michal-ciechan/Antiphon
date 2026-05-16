@@ -213,6 +213,92 @@ public class BoardE2ETests
         }
     }
 
+    [Test]
+    public async Task Board_user_can_edit_workflow_md_and_reload_persists_version()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repoPath = await CreateLocalGitRepositoryAsync();
+        var projectId = await CreateProjectAsync($"E09 Workflow Project {suffix}", repoPath);
+        var boardId = await CreateBoardAsync(projectId, $"E09 Workflow Board {suffix}");
+        var marker = $"E09_BROWSER_{suffix}";
+        var reloadMarker = $"E09_RELOAD_{suffix}";
+        var workflowContent = $$$"""
+            ---
+            name: E09 Browser {{{suffix}}}
+            hooks:
+              before_run: echo e09
+            ---
+            {{{marker}}}
+            Work on {{ issue.title }} in {{ workspace.branch }}.
+            """;
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Workflow" }).ClickAsync();
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByText("WORKFLOW.md")).ToBeVisibleAsync();
+
+            var monaco = dialog.Locator(".monaco-editor");
+            await monaco.WaitForAsync(new LocatorWaitForOptions { Timeout = 20_000 });
+            await monaco.ClickAsync();
+            await page.Keyboard.PressAsync("Control+A");
+            await page.Keyboard.InsertTextAsync(workflowContent);
+            var saveButton = dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Save" });
+            await Expect(saveButton).ToBeEnabledAsync();
+            var saveResponse = await page.RunAndWaitForResponseAsync(
+                () => saveButton.ClickAsync(),
+                response => response.Url.Contains($"/api/boards/{boardId}/workflow", StringComparison.Ordinal)
+                    && response.Request.Method.Equals("PUT", StringComparison.OrdinalIgnoreCase));
+            if (saveResponse.Status >= 300)
+            {
+                var responseBody = await saveResponse.TextAsync();
+                throw new InvalidOperationException(
+                    $"Workflow save failed with HTTP {saveResponse.Status}: {responseBody}");
+            }
+
+            await WaitForWorkflowContentAsync(boardId, marker);
+            var workflowFile = Path.Combine(
+                repoPath,
+                ".antiphon",
+                "boards",
+                boardId.ToString("N"),
+                "WORKFLOW.md");
+            File.Exists(workflowFile).ShouldBeTrue();
+            (await File.ReadAllTextAsync(workflowFile)).ShouldContain(marker);
+
+            var reloadedContent = $$$"""
+                ---
+                name: E09 Reload {{{suffix}}}
+                hooks:
+                  before_run: echo reload
+                ---
+                {{{reloadMarker}}}
+                Work on {{ issue.identifier }} from disk.
+                """;
+            await File.WriteAllTextAsync(workflowFile, reloadedContent);
+            await WaitForWorkflowContentAsync(boardId, reloadMarker);
+
+            await page.ReloadAsync();
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+            await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Workflow" }).ClickAsync();
+            await Expect(page.GetByRole(AriaRole.Dialog).GetByText("v2")).ToBeVisibleAsync();
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
     private async Task<Guid> CreateProjectAsync(string name, string? localRepositoryPath = null)
     {
         var response = await _appFixture.HttpClient.PostAsJsonAsync(
@@ -256,6 +342,23 @@ public class BoardE2ETests
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+    }
+
+    private async Task WaitForWorkflowContentAsync(Guid boardId, string expectedText, int timeoutMs = 10_000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var response = await _appFixture.HttpClient.GetAsync($"/api/boards/{boardId}/workflow");
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+            if (body.GetProperty("content").GetString()?.Contains(expectedText, StringComparison.Ordinal) == true)
+                return;
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException($"Workflow content for board {boardId} did not contain '{expectedText}'.");
     }
 
     private async Task CreateCardAsync(Guid boardId, Guid? boardColumnId, string title)

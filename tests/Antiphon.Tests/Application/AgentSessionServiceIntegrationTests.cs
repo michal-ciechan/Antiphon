@@ -158,6 +158,101 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
+    public async Task RunAttempt_uses_definition_version_at_launch_not_current()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-pin-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var pinnedDefinition = await db.BoardWorkflowDefinitions.SingleAsync(d => d.BoardId == graph.Card.BoardId);
+            pinnedDefinition.Name = "Pinned V1";
+            pinnedDefinition.Content = """
+                ---
+                name: Pinned V1
+                ---
+                V1 prompt for {{ issue.title }} on {{ workspace.branch }}
+                """;
+            pinnedDefinition.IsActive = false;
+            var currentDefinition = new BoardWorkflowDefinition
+            {
+                Id = Guid.NewGuid(),
+                BoardId = graph.Card.BoardId,
+                Version = 2,
+                Name = "Current V2",
+                Content = """
+                    ---
+                    name: Current V2
+                    ---
+                    V2 prompt for {{ issue.title }}
+                    """,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                Board = graph.Card.Board
+            };
+            db.BoardWorkflowDefinitions.Add(currentDefinition);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "PIN_OK" };
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                worktreePath,
+                new AgentSessionSettings
+                {
+                    FirstDeltaTimeoutMs = 1_000,
+                    KillGraceMs = 100,
+                    SignalRMaxChunkChars = 16 * 1024,
+                    ReplayBufferMaxChars = 128 * 1024,
+                    SessionLogPath = Path.Combine(tempRoot, "session-logs")
+                });
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "fake",
+                AgentKind.Raw,
+                "fallback prompt",
+                Cols: 120,
+                Rows: 30,
+                BoardWorkflowDefinitionId: pinnedDefinition.Id,
+                UseWorkflowPrompt: true);
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.Raw,
+                "fake",
+                [],
+                new Dictionary<string, string>(),
+                repoPath,
+                120,
+                30);
+
+            var result = await service.StartAsync(request, spec, CancellationToken.None);
+
+            adapter.SentPrompt.ShouldContain("V1 prompt");
+            adapter.SentPrompt.ShouldContain($"feat/card-{graph.Card.Identifier}");
+            adapter.SentPrompt.ShouldNotContain("V2 prompt");
+            var attempt = await db.RunAttempts.SingleAsync(a => a.Id == result.RunAttemptId);
+            attempt.BoardWorkflowDefinitionId.ShouldBe(pinnedDefinition.Id);
+            attempt.Prompt.ShouldBe(adapter.SentPrompt);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task AgentSessionService_kill_marks_active_attempt_canceled_and_disposes_adapter()
     {
         await using var db = CreateContext();

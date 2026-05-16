@@ -58,6 +58,12 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },
   {
+    event: 'WorkflowReloaded',
+    getKeys: (p) => [
+      ...(p.boardId ? [['boards', p.boardId], ['boards', p.boardId, 'workflow']] : []),
+    ],
+  },
+  {
     event: 'CardChanged',
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },

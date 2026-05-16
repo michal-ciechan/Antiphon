@@ -68,10 +68,19 @@ public sealed class AgentSessionService
 
         var now = UtcNow();
         var activeDefinition = card.Board.WorkflowDefinitions
-            .Where(d => d.IsActive)
-            .OrderByDescending(d => d.Version)
-            .FirstOrDefault();
+            .FirstOrDefault(d => request.BoardWorkflowDefinitionId is not null && d.Id == request.BoardWorkflowDefinitionId)
+            ?? card.Board.WorkflowDefinitions
+                .Where(d => d.IsActive)
+                .OrderByDescending(d => d.Version)
+                .FirstOrDefault();
+        if (request.BoardWorkflowDefinitionId is not null && activeDefinition?.Id != request.BoardWorkflowDefinitionId)
+        {
+            throw new ValidationException(
+                nameof(request.BoardWorkflowDefinitionId),
+                "Pinned board workflow definition does not belong to this card's board.");
+        }
         var hooks = ParseHooks(activeDefinition);
+        var prompt = request.Prompt;
 
         var attempt = new RunAttempt
         {
@@ -84,7 +93,7 @@ public sealed class AgentSessionService
             StartedAt = now,
             LastEventAt = now,
             PhaseStartedAt = now,
-            Prompt = request.Prompt,
+            Prompt = prompt,
             Card = card
         };
         _db.RunAttempts.Add(attempt);
@@ -106,6 +115,8 @@ public sealed class AgentSessionService
                 await _hookService.RunAfterCreateAsync(hookContext, hooks, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.BuildingPrompt, UtcNow());
+            prompt = BuildLaunchPrompt(request, card, worktree, activeDefinition);
+            attempt.Prompt = prompt;
             await _db.SaveChangesAsync(ct);
 
             await _hookService.RunBeforeRunAsync(hookContext, hooks, ct);
@@ -152,7 +163,7 @@ public sealed class AgentSessionService
                 new { boardId = card.BoardId, cardId = card.Id },
                 ct);
 
-            await adapter.SendPromptAsync(request.Prompt, ct);
+            await adapter.SendPromptAsync(prompt, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs)),
                 ct);
@@ -455,17 +466,41 @@ public sealed class AgentSessionService
         return Task.FromResult(project.LocalRepositoryPath);
     }
 
+    private static string BuildLaunchPrompt(
+        StartAgentSessionRequest request,
+        Card card,
+        Worktree worktree,
+        BoardWorkflowDefinition? activeDefinition)
+    {
+        if (!request.UseWorkflowPrompt
+            || activeDefinition is null
+            || !WorkflowDefinitionLoader.TryParseContent(activeDefinition.Content, out var definition, out _)
+            || definition is null)
+        {
+            return request.Prompt;
+        }
+
+        return WorkflowDefinitionLoader.RenderPrompt(
+            definition.PromptMarkdown,
+            WorkflowDefinitionLoader.BuildPromptVariables(card, worktree));
+    }
+
     private static WorkflowHooks ParseHooks(BoardWorkflowDefinition? activeDefinition)
     {
         if (activeDefinition is null
             || string.IsNullOrWhiteSpace(activeDefinition.Content)
-            || !activeDefinition.Content.Contains("hooks:", StringComparison.Ordinal)
-            || !activeDefinition.Content.Contains("stages:", StringComparison.Ordinal))
+            || !activeDefinition.Content.Contains("hooks:", StringComparison.Ordinal))
         {
             return WorkflowHooks.Empty;
         }
 
-        return WorkflowDefinitionParser.ParseYamlDefinition(activeDefinition.Content).Hooks;
+        if (WorkflowDefinitionLoader.TryParseContent(activeDefinition.Content, out var definition, out _) && definition is not null)
+            return definition.Hooks;
+
+        if (activeDefinition.Content.Contains("stages:", StringComparison.Ordinal))
+            return WorkflowDefinitionParser.ParseYamlDefinition(activeDefinition.Content).Hooks;
+
+        return WorkflowDefinitionParser.ParseYamlHooks(activeDefinition.Content);
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

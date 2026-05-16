@@ -144,8 +144,14 @@ public sealed class CardService
         if (sessionId is null)
             throw new ConflictException($"Card '{card.Identifier}' is already claimed by another session.");
 
+        var activeDefinition = card.Board.WorkflowDefinitions
+            .Where(d => d.IsActive)
+            .OrderByDescending(d => d.Version)
+            .FirstOrDefault();
+        var useWorkflowPrompt = string.IsNullOrWhiteSpace(request.Prompt)
+            && IsMarkdownWorkflow(activeDefinition?.Content);
         var prompt = string.IsNullOrWhiteSpace(request.Prompt)
-            ? BuildPrompt(card)
+            ? BuildPrompt(card, activeDefinition)
             : request.Prompt.Trim();
         _launchQueue.EnqueueInteractive(
             new StartAgentSessionRequest(
@@ -155,7 +161,9 @@ public sealed class CardService
                 prompt,
                 request.Cols,
                 request.Rows,
-                PreclaimedSessionId: sessionId),
+                PreclaimedSessionId: sessionId,
+                BoardWorkflowDefinitionId: activeDefinition?.Id,
+                UseWorkflowPrompt: useWorkflowPrompt),
             spec);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
@@ -175,6 +183,7 @@ public sealed class CardService
     {
         return await _db.Cards
             .Include(c => c.Board).ThenInclude(b => b.Columns)
+            .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
             .Include(c => c.BoardColumn)
             .Include(c => c.AgentSessions)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
@@ -222,15 +231,40 @@ public sealed class CardService
         return $"CARD-{count + 1:0000}";
     }
 
-    private static string BuildPrompt(Card card)
+    private static string BuildPrompt(Card card, BoardWorkflowDefinition? activeDefinition)
     {
-        return $"""
+        var prompt = $"""
             Work on card {card.Identifier}: {card.Title}
 
             Description:
             {card.Description}
             """;
+
+        if (activeDefinition is null
+            || string.IsNullOrWhiteSpace(activeDefinition.Content)
+            || IsMarkdownWorkflow(activeDefinition.Content))
+        {
+            return prompt;
+        }
+
+        var workflow = WorkflowDefinitionParser.ParseYamlDefinition(activeDefinition.Content);
+        var stages = string.Join(
+            Environment.NewLine,
+            workflow.Stages.Select(stage => $"- {stage.Name} ({stage.ExecutorType})"));
+        return string.IsNullOrWhiteSpace(stages)
+            ? prompt
+            : $"""
+                {prompt}
+
+                Workflow: {workflow.Name}
+                {stages}
+                """;
     }
+
+    private static bool IsMarkdownWorkflow(string? content) =>
+        !string.IsNullOrWhiteSpace(content)
+        && content.TrimStart().StartsWith("---", StringComparison.Ordinal)
+        && WorkflowDefinitionLoader.TryParseContent(content, out _, out _);
 
     private static void ValidateCreateRequest(CreateCardRequest request)
     {

@@ -20,6 +20,7 @@ using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Realtime;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
+using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 
 // Bootstrap Serilog for startup logging (before host is built)
 Log.Logger = new LoggerConfiguration()
@@ -118,6 +119,7 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
     builder.Services.AddScoped<CascadeService>();
     // Agent execution — AgentExecutor is the real IStageExecutor; MockExecutor is available for testing.
@@ -129,6 +131,8 @@ try
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
     builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
+    builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
+    builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
@@ -144,6 +148,7 @@ try
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
+    builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();

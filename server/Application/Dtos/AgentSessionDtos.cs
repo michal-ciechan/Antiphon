@@ -11,7 +11,9 @@ public sealed record StartAgentSessionRequest(
     int Rows = 30,
     IReadOnlyList<string>? ExtraArgs = null,
     IReadOnlyDictionary<string, string>? ExtraEnv = null,
-    Guid? PreclaimedSessionId = null);
+    Guid? PreclaimedSessionId = null,
+    Guid? BoardWorkflowDefinitionId = null,
+    bool UseWorkflowPrompt = false);
 
 public sealed record AgentSessionStartResult(
     Guid SessionId,

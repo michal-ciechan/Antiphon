@@ -17,7 +17,7 @@ import {
 import { notifications } from '@mantine/notifications'
 import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { useEffect, useMemo, useState } from 'react'
-import { TbAlertCircle, TbPlus } from 'react-icons/tb'
+import { TbAlertCircle, TbFileCode, TbPlus } from 'react-icons/tb'
 import { Navigate, useNavigate, useParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
@@ -30,6 +30,7 @@ import {
 } from '../../api/boards'
 import { BoardColumn } from './BoardColumn'
 import { CardModal } from './CardModal'
+import { WorkflowEditor } from './WorkflowEditor'
 
 interface BoardRouteParams {
   id?: string
@@ -45,11 +46,13 @@ export function BoardPage() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [newBoardOpen, setNewBoardOpen] = useState(false)
   const [newCardOpen, setNewCardOpen] = useState(false)
+  const [workflowOpen, setWorkflowOpen] = useState(false)
 
   useEffect(() => {
     setSelectedCardId(null)
     setNewBoardOpen(false)
     setNewCardOpen(false)
+    setWorkflowOpen(false)
   }, [id])
 
   const selectedCard = useMemo(() => {
@@ -101,6 +104,11 @@ export function BoardPage() {
             opened={!!selectedCard}
             onClose={() => setSelectedCardId(null)}
           />
+          <WorkflowEditor
+            boardId={board.id}
+            opened={workflowOpen}
+            onClose={() => setWorkflowOpen(false)}
+          />
         </>
       )}
 
@@ -126,9 +134,14 @@ export function BoardPage() {
             New Board
           </Button>
           {board && (
-            <Button leftSection={<TbPlus size={16} />} onClick={() => setNewCardOpen(true)}>
-              New Card
-            </Button>
+            <>
+              <Button leftSection={<TbFileCode size={16} />} variant="light" onClick={() => setWorkflowOpen(true)}>
+                Workflow
+              </Button>
+              <Button leftSection={<TbPlus size={16} />} onClick={() => setNewCardOpen(true)}>
+                New Card
+              </Button>
+            </>
           )}
         </Group>
       </Group>

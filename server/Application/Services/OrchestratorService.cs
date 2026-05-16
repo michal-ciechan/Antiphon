@@ -328,6 +328,11 @@ public sealed class OrchestratorService
                 c.Board.WorkflowDefinitions
                     .Where(d => d.IsActive)
                     .OrderByDescending(d => d.Version)
+                    .Select(d => (Guid?)d.Id)
+                    .FirstOrDefault(),
+                c.Board.WorkflowDefinitions
+                    .Where(d => d.IsActive)
+                    .OrderByDescending(d => d.Version)
                     .Select(d => d.Content)
                     .FirstOrDefault()))
             .ToListAsync(ct);
@@ -377,7 +382,9 @@ public sealed class OrchestratorService
                 AgentKind.Raw,
                 BuildPrompt(candidate),
                 _settings.DefaultCols,
-                _settings.DefaultRows);
+                _settings.DefaultRows,
+                BoardWorkflowDefinitionId: candidate.WorkflowDefinitionId,
+                UseWorkflowPrompt: IsMarkdownWorkflow(candidate.WorkflowContent));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -398,9 +405,6 @@ public sealed class OrchestratorService
 
     private static string BuildPrompt(DispatchCandidate candidate)
     {
-        var workflow = string.IsNullOrWhiteSpace(candidate.WorkflowContent)
-            ? null
-            : WorkflowDefinitionParser.ParseYamlDefinition(ExtractWorkflowYaml(candidate.WorkflowContent));
         var prompt = $"""
             Work on card {candidate.Identifier}: {candidate.Title}
 
@@ -408,9 +412,11 @@ public sealed class OrchestratorService
             {candidate.Description}
             """;
 
-        if (workflow is null)
+        if (string.IsNullOrWhiteSpace(candidate.WorkflowContent)
+            || IsMarkdownWorkflow(candidate.WorkflowContent))
             return prompt;
 
+        var workflow = WorkflowDefinitionParser.ParseYamlDefinition(candidate.WorkflowContent);
         var stages = string.Join(
             Environment.NewLine,
             workflow.Stages.Select(stage => $"- {stage.Name} ({stage.ExecutorType})"));
@@ -424,28 +430,10 @@ public sealed class OrchestratorService
                 """;
     }
 
-    private static string ExtractWorkflowYaml(string content)
-    {
-        if (!content.StartsWith("---", StringComparison.Ordinal))
-            return content;
-
-        using var reader = new StringReader(content);
-        var first = reader.ReadLine();
-        if (first != "---")
-            return content;
-
-        var yamlLines = new List<string>();
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            if (line == "---")
-                break;
-
-            yamlLines.Add(line);
-        }
-
-        return yamlLines.Count == 0 ? content : string.Join(Environment.NewLine, yamlLines);
-    }
+    private static bool IsMarkdownWorkflow(string? content) =>
+        !string.IsNullOrWhiteSpace(content)
+        && content.TrimStart().StartsWith("---", StringComparison.Ordinal)
+        && WorkflowDefinitionLoader.TryParseContent(content, out _, out _);
 
     private static SessionStatus[] ActiveSessionStatuses() =>
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
@@ -487,6 +475,7 @@ public sealed class OrchestratorService
         Guid BoardColumnId,
         int? ColumnMaxConcurrentSessions,
         Guid ConcurrencyToken,
+        Guid? WorkflowDefinitionId,
         string? WorkflowContent);
 
     private async Task MarkMissingRuntimeCanceledAsync(Card card, DateTime utcNow, CancellationToken ct)

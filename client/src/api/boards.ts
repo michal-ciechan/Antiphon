@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPatch, apiPost } from './client'
+import { apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
 export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled'
@@ -111,9 +111,24 @@ export interface SpawnCardResult {
   sessionId: string
 }
 
+export interface BoardWorkflowDto {
+  boardId: string
+  definitionId: string | null
+  version: number
+  name: string
+  content: string
+  filePath: string | null
+  updatedAt: string | null
+}
+
+export interface UpdateBoardWorkflowRequest {
+  content: string
+}
+
 export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
+  workflow: (id: string) => ['boards', id, 'workflow'] as const,
 }
 
 export function useBoards() {
@@ -127,6 +142,14 @@ export function useBoard(id: string | undefined) {
   return useQuery({
     queryKey: id ? boardKeys.detail(id) : ['boards', 'missing'],
     queryFn: () => apiGet<BoardDetailDto>(`/boards/${id}`),
+    enabled: !!id,
+  })
+}
+
+export function useBoardWorkflow(id: string | undefined) {
+  return useQuery({
+    queryKey: id ? boardKeys.workflow(id) : ['boards', 'missing', 'workflow'],
+    queryFn: () => apiGet<BoardWorkflowDto>(`/boards/${id}/workflow`),
     enabled: !!id,
   })
 }
@@ -186,6 +209,19 @@ export function useSpawnCard(boardId: string) {
     mutationFn: ({ cardId, request }: { cardId: string; request: SpawnCardRequest }) =>
       apiPost<SpawnCardResult>(`/cards/${cardId}/spawn`, request),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+    },
+  })
+}
+
+export function useUpdateBoardWorkflow(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: UpdateBoardWorkflowRequest) =>
+      apiPut<BoardWorkflowDto>(`/boards/${boardId}/workflow`, request),
+    onSuccess: (workflow) => {
+      queryClient.setQueryData(boardKeys.workflow(boardId), workflow)
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
     },

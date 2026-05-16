@@ -10,22 +10,7 @@ public static class WorkflowDefinitionParser
 
     public static WorkflowDefinition ParseYamlDefinition(string yaml)
     {
-        var yamlStream = new YamlStream();
-        using var reader = new StringReader(yaml);
-        yamlStream.Load(reader);
-
-        if (yamlStream.Documents.Count == 0)
-            throw new ValidationException(new Dictionary<string, string[]>
-            {
-                ["yaml"] = ["YAML document is empty."]
-            });
-
-        var root = yamlStream.Documents[0].RootNode;
-        if (root is not YamlMappingNode rootMapping)
-            throw new ValidationException(new Dictionary<string, string[]>
-            {
-                ["yaml"] = ["YAML root must be a mapping."]
-            });
+        var rootMapping = LoadRootMapping(yaml);
 
         var name = GetScalarValue(rootMapping, "name") ?? "Unnamed Workflow";
         var description = GetScalarValue(rootMapping, "description") ?? string.Empty;
@@ -78,6 +63,34 @@ public static class WorkflowDefinitionParser
         }
 
         return new WorkflowDefinition(name, description, stages, selectableStages, hooks);
+    }
+
+    public static WorkflowHooks ParseYamlHooks(string yaml)
+    {
+        var rootMapping = LoadRootMapping(yaml);
+        return ParseHooks(rootMapping);
+    }
+
+    private static YamlMappingNode LoadRootMapping(string yaml)
+    {
+        var yamlStream = new YamlStream();
+        using var reader = new StringReader(yaml);
+        yamlStream.Load(reader);
+
+        if (yamlStream.Documents.Count == 0)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["yaml"] = ["YAML document is empty."]
+            });
+
+        var root = yamlStream.Documents[0].RootNode;
+        if (root is not YamlMappingNode rootMapping)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["yaml"] = ["YAML root must be a mapping."]
+            });
+
+        return rootMapping;
     }
 
     private static string? GetScalarValue(YamlMappingNode mapping, string key)
