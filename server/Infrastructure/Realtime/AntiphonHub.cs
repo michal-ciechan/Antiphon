@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.AspNetCore.SignalR;
@@ -14,10 +15,12 @@ public class AntiphonHub : Hub
 {
     private static readonly Serilog.ILogger _logger = Log.ForContext<AntiphonHub>();
     private readonly AuditService _auditService;
+    private readonly AgentChannelService _agentChannelService;
 
-    public AntiphonHub(AuditService auditService)
+    public AntiphonHub(AuditService auditService, AgentChannelService agentChannelService)
     {
         _auditService = auditService;
+        _agentChannelService = agentChannelService;
     }
 
     public async Task JoinGroup(string groupName)
@@ -30,6 +33,34 @@ public class AntiphonHub : Hub
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
         _logger.Information("Connection {ConnectionId} left group {Group}", Context.ConnectionId, groupName);
+    }
+
+    public async Task JoinCard(Guid cardId)
+    {
+        var groupName = AgentChannelGroups.Card(cardId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+        _logger.Information("Connection {ConnectionId} joined agent card group {Group}", Context.ConnectionId, groupName);
+    }
+
+    public async Task LeaveCard(Guid cardId)
+    {
+        var groupName = AgentChannelGroups.Card(cardId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
+        _logger.Information("Connection {ConnectionId} left agent card group {Group}", Context.ConnectionId, groupName);
+    }
+
+    public async Task SendAsync(Guid targetSessionId, ChannelMessageRequest request)
+    {
+        await _agentChannelService.SendToSessionAsync(
+            sourceSessionId: null,
+            targetSessionId,
+            request.Message,
+            Context.ConnectionAborted);
+    }
+
+    public async Task<SpawnCardResult> DelegateCard(ChannelDelegateCardRequest request)
+    {
+        return await _agentChannelService.DelegateCardAsync(request, Context.ConnectionAborted);
     }
 
     public override async Task OnConnectedAsync()

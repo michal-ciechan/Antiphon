@@ -75,6 +75,7 @@ try
     builder.Services.AddOptions<OrchestratorSettings>()
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
+    builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -121,6 +122,12 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddSingleton<MentionScanner>();
+    builder.Services.AddScoped<AgentChannelService>();
+    builder.Services.AddSingleton<AgentMentionRouter>();
+    builder.Services.AddSingleton<WatchdogMatcher>();
+    builder.Services.AddSingleton<WatchdogCooldownStore>();
+    builder.Services.AddScoped<WatchdogService>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -156,6 +163,7 @@ try
     builder.Services.AddHostedService<ChangeDetectionService>();
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
+    builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
 

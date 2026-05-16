@@ -16,9 +16,11 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public string StartupOutput { get; set; } = string.Empty;
     public string NoiseDuringSendPrompt { get; set; } = string.Empty;
     public string PromptOutput { get; set; } = string.Empty;
+    public string? RenderedScreenOverride { get; set; }
     public int PromptOutputDelayMs { get; set; } = 10;
     public bool ReadyResult { get; set; } = true;
     public bool TurnCompleted { get; set; } = true;
+    public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;
     public string SentPrompt { get; private set; } = string.Empty;
     public int Cols { get; private set; }
@@ -102,7 +104,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public string SnapshotRawOutput() => _rawOutput.ToString();
 
-    public string SnapshotRenderedScreen() => _rawOutput.ToString();
+    public string SnapshotRenderedScreen()
+    {
+        if (ThrowOnRenderedSnapshot)
+            throw new InvalidOperationException("Rendered snapshot is not available.");
+
+        return RenderedScreenOverride ?? _rawOutput.ToString();
+    }
 
     public void Emit(string text)
     {

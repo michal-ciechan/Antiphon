@@ -23,19 +23,22 @@ public sealed class AgentSessionRuntime
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionRuntime> _logger;
+    private readonly AgentMentionRouter? _mentionRouter;
 
     public AgentSessionRuntime(
         IEventBus eventBus,
         IOptions<AgentSessionSettings> settings,
         IServiceScopeFactory scopeFactory,
         TimeProvider timeProvider,
-        ILogger<AgentSessionRuntime> logger)
+        ILogger<AgentSessionRuntime> logger,
+        AgentMentionRouter? mentionRouter = null)
     {
         _eventBus = eventBus;
         _settings = settings.Value;
         _scopeFactory = scopeFactory;
         _timeProvider = timeProvider;
         _logger = logger;
+        _mentionRouter = mentionRouter;
     }
 
     public void Register(Guid sessionId, IAgentProtocolAdapter adapter)
@@ -48,7 +51,8 @@ public sealed class AgentSessionRuntime
             _eventBus,
             _settings,
             _logger,
-            RecordActivityAsync);
+            RecordActivityAsync,
+            _mentionRouter);
         adapter.OnTextDelta += session.OnTextDelta;
 
         if (!_sessions.TryAdd(sessionId, session))
@@ -102,6 +106,27 @@ public sealed class AgentSessionRuntime
 
         var buffer = _buffers.GetOrAdd(sessionId, CreateBuffer);
         return new AgentSessionRuntimeBufferSnapshot(buffer.FullSnapshot(), 0);
+    }
+
+    public IReadOnlyList<Guid> ListLiveSessions() => _sessions.Keys.ToList();
+
+    public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
+    {
+        if (_sessions.TryGetValue(sessionId, out var session))
+        {
+            try
+            {
+                snapshot = session.GetLiveSnapshot();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Live snapshot unavailable for agent session {SessionId}", sessionId);
+            }
+        }
+
+        snapshot = default!;
+        return false;
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
@@ -192,6 +217,7 @@ public sealed class AgentSessionRuntime
         private readonly AgentSessionSettings _settings;
         private readonly ILogger _logger;
         private readonly Func<Guid, Task> _recordActivityAsync;
+        private readonly AgentMentionRouter? _mentionRouter;
         private readonly Channel<RuntimeDelta> _deltas = Channel.CreateUnbounded<RuntimeDelta>(
             new UnboundedChannelOptions
             {
@@ -208,7 +234,8 @@ public sealed class AgentSessionRuntime
             IEventBus eventBus,
             AgentSessionSettings settings,
             ILogger logger,
-            Func<Guid, Task> recordActivityAsync)
+            Func<Guid, Task> recordActivityAsync,
+            AgentMentionRouter? mentionRouter)
         {
             _sessionId = sessionId;
             Adapter = adapter;
@@ -217,6 +244,7 @@ public sealed class AgentSessionRuntime
             _settings = settings;
             _logger = logger;
             _recordActivityAsync = recordActivityAsync;
+            _mentionRouter = mentionRouter;
             _ = ProcessDeltasAsync();
         }
 
@@ -242,6 +270,18 @@ public sealed class AgentSessionRuntime
                 }
             }
 
+            foreach (var delta in deltas)
+            {
+                try
+                {
+                    _mentionRouter?.ObserveDelta(_sessionId, delta.Text);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to observe mention delta for session {SessionId}", _sessionId);
+                }
+            }
+
             FirstDelta.TrySetResult();
             foreach (var delta in deltas)
             {
@@ -257,6 +297,14 @@ public sealed class AgentSessionRuntime
                 return new AgentSessionRuntimeBufferSnapshot(_buffer.FullSnapshot(), _deltaSequence);
             }
         }
+
+        public AgentSessionLiveSnapshot GetLiveSnapshot() =>
+            new(
+                _sessionId,
+                string.Empty,
+                Adapter.SnapshotRenderedScreen(),
+                _buffer.TailSnapshot(Math.Max(1, _settings.ReplayBufferMaxChars)),
+                DeltaSequence);
 
         public void Stop()
         {
@@ -328,6 +376,15 @@ public sealed class AgentSessionRuntime
             }
         }
 
+        public string TailSnapshot(int maxChars)
+        {
+            lock (_gate)
+            {
+                var text = _buffer.ToString();
+                return text.Length > maxChars ? text[^maxChars..] : text;
+            }
+        }
+
         private void Hydrate()
         {
             if (!File.Exists(_filePath))
@@ -345,6 +402,13 @@ public sealed class AgentSessionRuntime
 }
 
 public sealed record AgentSessionRuntimeBufferSnapshot(string Buffer, long LastSequence);
+
+public sealed record AgentSessionLiveSnapshot(
+    Guid SessionId,
+    string RawOutput,
+    string RenderedScreen,
+    string Buffer,
+    long LastSequence);
 
 public static class AgentSessionGroups
 {

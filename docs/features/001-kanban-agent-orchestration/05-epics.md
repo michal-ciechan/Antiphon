@@ -21,7 +21,7 @@
 | E08 | xterm.js terminal pane + Board UI + drag-drop spawn (board-driven mode) | FR-01, FR-02, FR-03, FR-04, FR-06, FR-07 | [E_08-stories.md](epics/E_08-stories.md) | `[x]` |
 | E09 | WorkflowDefinition loader + hot reload + Monaco editor | FR-14 | [E_09-stories.md](epics/E_09-stories.md) | `[x]` |
 | E10 | External tracker adapters (Linear, GitHub Issues, Jira) | FR-12, NFR-07 | [E_10-stories.md](epics/E_10-stories.md) | `[x]` |
-| E11 | amux channels + atomic claim + watchdog | FR-16, FR-17, FR-18 | [E_11-stories.md](epics/E_11-stories.md) | `[ ]` |
+| E11 | amux channels + atomic claim + watchdog | FR-16, FR-17, FR-18 | [E_11-stories.md](epics/E_11-stories.md) | `[x]` |
 | E12 | DiffReview + GitHub PR open (Review → Done flow) | FR-10, FR-11 | [E_12-stories.md](epics/E_12-stories.md) | `[ ]` |
 | E13 | Snapshot / observability API + ops dashboard | FR-19, NFR-05 | [E_13-stories.md](epics/E_13-stories.md) | `[ ]` |
 | E14 | Migrate test suites from xUnit → TUnit + FluentAssertions → Shouldly (run **early** — after E01-S01 lands, before E02 substantial work) | NFR-* (testability) | [E_14-stories.md](epics/E_14-stories.md) | `[x]` |

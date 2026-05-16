@@ -29,3 +29,13 @@ public sealed record AgentSessionBufferDto(
 public sealed record SendSessionInputRequest(string Input);
 
 public sealed record ResizeSessionRequest(int Cols, int Rows);
+
+public sealed record ChannelMessageRequest(string Message);
+
+public sealed record ChannelDelegateCardRequest(
+    Guid CardId,
+    Guid ConcurrencyToken,
+    string Message,
+    string? DefinitionName = null,
+    int Cols = 120,
+    int Rows = 30);

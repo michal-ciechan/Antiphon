@@ -89,6 +89,7 @@ public sealed record SpawnCardRequest(
     string? DefinitionName = null,
     int Cols = 120,
     int Rows = 30,
-    string? Prompt = null);
+    string? Prompt = null,
+    Guid? ConcurrencyToken = null);
 
 public sealed record SpawnCardResult(Guid CardId, Guid SessionId);

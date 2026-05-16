@@ -109,6 +109,9 @@ public sealed class CardService
         ValidateSpawnRequest(request);
 
         var card = await LoadCardForUpdateAsync(id, ct);
+        if (request.ConcurrencyToken is Guid requestedToken && requestedToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
         if (card.BoardColumn.IsTerminal)
             throw new ConflictException($"Card '{card.Identifier}' is already in a terminal column.");
 
@@ -119,7 +122,14 @@ public sealed class CardService
                 .FirstOrDefault(c => c.IsActive && !c.IsTerminal)
                 ?? throw new ConflictException($"Board '{card.Board.Name}' has no active column for spawning.");
             ApplyColumnMove(card, activeColumn, enforceStateMachine: false);
-            await _db.SaveChangesAsync(ct);
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+            }
         }
 
         var definitionName = string.IsNullOrWhiteSpace(request.DefinitionName)
