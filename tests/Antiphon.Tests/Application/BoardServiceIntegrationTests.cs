@@ -221,6 +221,47 @@ public class BoardServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Queued_spawn_failure_releases_claim_and_publishes_card_changed()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot, []);
+            var board = await harness.BoardService.CreateAsync(new CreateBoardRequest(project.Id, "Failed Spawn"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Spawn failure"),
+                CancellationToken.None);
+
+            var result = await harness.CardService.SpawnAsync(
+                card.Id,
+                new SpawnCardRequest("fake", 100, 24),
+                CancellationToken.None);
+
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None));
+
+            await using var verify = CreateContext();
+            var storedCard = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            storedCard.OwnerSessionId.ShouldBeNull();
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == result.SessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            harness.EventBus.PublishedEvents
+                .Count(e => e.Group is null && e.EventName == "CardChanged" && HasPayloadValue(e.Payload, "cardId", card.Id))
+                .ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static Harness BuildHarness(string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters)
@@ -364,6 +405,12 @@ public class BoardServiceIntegrationTests
         {
             // Best-effort cleanup for temp worktree/session directories.
         }
+    }
+
+    private static bool HasPayloadValue<T>(object payload, string propertyName, T expected)
+    {
+        var value = payload.GetType().GetProperty(propertyName)?.GetValue(payload);
+        return value is T typed && EqualityComparer<T>.Default.Equals(typed, expected);
     }
 
     private sealed record Harness(

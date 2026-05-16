@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
@@ -84,6 +85,7 @@ public sealed class AgentSessionLaunchQueue
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var retryScheduler = scope.ServiceProvider.GetRequiredService<RetryScheduler>();
         var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+        var eventBus = scope.ServiceProvider.GetRequiredService<IEventBus>();
 
         try
         {
@@ -100,8 +102,21 @@ public sealed class AgentSessionLaunchQueue
                     await retryScheduler.ScheduleContinuationAsync(db, request.CardId, now, CancellationToken.None);
                 if (behavior.StopOnSuccess)
                     await StopCompletedSessionAsync(service, result.SessionId, CancellationToken.None);
+                CardChangedNotification? notification = null;
                 if (behavior.ReleaseClaimOnSuccess)
-                    await CompleteClaimAsync(db, request.CardId, SessionStatus.Stopped, null, now, CancellationToken.None);
+                {
+                    notification = await CompleteClaimAsync(
+                        db,
+                        request.CardId,
+                        SessionStatus.Stopped,
+                        null,
+                        now,
+                        CancellationToken.None);
+                }
+
+                await db.SaveChangesAsync(CancellationToken.None);
+                await PublishCardChangedAsync(eventBus, notification, CancellationToken.None);
+                return;
             }
             else if (RunAttemptStateMachine.IsTerminal(attempt.Phase))
             {
@@ -114,13 +129,16 @@ public sealed class AgentSessionLaunchQueue
                         now,
                         CancellationToken.None);
                 }
-                await CompleteClaimAsync(
+                var notification = await CompleteClaimAsync(
                     db,
                     request.CardId,
                     SessionStatus.Failed,
                     attempt.ErrorDetails ?? $"Run attempt ended in phase {attempt.Phase}.",
                     now,
                     CancellationToken.None);
+                await db.SaveChangesAsync(CancellationToken.None);
+                await PublishCardChangedAsync(eventBus, notification, CancellationToken.None);
+                return;
             }
 
             await db.SaveChangesAsync(CancellationToken.None);
@@ -130,8 +148,9 @@ public sealed class AgentSessionLaunchQueue
             var now = timeProvider.GetUtcNow().UtcDateTime;
             if (behavior.ScheduleRetryOnFailure)
                 await retryScheduler.ScheduleFailureAsync(db, request.CardId, ex.Message, now, CancellationToken.None);
-            await CompleteClaimAsync(db, request.CardId, SessionStatus.Failed, ex.Message, now, CancellationToken.None);
+            var notification = await CompleteClaimAsync(db, request.CardId, SessionStatus.Failed, ex.Message, now, CancellationToken.None);
             await db.SaveChangesAsync(CancellationToken.None);
+            await PublishCardChangedAsync(eventBus, notification, CancellationToken.None);
             throw;
         }
     }
@@ -151,7 +170,7 @@ public sealed class AgentSessionLaunchQueue
         }
     }
 
-    private static async Task CompleteClaimAsync(
+    private static async Task<CardChangedNotification?> CompleteClaimAsync(
         AppDbContext db,
         Guid cardId,
         SessionStatus sessionStatus,
@@ -163,7 +182,7 @@ public sealed class AgentSessionLaunchQueue
             .Include(c => c.OwnerSession)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct);
         if (card is null)
-            return;
+            return null;
 
         if (card.OwnerSession is not null)
         {
@@ -176,7 +195,24 @@ public sealed class AgentSessionLaunchQueue
         card.OwnerSessionId = null;
         card.ConcurrencyToken = Guid.NewGuid();
         card.UpdatedAt = utcNow;
+        return new CardChangedNotification(card.BoardId, card.Id);
     }
+
+    private static async Task PublishCardChangedAsync(
+        IEventBus eventBus,
+        CardChangedNotification? notification,
+        CancellationToken ct)
+    {
+        if (notification is null)
+            return;
+
+        await eventBus.PublishToAllAsync(
+            "CardChanged",
+            new { boardId = notification.BoardId, cardId = notification.CardId },
+            ct);
+    }
+
+    private sealed record CardChangedNotification(Guid BoardId, Guid CardId);
 
     private sealed record AgentSessionLaunchBehavior(
         bool StopOnSuccess,

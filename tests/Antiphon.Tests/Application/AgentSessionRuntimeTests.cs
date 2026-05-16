@@ -44,8 +44,11 @@ public class AgentSessionRuntimeTests
         events.Count.ShouldBe(3);
         events.Select(e => e.Group).ShouldAllBe(g => g == AgentSessionGroups.Session(sessionId));
         events.Select(e => e.EventName).ShouldAllBe(e => e == "AgentTextDelta");
-        runtime.GetBuffer(sessionId).ShouldBe("ABCDEFGHIJ");
+        runtime.GetBufferSnapshot(sessionId).Buffer.ShouldBe("ABCDEFGHIJ");
+        runtime.GetBufferSnapshot(sessionId).LastSequence.ShouldBe(3);
         GetPayloadValue<long>(events[0].Payload, "sequence").ShouldBe(1);
+        GetPayloadValue<long>(events[1].Payload, "sequence").ShouldBe(2);
+        GetPayloadValue<long>(events[2].Payload, "sequence").ShouldBe(3);
         GetPayloadValue<string>(events[0].Payload, "text").ShouldBe("ABCD");
         GetPayloadValue<string>(events[2].Payload, "text").ShouldBe("IJ");
 
@@ -94,7 +97,8 @@ public class AgentSessionRuntimeTests
                 TimeProvider.System,
                 NullLogger<AgentSessionRuntime>.Instance);
 
-            restartedRuntime.GetBuffer(sessionId).ShouldBe("0123456789ABCDE");
+            restartedRuntime.GetBufferSnapshot(sessionId).Buffer.ShouldBe("0123456789ABCDE");
+            restartedRuntime.GetBufferSnapshot(sessionId).LastSequence.ShouldBe(0);
         }
 
         Directory.Delete(logPath, recursive: true);

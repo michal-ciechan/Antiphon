@@ -311,7 +311,7 @@ public sealed class AgentSessionService
         return ResizeAndPersistAsync(sessionId, cols, rows, ct);
     }
 
-    public string GetBuffer(Guid sessionId) => _runtime.GetBuffer(sessionId);
+    public string GetBuffer(Guid sessionId) => _runtime.GetBufferSnapshot(sessionId).Buffer;
 
     public async Task<AgentSessionBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
     {
@@ -319,10 +319,8 @@ public sealed class AgentSessionService
         if (!exists)
             throw new NotFoundException(nameof(AgentSession), sessionId);
 
-        return new AgentSessionBufferDto(
-            sessionId,
-            _runtime.GetBuffer(sessionId),
-            _runtime.GetDeltaSequenceOrDefault(sessionId));
+        var snapshot = _runtime.GetBufferSnapshot(sessionId);
+        return new AgentSessionBufferDto(sessionId, snapshot.Buffer, snapshot.LastSequence);
     }
 
     private async Task<Card> LoadCardAsync(Guid cardId, CancellationToken ct)

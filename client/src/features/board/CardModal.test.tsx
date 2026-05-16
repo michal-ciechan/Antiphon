@@ -6,6 +6,10 @@ import { server } from '../../test/mocks/server'
 import { AgentPicker } from './AgentPicker'
 import { CardModal } from './CardModal'
 
+vi.mock('./SessionTerminal', () => ({
+  SessionTerminal: () => <div data-testid="session-terminal" />,
+}))
+
 const card: CardDto = {
   id: 'card-1',
   boardId: 'board-1',
@@ -84,5 +88,37 @@ describe('CardModal', () => {
       cols: 120,
       rows: 30,
     }))
+  })
+
+  it('disables spawn while a session is stopping', async () => {
+    server.use(agentHandlers())
+    renderWithProviders(
+      <CardModal
+        boardId="board-1"
+        card={{
+          ...card,
+          sessions: [
+            {
+              id: 'session-1',
+              definitionName: 'claude',
+              agentKind: 'ClaudeCode',
+              status: 'Stopping',
+              cwd: 'D:/repo',
+              createdAt: '2026-01-01T00:00:00Z',
+              startedAt: '2026-01-01T00:00:00Z',
+              lastSeenAt: '2026-01-01T00:00:01Z',
+              endedAt: null,
+              exitCode: null,
+              failureReason: null,
+            },
+          ],
+        }}
+        opened
+        onClose={() => undefined}
+      />,
+    )
+
+    await waitFor(() => expect(getAgentInput()).toHaveValue('claude (ClaudeCode, default)'))
+    expect(screen.getByRole('button', { name: 'Spawn' })).toBeDisabled()
   })
 })

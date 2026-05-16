@@ -7,6 +7,7 @@ import { SessionTerminal } from './SessionTerminal'
 const xtermMock = vi.hoisted(() => ({
   instances: [] as Array<{
     write: ReturnType<typeof vi.fn>
+    clear: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
     onDataHandler?: (input: string) => void
     onResizeHandler?: (size: { cols: number; rows: number }) => void
@@ -43,6 +44,7 @@ const signalrMock = vi.hoisted(() => ({
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     write = vi.fn()
+    clear = vi.fn()
     dispose = vi.fn()
     cols = 100
     rows = 30
@@ -201,5 +203,34 @@ describe('SessionTerminal', () => {
       expect(xtermMock.instances[0].write).toHaveBeenNthCalledWith(2, 'LATE')
     })
     expect(xtermMock.instances[0].write).not.toHaveBeenCalledWith('EARLY')
+  })
+
+  it('replays the buffer after reconnect to close missed live delta gaps', async () => {
+    let buffer = { sessionId: 'session-1', buffer: 'INITIAL', lastSequence: 1 }
+    server.use(
+      http.get('/api/sessions/session-1/buffer', () => HttpResponse.json(buffer)),
+    )
+
+    renderWithProviders(<SessionTerminal sessionId="session-1" />)
+
+    await waitFor(() => {
+      expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
+      expect(xtermMock.instances[0].write).toHaveBeenCalledWith('INITIAL')
+    })
+
+    buffer = { sessionId: 'session-1', buffer: 'INITIAL_MISSED', lastSequence: 2 }
+    signalrMock.connection.reconnected?.()
+
+    await waitFor(() => {
+      expect(xtermMock.instances[0].clear).toHaveBeenCalled()
+      expect(xtermMock.instances[0].write).toHaveBeenCalledWith('INITIAL_MISSED')
+    })
+
+    signalrMock.connection.handlers.get('AgentTextDelta')?.({
+      sessionId: 'session-1',
+      sequence: 2,
+      text: 'MISSED',
+    })
+    expect(xtermMock.instances[0].write).not.toHaveBeenCalledWith('MISSED')
   })
 })

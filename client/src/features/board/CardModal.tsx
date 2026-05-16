@@ -18,7 +18,10 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
   const spawnCard = useSpawnCard(boardId)
   const hasActiveSession = useMemo(
-    () => card?.sessions.some((session) => session.status === 'Starting' || session.status === 'Running') ?? false,
+    () => card?.sessions.some((session) =>
+      session.status === 'Starting'
+      || session.status === 'Running'
+      || session.status === 'Stopping') ?? false,
     [card?.sessions],
   )
 

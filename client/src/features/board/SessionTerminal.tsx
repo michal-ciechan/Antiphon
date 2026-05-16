@@ -28,7 +28,7 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
     let disposed = false
     let joined = false
     let backlogLoaded = false
-    let backlogSequence = 0
+    let lastAppliedSequence = 0
     const pendingDeltas: AgentTextDeltaPayload[] = []
     const groupName = `session-${sessionId}`
     const terminal = new Terminal({
@@ -69,6 +69,37 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
       joined = true
     }
 
+    const applyDelta = (payload: AgentTextDeltaPayload) => {
+      if (payload.sessionId !== sessionId || payload.sequence <= lastAppliedSequence) return
+
+      terminal.write(payload.text)
+      lastAppliedSequence = payload.sequence
+    }
+
+    const replayBacklog = async (replace: boolean) => {
+      let buffer
+      try {
+        buffer = await getSessionBuffer(sessionId)
+      } catch {
+        return
+      }
+      if (disposed) return
+
+      backlogLoaded = true
+      if (buffer.buffer && (!replace || buffer.lastSequence > lastAppliedSequence)) {
+        if (replace) {
+          terminal.clear()
+        }
+        terminal.write(buffer.buffer)
+      }
+      lastAppliedSequence = Math.max(lastAppliedSequence, buffer.lastSequence)
+
+      for (const delta of pendingDeltas.sort((a, b) => a.sequence - b.sequence)) {
+        applyDelta(delta)
+      }
+      pendingDeltas.length = 0
+    }
+
     const onDelta = (payload: AgentTextDeltaPayload) => {
       if (payload.sessionId !== sessionId) return
 
@@ -77,14 +108,15 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
         return
       }
 
-      if (payload.sequence > backlogSequence) {
-        terminal.write(payload.text)
-      }
+      applyDelta(payload)
     }
 
     connection.on('AgentTextDelta', onDelta)
     connection.onreconnected(() => {
-      void join()
+      void (async () => {
+        await join()
+        await replayBacklog(true)
+      })()
     })
 
     const resizeObserver = new ResizeObserver(() => {
@@ -103,26 +135,7 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
         // Backlog remains useful even if the live connection is unavailable.
       }
 
-      let buffer
-      try {
-        buffer = await getSessionBuffer(sessionId)
-      } catch {
-        return
-      }
-      if (disposed) return
-
-      backlogLoaded = true
-      backlogSequence = buffer.lastSequence
-      if (buffer.buffer) {
-        terminal.write(buffer.buffer)
-      }
-
-      for (const delta of pendingDeltas
-        .filter((delta) => delta.sequence > backlogSequence)
-        .sort((a, b) => a.sequence - b.sequence)) {
-        terminal.write(delta.text)
-      }
-      pendingDeltas.length = 0
+      await replayBacklog(false)
     })()
 
     return () => {

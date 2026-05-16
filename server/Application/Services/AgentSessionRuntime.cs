@@ -95,10 +95,13 @@ public sealed class AgentSessionRuntime
         return session.DeltaSequence > sequence;
     }
 
-    public string GetBuffer(Guid sessionId)
+    public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot(Guid sessionId)
     {
+        if (_sessions.TryGetValue(sessionId, out var session))
+            return session.GetBufferSnapshot();
+
         var buffer = _buffers.GetOrAdd(sessionId, CreateBuffer);
-        return buffer.FullSnapshot();
+        return new AgentSessionRuntimeBufferSnapshot(buffer.FullSnapshot(), 0);
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
@@ -195,6 +198,7 @@ public sealed class AgentSessionRuntime
                 SingleReader = true,
                 SingleWriter = false
             });
+        private readonly object _gate = new();
         private long _deltaSequence;
 
         public RuntimeSession(
@@ -225,12 +229,33 @@ public sealed class AgentSessionRuntime
             if (string.IsNullOrEmpty(text))
                 return;
 
-            var deltaSequence = Interlocked.Increment(ref _deltaSequence);
-            _buffer.Append(text);
+            var deltas = new List<RuntimeDelta>();
+            var maxChunkChars = Math.Max(1, _settings.SignalRMaxChunkChars);
+            lock (_gate)
+            {
+                for (var offset = 0; offset < text.Length; offset += maxChunkChars)
+                {
+                    var chunk = text.Substring(offset, Math.Min(maxChunkChars, text.Length - offset));
+                    var deltaSequence = ++_deltaSequence;
+                    _buffer.Append(chunk);
+                    deltas.Add(new RuntimeDelta(deltaSequence, chunk));
+                }
+            }
 
             FirstDelta.TrySetResult();
-            if (!_deltas.Writer.TryWrite(new RuntimeDelta(deltaSequence, text)))
-                _logger.LogWarning("Failed to enqueue PTY delta for session {SessionId}", _sessionId);
+            foreach (var delta in deltas)
+            {
+                if (!_deltas.Writer.TryWrite(delta))
+                    _logger.LogWarning("Failed to enqueue PTY delta for session {SessionId}", _sessionId);
+            }
+        }
+
+        public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot()
+        {
+            lock (_gate)
+            {
+                return new AgentSessionRuntimeBufferSnapshot(_buffer.FullSnapshot(), _deltaSequence);
+            }
         }
 
         public void Stop()
@@ -244,20 +269,15 @@ public sealed class AgentSessionRuntime
             {
                 try
                 {
-                    var maxChunkChars = Math.Max(1, _settings.SignalRMaxChunkChars);
-                    for (var offset = 0; offset < delta.Text.Length; offset += maxChunkChars)
-                    {
-                        var chunk = delta.Text.Substring(offset, Math.Min(maxChunkChars, delta.Text.Length - offset));
-                        await _eventBus.PublishToGroupAsync(
-                            AgentSessionGroups.Session(_sessionId),
-                            "AgentTextDelta",
-                            new
-                            {
-                                sessionId = _sessionId,
-                                sequence = delta.DeltaSequence,
-                                text = chunk
-                            });
-                    }
+                    await _eventBus.PublishToGroupAsync(
+                        AgentSessionGroups.Session(_sessionId),
+                        "AgentTextDelta",
+                        new
+                        {
+                            sessionId = _sessionId,
+                            sequence = delta.DeltaSequence,
+                            text = delta.Text
+                        });
 
                     await _recordActivityAsync(_sessionId);
                 }
@@ -323,6 +343,8 @@ public sealed class AgentSessionRuntime
 
     private sealed record RuntimeDelta(long DeltaSequence, string Text);
 }
+
+public sealed record AgentSessionRuntimeBufferSnapshot(string Buffer, long LastSequence);
 
 public static class AgentSessionGroups
 {
