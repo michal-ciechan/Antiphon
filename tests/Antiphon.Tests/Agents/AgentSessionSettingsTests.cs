@@ -20,10 +20,11 @@ public class AgentSessionSettingsTests
             FirstDeltaTimeoutMs = 0,
             KillGraceMs = 0,
             StallTimeoutMs = 0,
-            StallScanIntervalMs = 0
+            StallScanIntervalMs = 0,
+            MemoryLimitMb = -1
         });
 
         result.Failed.ShouldBeTrue();
-        result.Failures.Count().ShouldBe(7);
+        result.Failures.Count().ShouldBe(8);
     }
 }

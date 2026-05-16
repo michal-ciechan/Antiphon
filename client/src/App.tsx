@@ -15,6 +15,7 @@ import { DashboardPage } from './features/dashboard/DashboardPage'
 import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
+import { OrchestratorPanel } from './features/orchestrator/OrchestratorPanel'
 
 const queryClient = new QueryClient()
 
@@ -70,6 +71,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Board error">
                       <SuspenseBoundary variant="page">
                         <BoardPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="orchestrator"
+                  element={
+                    <ErrorBoundary fallbackTitle="Orchestrator error">
+                      <SuspenseBoundary variant="page">
+                        <OrchestratorPanel />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

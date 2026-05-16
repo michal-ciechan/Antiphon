@@ -25,4 +25,5 @@ public sealed record AgentLaunchSpec(
     IReadOnlyDictionary<string, string> Env,
     string Cwd,
     int Cols,
-    int Rows);
+    int Rows,
+    int MemoryLimitMb = 0);

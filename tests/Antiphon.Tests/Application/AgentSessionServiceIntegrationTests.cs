@@ -158,6 +158,82 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
+    public async Task RunAttempt_records_memory_killed_exit_reason()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-memory-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter
+            {
+                PromptOutput = "ALLOCATING",
+                ExitReason = AgentExitReason.MemoryKilled,
+                ExitCode = 137
+            };
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                worktreePath,
+                new AgentSessionSettings
+                {
+                    FirstDeltaTimeoutMs = 1_000,
+                    KillGraceMs = 100,
+                    SignalRMaxChunkChars = 16 * 1024,
+                    ReplayBufferMaxChars = 128 * 1024,
+                    SessionLogPath = Path.Combine(tempRoot, "session-logs"),
+                    MemoryLimitMb = 128
+                });
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "fake",
+                AgentKind.Raw,
+                "allocate memory",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.Raw,
+                "fake",
+                [],
+                new Dictionary<string, string>(),
+                repoPath,
+                120,
+                30);
+
+            var result = await service.StartAsync(request, spec, CancellationToken.None);
+
+            adapter.MemoryLimitMb.ShouldBe(128);
+            adapter.Disposed.ShouldBeTrue();
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == result.SessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldContain("MemoryKilled");
+            session.ExitCode.ShouldBe(137);
+            var attempt = await db.RunAttempts.SingleAsync(a => a.Id == result.RunAttemptId);
+            attempt.Phase.ShouldBe(RunPhase.Failed);
+            attempt.ErrorDetails.ShouldNotBeNull();
+            attempt.ErrorDetails.ShouldContain("MemoryKilled");
+            attempt.ExitCode.ShouldBe(137);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task RunAttempt_uses_definition_version_at_launch_not_current()
     {
         await using var db = CreateContext();

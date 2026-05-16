@@ -25,6 +25,7 @@ public sealed class OrchestratorService
     private readonly OrchestratorSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OrchestratorService> _logger;
+    private readonly AgentSessionRuntime? _runtime;
 
     public OrchestratorService(
         AppDbContext db,
@@ -37,7 +38,8 @@ public sealed class OrchestratorService
         IEventBus eventBus,
         IOptions<OrchestratorSettings> settings,
         TimeProvider timeProvider,
-        ILogger<OrchestratorService> logger)
+        ILogger<OrchestratorService> logger,
+        AgentSessionRuntime? runtime = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -50,6 +52,7 @@ public sealed class OrchestratorService
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _runtime = runtime;
     }
 
     public async Task<OrchestratorTickResult> PollTickAsync(CancellationToken ct)
@@ -158,27 +161,147 @@ public sealed class OrchestratorService
     {
         var activeStatuses = ActiveSessionStatuses();
         var now = UtcNow();
-        var runningSessions = await _db.AgentSessions
-            .Where(s => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
-                || s.Card.Board.TrackerKind != TrackerKind.Internal
-                || (s.Card.Board.Project.LocalRepositoryPath != null
-                    && s.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
-            .CountAsync(s => activeStatuses.Contains(s.Status), ct);
-        var retryQueueLength = await _db.RetrySchedules
-            .Where(r => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
-                || r.Card.Board.TrackerKind != TrackerKind.Internal
-                || (r.Card.Board.Project.LocalRepositoryPath != null
-                    && r.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
-            .CountAsync(r => r.AttemptCount < r.MaxAttempts
-                && r.NextRetryAt != null
-                && r.NextRetryAt <= now, ct);
+        var scopedSessions = ApplyScope(_db.AgentSessions
+            .AsNoTracking()
+            .Include(s => s.Card).ThenInclude(c => c.Board).ThenInclude(b => b.Project)
+            .Include(s => s.RunAttempts).ThenInclude(a => a.TokenUsage)
+            .AsSplitQuery());
+        var activeSessions = await scopedSessions
+            .Where(s => activeStatuses.Contains(s.Status))
+            .OrderByDescending(s => s.LastSeenAt)
+            .ToListAsync(ct);
 
-        return new OrchestratorStateDto(_controlState.IsPaused, runningSessions, retryQueueLength);
+        var retryQueue = await ApplyScope(_db.RetrySchedules
+                .AsNoTracking()
+                .Include(r => r.Card).ThenInclude(c => c.Board).ThenInclude(b => b.Project)
+                .AsSplitQuery())
+            .Where(r => r.AttemptCount < r.MaxAttempts
+                && r.NextRetryAt != null
+                && r.NextRetryAt <= now)
+            .OrderBy(r => r.NextRetryAt)
+            .ThenBy(r => r.Card.Identifier)
+            .ToListAsync(ct);
+
+        var tokenTotals = await ApplyScope(_db.RunAttempts
+                .AsNoTracking())
+            .Where(a => a.TokenUsage != null)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TokensIn = g.Sum(a => (long?)a.TokenUsage!.TokensIn) ?? 0,
+                TokensOut = g.Sum(a => (long?)a.TokenUsage!.TokensOut) ?? 0,
+                CostUsd = g.Sum(a => (decimal?)a.TokenUsage!.CostUsd) ?? 0
+            })
+            .FirstOrDefaultAsync(ct);
+
+        var running = activeSessions
+            .Select(session =>
+            {
+                var attempt = session.RunAttempts
+                    .OrderByDescending(a => a.AttemptNumber)
+                    .FirstOrDefault();
+                var live = false;
+                var lastSequence = 0L;
+                if (_runtime is not null && _runtime.TryGetLiveMetadata(session.Id, out var metadata))
+                {
+                    live = true;
+                    lastSequence = metadata.LastSequence;
+                }
+
+                return new OrchestratorRunningSessionDto(
+                    session.Id,
+                    session.CardId,
+                    session.Card.Identifier,
+                    session.Card.Title,
+                    session.Card.BoardId,
+                    session.Card.Board.Name,
+                    session.DefinitionName,
+                    session.AgentKind.ToString(),
+                    session.Status.ToString(),
+                    attempt?.Id,
+                    session.RunAttempts.Count,
+                    attempt?.AttemptNumber,
+                    attempt?.Phase.ToString(),
+                    session.StartedAt,
+                    session.LastSeenAt,
+                    attempt?.LastEventAt,
+                    Math.Max(0, (long)(now - session.StartedAt).TotalSeconds),
+                    attempt?.TokenUsage?.TokensIn ?? 0,
+                    attempt?.TokenUsage?.TokensOut ?? 0,
+                    attempt?.TokenUsage?.CostUsd ?? 0,
+                    live,
+                    lastSequence);
+            })
+            .ToList();
+
+        var retryItems = retryQueue
+            .Select(retry => new OrchestratorRetryQueueItemDto(
+                retry.CardId,
+                retry.Card.Identifier,
+                retry.Card.Title,
+                retry.Card.BoardId,
+                retry.Card.Board.Name,
+                retry.AttemptCount,
+                retry.MaxAttempts,
+                retry.NextRetryAt,
+                retry.LastAttemptAt,
+                retry.LastError))
+            .ToList();
+
+        var totals = new OrchestratorStateTotalsDto(
+            tokenTotals?.TokensIn ?? 0,
+            tokenTotals?.TokensOut ?? 0,
+            tokenTotals?.CostUsd ?? 0,
+            running.Sum(s => s.RuntimeSeconds));
+        var limits = new OrchestratorStateLimitsDto(
+            _settings.PollIntervalSeconds,
+            _settings.MaxDispatchesPerTick,
+            _settings.FailureBackoffBaseMs,
+            _settings.FailureBackoffMaxMs,
+            _settings.StartingSessionGraceSeconds);
+
+        return new OrchestratorStateDto(
+            _controlState.IsPaused,
+            _settings.Enabled,
+            now,
+            running.Count,
+            retryItems.Count,
+            totals,
+            limits,
+            running,
+            retryItems);
     }
 
     public OrchestratorPauseResult Pause() => new(_controlState.Pause());
 
     public OrchestratorPauseResult Resume() => new(_controlState.Resume());
+
+    private IQueryable<AgentSession> ApplyScope(IQueryable<AgentSession> query)
+    {
+        return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+            ? query
+            : query.Where(s => s.Card.Board.TrackerKind != TrackerKind.Internal
+                || (s.Card.Board.Project.LocalRepositoryPath != null
+                    && s.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
+    }
+
+    private IQueryable<RetrySchedule> ApplyScope(IQueryable<RetrySchedule> query)
+    {
+        return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+            ? query
+            : query.Where(r => r.Card.Board.TrackerKind != TrackerKind.Internal
+                || (r.Card.Board.Project.LocalRepositoryPath != null
+                    && r.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
+    }
+
+    private IQueryable<RunAttempt> ApplyScope(IQueryable<RunAttempt> query)
+    {
+        return string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
+            ? query
+            : query.Where(a => a.Card.Board.TrackerKind != TrackerKind.Internal
+                || (a.Card.Board.Project.LocalRepositoryPath != null
+                    && a.Card.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)));
+    }
 
     internal async Task<Guid?> TryClaimCardAsync(
         Guid cardId,

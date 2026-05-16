@@ -108,6 +108,18 @@ export function Layout() {
             </Anchor>
             <Anchor
               component={NavLink}
+              to="/orchestrator"
+              underline="never"
+              c="dimmed"
+              fw={500}
+              style={({ isActive }: { isActive: boolean }) =>
+                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
+              }
+            >
+              Orchestrator
+            </Anchor>
+            <Anchor
+              component={NavLink}
               to="/settings"
               underline="never"
               c="dimmed"

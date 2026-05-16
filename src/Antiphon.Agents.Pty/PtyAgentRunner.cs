@@ -15,6 +15,10 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     private PtySessionAudit? _audit;
     private DateTime _startedAt;
     private TerminalScreen? _screen;
+    private WindowsJobObject? _jobObject;
+    private CancellationTokenSource? _jobMonitorCts;
+    private Task? _jobMonitorTask;
+    private int _exitReason = (int)PtyExitReason.Unknown;
 
     public RingBuffer<string> Output { get; } = new(4096);
 
@@ -23,6 +27,8 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     public Task<int> Exited => _exitTcs.Task;
 
     public int? Pid => _conn?.Pid;
+
+    public PtyExitReason ExitReason => (PtyExitReason)Volatile.Read(ref _exitReason);
 
     public DateTime StartedAt => _startedAt;
 
@@ -36,9 +42,11 @@ public sealed class PtyAgentRunner : IAsyncDisposable
         IDictionary<string, string>? env = null,
         int cols = 120,
         int rows = 30,
+        int memoryLimitMb = 0,
         CancellationToken ct = default)
     {
         if (_conn is not null) throw new InvalidOperationException("Already started");
+        if (memoryLimitMb < 0) throw new ArgumentOutOfRangeException(nameof(memoryLimitMb));
         _startedAt = DateTime.UtcNow;
 
         var options = new PtyOptions
@@ -57,8 +65,26 @@ public sealed class PtyAgentRunner : IAsyncDisposable
         _conn = await PtyProvider.SpawnAsync(options, ct);
         _conn.ProcessExited += (_, e) =>
         {
+            if (_jobObject?.HasReachedMemoryLimit() == true)
+                SetExitReason(PtyExitReason.MemoryKilled);
+            else
+                SetExitReason(PtyExitReason.ProcessExited);
             _exitTcs.TrySetResult(e.ExitCode);
         };
+
+        if (memoryLimitMb > 0)
+        {
+            var pid = _conn.Pid;
+            if (pid <= 0)
+                throw new InvalidOperationException("PTY provider did not expose a process id.");
+
+            _jobObject = WindowsJobObject.AssignMemoryLimitedJob(pid, memoryLimitMb);
+            _jobMonitorCts = new CancellationTokenSource();
+            _jobMonitorTask = _jobObject.MonitorMemoryLimitAsync(
+                _exitTcs.Task,
+                () => SetExitReason(PtyExitReason.MemoryKilled),
+                _jobMonitorCts.Token);
+        }
 
         _audit = PtySessionAudit.Create(app, commandLine, cwd, env, SnapshotText);
 
@@ -225,6 +251,7 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     public async Task<bool> KillAsync(TimeSpan timeout)
     {
         if (_conn is null) return true;
+        SetExitReason(PtyExitReason.KilledByRequest);
         _conn.Kill();
         var done = await Task.WhenAny(_exitTcs.Task, Task.Delay(timeout));
         return done == _exitTcs.Task;
@@ -233,12 +260,19 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         try { _readCts?.Cancel(); } catch { }
+        try { _jobMonitorCts?.Cancel(); } catch { }
         if (_readTask is not null)
         {
             try { await _readTask; } catch { }
         }
+        if (_jobMonitorTask is not null)
+        {
+            try { await _jobMonitorTask; } catch { }
+        }
         _conn?.Dispose();
+        _jobObject?.Dispose();
         _readCts?.Dispose();
+        _jobMonitorCts?.Dispose();
         _writeGate.Dispose();
         if (_audit is not null) await _audit.DisposeAsync();
     }
@@ -251,4 +285,20 @@ public sealed class PtyAgentRunner : IAsyncDisposable
         await _conn.WriterStream.FlushAsync(ct);
     }
 
+    private void SetExitReason(PtyExitReason reason)
+    {
+        if (reason == PtyExitReason.Unknown)
+            return;
+
+        if (reason == PtyExitReason.MemoryKilled)
+        {
+            Volatile.Write(ref _exitReason, (int)PtyExitReason.MemoryKilled);
+            return;
+        }
+
+        Interlocked.CompareExchange(
+            ref _exitReason,
+            (int)reason,
+            (int)PtyExitReason.Unknown);
+    }
 }

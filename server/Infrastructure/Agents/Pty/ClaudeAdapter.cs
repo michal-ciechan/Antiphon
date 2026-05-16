@@ -38,6 +38,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
 
     public Task<int> Exited => _runner.Exited;
     public int? Pid => _runner.Pid;
+    public AgentExitReason ExitReason => MapExitReason(_runner.ExitReason);
     public string? AuditDirectory => _runner.AuditDirectory;
 
     public event Action<string>? OnTextDelta;
@@ -56,6 +57,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
             env: spec.Env.ToDictionary(kv => kv.Key, kv => kv.Value),
             cols: spec.Cols,
             rows: spec.Rows,
+            memoryLimitMb: spec.MemoryLimitMb,
             ct: ct);
     }
 
@@ -145,4 +147,12 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         _firstPromptOutput?.TrySetResult();
         OnTextDelta?.Invoke(chunk);
     }
+
+    private static AgentExitReason MapExitReason(PtyExitReason reason) => reason switch
+    {
+        PtyExitReason.ProcessExited => AgentExitReason.ProcessExited,
+        PtyExitReason.KilledByRequest => AgentExitReason.KilledByRequest,
+        PtyExitReason.MemoryKilled => AgentExitReason.MemoryKilled,
+        _ => AgentExitReason.Unknown
+    };
 }

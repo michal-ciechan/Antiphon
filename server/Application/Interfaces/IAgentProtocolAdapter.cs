@@ -16,6 +16,7 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct);
     Task<int> Exited { get; }
     int? Pid { get; }
+    AgentExitReason ExitReason { get; }
 
     Task SendPromptAsync(string prompt, CancellationToken ct);
 

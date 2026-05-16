@@ -19,6 +19,35 @@ public class PtyAgentRunnerTests
         if (!(IsWindows)) throw new SkipTestException("ConPTY only on Windows");
     }
 
+    private static void SkipIfPwshUnavailable()
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "pwsh.exe",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-NoLogo");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add("exit 0");
+            using var process = Process.Start(startInfo);
+            if (process is null)
+                throw new InvalidOperationException("pwsh.exe did not start.");
+
+            if (!process.WaitForExit(5_000) || process.ExitCode != 0)
+                throw new InvalidOperationException("pwsh.exe did not exit cleanly.");
+        }
+        catch (Exception ex)
+        {
+            throw new SkipTestException($"pwsh.exe is required for this test: {ex.Message}");
+        }
+    }
+
     // ---------- S01: spawn + capture ----------
 
     [Test]
@@ -113,6 +142,33 @@ public class PtyAgentRunnerTests
         exit1.ShouldBe(7);
         exit2.ShouldBe(7);
         runner.Exited.IsCompleted.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task JobObject_kills_session_when_memory_limit_exceeded()
+    {
+        SkipIfNotWindows();
+        SkipIfPwshUnavailable();
+        await using var runner = new PtyAgentRunner();
+        using var script = new TempPowerShellScript("""
+            $chunks = [System.Collections.Generic.List[byte[]]]::new()
+            while ($true) {
+                $chunks.Add([byte[]]::new(16777216))
+                Start-Sleep -Milliseconds 10
+            }
+            """);
+        using var bat = new TempBatch(
+            "@echo off\r\n"
+            + "ping -n 2 127.0.0.1 > nul\r\n"
+            + $"pwsh.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File \"{script.Path}\"\r\n"
+            + "exit /b %ERRORLEVEL%\r\n");
+
+        await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path }, memoryLimitMb: 256);
+
+        var completed = await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(45)));
+
+        completed.ShouldBe(runner.Exited);
+        runner.ExitReason.ShouldBe(PtyExitReason.MemoryKilled);
     }
 
     [Test]

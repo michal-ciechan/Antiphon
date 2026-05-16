@@ -15,6 +15,8 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentSessionService
 {
+    private const string MemoryKilledFailureReason = "MemoryKilled: agent exceeded the configured memory limit.";
+
     private readonly AppDbContext _db;
     private readonly IWorktreeManager _worktreeManager;
     private readonly WorkspaceHookService _hookService;
@@ -138,7 +140,8 @@ public sealed class AgentSessionService
             {
                 Cwd = worktree.Path,
                 Cols = request.Cols,
-                Rows = request.Rows
+                Rows = request.Rows,
+                MemoryLimitMb = _settings.MemoryLimitMb
             };
             await adapter.StartAsync(spec, ct);
 
@@ -172,20 +175,27 @@ public sealed class AgentSessionService
             session.LastSeenAt = UtcNow();
             if (!firstDeltaReceived)
             {
-                RunAttemptStateMachine.Transition(attempt, RunPhase.TimedOut, UtcNow());
-                session.Status = SessionStatus.Failed;
-                session.FailureReason = "Timed out waiting for first agent output.";
-                session.EndedAt = UtcNow();
-                await _runtime.KillAsync(
-                    session.Id,
-                    TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
-                    ct);
-                await _runtime.DisposeSessionAsync(session.Id);
+                if (!await TryMarkMemoryKilledAsync(session, attempt, adapter))
+                {
+                    RunAttemptStateMachine.Transition(attempt, RunPhase.TimedOut, UtcNow());
+                    session.Status = SessionStatus.Failed;
+                    session.FailureReason = "Timed out waiting for first agent output.";
+                    session.EndedAt = UtcNow();
+                    await _runtime.KillAsync(
+                        session.Id,
+                        TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
+                        ct);
+                    await _runtime.DisposeSessionAsync(session.Id);
+                }
             }
             else
             {
                 var turn = await adapter.WaitForTurnCompleteAsync(ct);
-                if (turn.TurnCompleted)
+                if (await TryMarkMemoryKilledAsync(session, attempt, adapter))
+                {
+                    // Persisted below.
+                }
+                else if (turn.TurnCompleted)
                 {
                     RunAttemptStateMachine.Transition(attempt, RunPhase.Finishing, UtcNow());
                     await _db.SaveChangesAsync(ct);
@@ -251,18 +261,25 @@ public sealed class AgentSessionService
             TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
             ct);
 
-        session.Status = killed ? SessionStatus.Stopped : SessionStatus.Failed;
-        session.EndedAt = UtcNow();
-        session.LastSeenAt = session.EndedAt.Value;
-        session.FailureReason = killed ? null : "Agent process did not exit within the configured grace period.";
-
+        var exitReason = AgentExitReason.Unknown;
         if (_runtime.TryRemove(sessionId, out var adapter) && adapter is not null)
         {
+            exitReason = adapter.ExitReason;
             if (adapter.Exited.IsCompletedSuccessfully)
                 session.ExitCode = adapter.Exited.Result;
 
             await adapter.DisposeAsync();
         }
+
+        var memoryKilled = exitReason == AgentExitReason.MemoryKilled;
+        session.Status = memoryKilled
+            ? SessionStatus.Failed
+            : killed ? SessionStatus.Stopped : SessionStatus.Failed;
+        session.EndedAt = UtcNow();
+        session.LastSeenAt = session.EndedAt.Value;
+        session.FailureReason = memoryKilled
+            ? MemoryKilledFailureReason
+            : killed ? null : "Agent process did not exit within the configured grace period.";
 
         var attempt = await _db.RunAttempts
             .Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null)
@@ -272,11 +289,12 @@ public sealed class AgentSessionService
         {
             RunAttemptStateMachine.Transition(
                 attempt,
-                killed ? RunPhase.Canceled : RunPhase.Failed,
+                memoryKilled ? RunPhase.Failed : killed ? RunPhase.Canceled : RunPhase.Failed,
                 UtcNow());
             attempt.ExitCode = session.ExitCode;
-            attempt.ErrorDetails = killed
-                ? "Agent session was killed by request."
+            attempt.ErrorDetails = memoryKilled
+                ? MemoryKilledFailureReason
+                : killed ? "Agent session was killed by request."
                 : session.FailureReason;
         }
 
@@ -502,6 +520,29 @@ public sealed class AgentSessionService
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private async Task<bool> TryMarkMemoryKilledAsync(
+        AgentSession session,
+        RunAttempt attempt,
+        IAgentProtocolAdapter adapter)
+    {
+        if (adapter.ExitReason != AgentExitReason.MemoryKilled)
+            return false;
+
+        if (!RunAttemptStateMachine.IsTerminal(attempt.Phase))
+            RunAttemptStateMachine.Transition(attempt, RunPhase.Failed, UtcNow());
+
+        session.Status = SessionStatus.Failed;
+        session.EndedAt = UtcNow();
+        session.LastSeenAt = session.EndedAt.Value;
+        session.FailureReason = MemoryKilledFailureReason;
+        if (adapter.Exited.IsCompletedSuccessfully)
+            session.ExitCode = adapter.Exited.Result;
+        attempt.ExitCode = session.ExitCode;
+        attempt.ErrorDetails = MemoryKilledFailureReason;
+        await _runtime.DisposeSessionAsync(session.Id);
+        return true;
+    }
 
     private async Task ResizeAndPersistAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
     {

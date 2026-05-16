@@ -12,6 +12,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public Task<int> Exited => _exit.Task;
     public int? Pid => 1234;
+    public AgentExitReason ExitReason { get; set; } = AgentExitReason.Unknown;
+    public int ExitCode { get; set; }
     public string? AuditDirectory => null;
     public string StartupOutput { get; set; } = string.Empty;
     public string NoiseDuringSendPrompt { get; set; } = string.Empty;
@@ -25,6 +27,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public string SentPrompt { get; private set; } = string.Empty;
     public int Cols { get; private set; }
     public int Rows { get; private set; }
+    public int MemoryLimitMb { get; private set; }
     public bool Started { get; private set; }
     public bool Killed { get; private set; }
     public bool Disposed { get; private set; }
@@ -37,6 +40,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         Started = true;
         Cols = spec.Cols;
         Rows = spec.Rows;
+        MemoryLimitMb = spec.MemoryLimitMb;
         Emit(StartupOutput);
         return Task.CompletedTask;
     }
@@ -45,7 +49,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     {
         Killed = true;
         if (KillResult)
-            _exit.TrySetResult(0);
+            _exit.TrySetResult(ExitCode);
 
         return Task.FromResult(KillResult);
     }
@@ -99,8 +103,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public Task<bool> WaitForReadyAsync(CancellationToken ct) => Task.FromResult(ReadyResult);
 
-    public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) =>
-        Task.FromResult(new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput()));
+    public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
+    {
+        if (ExitReason != AgentExitReason.Unknown)
+            _exit.TrySetResult(ExitCode);
+
+        return Task.FromResult(new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput()));
+    }
 
     public string SnapshotRawOutput() => _rawOutput.ToString();
 

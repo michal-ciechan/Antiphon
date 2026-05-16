@@ -129,6 +129,18 @@ public sealed class AgentSessionRuntime
         return false;
     }
 
+    public bool TryGetLiveMetadata(Guid sessionId, out AgentSessionLiveMetadata metadata)
+    {
+        if (_sessions.TryGetValue(sessionId, out var session))
+        {
+            metadata = new AgentSessionLiveMetadata(sessionId, session.DeltaSequence);
+            return true;
+        }
+
+        metadata = default!;
+        return false;
+    }
+
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
         var session = GetSession(sessionId);
@@ -409,6 +421,8 @@ public sealed record AgentSessionLiveSnapshot(
     string RenderedScreen,
     string Buffer,
     long LastSequence);
+
+public sealed record AgentSessionLiveMetadata(Guid SessionId, long LastSequence);
 
 public static class AgentSessionGroups
 {
