@@ -201,6 +201,44 @@ public class GitService : IGitService
         return result;
     }
 
+    public async Task<string> GetWorktreeDiffAsync(string baseRef, string worktreePath, CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Computing worktree diff: {Base} against {WorktreePath}",
+            baseRef,
+            worktreePath);
+
+        var trackedDiff = await RunGitAsync(worktreePath, $"diff --find-renames {baseRef}", ct);
+        var untrackedDiff = await GetUntrackedFilesDiffAsync(worktreePath, ct);
+        if (string.IsNullOrWhiteSpace(trackedDiff))
+            return untrackedDiff;
+        if (string.IsNullOrWhiteSpace(untrackedDiff))
+            return trackedDiff;
+
+        return trackedDiff.TrimEnd() + Environment.NewLine + untrackedDiff;
+    }
+
+    public async Task<bool> CommitAllChangesAsync(string worktreePath, string message, CancellationToken ct)
+    {
+        var status = await RunGitAsync(worktreePath, "status --porcelain", ct);
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            _logger.LogInformation("No pending worktree changes to commit in {WorktreePath}", worktreePath);
+            return false;
+        }
+
+        await RunGitAsync(worktreePath, "add -A", ct);
+        var staged = await RunGitAsync(worktreePath, "diff --cached --name-only", ct);
+        if (string.IsNullOrWhiteSpace(staged))
+        {
+            _logger.LogInformation("No staged worktree changes to commit in {WorktreePath}", worktreePath);
+            return false;
+        }
+
+        await RunGitAsync(worktreePath, BuildCommitArgs(message), ct);
+        return true;
+    }
+
     public async Task<string?> FindAgentBranchAsync(string repoPath, CancellationToken ct)
     {
         // Find the most recent commit authored by the Antiphon agent across all remote branches.
@@ -267,7 +305,12 @@ public class GitService : IGitService
     {
         // Git trailers are added as key-value pairs in the commit message body.
         // The [antiphon] trailer identifies system-generated commits (FR30, FR66).
-        return $"commit -m \"{subject}\" --trailer \"antiphon=true\"";
+        var sanitizedSubject = subject
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Trim();
+        return $"commit -m \"{sanitizedSubject}\" --trailer \"antiphon=true\"";
     }
 
     /// <summary>
@@ -373,6 +416,49 @@ public class GitService : IGitService
 
         await Task.WhenAll(stdoutTask, stderrTask);
         return (process.ExitCode, stdoutBuilder.ToString(), stderrBuilder.ToString());
+    }
+
+    private async Task<string> GetUntrackedFilesDiffAsync(string worktreePath, CancellationToken ct)
+    {
+        var untracked = await RunGitAsync(worktreePath, "ls-files --others --exclude-standard", ct);
+        var files = untracked
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(file => !string.IsNullOrWhiteSpace(file))
+            .ToList();
+        if (files.Count == 0)
+            return string.Empty;
+
+        var diff = new StringBuilder();
+        foreach (var relativePath in files)
+        {
+            ct.ThrowIfCancellationRequested();
+            var normalizedPath = relativePath.Replace('\\', '/');
+            var fullPath = Path.GetFullPath(Path.Combine(worktreePath, relativePath));
+            if (!File.Exists(fullPath))
+                continue;
+
+            var content = await File.ReadAllTextAsync(fullPath, ct);
+            if (content.Contains('\0', StringComparison.Ordinal))
+                continue;
+
+            var normalizedContent = content
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n');
+            var lines = normalizedContent.Length == 0
+                ? Array.Empty<string>()
+                : normalizedContent.TrimEnd('\n').Split('\n');
+
+            diff.AppendLine($"diff --git a/{normalizedPath} b/{normalizedPath}");
+            diff.AppendLine("new file mode 100644");
+            diff.AppendLine("index 0000000..0000000");
+            diff.AppendLine("--- /dev/null");
+            diff.AppendLine($"+++ b/{normalizedPath}");
+            diff.AppendLine($"@@ -0,0 +1,{lines.Length} @@");
+            foreach (var line in lines)
+                diff.Append('+').AppendLine(line);
+        }
+
+        return diff.ToString();
     }
 
     private static async Task ReadStreamAsync(StreamReader reader, StringBuilder builder, CancellationToken ct)

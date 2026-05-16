@@ -111,6 +111,48 @@ export interface SpawnCardResult {
   sessionId: string
 }
 
+export interface CardDiffFileDto {
+  filename: string
+  additions: number
+  deletions: number
+  patch: string
+}
+
+export interface CardDiffDto {
+  baseBranch: string
+  headBranch: string
+  files: CardDiffFileDto[]
+  prNumber?: number | null
+  prUrl?: string | null
+  prTitle?: string | null
+  prState?: string | null
+}
+
+export interface CardCommentRequest {
+  message: string
+  filePath?: string | null
+  line?: number | null
+  side?: 'old' | 'new' | 'context' | null
+}
+
+export interface CardCommentResult {
+  cardId: string
+  sessionId: string
+  formattedMessage: string
+}
+
+export interface CardPullRequestResult {
+  cardId: string
+  prNumber: number
+  owner: string
+  repo: string
+  branch: string
+  baseBranch: string
+  prUrl: string | null
+  prState: string | null
+  created: boolean
+}
+
 export interface BoardWorkflowDto {
   boardId: string
   definitionId: string | null
@@ -129,6 +171,7 @@ export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
   workflow: (id: string) => ['boards', id, 'workflow'] as const,
+  cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
 }
 
 export function useBoards() {
@@ -211,6 +254,38 @@ export function useSpawnCard(boardId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
+    },
+  })
+}
+
+export function useCardDiff(cardId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: cardId ? boardKeys.cardDiff(cardId) : ['cards', 'missing', 'diff'],
+    queryFn: () => apiGet<CardDiffDto>(`/cards/${cardId}/diff`),
+    enabled: !!cardId && enabled,
+    retry: 1,
+    staleTime: 30_000,
+  })
+}
+
+export function usePostCardComment(boardId: string, cardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: CardCommentRequest) =>
+      apiPost<CardCommentResult>(`/cards/${cardId}/comments`, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+    },
+  })
+}
+
+export function useOpenCardPullRequest(boardId: string, cardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<CardPullRequestResult>(`/cards/${cardId}/pr`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.cardDiff(cardId) })
     },
   })
 }

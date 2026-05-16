@@ -27,5 +27,30 @@ public static class CardEndpoints
         {
             return Results.Accepted($"/api/cards/{id}", await service.SpawnAsync(id, request, cancellationToken));
         });
+
+        cards.MapGet("/{id:guid}/diff", async (
+            Guid id,
+            CardReviewService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetDiffAsync(id, cancellationToken));
+        });
+
+        cards.MapPost("/{id:guid}/comments", async (
+            Guid id,
+            CardCommentRequest request,
+            CardReviewService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Accepted($"/api/cards/{id}", await service.PostCommentAsync(id, request, cancellationToken));
+        });
+
+        cards.MapPost("/{id:guid}/pr", async (
+            Guid id,
+            CardReviewService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.OpenPullRequestAsync(id, cancellationToken));
+        });
     }
 }

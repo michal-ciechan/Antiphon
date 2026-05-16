@@ -5,6 +5,7 @@ import { TbPlayerPlay } from 'react-icons/tb'
 import type { CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
 import { AgentPicker } from './AgentPicker'
+import { DiffReview } from './DiffReview'
 import { SessionTabs } from './SessionTabs'
 
 interface CardModalProps {
@@ -24,6 +25,7 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
       || session.status === 'Stopping') ?? false,
     [card?.sessions],
   )
+  const showDiffReview = !!card?.currentWorktreeId && (card.status === 'Review' || card.status === 'Done')
 
   if (!card) return null
 
@@ -78,6 +80,13 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
         <Text size="sm" c={card.description ? undefined : 'dimmed'} style={{ whiteSpace: 'pre-wrap' }}>
           {card.description || 'No description'}
         </Text>
+
+        {showDiffReview && (
+          <>
+            <Divider />
+            <DiffReview boardId={boardId} card={card} />
+          </>
+        )}
 
         <Divider />
 

@@ -58,6 +58,17 @@ public interface IGitService
     Task<string> GetBranchDiffAsync(string baseBranch, string headBranch, string repoPath, CancellationToken ct);
 
     /// <summary>
+    /// Returns the diff between a base ref and the current worktree state, including uncommitted changes.
+    /// </summary>
+    Task<string> GetWorktreeDiffAsync(string baseRef, string worktreePath, CancellationToken ct);
+
+    /// <summary>
+    /// Stages all pending worktree changes and commits them if there is anything to commit.
+    /// Returns true when a commit was created.
+    /// </summary>
+    Task<bool> CommitAllChangesAsync(string worktreePath, string message, CancellationToken ct);
+
+    /// <summary>
     /// Finds the remote branch containing the most recent commit authored by the Antiphon agent.
     /// Returns the branch name (e.g. "origin/feature/antiphon-documentation") or null if not found.
     /// Used as a fallback when workflow.GitBranchName doesn't exist in the remote.

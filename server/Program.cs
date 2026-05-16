@@ -122,6 +122,7 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddScoped<CardReviewService>();
     builder.Services.AddSingleton<MentionScanner>();
     builder.Services.AddScoped<AgentChannelService>();
     builder.Services.AddSingleton<AgentMentionRouter>();

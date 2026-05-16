@@ -4,6 +4,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Antiphon.E2E.Fixtures;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using Shouldly;
 using TUnit.Core;
@@ -299,6 +302,76 @@ public class BoardE2ETests
         }
     }
 
+    [Test]
+    public async Task Board_user_can_review_real_worktree_diff_and_send_inline_comment()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repoPath = await CreateLocalGitRepositoryAsync();
+        var projectId = await CreateProjectAsync($"E12 Review Project {suffix}", repoPath);
+        var boardId = await CreateBoardAsync(projectId, $"E12 Review Board {suffix}");
+        var board = await GetBoardAsync(boardId);
+        var reviewColumnId = GetColumnId(board, "review");
+        var cardTitle = $"E12 Review Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, reviewColumnId, cardTitle);
+        var sessionId = await SpawnCardAsync(cardId);
+        await WaitForSessionRunningAsync(boardId, sessionId);
+        await MoveCardAsync(boardId, cardId, reviewColumnId);
+
+        var worktreePath = await GetCurrentWorktreePathAsync(cardId);
+        await File.AppendAllTextAsync(Path.Combine(worktreePath, "README.md"), $"changed {suffix}\n");
+        await File.WriteAllTextAsync(Path.Combine(worktreePath, "new-file.txt"), $"untracked {suffix}\n");
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByText("Diff review")).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
+            {
+                Timeout = 15_000
+            });
+            await Expect(dialog.GetByText($"+changed {suffix}")).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions
+            {
+                NameRegex = new Regex("^new-file\\.txt")
+            })).ToBeVisibleAsync();
+            await Expect(dialog.GetByText($"+untracked {suffix}")).ToBeVisibleAsync();
+
+            await dialog.GetByLabel("Comment on README.md new line 2").ClickAsync();
+            await dialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions
+            {
+                Name = "Comment for README.md new line 2"
+            }).FillAsync("Please verify this E12 change.");
+            var commentResponse = await page.RunAndWaitForResponseAsync(
+                () => dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions
+                {
+                    Name = "Send comment for README.md new line 2"
+                }).ClickAsync(),
+                response => response.Url.Contains($"/api/cards/{cardId}/comments", StringComparison.Ordinal)
+                    && response.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
+            commentResponse.Status.ShouldBe(202);
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
     private async Task<Guid> CreateProjectAsync(string name, string? localRepositoryPath = null)
     {
         var response = await _appFixture.HttpClient.PostAsJsonAsync(
@@ -361,7 +434,7 @@ public class BoardE2ETests
         throw new TimeoutException($"Workflow content for board {boardId} did not contain '{expectedText}'.");
     }
 
-    private async Task CreateCardAsync(Guid boardId, Guid? boardColumnId, string title)
+    private async Task<Guid> CreateCardAsync(Guid boardId, Guid? boardColumnId, string title)
     {
         var response = await _appFixture.HttpClient.PostAsJsonAsync(
             $"/api/boards/{boardId}/cards",
@@ -374,6 +447,104 @@ public class BoardE2ETests
             },
             JsonOptions);
         response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        return body.GetProperty("id").GetGuid();
+    }
+
+    private async Task<Guid> SpawnCardAsync(Guid cardId)
+    {
+        var response = await _appFixture.HttpClient.PostAsJsonAsync(
+            $"/api/cards/{cardId}/spawn",
+            new
+            {
+                prompt = "echo E12 review target ready",
+                cols = 100,
+                rows = 24
+            },
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        return body.GetProperty("sessionId").GetGuid();
+    }
+
+    private async Task MoveCardAsync(Guid boardId, Guid cardId, Guid boardColumnId)
+    {
+        var board = await GetBoardAsync(boardId);
+        var card = FindCard(board, cardId);
+        var response = await _appFixture.HttpClient.PatchAsJsonAsync(
+            $"/api/cards/{cardId}",
+            new
+            {
+                boardColumnId,
+                concurrencyToken = card.GetProperty("concurrencyToken").GetString()
+            },
+            JsonOptions);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private async Task WaitForSessionRunningAsync(Guid boardId, Guid sessionId)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var board = await GetBoardAsync(boardId);
+            foreach (var column in board.GetProperty("columns").EnumerateArray())
+            {
+                foreach (var card in column.GetProperty("cards").EnumerateArray())
+                {
+                    foreach (var session in card.GetProperty("sessions").EnumerateArray())
+                    {
+                        if (session.GetProperty("id").GetGuid() != sessionId)
+                            continue;
+
+                        var status = session.GetProperty("status").GetString();
+                        if (string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase))
+                            return;
+                    }
+                }
+            }
+
+            await Task.Delay(250);
+        }
+
+        throw new TimeoutException($"Session {sessionId} did not reach Running status.");
+    }
+
+    private async Task<string> GetCurrentWorktreePathAsync(Guid cardId)
+    {
+        using var scope = _appFixture.Services.CreateScope();
+        await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var card = await db.Cards
+            .Include(c => c.CurrentWorktree)
+            .SingleAsync(c => c.Id == cardId);
+
+        return card.CurrentWorktree?.Path
+            ?? throw new InvalidOperationException($"Card {cardId} has no current worktree.");
+    }
+
+    private static Guid GetColumnId(JsonElement board, string stateKey)
+    {
+        return board.GetProperty("columns")
+            .EnumerateArray()
+            .Single(column => column.GetProperty("stateKey").GetString() == stateKey)
+            .GetProperty("id")
+            .GetGuid();
+    }
+
+    private static JsonElement FindCard(JsonElement board, Guid cardId)
+    {
+        foreach (var column in board.GetProperty("columns").EnumerateArray())
+        {
+            foreach (var card in column.GetProperty("cards").EnumerateArray())
+            {
+                if (card.GetProperty("id").GetGuid() == cardId)
+                    return card;
+            }
+        }
+
+        throw new InvalidOperationException($"Board payload does not contain card {cardId}.");
     }
 
     private async Task<string> CreateLocalGitRepositoryAsync()

@@ -66,6 +66,18 @@ public class MockGitService : IGitService
         return Task.FromResult($"diff {baseBranch}...{headBranch}");
     }
 
+    public Task<string> GetWorktreeDiffAsync(string baseRef, string worktreePath, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("GetWorktreeDiff", Guid.Empty, null, baseRef, worktreePath));
+        return Task.FromResult($"diff --git a/README.md b/README.md\n+changed from {baseRef}");
+    }
+
+    public Task<bool> CommitAllChangesAsync(string worktreePath, string message, CancellationToken ct)
+    {
+        _operations.Add(new GitOperation("CommitAllChanges", Guid.Empty, null, message, worktreePath));
+        return Task.FromResult(true);
+    }
+
     public Task<string?> FindAgentBranchAsync(string repoPath, CancellationToken ct)
     {
         _operations.Add(new GitOperation("FindAgentBranch", Guid.Empty, null, null, repoPath));
