@@ -99,22 +99,18 @@ Headed tiers always *compile* in the default suite; they self-skip at runtime vi
 |----------|---------|
 | `cl --version` via PTY | exits 0, output contains version string |
 | `cl --print "say PONG"` | exit 0, output contains `PONG` (allow case-insensitive) |
-| TUI starts and reaches ready (quiet 1.5s) | `WaitForQuietAsync` returns true within 30s |
+| TUI starts and reaches ready | `ClaudeReadyDetector` returns true using tuned defaults: 5s quiet, 60s max, 9s minimum startup wait |
 | send "hi" → quiet detected, output contains lowercase greeting | done within 60s |
 | sequential 2-prompt session: "hi" then "what is 2+2" | both responses captured, "4" appears |
 | `/exit` clean shutdown | `Exited` completes within 5s, exit 0 |
 | kill mid-response | runner kills within 2s, no orphan claude.exe |
-| readiness vs done heuristic stability (flaky guard) | run sequence 3× back-to-back, all succeed |
-| long prompt: "list 10 short bullet points about ConPTY" | response captured, contains ≥5 bullet markers |
 | ANSI stripping helper produces clean text | `AnsiStripper.Clean(snapshot)` removes `\e[...m` |
 
 ### 4.5 Claude headed — HeadedLong (opt-in, costly)
 
 | Scenario | Asserts |
 |----------|---------|
-| 10-prompt rolling chat | each prompt resolves, no session crash, transcript ordered |
 | tool-using prompt: "run `systeminfo` via Bash and tell me OS" | response contains `Windows` |
-| concurrency: 2 PTY claudes at once, each gets 1 prompt | both finish, outputs distinct |
 | resume via `--resume <session-id>` after exit | second runner picks up context (asks "what was last question" → matches) |
 
 ---

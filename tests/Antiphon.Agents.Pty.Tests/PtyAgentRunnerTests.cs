@@ -245,19 +245,52 @@ public class PtyAgentRunnerTests
     {
         SkipIfNotWindows();
         await using var runner = new PtyAgentRunner();
-        await runner.StartAsync("pwsh.exe", new[] { "-NoProfile", "-NoLogo" });
-        await runner.WaitForOutputAsync(s => s.Contains(">"), TimeSpan.FromSeconds(10));
+        await runner.StartAsync(
+            "pwsh.exe",
+            new[]
+            {
+                "-NoProfile",
+                "-NoLogo",
+                "-Command",
+                "$line=[Console]::In.ReadLine(); Write-Output $line.Length"
+            });
 
-        var big = new string('x', 60_000); // < 64KB pipe buffer; stays a single write
+        var big = new string('x', 65_536);
         runner.ClearLiveBuffer();
-        await runner.WriteAsync($"'{big}'.Length\r");
+        await runner.WriteAsync($"{big}\r");
 
         var matched = await runner.WaitForOutputAsync(
-            s => s.Contains("60000"), TimeSpan.FromSeconds(30));
+            s => s.Contains("65536"), TimeSpan.FromSeconds(30));
         matched.ShouldBeTrue();
 
-        await runner.SendLineAsync("exit");
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task Concurrent_SendLineAsync_calls_do_not_corrupt_child_input()
+    {
+        SkipIfNotWindows();
+        await using var runner = new PtyAgentRunner();
+        await runner.StartAsync(
+            "pwsh.exe",
+            new[]
+            {
+                "-NoProfile",
+                "-NoLogo",
+                "-Command",
+                "while (($line = [Console]::In.ReadLine()) -ne 'DONE') { Write-Output \"OUT:$line\" }"
+            });
+
+        var messages = Enumerable.Range(1, 10)
+            .Select(i => $"MSG-{i:00}")
+            .ToArray();
+        await Task.WhenAll(messages.Select(message => runner.SendLineAsync(message)));
+        await runner.SendLineAsync("DONE");
+        await runner.Exited.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var output = runner.SnapshotText();
+        foreach (var message in messages)
+            output.ShouldContain($"OUT:{message}");
     }
 
     // ---------- S04: resize ----------
@@ -366,6 +399,16 @@ public class PtyAgentRunnerTests
             s => s.Contains("NEVER"), TimeSpan.FromSeconds(30), cts.Token);
         sw.Stop();
         result.ShouldBeFalse();
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+
+        using var quietCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        sw.Restart();
+        var quiet = await runner.WaitForQuietAsync(
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            quietCts.Token);
+        sw.Stop();
+        quiet.ShouldBeFalse();
         sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));

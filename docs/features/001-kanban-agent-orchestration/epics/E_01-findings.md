@@ -95,7 +95,7 @@ Wrapped in `ClaudeReadyDetector` and `ClaudeDoneDetector` so call sites don't tu
 ### 6.1 Spawn-dispose × 50 (test S08)
 
 Measured on Win11 26100, .NET 9.0.14:
-- `conhost.exe` count delta: **0–2** (well under 10 threshold)
+- `conhost.exe` count delta: **0–2** (under the <5 threshold)
 - handle count delta: **<200** (under 500 threshold)
 - No `claude.exe` orphans (when running with cl.bat parent)
 

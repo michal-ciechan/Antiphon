@@ -47,8 +47,8 @@ public class PtyStressTests
         int conhostDelta = conhostAfter - conhostBefore;
         int handleDelta = handleAfter - handleBefore;
 
-        // Allow some noise: other tools spawn conhost; handles fluctuate via runtime + xunit.
-        conhostDelta.ShouldBeLessThan(10,
+        // Allow some noise: other tools spawn conhost; handles fluctuate via runtime + TUnit.
+        conhostDelta.ShouldBeLessThan(5,
             $"conhost.exe count must not climb significantly. before={conhostBefore} after={conhostAfter}");
         handleDelta.ShouldBeLessThan(500,
             $"handle count must not climb. before={handleBefore} after={handleAfter}");

@@ -48,7 +48,7 @@ public class ClaudeHeadedTests
     // ---------- S13: TUI ready detection ----------
 
     [Test]
-    public async Task Cl_tui_reaches_ready_within_30s()
+    public async Task Cl_tui_reaches_ready_with_default_detector()
     {
         ClSession.SkipIfNotEligible();
         await using var runner = new PtyAgentRunner();

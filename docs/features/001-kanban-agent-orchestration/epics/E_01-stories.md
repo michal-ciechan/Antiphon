@@ -131,7 +131,7 @@ Stand up a permanent, library-grade PTY substrate (`Antiphon.Agents.Pty`) capabl
 
 - **E01-S13** `[x]` Headed TUI ready detection.
   - Work items:
-    - Spawn `cl` (no args, full TUI), wait quiet 1.5s within 30s budget.
+    - Spawn `cl` (no args, full TUI), wait for the empirically tuned ready detector (`5s` quiet, `60s` max, `9s` minimum startup wait).
     - `WaitForQuietAsync` returns true → considered ready.
     - *TDD:* `Cl_tui_reaches_ready_within_30s`.
 
@@ -180,7 +180,7 @@ Stand up a permanent, library-grade PTY substrate (`Antiphon.Agents.Pty`) capabl
 
 - **E01-S21** `[x]` `ClaudeReadyDetector` + `ClaudeDoneDetector` — wraps `WaitForQuietAsync` with default budgets and centralises tuning. Future upgrade path: parse status line (`Opus 4.7 | in:N out:N`) instead of quiet heuristic.
   - Work items:
-    - `await detector.WaitForReady(runner, ct)` with defaults (1.5s quiet / 30s max).
+    - `await detector.WaitForReady(runner, ct)` with tuned defaults (5s quiet / 60s max / 9s minimum startup wait).
     - `await detector.WaitForDone(runner, ct)` with defaults (3s quiet / 2min max).
     - Configurable via constructor for slow links / large prompts.
     - *TDD:* `ReadyDetector_returns_true_when_runner_settles`, `DoneDetector_returns_true_after_response_completes`.

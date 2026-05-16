@@ -10,6 +10,7 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     private Task? _readTask;
     private readonly StringBuilder _liveBuffer = new();
     private readonly object _bufferLock = new();
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly TaskCompletionSource<int> _exitTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private PtySessionAudit? _audit;
     private DateTime _startedAt;
@@ -92,20 +93,33 @@ public sealed class PtyAgentRunner : IAsyncDisposable
 
     public async Task WriteAsync(string data, CancellationToken ct = default)
     {
-        if (_conn is null) throw new InvalidOperationException("Not started");
-        var bytes = Encoding.UTF8.GetBytes(data);
-        await _conn.WriterStream.WriteAsync(bytes.AsMemory(), ct);
-        await _conn.WriterStream.FlushAsync(ct);
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            await WriteCoreAsync(data, ct);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     public async Task SendLineAsync(string line, CancellationToken ct = default)
     {
-        await WriteAsync(line, ct);
-        // Flush the message text first, then send Enter in a separate write.
-        // ConPTY may drop the trailing \r if the entire line + Enter is sent as one
-        // large chunk that exceeds its internal input-record queue capacity.
-        await Task.Delay(20, ct);
-        await WriteAsync("\r", ct);
+        await _writeGate.WaitAsync(ct);
+        try
+        {
+            await WriteCoreAsync(line, ct);
+            // Flush the message text first, then send Enter in a separate write.
+            // ConPTY may drop the trailing \r if the entire line + Enter is sent as one
+            // large chunk that exceeds its internal input-record queue capacity.
+            await Task.Delay(20, ct);
+            await WriteCoreAsync("\r", ct);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     public string SnapshotText()
@@ -184,7 +198,8 @@ public sealed class PtyAgentRunner : IAsyncDisposable
 
         while (DateTime.UtcNow < deadline)
         {
-            await Task.Delay(50, ct);
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
             int curLen;
             lock (_bufferLock) curLen = _liveBuffer.Length;
             if (curLen != lastLen)
@@ -224,7 +239,16 @@ public sealed class PtyAgentRunner : IAsyncDisposable
         }
         _conn?.Dispose();
         _readCts?.Dispose();
+        _writeGate.Dispose();
         if (_audit is not null) await _audit.DisposeAsync();
+    }
+
+    private async Task WriteCoreAsync(string data, CancellationToken ct)
+    {
+        if (_conn is null) throw new InvalidOperationException("Not started");
+        var bytes = Encoding.UTF8.GetBytes(data);
+        await _conn.WriterStream.WriteAsync(bytes.AsMemory(), ct);
+        await _conn.WriterStream.FlushAsync(ct);
     }
 
 }
