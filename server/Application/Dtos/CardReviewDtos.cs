@@ -4,7 +4,8 @@ public sealed record CardCommentRequest(
     string Message,
     string? FilePath = null,
     int? Line = null,
-    string? Side = null);
+    string? Side = null,
+    int? EndLine = null);
 
 public sealed record CardCommentResult(
     Guid CardId,

@@ -133,6 +133,7 @@ export interface CardCommentRequest {
   filePath?: string | null
   line?: number | null
   side?: 'old' | 'new' | 'context' | null
+  endLine?: number | null
 }
 
 export interface CardCommentResult {

@@ -21,6 +21,10 @@ Failed launches release the claim and leave the card in its current workflow col
 
 Moving a card to a terminal column while a session is active stops the session and clears the claim.
 
+## Diff Review Comments
+
+Review comments from the card diff include the card identifier, file path, side, and selected line or line range before the comment text. The UI selects a single line from its comment action and extends same-file, same-side selections with Shift-click. If a matching agent session is running, the comment is sent to that session as channel input. If no agent session is running, Antiphon starts a new interactive agent session on the card with the review comment as the launch prompt.
+
 ## Review Column
 
 The success transition targets the first board column whose `CardStatus` is `Review`, ordered by `ColumnOrder`. If a board has no review column, or if the card has already reached a terminal column, completion does not move the card.

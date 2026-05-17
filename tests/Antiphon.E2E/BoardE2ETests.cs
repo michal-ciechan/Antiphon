@@ -318,7 +318,7 @@ public class BoardE2ETests
         await MoveCardAsync(boardId, cardId, reviewColumnId);
 
         var worktreePath = await GetCurrentWorktreePathAsync(cardId);
-        await File.AppendAllTextAsync(Path.Combine(worktreePath, "README.md"), $"changed {suffix}\n");
+        await File.AppendAllTextAsync(Path.Combine(worktreePath, "README.md"), $"changed {suffix}\nchanged again {suffix}\n");
         await File.WriteAllTextAsync(Path.Combine(worktreePath, "new-file.txt"), $"untracked {suffix}\n");
 
         var (page, context) = await _playwrightFixture.NewPageAsync();
@@ -350,18 +350,31 @@ public class BoardE2ETests
             await Expect(dialog.GetByText($"+untracked {suffix}")).ToBeVisibleAsync();
 
             await dialog.GetByLabel("Comment on README.md new line 2").ClickAsync();
+            await page.Keyboard.DownAsync("Shift");
+            try
+            {
+                await dialog.GetByLabel("Comment on README.md new line 3").ClickAsync();
+            }
+            finally
+            {
+                await page.Keyboard.UpAsync("Shift");
+            }
             await dialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions
             {
-                Name = "Comment for README.md new line 2"
-            }).FillAsync("Please verify this E12 change.");
+                Name = "Comment for README.md new lines 2-3"
+            }).FillAsync("Please verify this E12 range.");
             var commentResponse = await page.RunAndWaitForResponseAsync(
                 () => dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions
                 {
-                    Name = "Send comment for README.md new line 2"
+                    Name = "Send comment for README.md new lines 2-3"
                 }).ClickAsync(),
                 response => response.Url.Contains($"/api/cards/{cardId}/comments", StringComparison.Ordinal)
                     && response.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
             commentResponse.Status.ShouldBe(202);
+            var commentPostData = commentResponse.Request.PostData;
+            commentPostData.ShouldNotBeNull();
+            commentPostData!.ShouldContain("\"line\":2");
+            commentPostData.ShouldContain("\"endLine\":3");
 
             passed = true;
         }

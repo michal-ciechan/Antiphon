@@ -73,14 +73,26 @@ public sealed class CardReviewService
 
         if (request.Line is <= 0)
             throw new ValidationException(nameof(request.Line), "Review comment line must be positive.");
+        if (request.EndLine is <= 0)
+            throw new ValidationException(nameof(request.EndLine), "Review comment end line must be positive.");
+        if (request.EndLine is not null && request.Line is null)
+            throw new ValidationException(nameof(request.EndLine), "Review comment end line requires a start line.");
+        if (request.Line is int line && request.EndLine is int endLine && endLine < line)
+            throw new ValidationException(nameof(request.EndLine), "Review comment end line must be greater than or equal to the start line.");
         if (NormalizeCommentSide(request.Side) is null && !string.IsNullOrWhiteSpace(request.Side))
             throw new ValidationException(nameof(request.Side), "Review comment side must be old, new, or context.");
 
         var card = await LoadCardAsync(cardId, ct);
-        var target = FindActiveSession(card)
-            ?? throw new ConflictException($"Card '{card.Identifier}' has no running session to receive review comments.");
-
         var message = FormatReviewComment(card, request);
+        var target = FindActiveSession(card);
+        if (target is null)
+        {
+            var result = await _agentChannelService.DelegateCardAsync(
+                new ChannelDelegateCardRequest(card.Id, card.ConcurrencyToken, message),
+                ct);
+            return new CardCommentResult(card.Id, result.SessionId, message);
+        }
+
         await _agentChannelService.SendToSessionAsync(
             sourceSessionId: null,
             target.Id,
@@ -215,6 +227,7 @@ public sealed class CardReviewService
     private async Task<Card> LoadCardAsync(Guid cardId, CancellationToken ct)
     {
         return await _db.Cards
+            .AsNoTracking()
             .Include(c => c.Board).ThenInclude(b => b.Project)
             .Include(c => c.CurrentWorktree)
             .Include(c => c.AgentSessions)
@@ -247,13 +260,21 @@ public sealed class CardReviewService
         if (request.Line is int line)
         {
             var side = NormalizeCommentSide(request.Side);
-            var lineText = side is null ? $"line {line}" : $"{side} line {line}";
+            var lineText = FormatLineReference(side, line, request.EndLine);
             location.Append(location.Length == 0 ? $"{char.ToUpperInvariant(lineText[0])}{lineText[1..]}" : $" {lineText}");
         }
 
         return location.Length == 0
             ? $"Review comment for {card.Identifier}: {request.Message.Trim()}"
             : $"Review comment for {card.Identifier} ({location}): {request.Message.Trim()}";
+    }
+
+    private static string FormatLineReference(string? side, int line, int? endLine)
+    {
+        var normalizedEndLine = endLine.GetValueOrDefault(line);
+        var label = normalizedEndLine == line ? "line" : "lines";
+        var range = normalizedEndLine == line ? $"{line}" : $"{line}-{normalizedEndLine}";
+        return side is null ? $"{label} {range}" : $"{side} {label} {range}";
     }
 
     private static string? NormalizeCommentSide(string? side)

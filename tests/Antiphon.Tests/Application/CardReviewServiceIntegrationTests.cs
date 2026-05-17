@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -87,6 +88,57 @@ public class CardReviewServiceIntegrationTests
             adapter.SentInput.ShouldContain("src/App.tsx new line 42");
             adapter.SentInput.ShouldContain("Please tighten this branch.");
             harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "ChannelMessage");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task CommentApi_without_running_session_spawns_agent_with_line_range_prompt()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+            graph.Card.CurrentWorktreeId = graph.Worktree.Id;
+            await db.SaveChangesAsync();
+
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "COMMENT_ACK" };
+            await using var harness = BuildHarness(
+                db,
+                tempRoot,
+                new MockGitService(),
+                new FakeGitHubService(),
+                adapters: [adapter]);
+
+            var result = await harness.Service.PostCommentAsync(
+                graph.Card.Id,
+                new CardCommentRequest("Please revise this paragraph.", "README.md", 10, "new", 12),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            result.SessionId.ShouldNotBe(Guid.Empty);
+            result.FormattedMessage.ShouldContain("README.md new lines 10-12");
+            adapter.Started.ShouldBeTrue();
+            adapter.SentPrompt.ShouldContain("Review comment for CARD-0001");
+            adapter.SentPrompt.ShouldContain("README.md new lines 10-12");
+            adapter.SentPrompt.ShouldContain("Please revise this paragraph.");
+
+            await using var verify = CreateContext();
+            var card = await verify.Cards
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == graph.Card.Id);
+            card.Status.ShouldBe(CardStatus.Review);
+            card.BoardColumn.StateKey.ShouldBe("review");
+            card.OwnerSessionId.ShouldBe(result.SessionId);
+            var attempt = await verify.RunAttempts.SingleAsync(a => a.CardId == graph.Card.Id);
+            attempt.Phase.ShouldBe(RunPhase.Succeeded);
         }
         finally
         {
@@ -241,7 +293,8 @@ public class CardReviewServiceIntegrationTests
         string tempRoot,
         IGitService gitService,
         IGitHubService gitHubService,
-        bool githubEnabled = true)
+        bool githubEnabled = true,
+        IReadOnlyList<IAgentProtocolAdapter>? adapters = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -253,36 +306,54 @@ public class CardReviewServiceIntegrationTests
         var eventBus = new MockEventBus();
         services.AddSingleton(eventBus);
         services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton(gitService);
+        services.AddSingleton<IGitService>(_ => gitService);
+        services.AddSingleton(gitHubService);
+        services.AddSingleton<IGitHubService>(_ => gitHubService);
+        services.AddSingleton<IOptions<GithubSettings>>(Options.Create(new GithubSettings { Enabled = githubEnabled }));
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings
         {
+            FirstDeltaTimeoutMs = 1_000,
+            KillGraceMs = 100,
+            SignalRMaxChunkChars = 16 * 1024,
+            ReplayBufferMaxChars = 128 * 1024,
             SessionLogPath = Path.Combine(tempRoot, "session-logs")
         }));
+        services.AddSingleton<IOptions<OrchestratorSettings>>(Options.Create(new OrchestratorSettings
+        {
+            InternalTrackerRepositoryPathPrefix = tempRoot
+        }));
+        services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+        {
+            DefaultDefinition = "fake",
+            Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = "fake" } }
+        }));
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
+        services.AddSingleton<IAgentProtocolAdapterFactory>(new QueueAdapterFactory(adapters ?? []));
+        services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
+        services.AddScoped<WorkspaceHookService>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddScoped<AgentSessionService>();
+        services.AddScoped<RetryScheduler>();
+        services.AddScoped<ExternalTrackerSyncService>();
+        services.AddSingleton<OrchestratorControlState>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddScoped<OrchestratorService>();
+        services.AddScoped<CardService>();
+        services.AddScoped<AgentChannelService>();
+        services.AddScoped<CardReviewService>();
         services.AddSingleton(TimeProvider.System);
         services.AddLogging();
         var provider = services.BuildServiceProvider();
-        var runtime = new AgentSessionRuntime(
+        var scope = provider.CreateScope();
+        return new Harness(
+            provider,
+            scope,
+            provider.GetRequiredService<AgentSessionRuntime>(),
+            provider.GetRequiredService<AgentSessionLaunchQueue>(),
             eventBus,
-            Options.Create(new AgentSessionSettings
-            {
-                SessionLogPath = Path.Combine(tempRoot, "session-logs")
-            }),
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            TimeProvider.System,
-            NullLogger<AgentSessionRuntime>.Instance);
-        var channel = new AgentChannelService(
-            db,
-            runtime,
-            cardService: null!,
-            eventBus,
-            NullLogger<AgentChannelService>.Instance);
-        var service = new CardReviewService(
-            db,
-            gitService,
-            gitHubService,
-            channel,
-            Options.Create(new GithubSettings { Enabled = githubEnabled }),
-            NullLogger<CardReviewService>.Instance);
-        return new Harness(provider, runtime, eventBus, service);
+            scope.ServiceProvider.GetRequiredService<CardReviewService>());
     }
 
     private static Graph NewGraph(
@@ -318,13 +389,27 @@ public class CardReviewServiceIntegrationTests
             Project = project
         };
         project.Boards.Add(board);
+        var active = new BoardColumn
+        {
+            Id = Guid.NewGuid(),
+            BoardId = board.Id,
+            StateKey = "in-progress",
+            Name = "In Progress",
+            ColumnOrder = 0,
+            CardStatus = CardStatus.InProgress,
+            IsActive = true,
+            IsTerminal = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Board = board
+        };
         var review = new BoardColumn
         {
             Id = Guid.NewGuid(),
             BoardId = board.Id,
             StateKey = "review",
             Name = "Review",
-            ColumnOrder = 0,
+            ColumnOrder = 1,
             CardStatus = CardStatus.Review,
             IsActive = false,
             IsTerminal = false,
@@ -332,6 +417,7 @@ public class CardReviewServiceIntegrationTests
             UpdatedAt = now,
             Board = board
         };
+        board.Columns.Add(active);
         board.Columns.Add(review);
         var card = new Card
         {
@@ -492,14 +578,83 @@ public class CardReviewServiceIntegrationTests
 
     private sealed record Harness(
         ServiceProvider Provider,
+        IServiceScope Scope,
         AgentSessionRuntime Runtime,
+        AgentSessionLaunchQueue LaunchQueue,
         MockEventBus EventBus,
         CardReviewService Service) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
+            Scope.Dispose();
             await Provider.DisposeAsync();
         }
+    }
+
+    private sealed class QueueAdapterFactory : IAgentProtocolAdapterFactory
+    {
+        private readonly Queue<IAgentProtocolAdapter> _adapters;
+
+        public QueueAdapterFactory(IEnumerable<IAgentProtocolAdapter> adapters)
+        {
+            _adapters = new Queue<IAgentProtocolAdapter>(adapters);
+        }
+
+        public IAgentProtocolAdapter Create(AgentKind kind)
+        {
+            if (_adapters.TryDequeue(out var adapter))
+                return adapter;
+
+            throw new InvalidOperationException("No fake adapter was queued for dispatch.");
+        }
+    }
+
+    private sealed class FakeWorktreeManager : IWorktreeManager
+    {
+        private readonly string _worktreeRoot;
+        private readonly List<WorktreeInfo> _worktrees = [];
+
+        public FakeWorktreeManager(string worktreeRoot)
+        {
+            _worktreeRoot = worktreeRoot;
+        }
+
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct)
+        {
+            Directory.CreateDirectory(_worktreeRoot);
+            var worktreePath = Path.Combine(_worktreeRoot, $"card-{cardId}");
+            Directory.CreateDirectory(worktreePath);
+            var now = DateTimeOffset.UtcNow;
+            var info = new WorktreeInfo(cardId, repoPath, worktreePath, $"feat/card-{cardId}", baseRef, now, now);
+            _worktrees.Add(info);
+            return Task.FromResult(info);
+        }
+
+        public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorktreeInfo>>(_worktrees.ToList());
+
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task TouchAsync(string worktreePath, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task<int> PruneStaleAsync(CancellationToken ct) =>
+            Task.FromResult(0);
+    }
+
+    private sealed class OptionsMonitorStub<T> : IOptionsMonitor<T>
+    {
+        public OptionsMonitorStub(T currentValue)
+        {
+            CurrentValue = currentValue;
+        }
+
+        public T CurrentValue { get; }
+
+        public T Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
     }
 
     private sealed class FakeGitHubService : IGitHubService

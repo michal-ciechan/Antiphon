@@ -15,7 +15,7 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { TbAlertCircle, TbGitPullRequest, TbMessage } from 'react-icons/tb'
 import { VscAdd, VscChevronDown, VscChevronRight, VscDiff, VscRemove } from 'react-icons/vsc'
 import type { CardDiffFileDto, CardDto } from '../../api/boards'
@@ -32,6 +32,7 @@ type DiffCommentSide = 'old' | 'new' | 'context'
 interface CommentTarget {
   filePath: string
   line: number
+  endLine: number
   side: DiffCommentSide
   key: string
 }
@@ -47,13 +48,43 @@ interface ParsedDiffLine {
 
 const hunkRegex = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
 
-function makeTarget(filePath: string, line: number, side: DiffCommentSide): CommentTarget {
+function makeTarget(filePath: string, line: number, side: DiffCommentSide, endLine = line): CommentTarget {
+  const start = Math.min(line, endLine)
+  const end = Math.max(line, endLine)
   return {
     filePath,
-    line,
+    line: start,
+    endLine: end,
     side,
-    key: `${filePath}:${side}:${line}`,
+    key: `${filePath}:${side}:${start}-${end}`,
   }
+}
+
+function makeRangeTarget(start: CommentTarget, end: CommentTarget): CommentTarget {
+  if (start.filePath !== end.filePath || start.side !== end.side) {
+    return end
+  }
+
+  return makeTarget(start.filePath, start.line, start.side, end.line)
+}
+
+function formatTargetLabel(target: CommentTarget, includeFile = true) {
+  const lineLabel = target.line === target.endLine
+    ? `line ${target.line}`
+    : `lines ${target.line}-${target.endLine}`
+  const label = `${target.side} ${lineLabel}`
+  return includeFile ? `${target.filePath} ${label}` : label
+}
+
+function targetIncludesLine(target: CommentTarget | null, lineTarget: CommentTarget | null) {
+  if (!target || !lineTarget) {
+    return false
+  }
+
+  return target.filePath === lineTarget.filePath
+    && target.side === lineTarget.side
+    && lineTarget.line >= target.line
+    && lineTarget.line <= target.endLine
 }
 
 function parsePatch(filePath: string, patch: string): ParsedDiffLine[] {
@@ -140,22 +171,23 @@ function lineColors(kind: DiffLineKind) {
 }
 
 function DiffLine({
-  fileName,
   line,
-  selectedKey,
+  selectedTarget,
   onTargetSelect,
 }: {
-  fileName: string
   line: ParsedDiffLine
-  selectedKey: string | null
-  onTargetSelect: (target: CommentTarget) => void
+  selectedTarget: CommentTarget | null
+  onTargetSelect: (target: CommentTarget, extendSelection: boolean) => void
 }) {
-  const isSelected = line.commentTarget?.key === selectedKey
+  const isSelected = targetIncludesLine(selectedTarget, line.commentTarget)
   const colors = lineColors(line.kind)
   const testId = line.kind === 'added' ? 'diff-line-added' : line.kind === 'removed' ? 'diff-line-removed' : undefined
-  const targetLabel = line.commentTarget
-    ? `${fileName} ${line.commentTarget.side} line ${line.commentTarget.line}`
-    : ''
+  const targetLabel = line.commentTarget ? formatTargetLabel(line.commentTarget) : ''
+  const handleTargetClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (line.commentTarget) {
+      onTargetSelect(line.commentTarget, event.shiftKey)
+    }
+  }
 
   return (
     <Box
@@ -184,7 +216,7 @@ function DiffLine({
               size="xs"
               variant={isSelected ? 'filled' : 'subtle'}
               color="blue"
-              onClick={() => onTargetSelect(line.commentTarget!)}
+              onClick={handleTargetClick}
             >
               <TbMessage size={13} />
             </ActionIcon>
@@ -211,11 +243,12 @@ function CommentBox({
   onChange: (value: string) => void
   onSubmit: () => void
 }) {
-  const targetLabel = `${target.filePath} ${target.side} line ${target.line}`
+  const targetLabel = formatTargetLabel(target)
+  const rangeLabel = formatTargetLabel(target, false)
   return (
     <Group gap="xs" align="flex-end" p="xs" wrap="nowrap">
       <Badge color="blue" variant="light" style={{ flexShrink: 0 }}>
-        {target.side} {target.line}
+        {rangeLabel}
       </Badge>
       <Textarea
         aria-label={`Comment for ${targetLabel}`}
@@ -253,7 +286,7 @@ function FileDiff({
   selectedTarget: CommentTarget | null
   comment: string
   isPosting: boolean
-  onTargetSelect: (target: CommentTarget) => void
+  onTargetSelect: (target: CommentTarget, extendSelection: boolean) => void
   onCommentChange: (target: CommentTarget, value: string) => void
   onCommentSubmit: (target: CommentTarget) => void
 }) {
@@ -300,9 +333,8 @@ function FileDiff({
             {lines.map((line) => (
               <DiffLine
                 key={`${file.filename}-${line.id}`}
-                fileName={file.filename}
                 line={line}
-                selectedKey={fileTarget?.key ?? null}
+                selectedTarget={fileTarget}
                 onTargetSelect={onTargetSelect}
               />
             ))}
@@ -368,6 +400,12 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
     setComments((current) => ({ ...current, [target.key]: value }))
   }
 
+  const handleTargetSelect = (target: CommentTarget, extendSelection: boolean) => {
+    setSelectedTarget((current) => (
+      extendSelection && current ? makeRangeTarget(current, target) : target
+    ))
+  }
+
   const handleComment = (target: CommentTarget) => {
     const message = comments[target.key]?.trim()
     if (!message) return
@@ -377,6 +415,7 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
         message,
         filePath: target.filePath,
         line: target.line,
+        endLine: target.endLine,
         side: target.side,
       },
       {
@@ -444,7 +483,7 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
             selectedTarget={selectedTarget?.filePath === file.filename ? selectedTarget : null}
             comment={selectedTarget?.filePath === file.filename ? comments[selectedTarget.key] ?? '' : ''}
             isPosting={postComment.isPending}
-            onTargetSelect={setSelectedTarget}
+            onTargetSelect={handleTargetSelect}
             onCommentChange={handleCommentChange}
             onCommentSubmit={handleComment}
           />
