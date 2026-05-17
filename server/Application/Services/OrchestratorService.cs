@@ -358,7 +358,9 @@ public sealed class OrchestratorService
         var activeStatuses = ActiveSessionStatuses();
         var claimedCards = await _db.Cards
             .Include(c => c.BoardColumn)
+            .Include(c => c.Board).ThenInclude(b => b.Columns)
             .Include(c => c.OwnerSession)
+            .Include(c => c.RunAttempts)
             .Where(c => string.IsNullOrWhiteSpace(_settings.InternalTrackerRepositoryPathPrefix)
                 || c.Board.TrackerKind != TrackerKind.Internal
                 || (c.Board.Project.LocalRepositoryPath != null
@@ -367,12 +369,32 @@ public sealed class OrchestratorService
             .ToListAsync(ct);
 
         var reconciled = 0;
+        var changedCards = new List<CardChangedNotification>();
         foreach (var card in claimedCards)
         {
             ct.ThrowIfCancellationRequested();
             if (card.OwnerSession is null)
             {
                 ClearCardClaim(card, utcNow);
+                reconciled++;
+                continue;
+            }
+
+            if (card.BoardColumn.IsActive
+                && CardLifecycleTransitions.LatestAttemptSucceeded(card)
+                && CardLifecycleTransitions.TryMoveToReview(card, utcNow))
+            {
+                changedCards.Add(new CardChangedNotification(card.BoardId, card.Id));
+                if (!activeStatuses.Contains(card.OwnerSession.Status))
+                {
+                    ClearCardClaim(card, utcNow);
+                }
+                else if (!await HasLiveRuntimeSessionAsync(card.OwnerSession.Id, ct))
+                {
+                    MarkSuccessfulRuntimeStopped(card, utcNow);
+                    ClearCardClaim(card, utcNow);
+                }
+
                 reconciled++;
                 continue;
             }
@@ -418,7 +440,16 @@ public sealed class OrchestratorService
         }
 
         if (reconciled > 0)
+        {
             await _db.SaveChangesAsync(ct);
+            foreach (var changedCard in changedCards.Distinct())
+            {
+                await _eventBus.PublishToAllAsync(
+                    "CardChanged",
+                    new { boardId = changedCard.BoardId, cardId = changedCard.CardId },
+                    ct);
+            }
+        }
 
         return reconciled;
     }
@@ -531,6 +562,17 @@ public sealed class OrchestratorService
         card.UpdatedAt = utcNow;
     }
 
+    private static void MarkSuccessfulRuntimeStopped(Card card, DateTime utcNow)
+    {
+        if (card.OwnerSession is null)
+            return;
+
+        card.OwnerSession.Status = SessionStatus.Stopped;
+        card.OwnerSession.EndedAt ??= utcNow;
+        card.OwnerSession.LastSeenAt = utcNow;
+        card.OwnerSession.FailureReason = null;
+    }
+
     private static string BuildPrompt(DispatchCandidate candidate)
     {
         var prompt = $"""
@@ -605,6 +647,8 @@ public sealed class OrchestratorService
         Guid ConcurrencyToken,
         Guid? WorkflowDefinitionId,
         string? WorkflowContent);
+
+    private sealed record CardChangedNotification(Guid BoardId, Guid CardId);
 
     private async Task MarkMissingRuntimeCanceledAsync(Card card, DateTime utcNow, CancellationToken ct)
     {

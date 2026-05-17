@@ -1,5 +1,5 @@
-import { Badge, Group, Tabs, Text } from '@mantine/core'
-import { useEffect, useState } from 'react'
+import { Badge, Group, Select, Stack, Text } from '@mantine/core'
+import { useMemo, useState } from 'react'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { SessionTerminal } from './SessionTerminal'
 
@@ -17,38 +17,58 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export function SessionTabs({ sessions }: SessionTabsProps) {
-  const [active, setActive] = useState<string | null>(sessions[0]?.id ?? null)
-
-  useEffect(() => {
-    if (!active || !sessions.some((session) => session.id === active)) {
-      setActive(sessions[0]?.id ?? null)
-    }
-  }, [active, sessions])
+  const terminalSessions = useMemo(
+    () => sessions.filter((session) => session.id && session.cwd.trim().length > 0),
+    [sessions],
+  )
+  const hiddenSessionCount = sessions.length - terminalSessions.length
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const active = terminalSessions.some((session) => session.id === selectedSessionId)
+    ? selectedSessionId
+    : terminalSessions[0]?.id ?? null
+  const selectedSession = terminalSessions.find((session) => session.id === active) ?? null
+  const sessionOptions = terminalSessions.map((session, index) => ({
+    value: session.id,
+    label: `Session ${terminalSessions.length - index} - ${session.status}`,
+  }))
 
   if (sessions.length === 0) {
     return <Text size="sm" c="dimmed">No sessions</Text>
   }
 
-  return (
-    <Tabs value={active} onChange={setActive} keepMounted={false}>
-      <Tabs.List>
-        {sessions.map((session, index) => (
-          <Tabs.Tab key={session.id} value={session.id}>
-            <Group gap={6} wrap="nowrap">
-              <Text size="sm">Session {sessions.length - index}</Text>
-              <Badge size="xs" color={STATUS_COLOR[session.status] ?? 'gray'} variant="light">
-                {session.status}
-              </Badge>
-            </Group>
-          </Tabs.Tab>
-        ))}
-      </Tabs.List>
+  if (terminalSessions.length === 0) {
+    return <Text size="sm" c="dimmed">No terminal sessions yet</Text>
+  }
 
-      {sessions.map((session) => (
-        <Tabs.Panel key={session.id} value={session.id} pt="sm">
-          <SessionTerminal sessionId={session.id} />
-        </Tabs.Panel>
-      ))}
-    </Tabs>
+  return (
+    <Stack gap="sm">
+      <Group align="flex-end" justify="space-between">
+        <Select
+          label="All sessions"
+          data={sessionOptions}
+          value={active}
+          onChange={setSelectedSessionId}
+          allowDeselect={false}
+          searchable
+          w={260}
+        />
+        {selectedSession && (
+          <Group gap={6} wrap="nowrap">
+            <Badge size="sm" color={STATUS_COLOR[selectedSession.status] ?? 'gray'} variant="light">
+              {selectedSession.status}
+            </Badge>
+            <Text size="xs" c="dimmed" lineClamp={1} maw={520}>
+              {selectedSession.definitionName} · {selectedSession.cwd}
+            </Text>
+          </Group>
+        )}
+      </Group>
+      {hiddenSessionCount > 0 && (
+        <Text size="xs" c="dimmed" data-testid="hidden-session-count">
+          Hidden {hiddenSessionCount} preparing session{hiddenSessionCount === 1 ? '' : 's'} without a terminal.
+        </Text>
+      )}
+      {active && <SessionTerminal sessionId={active} />}
+    </Stack>
   )
 }

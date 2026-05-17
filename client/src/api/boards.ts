@@ -170,6 +170,8 @@ export interface UpdateBoardWorkflowRequest {
 export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
+  allDetails: ['boards', 'all-details'] as const,
+  allDetailsFor: (ids: string[]) => [...boardKeys.allDetails, ids] as const,
   workflow: (id: string) => ['boards', id, 'workflow'] as const,
   cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
 }
@@ -186,6 +188,14 @@ export function useBoard(id: string | undefined) {
     queryKey: id ? boardKeys.detail(id) : ['boards', 'missing'],
     queryFn: () => apiGet<BoardDetailDto>(`/boards/${id}`),
     enabled: !!id,
+  })
+}
+
+export function useAllBoardDetails(boardIds: string[], enabled = true) {
+  return useQuery({
+    queryKey: boardKeys.allDetailsFor(boardIds),
+    queryFn: () => Promise.all(boardIds.map((boardId) => apiGet<BoardDetailDto>(`/boards/${boardId}`))),
+    enabled: enabled && boardIds.length > 0,
   })
 }
 
@@ -215,6 +225,7 @@ export function useCreateCard(boardId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
 }
@@ -238,10 +249,12 @@ export function useMoveCard(boardId: string) {
       }
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
 }
@@ -254,6 +267,7 @@ export function useSpawnCard(boardId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
 }
@@ -275,6 +289,7 @@ export function usePostCardComment(boardId: string, cardId: string) {
       apiPost<CardCommentResult>(`/cards/${cardId}/comments`, request),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
 }

@@ -51,10 +51,13 @@ public class OrchestratorServiceIntegrationTests
             session.Status.ShouldBe(SessionStatus.Stopped);
             var attempt = await verify.RunAttempts.SingleAsync(a => a.CardId == graph.Card.Id);
             attempt.Phase.ShouldBe(RunPhase.Succeeded);
-            var retry = await verify.RetrySchedules.SingleAsync(r => r.CardId == graph.Card.Id);
-            retry.NextRetryAt.ShouldNotBeNull();
-            var card = await verify.Cards.SingleAsync(c => c.Id == graph.Card.Id);
+            (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(0);
+            var card = await verify.Cards
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == graph.Card.Id);
             card.OwnerSessionId.ShouldBeNull();
+            card.Status.ShouldBe(CardStatus.Review);
+            card.BoardColumn.StateKey.ShouldBe("review");
         }
         finally
         {
@@ -366,7 +369,8 @@ public class OrchestratorServiceIntegrationTests
             unblockedAdapter.Started.ShouldBeTrue();
             await using var verifyUnblocked = CreateContext();
             var unblockedCard = await verifyUnblocked.Cards.SingleAsync(c => c.BoardId == graph.Board.Id);
-            unblockedCard.BoardColumnId.ShouldBe(graph.ActiveColumn.Id);
+            unblockedCard.BoardColumnId.ShouldBe(graph.ReviewColumn.Id);
+            unblockedCard.Status.ShouldBe(CardStatus.Review);
             (await verifyUnblocked.AgentSessions.CountAsync(s => s.CardId == unblockedCard.Id)).ShouldBe(1);
         }
         finally
@@ -522,7 +526,7 @@ public class OrchestratorServiceIntegrationTests
     }
 
     [Test]
-    public async Task Orchestrator_due_continuation_dispatches_again_after_success_releases_claim()
+    public async Task Orchestrator_success_moves_card_to_review_and_does_not_continue()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -542,24 +546,85 @@ public class OrchestratorServiceIntegrationTests
                 firstAdapter.Disposed.ShouldBeTrue();
             }
 
-            await using (var markDue = CreateContext())
-            {
-                var retry = await markDue.RetrySchedules.SingleAsync(r => r.CardId == graph.Card.Id);
-                retry.NextRetryAt = DateTime.UtcNow.AddSeconds(-1);
-                await markDue.SaveChangesAsync();
-            }
-
             var secondAdapter = new FakeAgentProtocolAdapter { PromptOutput = "SECOND" };
             await using var secondHarness = BuildHarness(tempRoot, [secondAdapter]);
             var second = await secondHarness.Orchestrator.PollTickAsync(CancellationToken.None);
             await secondHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
-            second.Dispatched.ShouldBe(1);
-            secondAdapter.Started.ShouldBeTrue();
-            secondAdapter.Killed.ShouldBeTrue();
-            secondAdapter.Disposed.ShouldBeTrue();
+            second.Dispatched.ShouldBe(0);
+            secondAdapter.Started.ShouldBeFalse();
             await using var verify = CreateContext();
-            (await verify.RunAttempts.CountAsync(a => a.CardId == graph.Card.Id)).ShouldBe(2);
+            (await verify.RunAttempts.CountAsync(a => a.CardId == graph.Card.Id)).ShouldBe(1);
+            (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(0);
+            var card = await verify.Cards
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == graph.Card.Id);
+            card.Status.ShouldBe(CardStatus.Review);
+            card.BoardColumnId.ShouldBe(graph.ReviewColumn.Id);
+            card.BoardColumn.StateKey.ShouldBe("review");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reconcile_moves_succeeded_missing_runtime_session_to_review_without_retry()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+            var session = NewSession(graph.Card.Id, SessionStatus.Running);
+            db.AgentSessions.Add(session);
+            db.RunAttempts.Add(new RunAttempt
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                AgentSessionId = session.Id,
+                AttemptNumber = 1,
+                Phase = RunPhase.Succeeded,
+                CreatedAt = DateTime.UtcNow,
+                StartedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow,
+                LastEventAt = DateTime.UtcNow,
+                PhaseStartedAt = DateTime.UtcNow,
+                Prompt = "completed before restart",
+                Card = graph.Card,
+                AgentSession = session
+            });
+            await db.SaveChangesAsync();
+            await db.Cards
+                .Where(c => c.Id == graph.Card.Id)
+                .ExecuteUpdateAsync(updates => updates
+                    .SetProperty(c => c.OwnerSessionId, session.Id)
+                    .SetProperty(c => c.ConcurrencyToken, Guid.NewGuid()));
+
+            await using var harness = BuildHarness(tempRoot, []);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+
+            result.Reconciled.ShouldBe(1);
+            result.Dispatched.ShouldBe(0);
+            await using var verify = CreateContext();
+            var card = await verify.Cards
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == graph.Card.Id);
+            card.OwnerSessionId.ShouldBeNull();
+            card.Status.ShouldBe(CardStatus.Review);
+            card.BoardColumnId.ShouldBe(graph.ReviewColumn.Id);
+            card.BoardColumn.StateKey.ShouldBe("review");
+            var storedSession = await verify.AgentSessions.SingleAsync(s => s.Id == session.Id);
+            storedSession.Status.ShouldBe(SessionStatus.Stopped);
+            storedSession.FailureReason.ShouldBeNull();
+            var attempt = await verify.RunAttempts.SingleAsync(a => a.AgentSessionId == session.Id);
+            attempt.Phase.ShouldBe(RunPhase.Succeeded);
+            (await verify.RetrySchedules.CountAsync(r => r.CardId == graph.Card.Id)).ShouldBe(0);
         }
         finally
         {
@@ -1090,9 +1155,11 @@ public class OrchestratorServiceIntegrationTests
         var backlog = NewColumn(board, "backlog", "Backlog", 0, CardStatus.Backlog, isActive: false, isTerminal: false);
         var active = NewColumn(board, "in-progress", "In Progress", 1, CardStatus.InProgress, isActive: true, isTerminal: false);
         active.MaxConcurrentSessions = columnMaxConcurrent;
-        var done = NewColumn(board, "done", "Done", 2, CardStatus.Done, isActive: false, isTerminal: true);
+        var review = NewColumn(board, "review", "Review", 2, CardStatus.Review, isActive: false, isTerminal: false);
+        var done = NewColumn(board, "done", "Done", 3, CardStatus.Done, isActive: false, isTerminal: true);
         board.Columns.Add(backlog);
         board.Columns.Add(active);
+        board.Columns.Add(review);
         board.Columns.Add(done);
 
         var definition = new BoardWorkflowDefinition
@@ -1114,8 +1181,8 @@ public class OrchestratorServiceIntegrationTests
         };
         board.WorkflowDefinitions.Add(definition);
 
-        var card = AddCard(new Graph(project, board, active, done, null!), "E07", active);
-        return new Graph(project, board, active, done, card);
+        var card = AddCard(new Graph(project, board, active, review, done, null!), "E07", active);
+        return new Graph(project, board, active, review, done, card);
     }
 
     private static Card AddCard(Graph graph, string prefix, BoardColumn column)
@@ -1294,6 +1361,7 @@ public class OrchestratorServiceIntegrationTests
         Project Project,
         Board Board,
         BoardColumn ActiveColumn,
+        BoardColumn ReviewColumn,
         BoardColumn DoneColumn,
         Card Card);
 

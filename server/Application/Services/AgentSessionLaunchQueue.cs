@@ -98,11 +98,20 @@ public sealed class AgentSessionLaunchQueue
 
             if (attempt.Phase == RunPhase.Succeeded)
             {
+                CardChangedNotification? notification = null;
+                if (behavior.MoveToReviewOnSuccess)
+                {
+                    notification = await MoveCardToReviewAsync(
+                        db,
+                        request.CardId,
+                        now,
+                        CancellationToken.None);
+                }
+
                 if (behavior.ScheduleContinuationOnSuccess)
                     await retryScheduler.ScheduleContinuationAsync(db, request.CardId, now, CancellationToken.None);
                 if (behavior.StopOnSuccess)
                     await StopCompletedSessionAsync(service, result.SessionId, CancellationToken.None);
-                CardChangedNotification? notification = null;
                 if (behavior.ReleaseClaimOnSuccess)
                 {
                     notification = await CompleteClaimAsync(
@@ -111,7 +120,7 @@ public sealed class AgentSessionLaunchQueue
                         SessionStatus.Stopped,
                         null,
                         now,
-                        CancellationToken.None);
+                        CancellationToken.None) ?? notification;
                 }
 
                 await db.SaveChangesAsync(CancellationToken.None);
@@ -153,6 +162,24 @@ public sealed class AgentSessionLaunchQueue
             await PublishCardChangedAsync(eventBus, notification, CancellationToken.None);
             throw;
         }
+    }
+
+    private static async Task<CardChangedNotification?> MoveCardToReviewAsync(
+        AppDbContext db,
+        Guid cardId,
+        DateTime utcNow,
+        CancellationToken ct)
+    {
+        var card = await db.Cards
+            .Include(c => c.BoardColumn)
+            .Include(c => c.Board).ThenInclude(b => b.Columns)
+            .FirstOrDefaultAsync(c => c.Id == cardId, ct);
+        if (card is null)
+            return null;
+
+        return CardLifecycleTransitions.TryMoveToReview(card, utcNow)
+            ? new CardChangedNotification(card.BoardId, card.Id)
+            : null;
     }
 
     private async Task StopCompletedSessionAsync(
@@ -218,20 +245,23 @@ public sealed class AgentSessionLaunchQueue
         bool StopOnSuccess,
         bool ReleaseClaimOnSuccess,
         bool ScheduleContinuationOnSuccess,
-        bool ScheduleRetryOnFailure)
+        bool ScheduleRetryOnFailure,
+        bool MoveToReviewOnSuccess)
     {
         public static AgentSessionLaunchBehavior Orchestrated { get; } =
             new(
                 StopOnSuccess: true,
                 ReleaseClaimOnSuccess: true,
-                ScheduleContinuationOnSuccess: true,
-                ScheduleRetryOnFailure: true);
+                ScheduleContinuationOnSuccess: false,
+                ScheduleRetryOnFailure: true,
+                MoveToReviewOnSuccess: true);
 
         public static AgentSessionLaunchBehavior Interactive { get; } =
             new(
                 StopOnSuccess: false,
                 ReleaseClaimOnSuccess: false,
                 ScheduleContinuationOnSuccess: false,
-                ScheduleRetryOnFailure: false);
+                ScheduleRetryOnFailure: false,
+                MoveToReviewOnSuccess: true);
     }
 }

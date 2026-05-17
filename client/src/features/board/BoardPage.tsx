@@ -6,6 +6,7 @@ import {
   Loader,
   Modal,
   NumberInput,
+  Paper,
   ScrollArea,
   Select,
   Stack,
@@ -16,12 +17,16 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbFileCode, TbPlus } from 'react-icons/tb'
-import { Navigate, useNavigate, useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
+  type BoardColumnDto,
+  type BoardDetailDto,
   type CardDto,
+  type CardStatus,
+  useAllBoardDetails,
   useBoard,
   useBoards,
   useCreateBoard,
@@ -36,33 +41,56 @@ interface BoardRouteParams {
   id?: string
 }
 
+const ALL_BOARDS_VALUE = '__all__'
+const ALL_CARD_COLUMNS: Array<{
+  stateKey: string
+  name: string
+  cardStatus: CardStatus
+  isActive: boolean
+  isTerminal: boolean
+}> = [
+  { stateKey: 'backlog', name: 'Backlog', cardStatus: 'Backlog', isActive: false, isTerminal: false },
+  { stateKey: 'in-progress', name: 'In Progress', cardStatus: 'InProgress', isActive: true, isTerminal: false },
+  { stateKey: 'review', name: 'Review', cardStatus: 'Review', isActive: false, isTerminal: false },
+  { stateKey: 'done', name: 'Done', cardStatus: 'Done', isActive: false, isTerminal: true },
+  { stateKey: 'blocked', name: 'Blocked', cardStatus: 'Blocked', isActive: false, isTerminal: false },
+  { stateKey: 'canceled', name: 'Canceled', cardStatus: 'Canceled', isActive: false, isTerminal: true },
+]
+
 export function BoardPage() {
   const { id } = useParams() as BoardRouteParams
   const navigate = useNavigate()
   const { data: boards, isLoading: boardsLoading } = useBoards()
   const { data: board, isLoading: boardLoading, error } = useBoard(id)
+  const boardIds = useMemo(() => (boards ?? []).map((item) => item.id), [boards])
+  const allBoards = useAllBoardDetails(boardIds, !id && !boardsLoading)
+  const selectedBoardLoading = !!id && boardLoading
   const moveCard = useMoveCard(id ?? '')
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [selectedAllCardId, setSelectedAllCardId] = useState<string | null>(null)
   const [newBoardOpen, setNewBoardOpen] = useState(false)
   const [newCardOpen, setNewCardOpen] = useState(false)
   const [workflowOpen, setWorkflowOpen] = useState(false)
-
-  useEffect(() => {
-    setSelectedCardId(null)
-    setNewBoardOpen(false)
-    setNewCardOpen(false)
-    setWorkflowOpen(false)
-  }, [id])
 
   const selectedCard = useMemo(() => {
     if (!board || !selectedCardId) return null
     return board.columns.flatMap((column) => column.cards).find((card) => card.id === selectedCardId) ?? null
   }, [board, selectedCardId])
+  const selectedAllCard = useMemo(() => {
+    if (!selectedAllCardId) return null
+    return (allBoards.data ?? [])
+      .flatMap((item) => item.columns.flatMap((column) => column.cards))
+      .find((card) => card.id === selectedAllCardId) ?? null
+  }, [allBoards.data, selectedAllCardId])
 
-  if (!id && boards && boards.length > 0) {
-    return <Navigate to={`/boards/${boards[0].id}`} replace />
-  }
+  const boardOptions = useMemo(
+    () => [
+      { value: ALL_BOARDS_VALUE, label: 'All' },
+      ...(boards ?? []).map((item) => ({ value: item.id, label: `${item.projectName} / ${item.name}` })),
+    ],
+    [boards],
+  )
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (!board || !event.over || event.active.id === event.over.id) return
@@ -88,6 +116,15 @@ export function BoardPage() {
     )
   }
 
+  const handleBoardSelection = (value: string | null) => {
+    if (!value) return
+    setSelectedCardId(null)
+    setSelectedAllCardId(null)
+    setNewCardOpen(false)
+    setWorkflowOpen(false)
+    navigate(value === ALL_BOARDS_VALUE ? '/boards' : `/boards/${value}`)
+  }
+
   return (
     <Box p="md">
       <BoardCreateModal opened={newBoardOpen} onClose={() => setNewBoardOpen(false)} />
@@ -111,6 +148,14 @@ export function BoardPage() {
           />
         </>
       )}
+      {!board && selectedAllCard && (
+        <CardModal
+          boardId={selectedAllCard.boardId}
+          card={selectedAllCard}
+          opened
+          onClose={() => setSelectedAllCardId(null)}
+        />
+      )}
 
       <Group justify="space-between" mb="md" align="flex-end">
         <Stack gap={2}>
@@ -120,15 +165,21 @@ export function BoardPage() {
               {board.projectName} / {board.name}
             </Text>
           )}
+          {!board && !boardsLoading && boards && boards.length > 0 && (
+            <Text size="sm" c="dimmed">
+              All cards
+            </Text>
+          )}
         </Stack>
         <Group>
           <Select
             placeholder="Select board"
-            data={(boards ?? []).map((item) => ({ value: item.id, label: `${item.projectName} / ${item.name}` }))}
-            value={id ?? null}
-            onChange={(value) => value && navigate(`/boards/${value}`)}
+            data={boardOptions}
+            value={id ?? ALL_BOARDS_VALUE}
+            onChange={handleBoardSelection}
             w={320}
             searchable
+            maxDropdownHeight={420}
           />
           <Button leftSection={<TbPlus size={16} />} variant="light" onClick={() => setNewBoardOpen(true)}>
             New Board
@@ -146,7 +197,7 @@ export function BoardPage() {
         </Group>
       </Group>
 
-      {(boardsLoading || boardLoading) && (
+      {(boardsLoading || selectedBoardLoading) && (
         <Group justify="center" p="xl">
           <Loader />
         </Group>
@@ -175,7 +226,92 @@ export function BoardPage() {
           </ScrollArea>
         </DndContext>
       )}
+
+      {!id && !boardsLoading && boards && boards.length > 0 && (
+        <AllCardsBoard
+          boards={allBoards.data ?? []}
+          loading={allBoards.isLoading}
+          error={allBoards.error}
+          onOpenCard={setSelectedAllCardId}
+        />
+      )}
     </Box>
+  )
+}
+
+function AllCardsBoard({
+  boards,
+  loading,
+  error,
+  onOpenCard,
+}: {
+  boards: BoardDetailDto[]
+  loading: boolean
+  error: Error | null
+  onOpenCard: (cardId: string) => void
+}) {
+  const columns = useMemo<BoardColumnDto[]>(() => {
+    const allCards = boards.flatMap((item) =>
+      item.columns.flatMap((column) =>
+        column.cards.map((card) => ({
+          ...card,
+          labels: [item.name, ...card.labels.filter((label) => label !== item.name)],
+        })),
+      ),
+    )
+
+    return ALL_CARD_COLUMNS.map((column, index) => ({
+      id: `all-${column.stateKey}`,
+      boardId: 'all',
+      stateKey: column.stateKey,
+      name: column.name,
+      columnOrder: index,
+      cardStatus: column.cardStatus,
+      isActive: column.isActive,
+      isTerminal: column.isTerminal,
+      maxConcurrentSessions: null,
+      cards: allCards.filter((card) => card.status === column.cardStatus),
+    }))
+  }, [boards])
+
+  if (loading) {
+    return (
+      <Group justify="center" p="xl">
+        <Loader />
+      </Group>
+    )
+  }
+
+  if (error) {
+    return (
+      <Alert icon={<TbAlertCircle size={18} />} color="red" variant="light">
+        {error.message}
+      </Alert>
+    )
+  }
+
+  const cardCount = columns.reduce((total, column) => total + column.cards.length, 0)
+
+  if (cardCount === 0) {
+    return (
+      <Paper withBorder p="xl">
+        <Text ta="center" c="dimmed">
+          No cards across any board.
+        </Text>
+      </Paper>
+    )
+  }
+
+  return (
+    <DndContext>
+      <ScrollArea type="auto" offsetScrollbars>
+        <Group align="flex-start" wrap="nowrap" gap="md" pb="sm">
+          {columns.map((column) => (
+            <BoardColumn key={column.id} column={column} onOpenCard={onOpenCard} />
+          ))}
+        </Group>
+      </ScrollArea>
+    </DndContext>
   )
 }
 
@@ -198,11 +334,11 @@ function BoardCreateModal({ opened, onClose }: { opened: boolean; onClose: () =>
         maxConcurrentSessions: Number(maxConcurrentSessions) || 1,
       },
       {
-        onSuccess: (board) => {
+        onSuccess: () => {
           onClose()
           setName('')
           setDescription('')
-          navigate(`/boards/${board.id}`)
+          navigate('/boards')
         },
       },
     )

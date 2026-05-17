@@ -162,9 +162,10 @@ public class AgentChannelServiceIntegrationTests
             db.Projects.Add(graph.Project);
             await db.SaveChangesAsync();
             var token = graph.TargetCard.ConcurrencyToken;
-            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "CLAIMED", TurnCompleted = true };
-            await using var firstHarness = BuildHarness(tempRoot, [adapter]);
-            await using var secondHarness = BuildHarness(tempRoot, []);
+            var firstAdapter = new FakeAgentProtocolAdapter { PromptOutput = "CLAIMED_FIRST", TurnCompleted = true };
+            var secondAdapter = new FakeAgentProtocolAdapter { PromptOutput = "CLAIMED_SECOND", TurnCompleted = true };
+            await using var firstHarness = BuildHarness(tempRoot, [firstAdapter]);
+            await using var secondHarness = BuildHarness(tempRoot, [secondAdapter]);
             var firstService = firstHarness.Scope.ServiceProvider.GetRequiredService<AgentChannelService>();
             var secondService = secondHarness.Scope.ServiceProvider.GetRequiredService<AgentChannelService>();
             var request = new ChannelDelegateCardRequest(
@@ -177,12 +178,18 @@ public class AgentChannelServiceIntegrationTests
                 CaptureAsync(() => firstService.DelegateCardAsync(request, CancellationToken.None)),
                 CaptureAsync(() => secondService.DelegateCardAsync(request, CancellationToken.None)));
             await firstHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            await secondHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
             attempts.Count(a => a.Result is not null).ShouldBe(1);
             attempts.Count(a => a.Exception is ConflictException).ShouldBe(1);
             await using var verify = CreateContext();
-            var card = await verify.Cards.Include(c => c.AgentSessions).SingleAsync(c => c.Id == graph.TargetCard.Id);
+            var card = await verify.Cards
+                .Include(c => c.AgentSessions)
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == graph.TargetCard.Id);
             card.OwnerSessionId.ShouldNotBeNull();
+            card.Status.ShouldBe(CardStatus.Review);
+            card.BoardColumn.StateKey.ShouldBe("review");
             card.AgentSessions.Count.ShouldBe(1);
         }
         finally
@@ -292,8 +299,10 @@ public class AgentChannelServiceIntegrationTests
         project.Boards.Add(board);
         var backlog = NewColumn(board, "backlog", "Backlog", 0, CardStatus.Backlog, isActive: false);
         var active = NewColumn(board, "in-progress", "In Progress", 1, CardStatus.InProgress, isActive: true);
+        var review = NewColumn(board, "review", "Review", 2, CardStatus.Review, isActive: false);
         board.Columns.Add(backlog);
         board.Columns.Add(active);
+        board.Columns.Add(review);
         var definition = new BoardWorkflowDefinition
         {
             Id = Guid.NewGuid(),

@@ -130,7 +130,7 @@ public class BoardServiceIntegrationTests
     }
 
     [Test]
-    public async Task Moving_card_to_active_column_queues_interactive_session_and_keeps_runtime_claimed()
+    public async Task Moving_card_to_active_column_queues_interactive_session_and_moves_success_to_review()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -160,7 +160,11 @@ public class BoardServiceIntegrationTests
             adapter.Killed.ShouldBeFalse();
             adapter.Disposed.ShouldBeFalse();
             await using var verify = CreateContext();
-            var storedCard = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            var storedCard = await verify.Cards
+                .Include(c => c.BoardColumn)
+                .SingleAsync(c => c.Id == card.Id);
+            storedCard.Status.ShouldBe(CardStatus.Review);
+            storedCard.BoardColumn.StateKey.ShouldBe("review");
             storedCard.OwnerSessionId.ShouldBe(moved.OwnerSessionId);
             var session = await verify.AgentSessions.SingleAsync(s => s.Id == moved.OwnerSessionId);
             session.Status.ShouldBe(SessionStatus.Running);
@@ -179,7 +183,7 @@ public class BoardServiceIntegrationTests
     }
 
     [Test]
-    public async Task Explicit_spawn_from_backlog_moves_to_active_column_and_queues_interactive_session()
+    public async Task Explicit_spawn_from_backlog_moves_successful_interactive_session_to_review()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -210,9 +214,11 @@ public class BoardServiceIntegrationTests
             var storedCard = await verify.Cards
                 .Include(c => c.BoardColumn)
                 .SingleAsync(c => c.Id == card.Id);
-            storedCard.Status.ShouldBe(CardStatus.InProgress);
-            storedCard.BoardColumn.StateKey.ShouldBe("in-progress");
+            storedCard.Status.ShouldBe(CardStatus.Review);
+            storedCard.BoardColumn.StateKey.ShouldBe("review");
             storedCard.OwnerSessionId.ShouldBe(result.SessionId);
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == result.SessionId);
+            session.Status.ShouldBe(SessionStatus.Running);
         }
         finally
         {
