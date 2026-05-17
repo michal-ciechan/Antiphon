@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Antiphon.E2E.Fixtures;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -385,6 +387,65 @@ public class BoardE2ETests
         }
     }
 
+    [Test]
+    public async Task Board_stopped_claude_session_shows_terminal_overlay_and_resume_button()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Session Overlay Project {suffix}");
+        var boardId = await CreateBoardAsync(projectId, $"Session Overlay Board {suffix}");
+        var cardTitle = $"Stopped Claude Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, boardColumnId: null, cardTitle);
+        var sessionCwd = Path.Combine(Path.GetTempPath(), "antiphon-e2e-stopped-sessions", suffix);
+        Directory.CreateDirectory(sessionCwd);
+        _tempRepoRoots.Add(sessionCwd);
+        var sessionId = await AddStoppedClaudeSessionAsync(cardId, sessionCwd);
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByTestId("session-terminal")).ToBeVisibleAsync();
+            await Expect(dialog.GetByTestId("session-terminal-inactive-overlay")).ToBeVisibleAsync();
+            await Expect(dialog.GetByText("Session is not running")).ToBeVisibleAsync();
+            await Expect(dialog.GetByText(sessionId.ToString())).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Resume" })).ToBeVisibleAsync();
+
+            var screenshotPath = Path.Combine(
+                FindRepoRoot(),
+                "docs",
+                "screenshots",
+                "toonsharp-antiphon",
+                "33-stopped-session-overlay-resume.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Path = screenshotPath,
+                FullPage = true
+            });
+            Console.WriteLine($"[screenshot] {screenshotPath}");
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
     private async Task<Guid> CreateProjectAsync(string name, string? localRepositoryPath = null)
     {
         var response = await _appFixture.HttpClient.PostAsJsonAsync(
@@ -480,6 +541,34 @@ public class BoardE2ETests
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
         return body.GetProperty("sessionId").GetGuid();
+    }
+
+    private async Task<Guid> AddStoppedClaudeSessionAsync(Guid cardId, string cwd)
+    {
+        using var scope = _appFixture.Services.CreateScope();
+        await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+        var now = DateTime.UtcNow;
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            CardId = cardId,
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Stopped,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+            EndedAt = now,
+            Card = card
+        };
+
+        db.AgentSessions.Add(session);
+        await db.SaveChangesAsync();
+        return session.Id;
     }
 
     private async Task MoveCardAsync(Guid boardId, Guid cardId, Guid boardColumnId)
@@ -600,6 +689,19 @@ public class BoardE2ETests
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
                 $"git {string.Join(' ', arguments)} failed with exit code {process.ExitCode}: {stdout}{stderr}");
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null)
+        {
+            if (Directory.Exists(Path.Combine(dir, ".git")))
+                return dir;
+            dir = Directory.GetParent(dir)?.FullName;
+        }
+
+        return Directory.GetCurrentDirectory();
     }
 
     private static async Task DeleteDirectoryBestEffortAsync(string path)

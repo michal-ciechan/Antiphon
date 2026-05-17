@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SessionTerminal } from './SessionTerminal'
+import type { AgentSessionSummaryDto } from '../../api/boards'
 
 const xtermMock = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -13,9 +14,24 @@ const xtermMock = vi.hoisted(() => ({
     onResizeHandler?: (size: { cols: number; rows: number }) => void
     cols: number
     rows: number
+    options?: { disableStdin?: boolean }
   }>,
   fit: vi.fn(),
 }))
+
+const runningSession: AgentSessionSummaryDto = {
+  id: 'session-1',
+  definitionName: 'claude',
+  agentKind: 'ClaudeCode',
+  status: 'Running',
+  cwd: 'D:/repo/worktree',
+  createdAt: '2026-01-01T00:00:00Z',
+  startedAt: '2026-01-01T00:00:00Z',
+  lastSeenAt: '2026-01-01T00:00:01Z',
+  endedAt: null,
+  exitCode: null,
+  failureReason: null,
+}
 
 const signalrMock = vi.hoisted(() => ({
   connection: {
@@ -51,7 +67,10 @@ vi.mock('@xterm/xterm', () => ({
     onDataHandler?: (input: string) => void
     onResizeHandler?: (size: { cols: number; rows: number }) => void
 
-    constructor() {
+    options?: { disableStdin?: boolean }
+
+    constructor(options?: { disableStdin?: boolean }) {
+      this.options = options
       xtermMock.instances.push(this)
     }
 
@@ -122,7 +141,7 @@ describe('SessionTerminal', () => {
       }),
     )
 
-    const { unmount } = renderWithProviders(<SessionTerminal sessionId="session-1" />)
+    const { unmount } = renderWithProviders(<SessionTerminal session={runningSession} />)
 
     await waitFor(() => {
       expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
@@ -179,7 +198,7 @@ describe('SessionTerminal', () => {
       }),
     )
 
-    renderWithProviders(<SessionTerminal sessionId="session-1" />)
+    renderWithProviders(<SessionTerminal session={runningSession} />)
 
     await waitFor(() => {
       expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
@@ -211,7 +230,7 @@ describe('SessionTerminal', () => {
       http.get('/api/sessions/session-1/buffer', () => HttpResponse.json(buffer)),
     )
 
-    renderWithProviders(<SessionTerminal sessionId="session-1" />)
+    renderWithProviders(<SessionTerminal session={runningSession} />)
 
     await waitFor(() => {
       expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
@@ -232,5 +251,35 @@ describe('SessionTerminal', () => {
       text: 'MISSED',
     })
     expect(xtermMock.instances[0].write).not.toHaveBeenCalledWith('MISSED')
+  })
+
+  it('disables terminal input and overlays stopped sessions', async () => {
+    const inputSpy = vi.fn()
+    server.use(
+      http.get('/api/sessions/session-1/buffer', () =>
+        HttpResponse.json({ sessionId: 'session-1', buffer: 'STOPPED_BACKLOG', lastSequence: 1 }),
+      ),
+      http.post('/api/sessions/session-1/input', async ({ request }) => {
+        inputSpy(await request.json())
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    const stoppedSession: AgentSessionSummaryDto = {
+      ...runningSession,
+      status: 'Stopped',
+      endedAt: '2026-01-01T00:01:00Z',
+    }
+    const { getByTestId } = renderWithProviders(<SessionTerminal session={stoppedSession} />)
+
+    await waitFor(() => {
+      expect(xtermMock.instances[0].write).toHaveBeenCalledWith('STOPPED_BACKLOG')
+    })
+
+    expect(xtermMock.instances[0].options?.disableStdin).toBe(true)
+    expect(getByTestId('session-terminal-inactive-overlay')).toHaveTextContent('Session is not running')
+
+    xtermMock.instances[0].onDataHandler?.('x')
+    expect(inputSpy).not.toHaveBeenCalled()
   })
 })

@@ -136,13 +136,7 @@ public sealed class AgentSessionService
             _runtime.Register(session.Id, adapter);
             runtimeRegistered = true;
 
-            var spec = launchSpec with
-            {
-                Cwd = worktree.Path,
-                Cols = request.Cols,
-                Rows = request.Rows,
-                MemoryLimitMb = _settings.MemoryLimitMb
-            };
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, worktree.Path, resume: false);
             await adapter.StartAsync(spec, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
@@ -318,6 +312,102 @@ public sealed class AgentSessionService
         }
     }
 
+    public async Task<AgentSessionResumeResult> ResumeAsync(
+        Guid sessionId,
+        AgentLaunchSpec launchSpec,
+        CancellationToken ct)
+    {
+        var session = await _db.AgentSessions
+            .Include(s => s.Card)
+            .Include(s => s.Worktree)
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct)
+            ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        if (session.AgentKind != AgentKind.ClaudeCode)
+            throw new ConflictException("Only Claude Code sessions can be resumed.");
+        if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+            throw new ConflictException($"Agent session '{sessionId}' is already active.");
+        if (_runtime.ListLiveSessions().Contains(sessionId))
+            throw new ConflictException($"Agent session '{sessionId}' is already running.");
+
+        var activeOtherSession = await _db.AgentSessions.AnyAsync(
+            s => s.CardId == session.CardId
+                && s.Id != session.Id
+                && (s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running
+                    || s.Status == SessionStatus.Stopping),
+            ct);
+        if (activeOtherSession)
+            throw new ConflictException($"Card '{session.Card.Identifier}' already has an active agent session.");
+
+        var cwd = !string.IsNullOrWhiteSpace(session.Worktree?.Path)
+            ? session.Worktree.Path
+            : session.Cwd;
+        if (string.IsNullOrWhiteSpace(cwd) || !Directory.Exists(cwd))
+            throw new ConflictException($"Agent session '{sessionId}' has no usable worktree path to resume.");
+
+        var now = UtcNow();
+        session.Status = SessionStatus.Starting;
+        session.StartedAt = now;
+        session.LastSeenAt = now;
+        session.EndedAt = null;
+        session.ExitCode = null;
+        session.FailureReason = null;
+        session.Cwd = cwd;
+        session.Card.OwnerSessionId = session.Id;
+        session.Card.ConcurrencyToken = Guid.NewGuid();
+        session.Card.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct);
+
+        IAgentProtocolAdapter? adapter = null;
+        var runtimeRegistered = false;
+        try
+        {
+            adapter = _adapterFactory.Create(session.AgentKind);
+            _runtime.Register(session.Id, adapter);
+            runtimeRegistered = true;
+
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, cwd, resume: true);
+            await adapter.StartAsync(spec, ct);
+            await adapter.WaitForReadyAsync(ct);
+
+            session.Status = SessionStatus.Running;
+            session.LastSeenAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
+
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(session.Id),
+                "SessionResumed",
+                new { sessionId = session.Id, cardId = session.CardId },
+                ct);
+            await _eventBus.PublishToAllAsync(
+                "CardChanged",
+                new { boardId = session.Card.BoardId, cardId = session.CardId },
+                ct);
+
+            return new AgentSessionResumeResult(session.Id, session.CardId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to resume agent session {SessionId}", session.Id);
+            session.Status = SessionStatus.Failed;
+            session.FailureReason = ex.Message;
+            session.EndedAt = UtcNow();
+            session.LastSeenAt = session.EndedAt.Value;
+            session.Card.OwnerSessionId = null;
+            session.Card.ConcurrencyToken = Guid.NewGuid();
+            session.Card.UpdatedAt = session.EndedAt.Value;
+            await _db.SaveChangesAsync(CancellationToken.None);
+
+            if (runtimeRegistered)
+                await _runtime.DisposeSessionAsync(session.Id);
+            else if (adapter is not null)
+                await adapter.DisposeAsync();
+
+            throw;
+        }
+    }
+
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _runtime.SendInputAsync(sessionId, input, ct);
 
@@ -397,6 +487,61 @@ public sealed class AgentSessionService
         _db.AgentSessions.Add(session);
         return session;
     }
+
+    private AgentLaunchSpec BuildRuntimeLaunchSpec(
+        AgentLaunchSpec launchSpec,
+        AgentSession session,
+        string cwd,
+        bool resume)
+    {
+        var args = session.AgentKind == AgentKind.ClaudeCode
+            ? BuildClaudeSessionArgs(launchSpec.Args, session.Id, resume)
+            : launchSpec.Args;
+
+        return launchSpec with
+        {
+            Args = args,
+            Cwd = cwd,
+            Cols = session.Cols,
+            Rows = session.Rows,
+            MemoryLimitMb = _settings.MemoryLimitMb
+        };
+    }
+
+    private static IReadOnlyList<string> BuildClaudeSessionArgs(
+        IReadOnlyList<string> args,
+        Guid sessionId,
+        bool resume)
+    {
+        var filtered = new List<string>();
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            if (IsClaudeSessionArg(arg))
+            {
+                if ((arg == "--session-id" || arg == "--resume" || arg == "-r")
+                    && i + 1 < args.Count
+                    && !args[i + 1].StartsWith("-", StringComparison.Ordinal))
+                {
+                    i++;
+                }
+                continue;
+            }
+
+            filtered.Add(arg);
+        }
+
+        filtered.Add(resume ? "--resume" : "--session-id");
+        filtered.Add(sessionId.ToString("D"));
+        return filtered.AsReadOnly();
+    }
+
+    private static bool IsClaudeSessionArg(string arg) =>
+        arg == "--session-id"
+        || arg == "--resume"
+        || arg == "-r"
+        || arg.StartsWith("--session-id=", StringComparison.Ordinal)
+        || arg.StartsWith("--resume=", StringComparison.Ordinal);
 
     private async Task<(Worktree Worktree, bool Created)> ResolveOrCreateWorktreeAsync(
         Card card,

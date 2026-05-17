@@ -158,6 +158,175 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
+    public async Task Claude_start_uses_antiphon_session_id_as_claude_session_id()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-claude-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "CLAUDE_READY" };
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                worktreePath,
+                new AgentSessionSettings
+                {
+                    FirstDeltaTimeoutMs = 1_000,
+                    KillGraceMs = 100,
+                    SignalRMaxChunkChars = 16 * 1024,
+                    ReplayBufferMaxChars = 128 * 1024,
+                    SessionLogPath = Path.Combine(tempRoot, "session-logs")
+                });
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "fake",
+                AgentKind.ClaudeCode,
+                "start claude",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.ClaudeCode,
+                "fake",
+                [],
+                new Dictionary<string, string>(),
+                repoPath,
+                120,
+                30);
+
+            var result = await service.StartAsync(request, spec, CancellationToken.None);
+
+            adapter.StartedArgs.ShouldContain("--session-id");
+            adapter.StartedArgs.ShouldContain(result.SessionId.ToString("D"));
+            adapter.StartedArgs.ShouldNotContain("--resume");
+
+            await service.KillAsync(result.SessionId, CancellationToken.None);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Claude_resume_starts_existing_session_with_resume_argument()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-resume-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+        Directory.CreateDirectory(worktreePath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var now = DateTime.UtcNow;
+            var worktree = new Worktree
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RepoPath = repoPath,
+                Path = worktreePath,
+                Branch = $"feat/card-{graph.Card.Identifier}",
+                BaseRef = "main",
+                Status = WorktreeStatus.Active,
+                CreatedAt = now,
+                LastTouchedAt = now,
+                Card = graph.Card
+            };
+            graph.Card.CurrentWorktreeId = worktree.Id;
+            graph.Card.Worktrees.Add(worktree);
+            db.Worktrees.Add(worktree);
+            await db.SaveChangesAsync();
+
+            var session = new AgentSession
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                WorktreeId = worktree.Id,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Stopped,
+                Cwd = worktreePath,
+                Cols = 100,
+                Rows = 25,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+                EndedAt = now,
+                Card = graph.Card,
+                Worktree = worktree
+            };
+            graph.Card.AgentSessions.Add(session);
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                worktreePath,
+                new AgentSessionSettings
+                {
+                    FirstDeltaTimeoutMs = 1_000,
+                    KillGraceMs = 100,
+                    SignalRMaxChunkChars = 16 * 1024,
+                    ReplayBufferMaxChars = 128 * 1024,
+                    SessionLogPath = Path.Combine(tempRoot, "session-logs")
+                });
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.ClaudeCode,
+                "fake",
+                ["--session-id", Guid.NewGuid().ToString("D")],
+                new Dictionary<string, string>(),
+                repoPath,
+                100,
+                25);
+
+            var result = await service.ResumeAsync(session.Id, spec, CancellationToken.None);
+
+            result.SessionId.ShouldBe(session.Id);
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldContain("--resume");
+            adapter.StartedArgs.ShouldContain(session.Id.ToString("D"));
+            adapter.StartedArgs.ShouldNotContain("--session-id");
+            adapter.SentPrompt.ShouldBeEmpty();
+
+            var refreshedSession = await db.AgentSessions.SingleAsync(s => s.Id == session.Id);
+            refreshedSession.Status.ShouldBe(SessionStatus.Running);
+            var refreshedCard = await db.Cards.SingleAsync(c => c.Id == graph.Card.Id);
+            refreshedCard.OwnerSessionId.ShouldBe(session.Id);
+
+            await service.KillAsync(session.Id, CancellationToken.None);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task RunAttempt_records_memory_killed_exit_reason()
     {
         await using var db = CreateContext();

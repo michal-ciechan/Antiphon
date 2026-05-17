@@ -21,6 +21,10 @@ public sealed record AgentSessionStartResult(
     Guid WorktreeId,
     bool FirstDeltaReceived);
 
+public sealed record AgentSessionResumeResult(
+    Guid SessionId,
+    Guid CardId);
+
 public sealed record AgentSessionBufferDto(
     Guid SessionId,
     string Buffer,

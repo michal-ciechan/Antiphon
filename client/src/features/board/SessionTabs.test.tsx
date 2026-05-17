@@ -1,11 +1,13 @@
+import { HttpResponse, http } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionSummaryDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent } from '../../test/utils'
+import { server } from '../../test/mocks/server'
+import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { SessionTabs } from './SessionTabs'
 
 vi.mock('./SessionTerminal', () => ({
-  SessionTerminal: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="session-terminal">terminal {sessionId}</div>
+  SessionTerminal: ({ session }: { session: AgentSessionSummaryDto }) => (
+    <div data-testid="session-terminal">terminal {session.id}</div>
   ),
 }))
 
@@ -39,6 +41,7 @@ describe('SessionTabs', () => {
   it('shows valid terminal sessions in an all-sessions dropdown and hides empty sessions', async () => {
     renderWithProviders(
       <SessionTabs
+        boardId="board-1"
         sessions={[
           { ...baseSession, id: 'session-new', status: 'Running', cwd: 'D:/repo/new' },
           { ...baseSession, id: 'session-empty', status: 'Starting', cwd: '' },
@@ -62,10 +65,31 @@ describe('SessionTabs', () => {
 
   it('does not render a terminal for sessions without a cwd', () => {
     renderWithProviders(
-      <SessionTabs sessions={[{ ...baseSession, id: 'session-empty', status: 'Starting', cwd: '' }]} />,
+      <SessionTabs boardId="board-1" sessions={[{ ...baseSession, id: 'session-empty', status: 'Starting', cwd: '' }]} />,
     )
 
     expect(screen.getByText('No terminal sessions yet')).toBeInTheDocument()
     expect(screen.queryByTestId('session-terminal')).not.toBeInTheDocument()
+  })
+
+  it('shows a resume button for stopped Claude sessions and posts the stored session id', async () => {
+    const postSpy = vi.fn()
+    server.use(
+      http.post('/api/sessions/session-old/resume', async () => {
+        postSpy()
+        return HttpResponse.json({ sessionId: 'session-old', cardId: 'card-1' }, { status: 202 })
+      }),
+    )
+
+    renderWithProviders(
+      <SessionTabs
+        boardId="board-1"
+        sessions={[{ ...baseSession, id: 'session-old', status: 'Stopped', cwd: 'D:/repo/old' }]}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalled())
   })
 })

@@ -25,6 +25,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;
     public string SentPrompt { get; private set; } = string.Empty;
+    public IReadOnlyList<string> StartedArgs { get; private set; } = [];
     public int Cols { get; private set; }
     public int Rows { get; private set; }
     public int MemoryLimitMb { get; private set; }
@@ -38,6 +39,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
         Started = true;
+        StartedArgs = spec.Args.ToArray();
         Cols = spec.Cols;
         Rows = spec.Rows;
         MemoryLimitMb = spec.MemoryLimitMb;

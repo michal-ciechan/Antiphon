@@ -1,13 +1,14 @@
 import '@xterm/xterm/css/xterm.css'
-import { Box } from '@mantine/core'
+import { Box, Stack, Text } from '@mantine/core'
 import { useEffect, useRef } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
 
 interface SessionTerminalProps {
-  sessionId: string
+  session: AgentSessionSummaryDto
 }
 
 interface AgentTextDeltaPayload {
@@ -18,8 +19,10 @@ interface AgentTextDeltaPayload {
 
 const HUB_URL = '/hubs/antiphon'
 
-export function SessionTerminal({ sessionId }: SessionTerminalProps) {
+export function SessionTerminal({ session }: SessionTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const sessionId = session.id
+  const inputEnabled = session.status === 'Running'
 
   useEffect(() => {
     const host = hostRef.current
@@ -34,6 +37,7 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
+      disableStdin: !inputEnabled,
       fontFamily: 'Cascadia Mono, Consolas, monospace',
       fontSize: 13,
       theme: {
@@ -49,6 +53,7 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
     fitAddon.fit()
 
     const dataDisposable = terminal.onData((input) => {
+      if (!inputEnabled) return
       void sendSessionInput(sessionId, input)
     })
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
@@ -151,19 +156,48 @@ export function SessionTerminal({ sessionId }: SessionTerminalProps) {
       }
       terminal.dispose()
     }
-  }, [sessionId])
+  }, [inputEnabled, sessionId])
 
   return (
     <Box
-      ref={hostRef}
       data-testid="session-terminal"
       h={420}
       bg="#111317"
       style={{
+        position: 'relative',
         border: '1px solid var(--mantine-color-dark-4)',
         borderRadius: 6,
         overflow: 'hidden',
       }}
-    />
+    >
+      <Box ref={hostRef} h="100%" />
+      {!inputEnabled && (
+        <Box
+          data-testid="session-terminal-inactive-overlay"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(17, 19, 23, 0.72)',
+            backdropFilter: 'blur(1px)',
+            pointerEvents: 'auto',
+          }}
+        >
+          <Stack gap={4} align="center" px="md">
+            <Text fw={700} size="sm">Session is not running</Text>
+            <Text size="xs" c="dimmed" ta="center">
+              Terminal input is disabled for {session.status.toLowerCase()} sessions.
+            </Text>
+            {session.agentKind === 'ClaudeCode' && (
+              <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>
+                {session.id}
+              </Text>
+            )}
+          </Stack>
+        </Box>
+      )}
+    </Box>
   )
 }

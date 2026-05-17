@@ -90,7 +90,7 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
 
         <Divider />
 
-        <SessionTabs sessions={card.sessions} />
+        <SessionTabs boardId={boardId} sessions={card.sessions} />
       </Stack>
     </Modal>
   )

@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -62,6 +64,25 @@ public static class SessionEndpoints
             ValidateTerminalSize(request.Cols, request.Rows);
             await service.ResizeAsync(id, request.Cols, request.Rows, cancellationToken);
             return Results.NoContent();
+        });
+
+        sessions.MapPost("/{id:guid}/resume", async (
+            Guid id,
+            AppDbContext db,
+            AgentRegistry registry,
+            AgentSessionService service,
+            CancellationToken cancellationToken) =>
+        {
+            var session = await db.AgentSessions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == id, cancellationToken)
+                ?? throw new NotFoundException("AgentSession", id);
+            var spec = registry.Resolve(session.DefinitionName, new AgentLaunchOptions(
+                Cwd: session.Cwd,
+                Cols: session.Cols,
+                Rows: session.Rows));
+
+            return Results.Accepted($"/api/sessions/{id}", await service.ResumeAsync(id, spec, cancellationToken));
         });
 
         sessions.MapPost("/{id:guid}/kill", async (
