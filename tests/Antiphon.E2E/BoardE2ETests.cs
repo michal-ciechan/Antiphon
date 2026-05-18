@@ -398,7 +398,7 @@ public class BoardE2ETests
         var sessionCwd = Path.Combine(Path.GetTempPath(), "antiphon-e2e-stopped-sessions", suffix);
         Directory.CreateDirectory(sessionCwd);
         _tempRepoRoots.Add(sessionCwd);
-        var sessionId = await AddStoppedClaudeSessionAsync(cardId, sessionCwd);
+        var sessionId = await AddClaudeSessionAsync(cardId, sessionCwd, SessionStatus.Stopped);
 
         var (page, context) = await _playwrightFixture.NewPageAsync();
         var passed = false;
@@ -429,6 +429,63 @@ public class BoardE2ETests
                 "screenshots",
                 "toonsharp-antiphon",
                 "33-stopped-session-overlay-resume.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Path = screenshotPath,
+                FullPage = true
+            });
+            Console.WriteLine($"[screenshot] {screenshotPath}");
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Board_running_session_shows_stop_button()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Session Stop Project {suffix}");
+        var boardId = await CreateBoardAsync(projectId, $"Session Stop Board {suffix}");
+        var cardTitle = $"Running Session Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, boardColumnId: null, cardTitle);
+        var sessionCwd = Path.Combine(Path.GetTempPath(), "antiphon-e2e-running-sessions", suffix);
+        Directory.CreateDirectory(sessionCwd);
+        _tempRepoRoots.Add(sessionCwd);
+        await AddClaudeSessionAsync(cardId, sessionCwd, SessionStatus.Running);
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByTestId("session-terminal")).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Stop" })).ToBeVisibleAsync();
+            await Expect(dialog.GetByTestId("session-terminal-inactive-overlay")).Not.ToBeVisibleAsync();
+
+            var screenshotPath = Path.Combine(
+                FindRepoRoot(),
+                "docs",
+                "screenshots",
+                "toonsharp-antiphon",
+                "34-running-session-stop-button.png");
             Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
             await page.ScreenshotAsync(new PageScreenshotOptions
             {
@@ -543,7 +600,7 @@ public class BoardE2ETests
         return body.GetProperty("sessionId").GetGuid();
     }
 
-    private async Task<Guid> AddStoppedClaudeSessionAsync(Guid cardId, string cwd)
+    private async Task<Guid> AddClaudeSessionAsync(Guid cardId, string cwd, SessionStatus status)
     {
         using var scope = _appFixture.Services.CreateScope();
         await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -555,14 +612,14 @@ public class BoardE2ETests
             CardId = cardId,
             DefinitionName = "claude",
             AgentKind = AgentKind.ClaudeCode,
-            Status = SessionStatus.Stopped,
+            Status = status,
             Cwd = cwd,
             Cols = 120,
             Rows = 30,
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
-            EndedAt = now,
+            EndedAt = status == SessionStatus.Running ? null : now,
             Card = card
         };
 

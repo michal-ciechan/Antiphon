@@ -29,10 +29,25 @@ export async function resumeSession(sessionId: string) {
   return apiPost<AgentSessionResumeResult>(`/sessions/${sessionId}/resume`, {})
 }
 
+export async function stopSession(sessionId: string) {
+  return apiPost<void>(`/sessions/${sessionId}/kill`, {})
+}
+
 export function useResumeSession(boardId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: resumeSession,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
+export function useStopSession(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: stopSession,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })

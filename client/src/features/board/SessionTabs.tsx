@@ -1,9 +1,9 @@
 import { Badge, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbCopy, TbRefresh } from 'react-icons/tb'
+import { TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
 import type { AgentSessionSummaryDto } from '../../api/boards'
-import { useResumeSession } from '../../api/sessions'
+import { useResumeSession, useStopSession } from '../../api/sessions'
 import { SessionTerminal } from './SessionTerminal'
 
 interface SessionTabsProps {
@@ -22,6 +22,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
   const resumeSession = useResumeSession(boardId)
+  const stopSession = useStopSession(boardId)
   const terminalSessions = useMemo(
     () => sessions.filter((session) => session.id && session.cwd.trim().length > 0),
     [sessions],
@@ -38,6 +39,7 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
   }))
   const canResume = selectedSession?.agentKind === 'ClaudeCode'
     && (selectedSession.status === 'Stopped' || selectedSession.status === 'Failed')
+  const canStop = selectedSession?.status === 'Running' || selectedSession?.status === 'Starting'
 
   if (sessions.length === 0) {
     return <Text size="sm" c="dimmed">No sessions</Text>
@@ -95,6 +97,25 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
                 }}
               >
                 Resume
+              </Button>
+            )}
+            {canStop && (
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="red"
+                leftSection={<TbPlayerStop size={12} />}
+                loading={stopSession.isPending}
+                onClick={() => {
+                  stopSession.mutate(selectedSession.id, {
+                    onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
+                    onError: (error) => {
+                      notifications.show({ color: 'red', message: error instanceof Error ? error.message : 'Stop failed' })
+                    },
+                  })
+                }}
+              >
+                Stop
               </Button>
             )}
             <Text size="xs" c="dimmed" lineClamp={1} maw={520}>

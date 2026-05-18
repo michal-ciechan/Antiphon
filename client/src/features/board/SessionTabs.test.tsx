@@ -92,4 +92,26 @@ describe('SessionTabs', () => {
 
     await waitFor(() => expect(postSpy).toHaveBeenCalled())
   })
+
+  it('shows a stop button for running sessions and posts to the kill API', async () => {
+    const postSpy = vi.fn()
+    server.use(
+      http.post('/api/sessions/session-running/kill', async () => {
+        postSpy()
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderWithProviders(
+      <SessionTabs
+        boardId="board-1"
+        sessions={[{ ...baseSession, id: 'session-running', status: 'Running', cwd: 'D:/repo/running' }]}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalled())
+  })
 })
