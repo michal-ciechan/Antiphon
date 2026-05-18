@@ -1,8 +1,10 @@
-import { Badge, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
+import { Alert, Badge, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
+import { TbAlertCircle, TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
 import type { AgentSessionSummaryDto } from '../../api/boards'
+import { getApiErrorMessage } from '../../api/client'
+import type { AgentSessionResumeMode } from '../../api/sessions'
 import { useResumeSession, useStopSession } from '../../api/sessions'
 import { SessionTerminal } from './SessionTerminal'
 
@@ -19,6 +21,8 @@ const STATUS_COLOR: Record<string, string> = {
   Failed: 'red',
   Created: 'gray',
 }
+
+const CLAUDE_SESSION_NOT_FOUND_TEXT = 'Claude resume session was not found'
 
 export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
   const resumeSession = useResumeSession(boardId)
@@ -40,6 +44,27 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
   const canResume = selectedSession?.agentKind === 'ClaudeCode'
     && (selectedSession.status === 'Stopped' || selectedSession.status === 'Failed')
   const canStop = selectedSession?.status === 'Running' || selectedSession?.status === 'Starting'
+  const canRecoverClaudeSession = canResume
+    && (selectedSession.failureReason?.includes(CLAUDE_SESSION_NOT_FOUND_TEXT)
+      || selectedSession.failureReason?.includes('No conversation found with session ID'))
+
+  const resumeSelectedSession = (mode: AgentSessionResumeMode) => {
+    if (!selectedSession) return
+
+    resumeSession.mutate({ sessionId: selectedSession.id, mode }, {
+      onSuccess: () => {
+        const message = mode === 'Continue'
+          ? 'Session continued from Claude context'
+          : mode === 'New'
+            ? 'New Claude session started'
+            : 'Session resumed'
+        notifications.show({ color: 'green', message })
+      },
+      onError: (error) => {
+        notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Resume failed') })
+      },
+    })
+  }
 
   if (sessions.length === 0) {
     return <Text size="sm" c="dimmed">No sessions</Text>
@@ -87,14 +112,7 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
                 variant="light"
                 leftSection={<TbRefresh size={12} />}
                 loading={resumeSession.isPending}
-                onClick={() => {
-                  resumeSession.mutate(selectedSession.id, {
-                    onSuccess: () => notifications.show({ color: 'green', message: 'Session resumed' }),
-                    onError: (error) => {
-                      notifications.show({ color: 'red', message: error instanceof Error ? error.message : 'Resume failed' })
-                    },
-                  })
-                }}
+                onClick={() => resumeSelectedSession('Resume')}
               >
                 Resume
               </Button>
@@ -128,6 +146,39 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
         <Text size="xs" c="dimmed" data-testid="hidden-session-count">
           Hidden {hiddenSessionCount} preparing session{hiddenSessionCount === 1 ? '' : 's'} without a terminal.
         </Text>
+      )}
+      {canRecoverClaudeSession && (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<TbAlertCircle size={16} />}
+          title="Claude session was not found"
+          data-testid="claude-session-recovery"
+        >
+          <Stack gap="xs">
+            <Text size="sm">
+              Continue from the last Claude context in this worktree, or start a fresh Claude session for this card.
+            </Text>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="filled"
+                loading={resumeSession.isPending}
+                onClick={() => resumeSelectedSession('Continue')}
+              >
+                Continue from context
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                loading={resumeSession.isPending}
+                onClick={() => resumeSelectedSession('New')}
+              >
+                Start new session
+              </Button>
+            </Group>
+          </Stack>
+        </Alert>
       )}
       {selectedSession && <SessionTerminal session={selectedSession} />}
     </Stack>

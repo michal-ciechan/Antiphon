@@ -75,8 +75,8 @@ describe('SessionTabs', () => {
   it('shows a resume button for stopped Claude sessions and posts the stored session id', async () => {
     const postSpy = vi.fn()
     server.use(
-      http.post('/api/sessions/session-old/resume', async () => {
-        postSpy()
+      http.post('/api/sessions/session-old/resume', async ({ request }) => {
+        postSpy(await request.json())
         return HttpResponse.json({ sessionId: 'session-old', cardId: 'card-1' }, { status: 202 })
       }),
     )
@@ -90,7 +90,41 @@ describe('SessionTabs', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
 
-    await waitFor(() => expect(postSpy).toHaveBeenCalled())
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith({ mode: 'Resume' }))
+  })
+
+  it('prompts for Claude resume recovery and posts continue or new-session modes', async () => {
+    const postSpy = vi.fn()
+    server.use(
+      http.post('/api/sessions/session-missing/resume', async ({ request }) => {
+        postSpy(await request.json())
+        return HttpResponse.json({ sessionId: 'session-missing', cardId: 'card-1' }, { status: 202 })
+      }),
+    )
+
+    renderWithProviders(
+      <SessionTabs
+        boardId="board-1"
+        sessions={[
+          {
+            ...baseSession,
+            id: 'session-missing',
+            status: 'Failed',
+            cwd: 'D:/repo/missing',
+            failureReason: 'Claude resume session was not found. Continue from last context in this worktree or start a new Claude session.',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('claude-session-recovery')).toBeInTheDocument()
+    expect(screen.getByText('Claude session was not found')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue from context' }))
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith({ mode: 'Continue' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start new session' }))
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith({ mode: 'New' }))
   })
 
   it('shows a stop button for running sessions and posts to the kill API', async () => {

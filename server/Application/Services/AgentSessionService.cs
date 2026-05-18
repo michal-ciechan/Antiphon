@@ -16,6 +16,9 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentSessionService
 {
     private const string MemoryKilledFailureReason = "MemoryKilled: agent exceeded the configured memory limit.";
+    public const string ClaudeSessionNotFoundFailureReason =
+        "Claude resume session was not found. Continue from last context in this worktree or start a new Claude session.";
+    private const string ClaudeSessionNotFoundNeedle = "No conversation found with session ID:";
 
     private readonly AppDbContext _db;
     private readonly IWorktreeManager _worktreeManager;
@@ -136,13 +139,13 @@ public sealed class AgentSessionService
             _runtime.Register(session.Id, adapter);
             runtimeRegistered = true;
 
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, worktree.Path, resume: false);
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, worktree.Path, resumeMode: null);
             await adapter.StartAsync(spec, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
             await _db.SaveChangesAsync(ct);
 
-            await adapter.WaitForReadyAsync(ct);
+            await WaitForReadyOrThrowAsync(adapter, ct);
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -315,8 +318,12 @@ public sealed class AgentSessionService
     public async Task<AgentSessionResumeResult> ResumeAsync(
         Guid sessionId,
         AgentLaunchSpec launchSpec,
+        AgentSessionResumeMode resumeMode,
         CancellationToken ct)
     {
+        if (!Enum.IsDefined(resumeMode))
+            throw new ValidationException(nameof(resumeMode), "Resume mode is not supported.");
+
         var session = await _db.AgentSessions
             .Include(s => s.Card)
             .Include(s => s.Worktree)
@@ -367,9 +374,9 @@ public sealed class AgentSessionService
             _runtime.Register(session.Id, adapter);
             runtimeRegistered = true;
 
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, cwd, resume: true);
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, cwd, resumeMode);
             await adapter.StartAsync(spec, ct);
-            await adapter.WaitForReadyAsync(ct);
+            await WaitForReadyOrThrowAsync(adapter, ct);
 
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
@@ -390,8 +397,12 @@ public sealed class AgentSessionService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to resume agent session {SessionId}", session.Id);
+            var sessionNotFound = IsClaudeSessionNotFound(adapter, ex);
+            var failureReason = sessionNotFound
+                ? ClaudeSessionNotFoundFailureReason
+                : ex.Message;
             session.Status = SessionStatus.Failed;
-            session.FailureReason = ex.Message;
+            session.FailureReason = failureReason;
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
             session.Card.OwnerSessionId = null;
@@ -403,6 +414,9 @@ public sealed class AgentSessionService
                 await _runtime.DisposeSessionAsync(session.Id);
             else if (adapter is not null)
                 await adapter.DisposeAsync();
+
+            if (sessionNotFound)
+                throw new ConflictException(ClaudeSessionNotFoundFailureReason);
 
             throw;
         }
@@ -492,10 +506,10 @@ public sealed class AgentSessionService
         AgentLaunchSpec launchSpec,
         AgentSession session,
         string cwd,
-        bool resume)
+        AgentSessionResumeMode? resumeMode)
     {
         var args = session.AgentKind == AgentKind.ClaudeCode
-            ? BuildClaudeSessionArgs(launchSpec.Args, session.Id, resume)
+            ? BuildClaudeSessionArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
 
         return launchSpec with
@@ -511,7 +525,7 @@ public sealed class AgentSessionService
     private static IReadOnlyList<string> BuildClaudeSessionArgs(
         IReadOnlyList<string> args,
         Guid sessionId,
-        bool resume)
+        AgentSessionResumeMode? resumeMode)
     {
         var filtered = new List<string>();
         for (var i = 0; i < args.Count; i++)
@@ -519,7 +533,7 @@ public sealed class AgentSessionService
             var arg = args[i];
             if (IsClaudeSessionArg(arg))
             {
-                if ((arg == "--session-id" || arg == "--resume" || arg == "-r")
+                if (ClaudeSessionArgConsumesValue(arg)
                     && i + 1 < args.Count
                     && !args[i + 1].StartsWith("-", StringComparison.Ordinal))
                 {
@@ -531,17 +545,55 @@ public sealed class AgentSessionService
             filtered.Add(arg);
         }
 
-        filtered.Add(resume ? "--resume" : "--session-id");
+        if (resumeMode == AgentSessionResumeMode.Continue)
+        {
+            filtered.Add("--continue");
+            return filtered.AsReadOnly();
+        }
+
+        filtered.Add(resumeMode == AgentSessionResumeMode.Resume ? "--resume" : "--session-id");
         filtered.Add(sessionId.ToString("D"));
         return filtered.AsReadOnly();
     }
+
+    private static bool ClaudeSessionArgConsumesValue(string arg) =>
+        arg == "--session-id"
+        || arg == "--resume"
+        || arg == "-r";
 
     private static bool IsClaudeSessionArg(string arg) =>
         arg == "--session-id"
         || arg == "--resume"
         || arg == "-r"
+        || arg == "--continue"
+        || arg == "-c"
         || arg.StartsWith("--session-id=", StringComparison.Ordinal)
-        || arg.StartsWith("--resume=", StringComparison.Ordinal);
+        || arg.StartsWith("--resume=", StringComparison.Ordinal)
+        || arg.StartsWith("--continue=", StringComparison.Ordinal);
+
+    private static async Task WaitForReadyOrThrowAsync(IAgentProtocolAdapter adapter, CancellationToken ct)
+    {
+        if (!await adapter.WaitForReadyAsync(ct))
+            throw new InvalidOperationException("Agent process did not become ready.");
+    }
+
+    private static bool IsClaudeSessionNotFound(IAgentProtocolAdapter? adapter, Exception ex)
+    {
+        if (ex.Message.Contains(ClaudeSessionNotFoundNeedle, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (adapter is null)
+            return false;
+
+        try
+        {
+            return adapter.SnapshotRawOutput().Contains(ClaudeSessionNotFoundNeedle, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
 
     private async Task<(Worktree Worktree, bool Created)> ResolveOrCreateWorktreeAsync(
         Card card,

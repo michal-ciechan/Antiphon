@@ -25,6 +25,16 @@ public sealed record AgentSessionResumeResult(
     Guid SessionId,
     Guid CardId);
 
+public enum AgentSessionResumeMode
+{
+    Resume,
+    Continue,
+    New
+}
+
+public sealed record ResumeAgentSessionRequest(
+    AgentSessionResumeMode Mode = AgentSessionResumeMode.Resume);
+
 public sealed record AgentSessionBufferDto(
     Guid SessionId,
     string Buffer,

@@ -13,6 +13,8 @@ export interface AgentSessionResumeResult {
   cardId: string
 }
 
+export type AgentSessionResumeMode = 'Resume' | 'Continue' | 'New'
+
 export async function getSessionBuffer(sessionId: string) {
   return apiGet<AgentSessionBufferDto>(`/sessions/${sessionId}/buffer`)
 }
@@ -25,8 +27,8 @@ export async function resizeSession(sessionId: string, cols: number, rows: numbe
   return apiPost<void>(`/sessions/${sessionId}/resize`, { cols, rows })
 }
 
-export async function resumeSession(sessionId: string) {
-  return apiPost<AgentSessionResumeResult>(`/sessions/${sessionId}/resume`, {})
+export async function resumeSession(sessionId: string, mode: AgentSessionResumeMode = 'Resume') {
+  return apiPost<AgentSessionResumeResult>(`/sessions/${sessionId}/resume`, { mode })
 }
 
 export async function stopSession(sessionId: string) {
@@ -36,8 +38,9 @@ export async function stopSession(sessionId: string) {
 export function useResumeSession(boardId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: resumeSession,
-    onSuccess: () => {
+    mutationFn: ({ sessionId, mode = 'Resume' }: { sessionId: string; mode?: AgentSessionResumeMode }) =>
+      resumeSession(sessionId, mode),
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },

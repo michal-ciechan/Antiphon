@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Antiphon.E2E.Fixtures;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -447,6 +448,70 @@ public class BoardE2ETests
     }
 
     [Test]
+    public async Task Board_failed_claude_resume_missing_session_shows_recovery_actions()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Session Recovery Project {suffix}");
+        var boardId = await CreateBoardAsync(projectId, $"Session Recovery Board {suffix}");
+        var cardTitle = $"Missing Claude Session Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, boardColumnId: null, cardTitle);
+        var sessionCwd = Path.Combine(Path.GetTempPath(), "antiphon-e2e-missing-claude-sessions", suffix);
+        Directory.CreateDirectory(sessionCwd);
+        _tempRepoRoots.Add(sessionCwd);
+        await AddClaudeSessionAsync(
+            cardId,
+            sessionCwd,
+            SessionStatus.Failed,
+            AgentSessionService.ClaudeSessionNotFoundFailureReason);
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByTestId("session-terminal")).ToBeVisibleAsync();
+            await Expect(dialog.GetByTestId("claude-session-recovery")).ToBeVisibleAsync();
+            await Expect(dialog.GetByText("Claude session was not found")).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Resume" })).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Continue from context" })).ToBeVisibleAsync();
+            await Expect(dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Start new session" })).ToBeVisibleAsync();
+
+            var screenshotPath = Path.Combine(
+                FindRepoRoot(),
+                "docs",
+                "screenshots",
+                "toonsharp-antiphon",
+                "35-claude-session-recovery-prompt.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Path = screenshotPath,
+                FullPage = true
+            });
+            Console.WriteLine($"[screenshot] {screenshotPath}");
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task Board_running_session_shows_stop_button()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -600,7 +665,11 @@ public class BoardE2ETests
         return body.GetProperty("sessionId").GetGuid();
     }
 
-    private async Task<Guid> AddClaudeSessionAsync(Guid cardId, string cwd, SessionStatus status)
+    private async Task<Guid> AddClaudeSessionAsync(
+        Guid cardId,
+        string cwd,
+        SessionStatus status,
+        string? failureReason = null)
     {
         using var scope = _appFixture.Services.CreateScope();
         await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -620,6 +689,7 @@ public class BoardE2ETests
             StartedAt = now,
             LastSeenAt = now,
             EndedAt = status == SessionStatus.Running ? null : now,
+            FailureReason = failureReason,
             Card = card
         };
 

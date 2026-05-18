@@ -68,6 +68,7 @@ public static class SessionEndpoints
 
         sessions.MapPost("/{id:guid}/resume", async (
             Guid id,
+            ResumeAgentSessionRequest request,
             AppDbContext db,
             AgentRegistry registry,
             AgentSessionService service,
@@ -82,7 +83,7 @@ public static class SessionEndpoints
                 Cols: session.Cols,
                 Rows: session.Rows));
 
-            return Results.Accepted($"/api/sessions/{id}", await service.ResumeAsync(id, spec, cancellationToken));
+            return Results.Accepted($"/api/sessions/{id}", await service.ResumeAsync(id, spec, request.Mode, cancellationToken));
         });
 
         sessions.MapPost("/{id:guid}/kill", async (
