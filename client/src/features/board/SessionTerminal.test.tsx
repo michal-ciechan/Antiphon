@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
-import { SessionTerminal } from './SessionTerminal'
+import { SessionTerminal, createTerminalCopyKeyHandler } from './SessionTerminal'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 
 const xtermMock = vi.hoisted(() => ({
@@ -12,6 +12,7 @@ const xtermMock = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>
     onDataHandler?: (input: string) => void
     onResizeHandler?: (size: { cols: number; rows: number }) => void
+    customKeyHandler?: (event: KeyboardEvent) => boolean
     cols: number
     rows: number
     options?: { disableStdin?: boolean }
@@ -66,6 +67,7 @@ vi.mock('@xterm/xterm', () => ({
     rows = 30
     onDataHandler?: (input: string) => void
     onResizeHandler?: (size: { cols: number; rows: number }) => void
+    customKeyHandler?: (event: KeyboardEvent) => boolean
 
     options?: { disableStdin?: boolean }
 
@@ -83,6 +85,15 @@ vi.mock('@xterm/xterm', () => ({
     onResize(handler: (size: { cols: number; rows: number }) => void) {
       this.onResizeHandler = handler
       return { dispose: vi.fn() }
+    }
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.customKeyHandler = handler
+    }
+    hasSelection() {
+      return false
+    }
+    getSelection() {
+      return ''
     }
   },
 }))
@@ -147,6 +158,7 @@ describe('SessionTerminal', () => {
       expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
       expect(xtermMock.instances[0].write).toHaveBeenCalledWith('BACKLOG')
     })
+    expect(xtermMock.instances[0].customKeyHandler).toBeTypeOf('function')
 
     signalrMock.connection.handlers.get('AgentTextDelta')?.({
       sessionId: 'session-2',
@@ -281,5 +293,37 @@ describe('SessionTerminal', () => {
 
     xtermMock.instances[0].onDataHandler?.('x')
     expect(inputSpy).not.toHaveBeenCalled()
+  })
+
+  it('copies the selected terminal text on Ctrl+C and lets unselected Ctrl+C through', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    const terminal = {
+      hasSelection: vi.fn(() => true),
+      getSelection: vi.fn(() => 'SELECTED OUTPUT'),
+    }
+    const handler = createTerminalCopyKeyHandler(terminal)
+
+    const copied = handler(new KeyboardEvent('keydown', {
+      key: 'c',
+      code: 'KeyC',
+      ctrlKey: true,
+    }))
+
+    expect(copied).toBe(false)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('SELECTED OUTPUT'))
+
+    terminal.hasSelection.mockReturnValue(false)
+
+    const passedThrough = handler(new KeyboardEvent('keydown', {
+      key: 'c',
+      code: 'KeyC',
+      ctrlKey: true,
+    }))
+
+    expect(passedThrough).toBe(true)
   })
 })
