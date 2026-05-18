@@ -243,11 +243,42 @@ public class SmokeTests
     {
         var agents = await _client.GetAsync("/api/agents");
         agents.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await agents.Content.ReadAsStringAsync()).ShouldContain("\"defaultDefinition\"");
+        (await agents.Content.ReadAsStringAsync()).ShouldStartWith("[");
+
+        var agentDefinitions = await _client.GetAsync("/api/agents/definitions");
+        agentDefinitions.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await agentDefinitions.Content.ReadAsStringAsync()).ShouldContain("\"defaultDefinition\"");
 
         var boards = await _client.GetAsync("/api/boards");
         boards.StatusCode.ShouldBe(HttpStatusCode.OK);
         (await boards.Content.ReadAsStringAsync()).ShouldStartWith("[");
+    }
+
+    [Test]
+    public async Task AgentEndpoint_post_agent_and_get_agents_round_trips_created_agent()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+
+        var createResponse = await _client.PostAsJsonAsync("/api/agents", new
+        {
+            name = $"Endpoint Agent {suffix}",
+            workingDirectory = $"D:/src/agent-{suffix}",
+            details = "Created by endpoint smoke test"
+        });
+
+        createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var agentId = created.GetProperty("id").GetGuid();
+        created.GetProperty("name").GetString().ShouldBe($"Endpoint Agent {suffix}");
+        created.GetProperty("queue").EnumerateArray().ShouldBeEmpty();
+
+        var listResponse = await _client.GetAsync("/api/agents");
+
+        listResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var agents = await listResponse.Content.ReadFromJsonAsync<JsonElement>();
+        agents.EnumerateArray()
+            .ShouldContain(agent => agent.GetProperty("id").GetGuid() == agentId
+                && agent.GetProperty("name").GetString() == $"Endpoint Agent {suffix}");
     }
 
     [Test]
