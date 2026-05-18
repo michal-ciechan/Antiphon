@@ -1,0 +1,303 @@
+import { HttpResponse, http } from 'msw'
+import { notifications } from '@mantine/notifications'
+import { describe, expect, it, vi } from 'vitest'
+import type { AgentDetailDto, AgentSummaryDto } from '../../api/agents'
+import type { BoardDetailDto, BoardSummaryDto } from '../../api/boards'
+import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { server } from '../../test/mocks/server'
+import { AgentsPage } from './AgentsPage'
+
+vi.mock('@mantine/notifications', () => ({
+  notifications: {
+    show: vi.fn(),
+  },
+}))
+
+const agentSummary: AgentSummaryDto = {
+  id: 'agent-1',
+  name: 'Frontend Claude',
+  slug: 'frontend-claude',
+  workingDirectory: 'D:/src/app',
+  details: 'UI work',
+  defaultWorkflowTemplateId: 'template-1',
+  defaultWorkflowTemplateName: 'One Shot',
+  assignmentPolicy: 'AutoPick',
+  status: 'Idle',
+  persistentSessionId: null,
+  currentCardId: null,
+  queueLength: 2,
+  createdAt: '2026-05-18T09:00:00Z',
+  updatedAt: '2026-05-18T09:00:00Z',
+}
+
+const agentDetail: AgentDetailDto = {
+  ...agentSummary,
+  queue: [],
+}
+
+const boardSummary: BoardSummaryDto = {
+  id: 'board-1',
+  projectId: 'project-1',
+  projectName: 'Project One',
+  name: 'Delivery',
+  description: '',
+  trackerKind: 'Internal',
+  maxConcurrentSessions: 1,
+  cardCount: 1,
+  createdAt: '2026-05-18T09:00:00Z',
+  updatedAt: '2026-05-18T09:00:00Z',
+}
+
+const boardDetail: BoardDetailDto = {
+  ...boardSummary,
+  columns: [
+    {
+      id: 'column-backlog',
+      stateKey: 'backlog',
+      name: 'Backlog',
+      columnOrder: 0,
+      cardStatus: 'Backlog',
+      isActive: false,
+      isTerminal: false,
+      maxConcurrentSessions: null,
+      cards: [
+        {
+          id: 'card-1',
+          boardId: 'board-1',
+          boardColumnId: 'column-backlog',
+          ownerSessionId: null,
+          currentWorktreeId: null,
+          assignedAgentId: null,
+          assignedAgentName: null,
+          agentQueuePosition: null,
+          activeWorkflowRunId: null,
+          workflowRunStatus: null,
+          currentWorkflowStageName: null,
+          identifier: 'CARD-0001',
+          title: 'Build agent UI',
+          description: 'Create the roster page',
+          priority: 1,
+          labels: [],
+          status: 'Backlog',
+          concurrencyToken: 'token-1',
+          createdAt: '2026-05-18T09:00:00Z',
+          updatedAt: '2026-05-18T09:00:00Z',
+          startedAt: null,
+          completedAt: null,
+          terminalReason: null,
+          sessions: [],
+        },
+      ],
+    },
+  ],
+}
+
+function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: AgentDetailDto = agentDetail) {
+  return [
+    http.get('/api/agents', () => HttpResponse.json(summary)),
+    http.get('/api/agents/:id', () => HttpResponse.json(detail)),
+  ]
+}
+
+function getVisibleInput(label: string) {
+  return screen
+    .getAllByLabelText(label)
+    .find((element): element is HTMLInputElement =>
+      element instanceof HTMLInputElement && element.getAttribute('type') !== 'hidden',
+    ) as HTMLInputElement
+}
+
+describe('AgentsPage', () => {
+  it('renders agent roster with status and queue length', async () => {
+    server.use(...agentHandlers())
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByText('Frontend Claude')).toBeInTheDocument()
+    expect(screen.getAllByText('Idle')[0]).toBeInTheDocument()
+    expect(screen.getByText('2 queued')).toBeInTheDocument()
+  })
+
+  it('loads selected agent detail and shows queue card title', async () => {
+    const backendAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-2',
+      name: 'Backend Codex',
+      slug: 'backend-codex',
+      workingDirectory: 'D:/src/api',
+      queueLength: 1,
+    }
+    const backendDetail: AgentDetailDto = {
+      ...backendAgent,
+      queue: [
+        {
+          cardId: 'card-2',
+          boardId: 'board-1',
+          boardName: 'Delivery',
+          identifier: 'CARD-0002',
+          title: 'Wire queue endpoints',
+          priority: 2,
+          queuePosition: 1,
+          activeWorkflowRunId: 'run-1',
+          workflowStatus: 'Queued',
+          currentStageName: 'Implement',
+        },
+      ],
+    }
+
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json([agentSummary, backendAgent])),
+      http.get('/api/agents/:id', ({ params }) =>
+        HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
+      ),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Agent Backend Codex' }))
+
+    expect(await screen.findByText(/Wire queue endpoints/)).toBeInTheDocument()
+    expect(screen.getByText('Implement')).toBeInTheDocument()
+  })
+
+  it('supports keyboard selection from the agent roster', async () => {
+    const backendAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-2',
+      name: 'Backend Codex',
+      slug: 'backend-codex',
+      workingDirectory: 'D:/src/api',
+      queueLength: 1,
+    }
+    const backendDetail: AgentDetailDto = {
+      ...backendAgent,
+      queue: [
+        {
+          cardId: 'card-2',
+          boardId: 'board-1',
+          boardName: 'Delivery',
+          identifier: 'CARD-0002',
+          title: 'Keyboard selected card',
+          priority: 2,
+          queuePosition: 1,
+          activeWorkflowRunId: 'run-1',
+          workflowStatus: 'Queued',
+          currentStageName: 'Implement',
+        },
+      ],
+    }
+
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json([agentSummary, backendAgent])),
+      http.get('/api/agents/:id', ({ params }) =>
+        HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
+      ),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    const backendButton = await screen.findByRole('button', { name: 'Agent Backend Codex' })
+    backendButton.focus()
+    await userEvent.keyboard('{Enter}')
+
+    expect(await screen.findByText(/Keyboard selected card/)).toBeInTheDocument()
+  })
+
+  it('creates an agent from the modal', async () => {
+    const createSpy = vi.fn()
+    server.use(
+      ...agentHandlers([]),
+      http.post('/api/agents', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json({ ...agentDetail, id: 'agent-created', queueLength: 0 }, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
+    await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
+    await userEvent.type(screen.getByLabelText('Working directory'), 'D:/src/app')
+    await userEvent.type(screen.getByLabelText('Details'), 'UI work')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith({
+        name: 'Frontend Claude',
+        workingDirectory: 'D:/src/app',
+        details: 'UI work',
+        assignmentPolicy: 'AutoPick',
+      }),
+    )
+  })
+
+  it('shows backend validation text when agent creation fails', async () => {
+    server.use(
+      ...agentHandlers([]),
+      http.post('/api/agents', () =>
+        HttpResponse.json({
+          title: 'Validation failed',
+          detail: 'One or more validation errors occurred.',
+          errors: {
+            Name: ['Agent name is required.'],
+          },
+        }, { status: 422 }),
+      ),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
+    await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
+    await userEvent.type(screen.getByLabelText('Working directory'), 'D:/src/app')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', message: 'Agent name is required.' }),
+      ),
+    )
+  })
+
+  it('assigns an unassigned board card to an agent queue', async () => {
+    const assignSpy = vi.fn()
+    const assignedDetail: AgentDetailDto = {
+      ...agentDetail,
+      queue: [
+        {
+          cardId: 'card-1',
+          boardId: 'board-1',
+          boardName: 'Delivery',
+          identifier: 'CARD-0001',
+          title: 'Build agent UI',
+          priority: 1,
+          queuePosition: 1,
+          activeWorkflowRunId: 'run-1',
+          workflowStatus: 'Queued',
+          currentStageName: null,
+        },
+      ],
+    }
+
+    server.use(
+      ...agentHandlers([agentSummary], agentDetail),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+      http.get('/api/boards/board-1', () => HttpResponse.json(boardDetail)),
+      http.post('/api/agents/agent-1/queue', async ({ request }) => {
+        assignSpy(await request.json())
+        return HttpResponse.json(assignedDetail)
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add Card' }))
+    expect(await screen.findByDisplayValue('Project One / Delivery')).toBeInTheDocument()
+    await userEvent.click(getVisibleInput('Card'))
+    await userEvent.click(await screen.findByText('CARD-0001 - Build agent UI'))
+    await userEvent.click(screen.getByRole('button', { name: 'Assign' }))
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'card-1' }))
+    expect(await screen.findByText(/Build agent UI/)).toBeInTheDocument()
+  })
+})

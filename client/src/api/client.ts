@@ -14,6 +14,38 @@ export class ApiError extends Error {
   }
 }
 
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    const body = error.body
+    if (body && typeof body === 'object') {
+      const maybeErrors = 'errors' in body ? body.errors : undefined
+      if (maybeErrors && typeof maybeErrors === 'object') {
+        for (const value of Object.values(maybeErrors)) {
+          if (Array.isArray(value) && typeof value[0] === 'string' && value[0].trim()) {
+            return value[0]
+          }
+        }
+      }
+
+      const maybeDetail = 'detail' in body ? body.detail : undefined
+      if (typeof maybeDetail === 'string' && maybeDetail.trim()) {
+        return maybeDetail
+      }
+
+      const maybeTitle = 'title' in body ? body.title : undefined
+      if (typeof maybeTitle === 'string' && maybeTitle.trim()) {
+        return maybeTitle
+      }
+    }
+
+    if (typeof body === 'string' && body.trim()) {
+      return body
+    }
+  }
+
+  return error instanceof Error ? error.message : fallback
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text()

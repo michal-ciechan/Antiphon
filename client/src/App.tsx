@@ -16,6 +16,7 @@ import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
 import { OrchestratorPanel } from './features/orchestrator/OrchestratorPanel'
+import { AgentsPage } from './features/agents/AgentsPage'
 
 const queryClient = new QueryClient()
 
@@ -71,6 +72,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Board error">
                       <SuspenseBoundary variant="page">
                         <BoardPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="agents"
+                  element={
+                    <ErrorBoundary fallbackTitle="Agents error">
+                      <SuspenseBoundary variant="page">
+                        <AgentsPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }
