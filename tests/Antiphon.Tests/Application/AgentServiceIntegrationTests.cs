@@ -22,13 +22,15 @@ public class AgentServiceIntegrationTests
         await using var db = CreateContext();
         var eventBus = new MockEventBus();
         var service = CreateService(db, eventBus);
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var agentName = $"Frontend Claude {suffix}";
 
         var created = await service.CreateAsync(
-            new CreateAgentRequest("Frontend Claude", "D:/src/app"),
+            new CreateAgentRequest(agentName, "D:/src/app"),
             CancellationToken.None);
 
-        created.Name.ShouldBe("Frontend Claude");
-        created.Slug.ShouldBe("frontend-claude");
+        created.Name.ShouldBe(agentName);
+        created.Slug.ShouldBe($"frontend-claude-{suffix}");
         created.WorkingDirectory.ShouldBe("D:/src/app");
         created.AssignmentPolicy.ShouldBe(AgentAssignmentPolicy.AutoPick);
         created.Status.ShouldBe(AgentStatus.Idle);
@@ -36,7 +38,7 @@ public class AgentServiceIntegrationTests
 
         await using var verify = CreateContext();
         var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
-        stored.Name.ShouldBe("Frontend Claude");
+        stored.Name.ShouldBe(agentName);
         stored.AssignmentPolicy.ShouldBe(AgentAssignmentPolicy.AutoPick);
         eventBus.PublishedEvents.Any(e => e.EventName == "AgentChanged").ShouldBeTrue();
     }
@@ -52,7 +54,7 @@ public class AgentServiceIntegrationTests
         var eventBus = new MockEventBus();
         var service = CreateService(db, eventBus);
         var agent = await service.CreateAsync(
-            new CreateAgentRequest("Frontend Claude", "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+            new CreateAgentRequest(UniqueAgentName("Frontend Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
             CancellationToken.None);
 
         var detail = await service.AssignCardAsync(
@@ -99,7 +101,7 @@ public class AgentServiceIntegrationTests
             seed.Add(graph.Project);
             await seed.SaveChangesAsync();
             var agent = await CreateService(seed, new MockEventBus()).CreateAsync(
-                new CreateAgentRequest("Concurrent Claude", "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+                new CreateAgentRequest(UniqueAgentName("Concurrent Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
                 CancellationToken.None);
 
             await using var workerA = CreateContext();
@@ -136,10 +138,10 @@ public class AgentServiceIntegrationTests
         var eventBus = new MockEventBus();
         var service = CreateService(db, eventBus);
         var agentA = await service.CreateAsync(
-            new CreateAgentRequest("Frontend Claude", "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+            new CreateAgentRequest(UniqueAgentName("Frontend Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
             CancellationToken.None);
         var agentB = await service.CreateAsync(
-            new CreateAgentRequest("Backend Claude", "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+            new CreateAgentRequest(UniqueAgentName("Backend Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
             CancellationToken.None);
         await service.AssignCardAsync(agentA.Id, new AssignAgentCardRequest(graph.CardA.Id), CancellationToken.None);
         await service.AssignCardAsync(agentA.Id, new AssignAgentCardRequest(graph.CardB.Id), CancellationToken.None);
@@ -172,7 +174,7 @@ public class AgentServiceIntegrationTests
         var eventBus = new MockEventBus();
         var service = CreateService(db, eventBus);
         var agent = await service.CreateAsync(
-            new CreateAgentRequest("Frontend Claude", "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+            new CreateAgentRequest(UniqueAgentName("Frontend Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
             CancellationToken.None);
         await service.AssignCardAsync(agent.Id, new AssignAgentCardRequest(graph.CardA.Id), CancellationToken.None);
         await service.AssignCardAsync(agent.Id, new AssignAgentCardRequest(graph.CardB.Id), CancellationToken.None);
@@ -232,6 +234,8 @@ public class AgentServiceIntegrationTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static string UniqueAgentName(string prefix) => $"{prefix} {Guid.NewGuid():N}";
 
     private static TestGraph CreateGraph(bool includeThirdCard = false)
     {
