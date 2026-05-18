@@ -23,6 +23,7 @@ dist/
 server/logs/
 
 # Local working dirs
+.worktrees/
 workspace/
 analysis/
 %TEMP%/
