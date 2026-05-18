@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Box, Text, Group, Badge, SegmentedControl, Loader, Stack, UnstyledButton } from '@mantine/core'
+import { Box, Text, Group, Badge, Button, SegmentedControl, Loader, Stack, UnstyledButton } from '@mantine/core'
 import { VscFile, VscFolder, VscFolderOpened, VscChevronRight, VscChevronDown } from 'react-icons/vsc'
+import { TbCheck, TbRefresh } from 'react-icons/tb'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 import { useBranchDiff, useWorkflowFileContent, type BranchDiffFileDto } from '../../api/projects'
+import { useReviewedFiles } from '../../hooks/useReviewedFiles'
 import '../artifact/tiptap.css'
 
 // --- Diff parsing ---
@@ -73,11 +75,13 @@ function FileTreeNode({
   node,
   selected,
   onSelect,
+  isFileReviewed,
   depth = 0,
 }: {
   node: TreeNode
   selected: string | null
   onSelect: (filename: string) => void
+  isFileReviewed: (file: BranchDiffFileDto) => boolean
   depth?: number
 }) {
   const [open, setOpen] = useState(true)
@@ -108,6 +112,7 @@ function FileTreeNode({
               node={child}
               selected={selected}
               onSelect={onSelect}
+              isFileReviewed={isFileReviewed}
               depth={depth + 1}
             />
           ))}
@@ -117,6 +122,7 @@ function FileTreeNode({
 
   const additions = node.file?.additions ?? 0
   const deletions = node.file?.deletions ?? 0
+  const reviewed = node.file ? isFileReviewed(node.file) : false
 
   return (
     <UnstyledButton
@@ -129,6 +135,7 @@ function FileTreeNode({
         padding: `3px ${4 + depth * 12}px`,
         backgroundColor: isSelected ? 'var(--mantine-color-active-9)' : 'transparent',
         borderRadius: 'var(--mantine-radius-xs)',
+        opacity: reviewed ? 0.78 : 1,
       }}
     >
       <VscFile size={14} style={{ flexShrink: 0, color: 'var(--mantine-color-dimmed)' }} />
@@ -136,6 +143,11 @@ function FileTreeNode({
         {node.name}
       </Text>
       <Group gap={2} style={{ flexShrink: 0 }}>
+        {reviewed && (
+          <Badge size="xs" color="blue" variant="light" style={{ minWidth: 0, padding: '0 4px' }}>
+            Reviewed
+          </Badge>
+        )}
         {additions > 0 && (
           <Badge size="xs" color="green" variant="light" style={{ minWidth: 0, padding: '0 4px' }}>
             +{additions}
@@ -148,6 +160,49 @@ function FileTreeNode({
         )}
       </Group>
     </UnstyledButton>
+  )
+}
+
+function FileTreeSection({
+  title,
+  count,
+  collapsible = false,
+  children,
+}: {
+  title: string
+  count: number
+  collapsible?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <Box>
+      <UnstyledButton
+        onClick={() => collapsible && setOpen((value) => !value)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          width: '100%',
+          padding: '5px 6px 3px',
+          cursor: collapsible ? 'pointer' : 'default',
+        }}
+      >
+        {collapsible ? (
+          open ? <VscChevronDown size={12} /> : <VscChevronRight size={12} />
+        ) : (
+          <Box w={12} />
+        )}
+        <Text size="xs" c="dimmed" fw={700} tt="uppercase" style={{ flex: 1, textAlign: 'left' }}>
+          {title}
+        </Text>
+        <Badge size="xs" color={title === 'Reviewed' ? 'blue' : 'gray'} variant="outline">
+          {count}
+        </Badge>
+      </UnstyledButton>
+      {open && children}
+    </Box>
   )
 }
 
@@ -276,16 +331,29 @@ export function WorkflowOutputsTab({ workflowId }: { workflowId?: string }) {
   const [viewMode, setViewMode] = useState<ViewMode>('rendered')
 
   const files = branchDiff?.files ?? []
-  const tree = useMemo(() => buildTree(files), [files])
+  const reviewedFileState = useReviewedFiles(
+    `workflow-outputs:${workflowId ?? 'missing'}:${branchDiff?.baseBranch ?? 'base'}:${branchDiff?.headBranch ?? 'head'}`,
+    files,
+  )
+  const unreviewedTree = useMemo(() => buildTree(reviewedFileState.unreviewedFiles), [reviewedFileState.unreviewedFiles])
+  const reviewedTree = useMemo(() => buildTree(reviewedFileState.reviewedFiles), [reviewedFileState.reviewedFiles])
 
   // Auto-select first file
   useEffect(() => {
-    if (files.length > 0 && !selectedFilename) {
-      setSelectedFilename(files[0].filename)
+    if (files.length === 0) {
+      if (selectedFilename) {
+        setSelectedFilename(null)
+      }
+      return
     }
-  }, [files, selectedFilename])
+
+    if (!selectedFilename || !files.some((file) => file.filename === selectedFilename)) {
+      setSelectedFilename(reviewedFileState.unreviewedFiles[0]?.filename ?? files[0].filename)
+    }
+  }, [files, reviewedFileState.unreviewedFiles, selectedFilename])
 
   const selectedFile = files.find((f) => f.filename === selectedFilename) ?? null
+  const selectedFileReviewed = selectedFile ? reviewedFileState.isReviewed(selectedFile) : false
   const isMarkdown = selectedFilename?.match(/\.mdx?$/i) !== null
 
   // For non-markdown, default to diff view when switching to a new file
@@ -364,14 +432,36 @@ export function WorkflowOutputsTab({ workflowId }: { workflowId?: string }) {
           padding: '4px 0',
         }}
       >
-        {tree.map((node) => (
-          <FileTreeNode
-            key={node.path}
-            node={node}
-            selected={selectedFilename}
-            onSelect={handleSelectFile}
-          />
-        ))}
+        <FileTreeSection title="To review" count={reviewedFileState.unreviewedFiles.length}>
+          {unreviewedTree.length > 0 ? (
+            unreviewedTree.map((node) => (
+              <FileTreeNode
+                key={node.path}
+                node={node}
+                selected={selectedFilename}
+                onSelect={handleSelectFile}
+                isFileReviewed={reviewedFileState.isReviewed}
+              />
+            ))
+          ) : (
+            <Text size="xs" c="dimmed" px="sm" py={4}>
+              All files reviewed.
+            </Text>
+          )}
+        </FileTreeSection>
+        {reviewedFileState.reviewedFiles.length > 0 && (
+          <FileTreeSection title="Reviewed" count={reviewedFileState.reviewedFiles.length} collapsible>
+            {reviewedTree.map((node) => (
+              <FileTreeNode
+                key={node.path}
+                node={node}
+                selected={selectedFilename}
+                onSelect={handleSelectFile}
+                isFileReviewed={reviewedFileState.isReviewed}
+              />
+            ))}
+          </FileTreeSection>
+        )}
       </Box>
 
       {/* Content area */}
@@ -403,6 +493,19 @@ export function WorkflowOutputsTab({ workflowId }: { workflowId?: string }) {
                   </Badge>
                 )}
               </Group>
+              <Button
+                size="compact-xs"
+                variant={selectedFileReviewed ? 'subtle' : 'light'}
+                color={selectedFileReviewed ? 'gray' : 'blue'}
+                leftSection={selectedFileReviewed ? <TbRefresh size={12} /> : <TbCheck size={12} />}
+                onClick={() => (
+                  selectedFileReviewed
+                    ? reviewedFileState.markUnreviewed(selectedFile)
+                    : reviewedFileState.markReviewed(selectedFile)
+                )}
+              >
+                {selectedFileReviewed ? 'Unreview' : 'Mark reviewed'}
+              </Button>
               <SegmentedControl
                 size="xs"
                 value={viewMode}

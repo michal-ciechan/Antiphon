@@ -15,11 +15,12 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMemo, useState, type MouseEvent } from 'react'
-import { TbAlertCircle, TbGitPullRequest, TbMessage } from 'react-icons/tb'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { TbAlertCircle, TbCheck, TbGitPullRequest, TbMessage, TbRefresh } from 'react-icons/tb'
 import { VscAdd, VscChevronDown, VscChevronRight, VscDiff, VscRemove } from 'react-icons/vsc'
 import type { CardDiffFileDto, CardDto } from '../../api/boards'
 import { useCardDiff, useOpenCardPullRequest, usePostCardComment } from '../../api/boards'
+import { useReviewedFiles } from '../../hooks/useReviewedFiles'
 
 interface DiffReviewProps {
   boardId: string
@@ -275,24 +276,34 @@ function CommentBox({
 
 function FileDiff({
   file,
+  isReviewed,
   selectedTarget,
   comment,
   isPosting,
   onTargetSelect,
   onCommentChange,
   onCommentSubmit,
+  onMarkReviewed,
+  onMarkUnreviewed,
 }: {
   file: CardDiffFileDto
+  isReviewed: boolean
   selectedTarget: CommentTarget | null
   comment: string
   isPosting: boolean
   onTargetSelect: (target: CommentTarget, extendSelection: boolean) => void
   onCommentChange: (target: CommentTarget, value: string) => void
   onCommentSubmit: (target: CommentTarget) => void
+  onMarkReviewed: (file: CardDiffFileDto) => void
+  onMarkUnreviewed: (file: CardDiffFileDto) => void
 }) {
   const [open, setOpen] = useState(true)
   const lines = useMemo(() => parsePatch(file.filename, file.patch), [file.filename, file.patch])
   const fileTarget = selectedTarget?.filePath === file.filename ? selectedTarget : null
+
+  useEffect(() => {
+    setOpen(!isReviewed)
+  }, [file.patch, isReviewed])
 
   return (
     <Box
@@ -302,31 +313,55 @@ function FileDiff({
         overflow: 'hidden',
       }}
     >
-      <UnstyledButton
-        onClick={() => setOpen((value) => !value)}
+      <Group
+        gap={6}
+        wrap="nowrap"
         style={{
           width: '100%',
           minHeight: 40,
-          padding: '8px 10px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
           backgroundColor: 'var(--mantine-color-default-hover)',
         }}
       >
-        {open ? <VscChevronDown size={15} /> : <VscChevronRight size={15} />}
-        <Text size="sm" fw={600} style={{ flex: 1, fontFamily: 'var(--mantine-font-family-monospace)', textAlign: 'left' }}>
-          {file.filename}
-        </Text>
-        <Group gap={4}>
-          <Badge size="sm" color="green" variant="light" leftSection={<VscAdd size={11} />}>
-            {file.additions}
-          </Badge>
-          <Badge size="sm" color="red" variant="light" leftSection={<VscRemove size={11} />}>
-            {file.deletions}
-          </Badge>
-        </Group>
-      </UnstyledButton>
+        <UnstyledButton
+          onClick={() => setOpen((value) => !value)}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: '8px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          {open ? <VscChevronDown size={15} /> : <VscChevronRight size={15} />}
+          <Text size="sm" fw={600} style={{ flex: 1, fontFamily: 'var(--mantine-font-family-monospace)', textAlign: 'left' }} truncate>
+            {file.filename}
+          </Text>
+          <Group gap={4} wrap="nowrap">
+            {isReviewed && (
+              <Badge size="sm" color="blue" variant="light">
+                Reviewed
+              </Badge>
+            )}
+            <Badge size="sm" color="green" variant="light" leftSection={<VscAdd size={11} />}>
+              {file.additions}
+            </Badge>
+            <Badge size="sm" color="red" variant="light" leftSection={<VscRemove size={11} />}>
+              {file.deletions}
+            </Badge>
+          </Group>
+        </UnstyledButton>
+        <Button
+          size="compact-xs"
+          variant={isReviewed ? 'subtle' : 'light'}
+          color={isReviewed ? 'gray' : 'blue'}
+          leftSection={isReviewed ? <TbRefresh size={12} /> : <TbCheck size={12} />}
+          onClick={() => (isReviewed ? onMarkUnreviewed(file) : onMarkReviewed(file))}
+          mr="xs"
+        >
+          {isReviewed ? 'Unreview' : 'Mark reviewed'}
+        </Button>
+      </Group>
       <Collapse in={open}>
         <ScrollArea.Autosize mah={460} type="auto">
           <Box py={4}>
@@ -354,6 +389,53 @@ function FileDiff({
   )
 }
 
+function ReviewedFilesSection({
+  count,
+  children,
+}: {
+  count: number
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <Box
+      data-testid="reviewed-files-section"
+      style={{
+        border: '1px solid var(--mantine-color-default-border)',
+        borderRadius: 'var(--mantine-radius-sm)',
+        overflow: 'hidden',
+      }}
+    >
+      <UnstyledButton
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          width: '100%',
+          minHeight: 36,
+          padding: '7px 10px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          backgroundColor: 'var(--mantine-color-dark-7)',
+        }}
+      >
+        {open ? <VscChevronDown size={15} /> : <VscChevronRight size={15} />}
+        <Text size="sm" fw={600} style={{ flex: 1, textAlign: 'left' }}>
+          Reviewed files
+        </Text>
+        <Badge size="sm" color="blue" variant="light">
+          {count}
+        </Badge>
+      </UnstyledButton>
+      <Collapse in={open}>
+        <Stack gap="xs" p="xs">
+          {children}
+        </Stack>
+      </Collapse>
+    </Box>
+  )
+}
+
 export function DiffReview({ boardId, card }: DiffReviewProps) {
   const [selectedTarget, setSelectedTarget] = useState<CommentTarget | null>(null)
   const [comments, setComments] = useState<Record<string, string>>({})
@@ -361,6 +443,12 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
   const postComment = usePostCardComment(boardId, card.id)
   const openPullRequest = useOpenCardPullRequest(boardId, card.id)
   const canOpenPr = card.status === 'Done'
+  const data = diff.data
+  const files = data?.files ?? []
+  const reviewedFileState = useReviewedFiles(
+    `card-diff:${card.id}:${data?.baseBranch ?? 'base'}:${data?.headBranch ?? 'worktree'}`,
+    files,
+  )
 
   if (!card.currentWorktreeId) {
     return (
@@ -392,9 +480,8 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
     )
   }
 
-  const data = diff.data
-  const totalAdditions = data?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0
-  const totalDeletions = data?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0
+  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0)
 
   const handleCommentChange = (target: CommentTarget, value: string) => {
     setComments((current) => ({ ...current, [target.key]: value }))
@@ -442,6 +529,29 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
     })
   }
 
+  const handleMarkReviewed = (file: CardDiffFileDto) => {
+    reviewedFileState.markReviewed(file)
+    if (selectedTarget?.filePath === file.filename) {
+      setSelectedTarget(null)
+    }
+  }
+
+  const renderFileDiff = (file: CardDiffFileDto, isReviewed: boolean) => (
+    <FileDiff
+      key={file.filename}
+      file={file}
+      isReviewed={isReviewed}
+      selectedTarget={selectedTarget?.filePath === file.filename ? selectedTarget : null}
+      comment={selectedTarget?.filePath === file.filename ? comments[selectedTarget.key] ?? '' : ''}
+      isPosting={postComment.isPending}
+      onTargetSelect={handleTargetSelect}
+      onCommentChange={handleCommentChange}
+      onCommentSubmit={handleComment}
+      onMarkReviewed={handleMarkReviewed}
+      onMarkUnreviewed={reviewedFileState.markUnreviewed}
+    />
+  )
+
   return (
     <Stack gap="sm">
       <Group justify="space-between" align="center">
@@ -456,7 +566,10 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
           <Badge color="green" variant="light">+{totalAdditions}</Badge>
           <Badge color="red" variant="light">-{totalDeletions}</Badge>
           <Badge color="gray" variant="outline">
-            {data?.files.length ?? 0} file{data?.files.length === 1 ? '' : 's'}
+            {files.length} file{files.length === 1 ? '' : 's'}
+          </Badge>
+          <Badge color="blue" variant="outline">
+            {reviewedFileState.reviewedFiles.length} reviewed
           </Badge>
           <Button
             leftSection={<TbGitPullRequest size={16} />}
@@ -470,24 +583,26 @@ export function DiffReview({ boardId, card }: DiffReviewProps) {
         </Group>
       </Group>
 
-      {!data || data.files.length === 0 ? (
+      {files.length === 0 ? (
         <Stack align="center" py="md" gap={4}>
           <VscDiff size={24} color="var(--mantine-color-dimmed)" />
           <Text size="sm" c="dimmed">No differences found.</Text>
         </Stack>
       ) : (
-        data.files.map((file) => (
-          <FileDiff
-            key={file.filename}
-            file={file}
-            selectedTarget={selectedTarget?.filePath === file.filename ? selectedTarget : null}
-            comment={selectedTarget?.filePath === file.filename ? comments[selectedTarget.key] ?? '' : ''}
-            isPosting={postComment.isPending}
-            onTargetSelect={handleTargetSelect}
-            onCommentChange={handleCommentChange}
-            onCommentSubmit={handleComment}
-          />
-        ))
+        <>
+          {reviewedFileState.unreviewedFiles.length === 0 ? (
+            <Alert color="blue" variant="light">
+              <Text size="sm">All changed files have been marked reviewed.</Text>
+            </Alert>
+          ) : (
+            reviewedFileState.unreviewedFiles.map((file) => renderFileDiff(file, false))
+          )}
+          {reviewedFileState.reviewedFiles.length > 0 && (
+            <ReviewedFilesSection count={reviewedFileState.reviewedFiles.length}>
+              {reviewedFileState.reviewedFiles.map((file) => renderFileDiff(file, true))}
+            </ReviewedFilesSection>
+          )}
+        </>
       )}
     </Stack>
   )

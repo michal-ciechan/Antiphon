@@ -1,5 +1,5 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CardDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -32,7 +32,7 @@ const reviewCard: CardDto = {
   sessions: [],
 }
 
-function diffHandler() {
+function diffHandler(patchLines?: string[]) {
   return http.get('/api/cards/card-1/diff', () =>
     HttpResponse.json({
       baseBranch: 'main',
@@ -42,13 +42,13 @@ function diffHandler() {
           filename: 'src/App.tsx',
           additions: 2,
           deletions: 1,
-          patch: [
+          patch: (patchLines ?? [
             'diff --git a/src/App.tsx b/src/App.tsx',
             '@@ -1,2 +1,3 @@',
             '-old line',
             '+new line',
             '+second new line',
-          ].join('\n'),
+          ]).join('\n'),
         },
       ],
     }),
@@ -56,6 +56,10 @@ function diffHandler() {
 }
 
 describe('DiffReview', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
   it('renders added and removed lines from the card diff', async () => {
     server.use(diffHandler())
 
@@ -128,5 +132,40 @@ describe('DiffReview', () => {
       endLine: 2,
       side: 'new',
     }))
+  })
+
+  it('moves a reviewed file into the reviewed section and persists until the patch changes', async () => {
+    server.use(diffHandler())
+
+    const firstRender = renderWithProviders(<DiffReview boardId="board-1" card={reviewCard} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }))
+
+    expect(await screen.findByText('All changed files have been marked reviewed.')).toBeInTheDocument()
+    expect(screen.getByTestId('reviewed-files-section')).toHaveTextContent('Reviewed files')
+    expect(screen.getByRole('button', { name: 'Unreview' })).toBeInTheDocument()
+
+    firstRender.unmount()
+    const persistedRender = renderWithProviders(<DiffReview boardId="board-1" card={reviewCard} />)
+
+    expect(await screen.findByTestId('reviewed-files-section')).toHaveTextContent('Reviewed files')
+    expect(screen.getByRole('button', { name: 'Unreview' })).toBeInTheDocument()
+    persistedRender.unmount()
+
+    server.use(diffHandler([
+      'diff --git a/src/App.tsx b/src/App.tsx',
+      '@@ -1,2 +1,3 @@',
+      '-old line',
+      '+changed line',
+      '+second new line',
+    ]))
+
+    const changedRender = renderWithProviders(<DiffReview boardId="board-1" card={reviewCard} />)
+
+    expect(await screen.findByText('+changed line')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Mark reviewed' })).toBeInTheDocument()
+    expect(screen.queryByTestId('reviewed-files-section')).not.toBeInTheDocument()
+
+    changedRender.unmount()
   })
 })
