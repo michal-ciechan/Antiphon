@@ -122,6 +122,8 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    builder.Services.AddScoped<CardWorkflowRunFactory>();
+    builder.Services.AddScoped<AgentService>();
     builder.Services.AddScoped<CardReviewService>();
     builder.Services.AddSingleton<MentionScanner>();
     builder.Services.AddScoped<AgentChannelService>();
