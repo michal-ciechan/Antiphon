@@ -9,6 +9,9 @@ public class Card
     public Guid BoardColumnId { get; set; }
     public Guid? OwnerSessionId { get; set; }
     public Guid? CurrentWorktreeId { get; set; }
+    public Guid? AssignedAgentId { get; set; }
+    public int? AgentQueuePosition { get; set; }
+    public Guid? ActiveWorkflowRunId { get; set; }
     public string Identifier { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
@@ -26,9 +29,12 @@ public class Card
     public BoardColumn BoardColumn { get; set; } = null!;
     public AgentSession? OwnerSession { get; set; }
     public Worktree? CurrentWorktree { get; set; }
+    public Agent? AssignedAgent { get; set; }
+    public CardWorkflowRun? ActiveWorkflowRun { get; set; }
     public ExternalIssueRef? ExternalIssueRef { get; set; }
     public RetrySchedule? RetrySchedule { get; set; }
     public ICollection<AgentSession> AgentSessions { get; set; } = new List<AgentSession>();
     public ICollection<RunAttempt> RunAttempts { get; set; } = new List<RunAttempt>();
     public ICollection<Worktree> Worktrees { get; set; } = new List<Worktree>();
+    public ICollection<CardWorkflowRun> WorkflowRuns { get; set; } = new List<CardWorkflowRun>();
 }

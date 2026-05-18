@@ -25,6 +25,9 @@ public class AppDbContext : DbContext
     public DbSet<Board> Boards => Set<Board>();
     public DbSet<BoardColumn> BoardColumns => Set<BoardColumn>();
     public DbSet<Card> Cards => Set<Card>();
+    public DbSet<Agent> Agents => Set<Agent>();
+    public DbSet<CardWorkflowRun> CardWorkflowRuns => Set<CardWorkflowRun>();
+    public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
@@ -411,12 +414,41 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Agent>(entity =>
+        {
+            entity.ToTable("Agents");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.Name).IsRequired().HasMaxLength(200);
+            entity.Property(a => a.Slug).IsRequired().HasMaxLength(120);
+            entity.Property(a => a.WorkingDirectory).IsRequired().HasMaxLength(1000);
+            entity.Property(a => a.Details).IsRequired().HasMaxLength(4000);
+            entity.Property(a => a.AssignmentPolicy).IsRequired();
+            entity.Property(a => a.Status).IsRequired();
+            entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
+            entity.Property(a => a.CreatedAt).IsRequired();
+            entity.Property(a => a.UpdatedAt).IsRequired();
+
+            entity.HasIndex(a => a.Slug).IsUnique().HasDatabaseName("IX_Agents_Slug");
+            entity.HasIndex(a => a.Status).HasDatabaseName("IX_Agents_Status");
+
+            entity.HasOne(a => a.DefaultWorkflowTemplate)
+                .WithMany()
+                .HasForeignKey(a => a.DefaultWorkflowTemplateId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.CurrentCard)
+                .WithMany()
+                .HasForeignKey(a => a.CurrentCardId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
         modelBuilder.Entity<Card>(entity =>
         {
             entity.ToTable("Cards");
             entity.HasKey(c => c.Id);
             entity.Property(c => c.BoardId).IsRequired();
             entity.Property(c => c.BoardColumnId).IsRequired();
+            entity.Property(c => c.AgentQueuePosition);
             entity.Property(c => c.Identifier).IsRequired().HasMaxLength(100);
             entity.Property(c => c.Title).IsRequired().HasMaxLength(300);
             entity.Property(c => c.Description).HasMaxLength(4000);
@@ -432,6 +464,10 @@ public class AppDbContext : DbContext
             entity.HasIndex(c => c.BoardColumnId).HasDatabaseName("IX_Cards_BoardColumnId");
             entity.HasIndex(c => c.OwnerSessionId).HasDatabaseName("IX_Cards_OwnerSessionId");
             entity.HasIndex(c => c.CurrentWorktreeId).HasDatabaseName("IX_Cards_CurrentWorktreeId");
+            entity.HasIndex(c => c.AssignedAgentId).HasDatabaseName("IX_Cards_AssignedAgentId");
+            entity.HasIndex(c => new { c.AssignedAgentId, c.AgentQueuePosition })
+                .HasDatabaseName("IX_Cards_AssignedAgentId_AgentQueuePosition");
+            entity.HasIndex(c => c.ActiveWorkflowRunId).HasDatabaseName("IX_Cards_ActiveWorkflowRunId");
             entity.HasIndex(c => new { c.BoardId, c.Identifier })
                 .IsUnique()
                 .HasDatabaseName("IX_Cards_BoardId_Identifier");
@@ -457,6 +493,87 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(c => c.CurrentWorktreeId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(c => c.AssignedAgent)
+                .WithMany(a => a.QueueCards)
+                .HasForeignKey(c => c.AssignedAgentId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(c => c.ActiveWorkflowRun)
+                .WithOne()
+                .HasForeignKey<Card>(c => c.ActiveWorkflowRunId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CardWorkflowRun>(entity =>
+        {
+            entity.ToTable("CardWorkflowRuns");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CardId).IsRequired();
+            entity.Property(r => r.AgentId).IsRequired();
+            entity.Property(r => r.WorkflowName).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.WorkflowDefinitionSnapshot).IsRequired();
+            entity.Property(r => r.Status).IsRequired();
+            entity.Property(r => r.FailureReason).HasMaxLength(4000);
+            entity.Property(r => r.CreatedAt).IsRequired();
+            entity.Property(r => r.UpdatedAt).IsRequired();
+
+            entity.HasIndex(r => r.CardId).HasDatabaseName("IX_CardWorkflowRuns_CardId");
+            entity.HasIndex(r => r.AgentId).HasDatabaseName("IX_CardWorkflowRuns_AgentId");
+            entity.HasIndex(r => new { r.CardId, r.Status }).HasDatabaseName("IX_CardWorkflowRuns_CardId_Status");
+            entity.HasIndex(r => new { r.CardId, r.Id })
+                .IsUnique()
+                .HasDatabaseName("IX_CardWorkflowRuns_CardId_Id");
+
+            entity.HasOne(r => r.Card)
+                .WithMany(c => c.WorkflowRuns)
+                .HasForeignKey(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(r => r.Agent)
+                .WithMany(a => a.WorkflowRuns)
+                .HasForeignKey(r => r.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(r => r.WorkflowTemplate)
+                .WithMany()
+                .HasForeignKey(r => r.WorkflowTemplateId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(r => r.CurrentStage)
+                .WithMany()
+                .HasForeignKey(r => r.CurrentStageId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CardWorkflowStage>(entity =>
+        {
+            entity.ToTable("CardWorkflowStages");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.CardWorkflowRunId).IsRequired();
+            entity.Property(s => s.StageOrder).IsRequired();
+            entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
+            entity.Property(s => s.ExecutorType).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.ModelName).HasMaxLength(200);
+            entity.Property(s => s.SystemPrompt).HasMaxLength(4000);
+            entity.Property(s => s.GateRequired).IsRequired();
+            entity.Property(s => s.Status).IsRequired();
+            entity.Property(s => s.ResultSummary).HasMaxLength(4000);
+            entity.Property(s => s.FailureReason).HasMaxLength(4000);
+            entity.Property(s => s.CreatedAt).IsRequired();
+            entity.Property(s => s.UpdatedAt).IsRequired();
+
+            entity.HasIndex(s => new { s.CardWorkflowRunId, s.StageOrder })
+                .IsUnique()
+                .HasDatabaseName("IX_CardWorkflowStages_RunId_StageOrder");
+            entity.HasIndex(s => new { s.CardWorkflowRunId, s.Id })
+                .IsUnique()
+                .HasDatabaseName("IX_CardWorkflowStages_RunId_Id");
+
+            entity.HasOne(s => s.CardWorkflowRun)
+                .WithMany(r => r.Stages)
+                .HasForeignKey(s => s.CardWorkflowRunId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AgentSession>(entity =>

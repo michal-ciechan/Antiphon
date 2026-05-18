@@ -78,6 +78,212 @@ public class KanbanPersistenceTests
     }
 
     [Test]
+    public async Task AppDbContext_round_trip_persists_agent_queue_and_card_workflow_run()
+    {
+        await using var db = CreateContext();
+        var graph = CreateKanbanGraph();
+        var now = DateTime.UtcNow;
+
+        var template = new WorkflowTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Agent Template {Guid.NewGuid():N}",
+            Description = "Agent queue test template",
+            YamlDefinition = """
+                name: One Shot
+                description: Implement then review
+                stages:
+                  - name: Implement
+                    executorType: agent
+                    gateRequired: false
+                  - name: Human Review
+                    executorType: human
+                    gateRequired: true
+                """,
+            IsBuiltIn = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Frontend Claude",
+            Slug = $"frontend-claude-{Guid.NewGuid():N}",
+            WorkingDirectory = "D:/src/app",
+            Details = "Handles UI cards",
+            DefaultWorkflowTemplateId = template.Id,
+            AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
+            Status = AgentStatus.Idle,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var run = new CardWorkflowRun
+        {
+            Id = Guid.NewGuid(),
+            CardId = graph.Card.Id,
+            AgentId = agent.Id,
+            WorkflowTemplateId = template.Id,
+            WorkflowName = "One Shot",
+            WorkflowDefinitionSnapshot = template.YamlDefinition,
+            Status = CardWorkflowRunStatus.Queued,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var stage = new CardWorkflowStage
+        {
+            Id = Guid.NewGuid(),
+            CardWorkflowRunId = run.Id,
+            StageOrder = 0,
+            Name = "Implement",
+            ExecutorType = "agent",
+            GateRequired = false,
+            Status = CardWorkflowStageStatus.Pending,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        db.WorkflowTemplates.Add(template);
+        db.Add(graph.Project);
+        db.Agents.Add(agent);
+        db.CardWorkflowRuns.Add(run);
+        db.CardWorkflowStages.Add(stage);
+        graph.Card.AssignedAgentId = agent.Id;
+        graph.Card.AgentQueuePosition = 1;
+
+        await db.SaveChangesAsync();
+        graph.Card.ActiveWorkflowRunId = run.Id;
+        await db.SaveChangesAsync();
+
+        await using var verify = CreateContext();
+        var stored = await verify.Cards
+            .Include(c => c.AssignedAgent)
+            .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.Stages)
+            .SingleAsync(c => c.Id == graph.Card.Id);
+
+        stored.AssignedAgent!.Name.ShouldBe("Frontend Claude");
+        stored.AgentQueuePosition.ShouldBe(1);
+        stored.ActiveWorkflowRun!.WorkflowName.ShouldBe("One Shot");
+        stored.ActiveWorkflowRun.Stages.Single().Name.ShouldBe("Implement");
+    }
+
+    [Test]
+    public async Task AppDbContext_rejects_active_workflow_run_from_another_card()
+    {
+        await using var db = CreateContext();
+        var graphA = CreateKanbanGraph();
+        var graphB = CreateKanbanGraph();
+        var now = DateTime.UtcNow;
+
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Backend Claude",
+            Slug = $"backend-claude-{Guid.NewGuid():N}",
+            WorkingDirectory = "D:/src/app",
+            Details = "Handles backend cards",
+            AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
+            Status = AgentStatus.Idle,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var runForCardB = new CardWorkflowRun
+        {
+            Id = Guid.NewGuid(),
+            CardId = graphB.Card.Id,
+            AgentId = agent.Id,
+            WorkflowName = "Card B Run",
+            WorkflowDefinitionSnapshot = "name: Card B Run",
+            Status = CardWorkflowRunStatus.Queued,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        db.Add(graphA.Project);
+        db.Add(graphB.Project);
+        db.Agents.Add(agent);
+        db.CardWorkflowRuns.Add(runForCardB);
+        await db.SaveChangesAsync();
+
+        graphA.Card.ActiveWorkflowRunId = runForCardB.Id;
+
+        await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Test]
+    public async Task AppDbContext_rejects_current_stage_from_another_workflow_run()
+    {
+        await using var db = CreateContext();
+        var graphA = CreateKanbanGraph();
+        var graphB = CreateKanbanGraph();
+        var now = DateTime.UtcNow;
+
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Workflow Claude",
+            Slug = $"workflow-claude-{Guid.NewGuid():N}",
+            WorkingDirectory = "D:/src/app",
+            Details = "Handles workflow cards",
+            AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
+            Status = AgentStatus.Idle,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var runA = new CardWorkflowRun
+        {
+            Id = Guid.NewGuid(),
+            CardId = graphA.Card.Id,
+            AgentId = agent.Id,
+            WorkflowName = "Card A Run",
+            WorkflowDefinitionSnapshot = "name: Card A Run",
+            Status = CardWorkflowRunStatus.Running,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var runB = new CardWorkflowRun
+        {
+            Id = Guid.NewGuid(),
+            CardId = graphB.Card.Id,
+            AgentId = agent.Id,
+            WorkflowName = "Card B Run",
+            WorkflowDefinitionSnapshot = "name: Card B Run",
+            Status = CardWorkflowRunStatus.Running,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        var stageForRunB = new CardWorkflowStage
+        {
+            Id = Guid.NewGuid(),
+            CardWorkflowRunId = runB.Id,
+            StageOrder = 0,
+            Name = "Run B Stage",
+            ExecutorType = "agent",
+            GateRequired = false,
+            Status = CardWorkflowStageStatus.Running,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        db.Add(graphA.Project);
+        db.Add(graphB.Project);
+        db.Agents.Add(agent);
+        db.CardWorkflowRuns.AddRange(runA, runB);
+        db.CardWorkflowStages.Add(stageForRunB);
+        await db.SaveChangesAsync();
+
+        runA.CurrentStageId = stageForRunB.Id;
+
+        await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+    }
+
+    [Test]
     public async Task Migration_KanbanInitial_creates_expected_tables()
     {
         await using var db = CreateContext();
