@@ -132,6 +132,12 @@ public sealed class BoardService
             card.BoardColumnId,
             card.OwnerSessionId,
             card.CurrentWorktreeId,
+            card.AssignedAgentId,
+            card.AssignedAgent?.Name,
+            card.AgentQueuePosition,
+            card.ActiveWorkflowRunId,
+            card.ActiveWorkflowRun?.Status,
+            card.ActiveWorkflowRun?.CurrentStage?.Name,
             card.Identifier,
             card.Title,
             card.Description,
@@ -168,6 +174,10 @@ public sealed class BoardService
             .Include(b => b.Columns)
             .Include(b => b.Cards)
                 .ThenInclude(c => c.AgentSessions)
+            .Include(b => b.Cards)
+                .ThenInclude(c => c.AssignedAgent)
+            .Include(b => b.Cards)
+                .ThenInclude(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
     }

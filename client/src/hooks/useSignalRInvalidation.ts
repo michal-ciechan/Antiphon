@@ -12,6 +12,7 @@ interface EventPayload {
   workflowId?: string
   boardId?: string
   cardId?: string
+  agentId?: string
   [key: string]: unknown
 }
 
@@ -66,6 +67,22 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   {
     event: 'CardChanged',
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+  },
+  {
+    event: 'AgentChanged',
+    getKeys: (p) => [
+      ['agents', 'list'],
+      ...(p.agentId ? [['agents', 'detail', p.agentId]] : []),
+    ],
+  },
+  {
+    event: 'AgentQueueChanged',
+    getKeys: (p) => [
+      ['agents', 'list'],
+      ...(p.agentId ? [['agents', 'detail', p.agentId], ['agents', 'queue', p.agentId]] : []),
+      ['boards'],
+      ...(p.boardId ? [['boards', p.boardId]] : []),
+    ],
   },
   {
     event: 'SessionStarted',

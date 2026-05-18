@@ -5,6 +5,7 @@ export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
 export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled'
 export type AgentKind = 'Raw' | 'ClaudeCode'
 export type SessionStatus = 'Created' | 'Starting' | 'Running' | 'Stopping' | 'Stopped' | 'Failed'
+export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 
 export interface BoardSummaryDto {
   id: string
@@ -50,6 +51,12 @@ export interface CardDto {
   boardColumnId: string
   ownerSessionId: string | null
   currentWorktreeId: string | null
+  assignedAgentId: string | null
+  assignedAgentName: string | null
+  agentQueuePosition: number | null
+  activeWorkflowRunId: string | null
+  workflowRunStatus: CardWorkflowRunStatus | null
+  currentWorkflowStageName: string | null
   identifier: string
   title: string
   description: string

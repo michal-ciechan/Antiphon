@@ -32,7 +32,9 @@ public class BoardServiceIntegrationTests
         try
         {
             var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
             db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
             await db.SaveChangesAsync();
             await using var harness = BuildHarness(tempRoot, []);
 
@@ -42,6 +44,16 @@ public class BoardServiceIntegrationTests
             var card = await harness.CardService.CreateAsync(
                 board.Id,
                 new CreateCardRequest(null, "Wire board UI", "Build the usable board", 3, ["ui", "e08"]),
+                CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Frontend Claude",
+                    Path.Combine(tempRoot, "agent-workspace"),
+                    DefaultWorkflowTemplateId: template.Id),
+                CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id,
+                new AssignAgentCardRequest(card.Id),
                 CancellationToken.None);
 
             var detail = await harness.BoardService.GetByIdAsync(board.Id, CancellationToken.None);
@@ -53,6 +65,12 @@ public class BoardServiceIntegrationTests
             backlogCard.Id.ShouldBe(card.Id);
             backlogCard.Labels.ShouldBe(["ui", "e08"]);
             backlogCard.Sessions.ShouldBeEmpty();
+            backlogCard.AssignedAgentId.ShouldBe(agent.Id);
+            backlogCard.AssignedAgentName.ShouldBe("Frontend Claude");
+            backlogCard.AgentQueuePosition.ShouldBe(1);
+            backlogCard.ActiveWorkflowRunId.ShouldNotBeNull();
+            backlogCard.WorkflowRunStatus.ShouldBe(CardWorkflowRunStatus.Queued);
+            backlogCard.CurrentWorkflowStageName.ShouldBe("Implement");
         }
         finally
         {
@@ -312,6 +330,8 @@ public class BoardServiceIntegrationTests
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddScoped<OrchestratorService>();
+        services.AddScoped<CardWorkflowRunFactory>();
+        services.AddScoped<AgentService>();
         services.AddScoped<BoardService>();
         services.AddScoped<CardService>();
         services.AddLogging();
@@ -323,6 +343,7 @@ public class BoardServiceIntegrationTests
             scope,
             scope.ServiceProvider.GetRequiredService<BoardService>(),
             scope.ServiceProvider.GetRequiredService<CardService>(),
+            scope.ServiceProvider.GetRequiredService<AgentService>(),
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
             eventBus);
     }
@@ -344,18 +365,50 @@ public class BoardServiceIntegrationTests
         };
     }
 
+    private static WorkflowTemplate NewWorkflowTemplate(string tempRoot)
+    {
+        var now = DateTime.UtcNow;
+        return new WorkflowTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Agent Template {Guid.NewGuid():N}",
+            Description = tempRoot,
+            YamlDefinition = """
+                name: One Shot
+                description: Implement then review
+                stages:
+                  - name: Implement
+                    executorType: agent
+                    gateRequired: false
+                  - name: Human Review
+                    executorType: human
+                    gateRequired: true
+                """,
+            IsBuiltIn = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+    }
+
     private static string NewTempRoot() =>
         Path.Combine(Path.GetTempPath(), $"antiphon-board-tests-{Guid.NewGuid():N}");
 
     private static async Task CleanupProjectsByTempRootAsync(string tempRoot)
     {
         await using var db = CreateContext();
+        var workflowTemplateIds = await db.WorkflowTemplates
+            .Where(t => t.Description == tempRoot)
+            .Select(t => t.Id)
+            .ToListAsync();
         var projectIds = await db.Projects
             .Where(p => p.LocalRepositoryPath != null && p.LocalRepositoryPath.StartsWith(tempRoot))
             .Select(p => p.Id)
             .ToListAsync();
         if (projectIds.Count == 0)
+        {
+            await db.WorkflowTemplates.Where(t => workflowTemplateIds.Contains(t.Id)).ExecuteDeleteAsync();
             return;
+        }
 
         var boardIds = await db.Boards
             .Where(b => projectIds.Contains(b.ProjectId))
@@ -368,6 +421,17 @@ public class BoardServiceIntegrationTests
         var sessionIds = await db.AgentSessions
             .Where(s => cardIds.Contains(s.CardId))
             .Select(s => s.Id)
+            .ToListAsync();
+        var workflowRunIds = await db.CardWorkflowRuns
+            .Where(r => cardIds.Contains(r.CardId))
+            .Select(r => r.Id)
+            .ToListAsync();
+        var agentIds = await db.Agents
+            .Where(a => a.WorkingDirectory.StartsWith(tempRoot)
+                || (a.CurrentCardId != null && cardIds.Contains(a.CurrentCardId.Value))
+                || db.Cards.Any(c => cardIds.Contains(c.Id) && c.AssignedAgentId == a.Id)
+                || db.CardWorkflowRuns.Any(r => workflowRunIds.Contains(r.Id) && r.AgentId == a.Id))
+            .Select(a => a.Id)
             .ToListAsync();
         var attemptIds = await db.RunAttempts
             .Where(a => cardIds.Contains(a.CardId))
@@ -382,7 +446,19 @@ public class BoardServiceIntegrationTests
             .Where(c => cardIds.Contains(c.Id))
             .ExecuteUpdateAsync(updates => updates
                 .SetProperty(c => c.OwnerSessionId, (Guid?)null)
-                .SetProperty(c => c.CurrentWorktreeId, (Guid?)null));
+                .SetProperty(c => c.CurrentWorktreeId, (Guid?)null)
+                .SetProperty(c => c.AssignedAgentId, (Guid?)null)
+                .SetProperty(c => c.ActiveWorkflowRunId, (Guid?)null));
+        await db.Agents
+            .Where(a => agentIds.Contains(a.Id))
+            .ExecuteUpdateAsync(updates => updates
+                .SetProperty(a => a.CurrentCardId, (Guid?)null));
+        await db.CardWorkflowRuns
+            .Where(r => workflowRunIds.Contains(r.Id))
+            .ExecuteUpdateAsync(updates => updates
+                .SetProperty(r => r.CurrentStageId, (Guid?)null));
+        await db.CardWorkflowStages.Where(s => workflowRunIds.Contains(s.CardWorkflowRunId)).ExecuteDeleteAsync();
+        await db.CardWorkflowRuns.Where(r => workflowRunIds.Contains(r.Id)).ExecuteDeleteAsync();
         await db.TokenUsages.Where(t => attemptIds.Contains(t.RunAttemptId)).ExecuteDeleteAsync();
         await db.RetrySchedules.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
@@ -393,6 +469,8 @@ public class BoardServiceIntegrationTests
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync();
         await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync();
         await db.Boards.Where(b => boardIds.Contains(b.Id)).ExecuteDeleteAsync();
+        await db.Agents.Where(a => agentIds.Contains(a.Id)).ExecuteDeleteAsync();
+        await db.WorkflowTemplates.Where(t => workflowTemplateIds.Contains(t.Id)).ExecuteDeleteAsync();
         await db.Projects.Where(p => projectIds.Contains(p.Id)).ExecuteDeleteAsync();
     }
 
@@ -425,6 +503,7 @@ public class BoardServiceIntegrationTests
         IServiceScope Scope,
         BoardService BoardService,
         CardService CardService,
+        AgentService AgentService,
         AgentSessionLaunchQueue LaunchQueue,
         MockEventBus EventBus) : IAsyncDisposable
     {

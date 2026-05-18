@@ -15,6 +15,9 @@ export interface AgentDefinitionDto {
 
 export const agentKeys = {
   definitions: ['agents', 'definitions'] as const,
+  all: ['agents', 'list'] as const,
+  detail: (id: string) => ['agents', 'detail', id] as const,
+  queue: (id: string) => ['agents', 'queue', id] as const,
 }
 
 export function useAgentDefinitions() {

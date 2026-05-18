@@ -185,6 +185,8 @@ public sealed class CardService
         return await _db.Cards
             .AsNoTracking()
             .Include(c => c.AgentSessions)
+            .Include(c => c.AssignedAgent)
+            .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
     }
@@ -196,6 +198,8 @@ public sealed class CardService
             .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
             .Include(c => c.BoardColumn)
             .Include(c => c.AgentSessions)
+            .Include(c => c.AssignedAgent)
+            .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
     }
