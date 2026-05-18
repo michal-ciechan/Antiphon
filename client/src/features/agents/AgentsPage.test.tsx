@@ -231,6 +231,66 @@ describe('AgentsPage', () => {
     )
   })
 
+  it('drafts agent fields from a description before creating', async () => {
+    const draftSpy = vi.fn()
+    const createSpy = vi.fn()
+    server.use(
+      ...agentHandlers([]),
+      http.post('/api/agents/draft', async ({ request }) => {
+        draftSpy(await request.json())
+        return HttpResponse.json({
+          name: 'Frontend Agent',
+          workingDirectory: 'D:/src/Antiphon/client',
+          details: 'Owns React and Mantine UI work.',
+          assignmentPolicy: 'ManualConfirm',
+          usedAi: true,
+        })
+      }),
+      http.post('/api/agents', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json({
+          ...agentDetail,
+          id: 'agent-drafted',
+          name: 'Frontend Agent',
+          workingDirectory: 'D:/src/Antiphon/client',
+          details: 'Owns React and Mantine UI work.',
+          assignmentPolicy: 'ManualConfirm',
+          queueLength: 0,
+        }, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
+    await userEvent.type(
+      await screen.findByLabelText('Describe what you want'),
+      'Frontend agent for D:/src/Antiphon/client with manual review',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Draft details' }))
+
+    expect(await screen.findByDisplayValue('Frontend Agent')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('D:/src/Antiphon/client')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Owns React and Mantine UI work.')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Manual confirm')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(draftSpy).toHaveBeenCalledWith({
+        description: 'Frontend agent for D:/src/Antiphon/client with manual review',
+      }),
+    )
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith({
+        name: 'Frontend Agent',
+        workingDirectory: 'D:/src/Antiphon/client',
+        details: 'Owns React and Mantine UI work.',
+        assignmentPolicy: 'ManualConfirm',
+      }),
+    )
+  })
+
   it('shows backend validation text when agent creation fails', async () => {
     server.use(
       ...agentHandlers([]),

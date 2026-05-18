@@ -40,6 +40,11 @@ public class SmokeTests
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection",
             _container.GetConnectionString());
         Environment.SetEnvironmentVariable("GitHub__Enabled", "false");
+        Environment.SetEnvironmentVariable("Llm__DefaultProvider", "disabled");
+        Environment.SetEnvironmentVariable("Llm__DefaultModel", "disabled-model");
+        Environment.SetEnvironmentVariable("Llm__Providers__anthropic__ApiKey", " ");
+        Environment.SetEnvironmentVariable("Llm__Providers__openai__ApiKey", " ");
+        Environment.SetEnvironmentVariable("Llm__Providers__ollama__ApiKey", " ");
 
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
@@ -53,6 +58,11 @@ public class SmokeTests
         await _container.DisposeAsync();
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection", null);
         Environment.SetEnvironmentVariable("GitHub__Enabled", null);
+        Environment.SetEnvironmentVariable("Llm__DefaultProvider", null);
+        Environment.SetEnvironmentVariable("Llm__DefaultModel", null);
+        Environment.SetEnvironmentVariable("Llm__Providers__anthropic__ApiKey", null);
+        Environment.SetEnvironmentVariable("Llm__Providers__openai__ApiKey", null);
+        Environment.SetEnvironmentVariable("Llm__Providers__ollama__ApiKey", null);
     }
 
     [Test]
@@ -279,6 +289,23 @@ public class SmokeTests
         agents.EnumerateArray()
             .ShouldContain(agent => agent.GetProperty("id").GetGuid() == agentId
                 && agent.GetProperty("name").GetString() == $"Endpoint Agent {suffix}");
+    }
+
+    [Test]
+    public async Task AgentDraftEndpoint_fills_fields_from_description_without_llm()
+    {
+        var response = await _client.PostAsJsonAsync("/api/agents/draft", new
+        {
+            description = "React UI agent for D:/src/Antiphon/client that handles Mantine polish"
+        });
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var draft = await response.Content.ReadFromJsonAsync<JsonElement>();
+        (draft.GetProperty("name").GetString() ?? string.Empty).ShouldContain("React");
+        draft.GetProperty("workingDirectory").GetString().ShouldBe("D:/src/Antiphon/client");
+        (draft.GetProperty("details").GetString() ?? string.Empty).ShouldContain("React UI agent");
+        draft.GetProperty("assignmentPolicy").GetString().ShouldBe("AutoPick");
+        draft.GetProperty("usedAi").GetBoolean().ShouldBeFalse();
     }
 
     [Test]

@@ -62,6 +62,15 @@ public sealed record CreateAgentRequest(
     Guid? DefaultWorkflowTemplateId = null,
     AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick);
 
+public sealed record DraftAgentRequest(string Description);
+
+public sealed record DraftAgentResponse(
+    string Name,
+    string WorkingDirectory,
+    string Details,
+    AgentAssignmentPolicy AssignmentPolicy,
+    bool UsedAi);
+
 public sealed record UpdateAgentRequest(
     string Name,
     string WorkingDirectory,

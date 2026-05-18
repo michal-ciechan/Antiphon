@@ -59,6 +59,18 @@ export interface CreateAgentRequest {
   assignmentPolicy?: AgentAssignmentPolicy
 }
 
+export interface DraftAgentRequest {
+  description: string
+}
+
+export interface DraftAgentResponse {
+  name: string
+  workingDirectory: string
+  details: string
+  assignmentPolicy: AgentAssignmentPolicy
+  usedAi: boolean
+}
+
 export interface AssignAgentCardRequest {
   cardId: string
 }
@@ -105,6 +117,12 @@ export function useCreateAgent() {
       queryClient.invalidateQueries({ queryKey: agentKeys.all })
       queryClient.setQueryData(agentKeys.detail(agent.id), agent)
     },
+  })
+}
+
+export function useDraftAgent() {
+  return useMutation({
+    mutationFn: (request: DraftAgentRequest) => apiPost<DraftAgentResponse>('/agents/draft', request),
   })
 }
 

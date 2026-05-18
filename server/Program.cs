@@ -124,6 +124,7 @@ try
     builder.Services.AddScoped<CardService>();
     builder.Services.AddScoped<CardWorkflowRunFactory>();
     builder.Services.AddScoped<AgentService>();
+    builder.Services.AddScoped<AgentDraftService>();
     builder.Services.AddScoped<CardReviewService>();
     builder.Services.AddSingleton<MentionScanner>();
     builder.Services.AddScoped<AgentChannelService>();
@@ -139,6 +140,7 @@ try
     // To use MockExecutor instead, change the registration below.
     builder.Services.AddSingleton<ToolRegistry>();
     builder.Services.AddSingleton<LlmClientFactory>();
+    builder.Services.AddScoped<IAgentDraftGenerator, AgentDraftGenerator>();
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddSingleton(TimeProvider.System);

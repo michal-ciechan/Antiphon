@@ -55,6 +55,14 @@ public static class AgentEndpoints
             return Results.Created($"/api/agents/{agent.Id}", agent);
         });
 
+        agents.MapPost("/draft", async (
+            DraftAgentRequest request,
+            AgentDraftService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.DraftAsync(request, cancellationToken));
+        });
+
         agents.MapPatch("/{id:guid}", async (
             Guid id,
             UpdateAgentRequest request,
