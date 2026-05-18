@@ -295,7 +295,7 @@ describe('SessionTerminal', () => {
     expect(inputSpy).not.toHaveBeenCalled()
   })
 
-  it('copies the selected terminal text on Ctrl+C and lets unselected Ctrl+C through', async () => {
+  it('copies the selected terminal text on Ctrl+C and still lets Ctrl+C through', async () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -307,13 +307,13 @@ describe('SessionTerminal', () => {
     }
     const handler = createTerminalCopyKeyHandler(terminal)
 
-    const copied = handler(new KeyboardEvent('keydown', {
+    const copiedAndPassedThrough = handler(new KeyboardEvent('keydown', {
       key: 'c',
       code: 'KeyC',
       ctrlKey: true,
     }))
 
-    expect(copied).toBe(false)
+    expect(copiedAndPassedThrough).toBe(true)
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('SELECTED OUTPUT'))
 
     terminal.hasSelection.mockReturnValue(false)

@@ -58,7 +58,7 @@ export function createTerminalCopyKeyHandler(terminal: TerminalSelectionApi) {
     }
 
     void writeClipboardText(selection)
-    return false
+    return true
   }
 }
 
