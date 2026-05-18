@@ -11,6 +11,7 @@ dist/
 # Antiphon
 .antiphon-cache/
 .memsearch/
+.superpowers/
 
 # IDE
 .vs/
