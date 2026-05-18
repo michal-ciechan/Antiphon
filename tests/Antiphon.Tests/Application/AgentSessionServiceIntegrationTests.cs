@@ -159,6 +159,88 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
+    public async Task AgentSessionService_start_reuses_existing_worktree_when_touch_rejects_legacy_path()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-legacy-worktree-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var legacyWorktreePath = Path.Combine(tempRoot, "legacy-root", "card-CARD-0001");
+        Directory.CreateDirectory(repoPath);
+        Directory.CreateDirectory(legacyWorktreePath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var now = DateTime.UtcNow;
+            var worktree = new Worktree
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RepoPath = repoPath,
+                Path = legacyWorktreePath,
+                Branch = $"feat/card-{graph.Card.Identifier}",
+                BaseRef = "main",
+                Status = WorktreeStatus.Active,
+                CreatedAt = now,
+                LastTouchedAt = now,
+                Card = graph.Card
+            };
+            graph.Card.CurrentWorktreeId = worktree.Id;
+            graph.Card.CurrentWorktree = worktree;
+            graph.Card.Worktrees.Add(worktree);
+            db.Worktrees.Add(worktree);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "LEGACY_WORKTREE_OK" };
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                legacyWorktreePath,
+                CreateSessionSettings(tempRoot),
+                new TouchRejectingWorktreeManager());
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "fake",
+                AgentKind.Raw,
+                "reuse legacy worktree",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.Raw,
+                "fake",
+                [],
+                new Dictionary<string, string>(),
+                repoPath,
+                120,
+                30);
+
+            var result = await service.StartAsync(request, spec, CancellationToken.None);
+
+            result.FirstDeltaReceived.ShouldBeTrue();
+            var attempt = await db.RunAttempts.SingleAsync(a => a.Id == result.RunAttemptId);
+            attempt.WorktreeId.ShouldBe(worktree.Id);
+            attempt.Phase.ShouldBe(RunPhase.Succeeded);
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == result.SessionId);
+            session.Cwd.ShouldBe(legacyWorktreePath);
+            session.Status.ShouldBe(SessionStatus.Running);
+
+            await service.KillAsync(result.SessionId, CancellationToken.None);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Claude_start_uses_antiphon_session_id_as_claude_session_id()
     {
         await using var db = CreateContext();
@@ -1036,7 +1118,8 @@ public class AgentSessionServiceIntegrationTests
         ServiceProvider provider,
         IAgentProtocolAdapter adapter,
         string worktreePath,
-        AgentSessionSettings settings)
+        AgentSessionSettings settings,
+        IWorktreeManager? worktreeManager = null)
     {
         var sessionSettings = Options.Create(settings);
         var runtime = new AgentSessionRuntime(
@@ -1049,7 +1132,7 @@ public class AgentSessionServiceIntegrationTests
         var hookService = new WorkspaceHookService(hookRunner, NullLogger<WorkspaceHookService>.Instance);
         var service = new AgentSessionService(
             db,
-            new FakeWorktreeManager(worktreePath),
+            worktreeManager ?? new FakeWorktreeManager(worktreePath),
             hookService,
             new FakeAdapterFactory(adapter),
             runtime,
@@ -1216,6 +1299,24 @@ public class AgentSessionServiceIntegrationTests
 
         public Task TouchAsync(string worktreePath, CancellationToken ct) =>
             Task.CompletedTask;
+
+        public Task<int> PruneStaleAsync(CancellationToken ct) =>
+            Task.FromResult(0);
+    }
+
+    private sealed class TouchRejectingWorktreeManager : IWorktreeManager
+    {
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct) =>
+            throw new InvalidOperationException("Existing worktree should be reused.");
+
+        public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorktreeInfo>>([]);
+
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task TouchAsync(string worktreePath, CancellationToken ct) =>
+            throw new ValidationException(nameof(worktreePath), "Resolved worktree path must stay under Git:WorktreeBasePath.");
 
         public Task<int> PruneStaleAsync(CancellationToken ct) =>
             Task.FromResult(0);

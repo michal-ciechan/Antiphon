@@ -92,6 +92,10 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     event: 'SessionExited',
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },
+  {
+    event: 'OrchestratorTick',
+    getKeys: () => [['orchestrator', 'state']],
+  },
 ]
 
 export function useSignalRInvalidation(connectionRef: RefObject<HubConnection | null>) {

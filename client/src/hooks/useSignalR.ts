@@ -10,6 +10,14 @@ import { useConnectionStore } from '../stores/connectionStore'
 const SIGNALR_HUB_URL = '/hubs/antiphon'
 const RETRY_INTERVAL_MS = 5000
 
+function createConnection() {
+  return new HubConnectionBuilder()
+    .withUrl(SIGNALR_HUB_URL)
+    .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
+    .configureLogging(LogLevel.Warning)
+    .build()
+}
+
 /**
  * Manages the SignalR connection lifecycle (connect, reconnect, disconnect).
  * Uses withAutomaticReconnect() for resilience and updates connectionStore status.
@@ -22,16 +30,13 @@ export function useSignalR() {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stoppedRef = useRef(false)
 
+  if (connectionRef.current === null) {
+    connectionRef.current = createConnection()
+  }
+
   useEffect(() => {
     stoppedRef.current = false
-
-    const connection = new HubConnectionBuilder()
-      .withUrl(SIGNALR_HUB_URL)
-      .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
-      .configureLogging(LogLevel.Warning)
-      .build()
-
-    connectionRef.current = connection
+    const connection = connectionRef.current!
 
     const tryStart = () => {
       if (stoppedRef.current) return

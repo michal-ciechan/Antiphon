@@ -220,6 +220,78 @@ public class BoardE2ETests
     }
 
     [Test]
+    public async Task Board_spawn_reuses_existing_worktree_outside_current_worktree_root()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repoPath = await CreateLocalGitRepositoryAsync();
+        var projectId = await CreateProjectAsync($"Legacy Worktree Spawn Project {suffix}", repoPath);
+        var boardId = await CreateBoardAsync(projectId, $"Legacy Worktree Spawn Board {suffix}");
+        var cardTitle = $"Legacy Worktree Spawn Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, boardColumnId: null, cardTitle);
+        var legacyRoot = Path.Combine(Path.GetTempPath(), "antiphon-e2e-legacy-worktrees", suffix);
+        var legacyWorktreePath = Path.Combine(legacyRoot, "card-CARD-0001");
+        Directory.CreateDirectory(legacyRoot);
+        _tempRepoRoots.Add(legacyRoot);
+        await RunGitAsync(repoPath, "worktree", "add", "-b", "feat/card-CARD-0001", legacyWorktreePath, "main");
+        await AddExistingWorktreeAsync(cardId, repoPath, legacyWorktreePath, "feat/card-CARD-0001");
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(dialog.GetByText(cardTitle)).ToBeVisibleAsync();
+            var spawnResponse = await page.RunAndWaitForResponseAsync(
+                () => dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Spawn" }).ClickAsync(),
+                response => response.Url.Contains($"/api/cards/{cardId}/spawn", StringComparison.Ordinal)
+                    && response.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
+            spawnResponse.Status.ShouldBe(202);
+
+            await Expect(dialog.GetByText("Running", new LocatorGetByTextOptions { Exact = true }))
+                .ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
+            {
+                Timeout = 60_000
+            });
+            await Expect(dialog.GetByTestId("session-terminal")).ToBeVisibleAsync();
+            await Expect(dialog.GetByText(legacyWorktreePath, new LocatorGetByTextOptions { Exact = false }).First)
+                .ToBeVisibleAsync();
+
+            var screenshotPath = Path.Combine(
+                FindRepoRoot(),
+                "docs",
+                "screenshots",
+                "toonsharp-antiphon",
+                "36-spawn-legacy-worktree-running.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(screenshotPath)!);
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Path = screenshotPath,
+                FullPage = true
+            });
+            Console.WriteLine($"[screenshot] {screenshotPath}");
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task Board_user_can_edit_workflow_md_and_reload_persists_version()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -696,6 +768,37 @@ public class BoardE2ETests
         db.AgentSessions.Add(session);
         await db.SaveChangesAsync();
         return session.Id;
+    }
+
+    private async Task AddExistingWorktreeAsync(
+        Guid cardId,
+        string repoPath,
+        string worktreePath,
+        string branch)
+    {
+        using var scope = _appFixture.Services.CreateScope();
+        await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+        var now = DateTime.UtcNow;
+        var worktree = new Worktree
+        {
+            Id = Guid.NewGuid(),
+            CardId = cardId,
+            RepoPath = repoPath,
+            Path = worktreePath,
+            Branch = branch,
+            BaseRef = "main",
+            Status = WorktreeStatus.Active,
+            CreatedAt = now,
+            LastTouchedAt = now,
+            Card = card
+        };
+
+        card.CurrentWorktreeId = worktree.Id;
+        card.ConcurrencyToken = Guid.NewGuid();
+        card.UpdatedAt = now;
+        db.Worktrees.Add(worktree);
+        await db.SaveChangesAsync();
     }
 
     private async Task MoveCardAsync(Guid boardId, Guid cardId, Guid boardColumnId)

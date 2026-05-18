@@ -612,9 +612,10 @@ public sealed class AgentSessionService
             {
                 await _worktreeManager.TouchAsync(existing.Path, ct);
             }
-            catch (NotFoundException)
+            catch (Exception ex) when (ex is NotFoundException or ValidationException)
             {
-                // Older rows or tests may not have sidecar metadata yet; DB timestamp is still updated.
+                // Older rows may predate sidecar metadata or the current worktree root. DB timestamp is still updated.
+                _logger.LogDebug(ex, "Skipping optional touch for existing worktree {WorktreePath}", existing.Path);
             }
             return (existing, Created: false);
         }
