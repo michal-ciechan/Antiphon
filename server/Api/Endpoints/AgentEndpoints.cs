@@ -11,7 +11,7 @@ public static class AgentEndpoints
         var agents = app.MapGroup("/api/agents")
             .WithTags("Agents");
 
-        agents.MapGet("/", (AgentRegistry registry) =>
+        agents.MapGet("/definitions", (AgentRegistry registry) =>
         {
             var settings = registry.Settings;
             var definitions = settings.Definitions

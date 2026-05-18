@@ -31,8 +31,8 @@ const card: CardDto = {
   sessions: [],
 }
 
-function agentHandlers() {
-  return http.get('/api/agents', () =>
+function agentDefinitionsHandler() {
+  return http.get('/api/agents/definitions', () =>
     HttpResponse.json({
       defaultDefinition: 'claude',
       definitions: [
@@ -54,7 +54,7 @@ function getAgentInput() {
 describe('AgentPicker', () => {
   it('renders configured registry options and selects the default', async () => {
     const onChange = vi.fn()
-    server.use(agentHandlers())
+    server.use(agentDefinitionsHandler())
 
     renderWithProviders(<AgentPicker value={null} onChange={onChange} />)
 
@@ -69,7 +69,7 @@ describe('CardModal', () => {
   it('posts spawn with the selected agent definition', async () => {
     const spawnSpy = vi.fn()
     server.use(
-      agentHandlers(),
+      agentDefinitionsHandler(),
       http.post('/api/cards/card-1/spawn', async ({ request }) => {
         spawnSpy(await request.json())
         return HttpResponse.json({ cardId: 'card-1', sessionId: 'session-1' }, { status: 202 })
@@ -91,7 +91,7 @@ describe('CardModal', () => {
   })
 
   it('disables spawn while a session is stopping', async () => {
-    server.use(agentHandlers())
+    server.use(agentDefinitionsHandler())
     renderWithProviders(
       <CardModal
         boardId="board-1"

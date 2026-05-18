@@ -13,9 +13,13 @@ export interface AgentDefinitionDto {
   isDefault: boolean
 }
 
-export function useAgents() {
+export const agentKeys = {
+  definitions: ['agents', 'definitions'] as const,
+}
+
+export function useAgentDefinitions() {
   return useQuery({
-    queryKey: ['agents'],
-    queryFn: () => apiGet<AgentRegistryDto>('/agents'),
+    queryKey: agentKeys.definitions,
+    queryFn: () => apiGet<AgentRegistryDto>('/agents/definitions'),
   })
 }

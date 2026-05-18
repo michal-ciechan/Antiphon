@@ -1,6 +1,6 @@
 import { Select } from '@mantine/core'
 import { useEffect } from 'react'
-import { useAgents } from '../../api/agents'
+import { useAgentDefinitions } from '../../api/agents'
 
 interface AgentPickerProps {
   value: string | null
@@ -8,7 +8,7 @@ interface AgentPickerProps {
 }
 
 export function AgentPicker({ value, onChange }: AgentPickerProps) {
-  const { data, isLoading } = useAgents()
+  const { data, isLoading } = useAgentDefinitions()
   const options = (data?.definitions ?? []).map((agent) => ({
     value: agent.name,
     label: agent.isDefault ? `${agent.name} (${agent.kind}, default)` : `${agent.name} (${agent.kind})`,
