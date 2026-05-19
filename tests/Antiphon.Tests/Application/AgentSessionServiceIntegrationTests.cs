@@ -1077,12 +1077,15 @@ public class AgentSessionServiceIntegrationTests
             ReplayBufferMaxChars = 128 * 1024,
             SessionLogPath = Path.Combine(worktreeRoot, "session-logs")
         });
+        var runnerClient = new DirectSessionRunnerClient(Path.Combine(worktreeRoot, "session-runner-logs"));
         var runtime = new AgentSessionRuntime(
+            runnerClient,
             eventBus,
             sessionSettings,
             provider.GetRequiredService<IServiceScopeFactory>(),
             TimeProvider.System,
             NullLogger<AgentSessionRuntime>.Instance);
+        StartEventBridge(runnerClient, runtime);
         var hookRunner = new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance);
         var hookService = new WorkspaceHookService(hookRunner, NullLogger<WorkspaceHookService>.Instance);
         var worktreeManager = new WorktreeManager(
@@ -1098,7 +1101,8 @@ public class AgentSessionServiceIntegrationTests
         {
             DefaultDefinition = "raw-cmd",
             Definitions = { ["raw-cmd"] = new AgentDefinition { Kind = "Raw", Exe = Cmd } }
-        }));
+        }),
+        runnerClient);
 
         return new AgentSessionService(
             db,
@@ -1134,7 +1138,7 @@ public class AgentSessionServiceIntegrationTests
             db,
             worktreeManager ?? new FakeWorktreeManager(worktreePath),
             hookService,
-            new FakeAdapterFactory(adapter),
+            new FakeAdapterFactory(adapter, runtime),
             runtime,
             eventBus,
             sessionSettings,
@@ -1142,6 +1146,39 @@ public class AgentSessionServiceIntegrationTests
             NullLogger<AgentSessionService>.Instance);
 
         return (service, runtime);
+    }
+
+    private static void StartEventBridge(ISessionRunnerClient runnerClient, AgentSessionRuntime runtime)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var evt in runnerClient.StreamEventsAsync(CancellationToken.None))
+                {
+                    if (evt.Output is not null)
+                    {
+                        await runtime.ObserveOutputAsync(
+                            evt.Output.SessionId,
+                            evt.Output.Sequence,
+                            evt.Output.Text,
+                            CancellationToken.None);
+                    }
+                    else if (evt.Exited is not null)
+                    {
+                        await runtime.ObserveExitAsync(
+                            evt.Exited.SessionId,
+                            evt.Exited.ExitCode,
+                            evt.Exited.ExitReason,
+                            CancellationToken.None);
+                    }
+                }
+            }
+            catch
+            {
+                // Test bridge exits when the direct runner event stream is closed.
+            }
+        });
     }
 
     private static Graph CreateGraph(string repoPath)
@@ -1259,13 +1296,60 @@ public class AgentSessionServiceIntegrationTests
     private sealed class FakeAdapterFactory : IAgentProtocolAdapterFactory
     {
         private readonly IAgentProtocolAdapter _adapter;
+        private readonly AgentSessionRuntime _runtime;
 
-        public FakeAdapterFactory(IAgentProtocolAdapter adapter)
+        public FakeAdapterFactory(IAgentProtocolAdapter adapter, AgentSessionRuntime runtime)
         {
             _adapter = adapter;
+            _runtime = runtime;
         }
 
-        public IAgentProtocolAdapter Create(AgentKind kind) => _adapter;
+        public IAgentProtocolAdapter Create(AgentKind kind) => new RuntimeRegisteringAdapter(_adapter, _runtime);
+    }
+
+    private sealed class RuntimeRegisteringAdapter : IAgentProtocolAdapter
+    {
+        private readonly IAgentProtocolAdapter _inner;
+        private readonly AgentSessionRuntime _runtime;
+        private bool _registered;
+
+        public RuntimeRegisteringAdapter(IAgentProtocolAdapter inner, AgentSessionRuntime runtime)
+        {
+            _inner = inner;
+            _runtime = runtime;
+        }
+
+        public Task<int> Exited => _inner.Exited;
+        public int? Pid => _inner.Pid;
+        public AgentExitReason ExitReason => _inner.ExitReason;
+        public string? AuditDirectory => _inner.AuditDirectory;
+        public event Action<string>? OnTextDelta
+        {
+            add => _inner.OnTextDelta += value;
+            remove => _inner.OnTextDelta -= value;
+        }
+
+        public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
+        {
+            if (!_registered && spec.SessionId is Guid sessionId)
+            {
+                _runtime.Register(sessionId, _inner);
+                _registered = true;
+            }
+
+            await _inner.StartAsync(spec, ct);
+        }
+
+        public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => _inner.KillAsync(timeout, ct);
+        public Task SendPromptAsync(string prompt, CancellationToken ct) => _inner.SendPromptAsync(prompt, ct);
+        public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) => _inner.WaitForFirstPromptOutputAsync(timeout, ct);
+        public Task SendInputAsync(string input, CancellationToken ct) => _inner.SendInputAsync(input, ct);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => _inner.ResizeAsync(cols, rows, ct);
+        public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
+        public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
+        public string SnapshotRawOutput() => _inner.SnapshotRawOutput();
+        public string SnapshotRenderedScreen() => _inner.SnapshotRenderedScreen();
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private sealed class FakeWorktreeManager : IWorktreeManager

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.SessionRunner</RootNamespace>
+    <AssemblyName>Antiphon.SessionRunner</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

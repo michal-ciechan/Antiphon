@@ -9,5 +9,6 @@ public sealed class AgentSessionSettings
     public int KillGraceMs { get; set; } = 5_000;
     public int StallTimeoutMs { get; set; } = 300_000;
     public int StallScanIntervalMs { get; set; } = 10_000;
+    public int ManualTurnQuietPeriodMs { get; set; } = 3_000;
     public int MemoryLimitMb { get; set; } = 0;
 }

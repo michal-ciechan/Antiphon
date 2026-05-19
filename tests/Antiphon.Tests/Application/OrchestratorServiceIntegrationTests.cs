@@ -1100,10 +1100,11 @@ public class OrchestratorServiceIntegrationTests
         foreach (var issueTracker in issueTrackers ?? [])
             services.AddSingleton<IIssueTracker>(issueTracker);
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
-        services.AddSingleton<IAgentProtocolAdapterFactory>(new QueueAdapterFactory(adapters));
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
+            new QueueAdapterFactory(adapters, sp.GetRequiredService<AgentSessionRuntime>()));
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();
@@ -1397,19 +1398,66 @@ public class OrchestratorServiceIntegrationTests
     private sealed class QueueAdapterFactory : IAgentProtocolAdapterFactory
     {
         private readonly Queue<IAgentProtocolAdapter> _adapters;
+        private readonly AgentSessionRuntime _runtime;
 
-        public QueueAdapterFactory(IEnumerable<IAgentProtocolAdapter> adapters)
+        public QueueAdapterFactory(IEnumerable<IAgentProtocolAdapter> adapters, AgentSessionRuntime runtime)
         {
             _adapters = new Queue<IAgentProtocolAdapter>(adapters);
+            _runtime = runtime;
         }
 
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
             if (_adapters.TryDequeue(out var adapter))
-                return adapter;
+                return new RuntimeRegisteringAdapter(adapter, _runtime);
 
             throw new InvalidOperationException("No fake adapter was queued for dispatch.");
         }
+    }
+
+    private sealed class RuntimeRegisteringAdapter : IAgentProtocolAdapter
+    {
+        private readonly IAgentProtocolAdapter _inner;
+        private readonly AgentSessionRuntime _runtime;
+        private bool _registered;
+
+        public RuntimeRegisteringAdapter(IAgentProtocolAdapter inner, AgentSessionRuntime runtime)
+        {
+            _inner = inner;
+            _runtime = runtime;
+        }
+
+        public Task<int> Exited => _inner.Exited;
+        public int? Pid => _inner.Pid;
+        public AgentExitReason ExitReason => _inner.ExitReason;
+        public string? AuditDirectory => _inner.AuditDirectory;
+        public event Action<string>? OnTextDelta
+        {
+            add => _inner.OnTextDelta += value;
+            remove => _inner.OnTextDelta -= value;
+        }
+
+        public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
+        {
+            if (!_registered && spec.SessionId is Guid sessionId)
+            {
+                _runtime.Register(sessionId, _inner);
+                _registered = true;
+            }
+
+            await _inner.StartAsync(spec, ct);
+        }
+
+        public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => _inner.KillAsync(timeout, ct);
+        public Task SendPromptAsync(string prompt, CancellationToken ct) => _inner.SendPromptAsync(prompt, ct);
+        public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) => _inner.WaitForFirstPromptOutputAsync(timeout, ct);
+        public Task SendInputAsync(string input, CancellationToken ct) => _inner.SendInputAsync(input, ct);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => _inner.ResizeAsync(cols, rows, ct);
+        public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
+        public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
+        public string SnapshotRawOutput() => _inner.SnapshotRawOutput();
+        public string SnapshotRenderedScreen() => _inner.SnapshotRenderedScreen();
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private sealed class FakeIssueTracker : IIssueTracker

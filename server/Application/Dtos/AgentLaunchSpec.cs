@@ -26,4 +26,5 @@ public sealed record AgentLaunchSpec(
     string Cwd,
     int Cols,
     int Rows,
-    int MemoryLimitMb = 0);
+    int MemoryLimitMb = 0,
+    Guid? SessionId = null);

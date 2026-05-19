@@ -625,6 +625,9 @@ public sealed class OrchestratorService
     {
         try
         {
+            if (_runtime is not null)
+                return _runtime.ListLiveSessions().Contains(sessionId);
+
             await _sessionService.SendInputAsync(sessionId, string.Empty, ct);
             return true;
         }

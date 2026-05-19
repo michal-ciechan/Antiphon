@@ -106,7 +106,6 @@ public sealed class AgentSessionService
 
         AgentSession? session = null;
         IAgentProtocolAdapter? adapter = null;
-        var runtimeRegistered = false;
 
         try
         {
@@ -136,9 +135,6 @@ public sealed class AgentSessionService
             await _db.SaveChangesAsync(ct);
 
             adapter = _adapterFactory.Create(request.AgentKind);
-            _runtime.Register(session.Id, adapter);
-            runtimeRegistered = true;
-
             var spec = BuildRuntimeLaunchSpec(launchSpec, session, worktree.Path, resumeMode: null);
             await adapter.StartAsync(spec, ct);
 
@@ -178,11 +174,8 @@ public sealed class AgentSessionService
                     session.Status = SessionStatus.Failed;
                     session.FailureReason = "Timed out waiting for first agent output.";
                     session.EndedAt = UtcNow();
-                    await _runtime.KillAsync(
-                        session.Id,
-                        TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
-                        ct);
-                    await _runtime.DisposeSessionAsync(session.Id);
+                    await adapter.KillAsync(TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)), ct);
+                    await adapter.DisposeAsync();
                 }
             }
             else
@@ -207,11 +200,8 @@ public sealed class AgentSessionService
                     session.Status = SessionStatus.Failed;
                     session.FailureReason = "Timed out waiting for the agent turn to complete.";
                     session.EndedAt = UtcNow();
-                    await _runtime.KillAsync(
-                        session.Id,
-                        TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
-                        ct);
-                    await _runtime.DisposeSessionAsync(session.Id);
+                    await adapter.KillAsync(TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)), ct);
+                    await adapter.DisposeAsync();
                 }
             }
 
@@ -235,9 +225,7 @@ public sealed class AgentSessionService
 
             await _db.SaveChangesAsync(CancellationToken.None);
 
-            if (runtimeRegistered && session is not null)
-                await _runtime.DisposeSessionAsync(session.Id);
-            else if (adapter is not null)
+            if (adapter is not null)
                 await adapter.DisposeAsync();
 
             throw;
@@ -258,15 +246,10 @@ public sealed class AgentSessionService
             TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
             ct);
 
-        var exitReason = AgentExitReason.Unknown;
-        if (_runtime.TryRemove(sessionId, out var adapter) && adapter is not null)
-        {
-            exitReason = adapter.ExitReason;
-            if (adapter.Exited.IsCompletedSuccessfully)
-                session.ExitCode = adapter.Exited.Result;
-
-            await adapter.DisposeAsync();
-        }
+        var runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
+        var exitReason = runnerSession.ExitReason;
+        session.ExitCode = runnerSession.ExitCode;
+        await _runtime.DisposeSessionAsync(sessionId);
 
         var memoryKilled = exitReason == AgentExitReason.MemoryKilled;
         session.Status = memoryKilled
@@ -367,13 +350,9 @@ public sealed class AgentSessionService
         await _db.SaveChangesAsync(ct);
 
         IAgentProtocolAdapter? adapter = null;
-        var runtimeRegistered = false;
         try
         {
             adapter = _adapterFactory.Create(session.AgentKind);
-            _runtime.Register(session.Id, adapter);
-            runtimeRegistered = true;
-
             var spec = BuildRuntimeLaunchSpec(launchSpec, session, cwd, resumeMode);
             await adapter.StartAsync(spec, ct);
             await WaitForReadyOrThrowAsync(adapter, ct);
@@ -410,9 +389,7 @@ public sealed class AgentSessionService
             session.Card.UpdatedAt = session.EndedAt.Value;
             await _db.SaveChangesAsync(CancellationToken.None);
 
-            if (runtimeRegistered)
-                await _runtime.DisposeSessionAsync(session.Id);
-            else if (adapter is not null)
+            if (adapter is not null)
                 await adapter.DisposeAsync();
 
             if (sessionNotFound)
@@ -518,7 +495,8 @@ public sealed class AgentSessionService
             Cwd = cwd,
             Cols = session.Cols,
             Rows = session.Rows,
-            MemoryLimitMb = _settings.MemoryLimitMb
+            MemoryLimitMb = _settings.MemoryLimitMb,
+            SessionId = session.Id
         };
     }
 
@@ -738,7 +716,7 @@ public sealed class AgentSessionService
             session.ExitCode = adapter.Exited.Result;
         attempt.ExitCode = session.ExitCode;
         attempt.ErrorDetails = MemoryKilledFailureReason;
-        await _runtime.DisposeSessionAsync(session.Id);
+        await adapter.DisposeAsync();
         return true;
     }
 

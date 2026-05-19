@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\server\Antiphon.Server.csproj" />
+    <ProjectReference Include="..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
   </ItemGroup>
 
 </Project>

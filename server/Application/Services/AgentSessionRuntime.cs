@@ -1,9 +1,10 @@
 using System.Collections.Concurrent;
 using System.Text;
-using System.Threading.Channels;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
@@ -14,10 +15,23 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
+/// <summary>
+/// Backend-side session coordinator. It does not own PTY processes in the
+/// production path; live process ownership lives in Antiphon.SessionRunner.
+/// This service observes runner output, republishes SignalR deltas, tracks
+/// manual xterm turns, and forwards input/resize/kill commands to the runner.
+/// </summary>
 public sealed class AgentSessionRuntime
 {
-    private readonly ConcurrentDictionary<Guid, RuntimeSession> _sessions = new();
-    private readonly ConcurrentDictionary<Guid, RuntimeBuffer> _buffers = new();
+    private static readonly TimeSpan ManualTurnPollInterval = TimeSpan.FromMilliseconds(100);
+
+    private readonly ConcurrentDictionary<Guid, long> _lastSequences = new();
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _firstDeltas = new();
+    private readonly ConcurrentDictionary<Guid, PendingTerminalInput> _pendingInputs = new();
+    private readonly ConcurrentDictionary<Guid, byte> _manualTurns = new();
+    private readonly ConcurrentDictionary<Guid, IAgentProtocolAdapter> _testAdapters = new();
+    private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
+    private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
     private readonly AgentSessionSettings _settings;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -26,6 +40,7 @@ public sealed class AgentSessionRuntime
     private readonly AgentMentionRouter? _mentionRouter;
 
     public AgentSessionRuntime(
+        ISessionRunnerClient runnerClient,
         IEventBus eventBus,
         IOptions<AgentSessionSettings> settings,
         IServiceScopeFactory scopeFactory,
@@ -33,6 +48,7 @@ public sealed class AgentSessionRuntime
         ILogger<AgentSessionRuntime> logger,
         AgentMentionRouter? mentionRouter = null)
     {
+        _runnerClient = runnerClient;
         _eventBus = eventBus;
         _settings = settings.Value;
         _scopeFactory = scopeFactory;
@@ -41,41 +57,98 @@ public sealed class AgentSessionRuntime
         _mentionRouter = mentionRouter;
     }
 
+    public AgentSessionRuntime(
+        IEventBus eventBus,
+        IOptions<AgentSessionSettings> settings,
+        IServiceScopeFactory scopeFactory,
+        TimeProvider timeProvider,
+        ILogger<AgentSessionRuntime> logger,
+        AgentMentionRouter? mentionRouter = null)
+        : this(
+            new EmptySessionRunnerClient(),
+            eventBus,
+            settings,
+            scopeFactory,
+            timeProvider,
+            logger,
+            mentionRouter)
+    {
+    }
+
     public void Register(Guid sessionId, IAgentProtocolAdapter adapter)
     {
-        var buffer = _buffers.GetOrAdd(sessionId, CreateBuffer);
-        var session = new RuntimeSession(
-            sessionId,
-            adapter,
-            buffer,
-            _eventBus,
-            _settings,
-            _logger,
-            RecordActivityAsync,
-            _mentionRouter);
-        adapter.OnTextDelta += session.OnTextDelta;
+        if (!_testAdapters.TryAdd(sessionId, adapter))
+            throw new ConflictException($"Agent session '{sessionId}' is already registered.");
 
-        if (!_sessions.TryAdd(sessionId, session))
+        _testBuffers.TryAdd(sessionId, new StringBuilder());
+        adapter.OnTextDelta += OnTestAdapterDelta;
+        return;
+
+        void OnTestAdapterDelta(string text)
         {
-            adapter.OnTextDelta -= session.OnTextDelta;
-            throw new ConflictException($"Agent session '{sessionId}' is already running.");
+            _testBuffers.GetOrAdd(sessionId, _ => new StringBuilder()).Append(text);
+            var sequence = _lastSequences.AddOrUpdate(sessionId, 1, (_, previous) => previous + 1);
+            _ = ObserveOutputAsync(sessionId, sequence, text, CancellationToken.None);
         }
+    }
+
+    public async Task ObserveOutputAsync(Guid sessionId, long sequence, string text, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        _lastSequences.AddOrUpdate(sessionId, sequence, (_, previous) => Math.Max(previous, sequence));
+        _firstDeltas.GetOrAdd(sessionId, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+
+        var maxChunkChars = Math.Max(1, _settings.SignalRMaxChunkChars);
+        for (var offset = 0; offset < text.Length; offset += maxChunkChars)
+        {
+            var chunk = text.Substring(offset, Math.Min(maxChunkChars, text.Length - offset));
+            try
+            {
+                _mentionRouter?.ObserveDelta(sessionId, chunk);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to observe mention delta for session {SessionId}", sessionId);
+            }
+
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(sessionId),
+                "AgentTextDelta",
+                new { sessionId, sequence, text = chunk },
+                ct);
+        }
+
+        await RecordActivityAsync(sessionId);
+    }
+
+    public async Task ObserveExitAsync(Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct)
+    {
+        await _eventBus.PublishToGroupAsync(
+            AgentSessionGroups.Session(sessionId),
+            "SessionExited",
+            new { sessionId, status = "Exited", exitCode, exitReason = exitReason.ToString() },
+            ct);
     }
 
     public async Task<bool> WaitForFirstDeltaAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
     {
-        var session = GetSession(sessionId);
-        var completed = await Task.WhenAny(
-            session.FirstDelta.Task,
-            Task.Delay(timeout, ct));
-
-        return completed == session.FirstDelta.Task;
+        var firstDelta = _firstDeltas.GetOrAdd(sessionId, _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+        var completed = await Task.WhenAny(firstDelta.Task, Task.Delay(timeout, ct));
+        return completed == firstDelta.Task;
     }
 
-    public long GetDeltaSequence(Guid sessionId) => GetSession(sessionId).DeltaSequence;
+    public long GetDeltaSequence(Guid sessionId)
+    {
+        if (_lastSequences.TryGetValue(sessionId, out var sequence))
+            return sequence;
+
+        throw new NotFoundException("AgentSessionRuntime", sessionId);
+    }
 
     public long GetDeltaSequenceOrDefault(Guid sessionId) =>
-        _sessions.TryGetValue(sessionId, out var session) ? session.DeltaSequence : 0;
+        _lastSequences.GetValueOrDefault(sessionId);
 
     public async Task<bool> WaitForDeltaAfterAsync(
         Guid sessionId,
@@ -83,97 +156,186 @@ public sealed class AgentSessionRuntime
         TimeSpan timeout,
         CancellationToken ct)
     {
-        var session = GetSession(sessionId);
-        if (session.DeltaSequence > sequence)
+        if (GetDeltaSequenceOrDefault(sessionId) > sequence)
             return true;
 
         var delay = Task.Delay(timeout, ct);
         while (!delay.IsCompleted)
         {
-            if (session.DeltaSequence > sequence)
+            if (GetDeltaSequenceOrDefault(sessionId) > sequence)
                 return true;
 
             await Task.Delay(TimeSpan.FromMilliseconds(25), ct);
         }
 
-        return session.DeltaSequence > sequence;
+        return GetDeltaSequenceOrDefault(sessionId) > sequence;
     }
 
     public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot(Guid sessionId)
     {
-        if (_sessions.TryGetValue(sessionId, out var session))
-            return session.GetBufferSnapshot();
+        if (_testBuffers.TryGetValue(sessionId, out var testBuffer))
+            return new AgentSessionRuntimeBufferSnapshot(testBuffer.ToString(), GetDeltaSequenceOrDefault(sessionId));
 
-        var buffer = _buffers.GetOrAdd(sessionId, CreateBuffer);
-        return new AgentSessionRuntimeBufferSnapshot(buffer.FullSnapshot(), 0);
+        var buffer = _runnerClient.GetBufferAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+        return new AgentSessionRuntimeBufferSnapshot(buffer.Buffer, buffer.LastSequence);
     }
 
-    public IReadOnlyList<Guid> ListLiveSessions() => _sessions.Keys.ToList();
+    public IReadOnlyList<Guid> ListLiveSessions() =>
+        _runnerClient.ListAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+            .Where(session => session.Status is "Running" or "Starting")
+            .Select(session => session.SessionId)
+            .Concat(_testAdapters.Keys)
+            .Distinct()
+            .ToList();
 
     public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
     {
-        if (_sessions.TryGetValue(sessionId, out var session))
+        try
         {
-            try
+            if (_testAdapters.TryGetValue(sessionId, out var adapter))
             {
-                snapshot = session.GetLiveSnapshot();
+                snapshot = new AgentSessionLiveSnapshot(
+                    sessionId,
+                    adapter.SnapshotRawOutput(),
+                    adapter.SnapshotRenderedScreen(),
+                    _testBuffers.GetValueOrDefault(sessionId)?.ToString() ?? string.Empty,
+                    GetDeltaSequenceOrDefault(sessionId));
                 return true;
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Live snapshot unavailable for agent session {SessionId}", sessionId);
-            }
-        }
 
-        snapshot = default!;
-        return false;
+            var runnerSnapshot = _runnerClient.GetSnapshotAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+            var buffer = _runnerClient.GetBufferAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+            snapshot = new AgentSessionLiveSnapshot(
+                sessionId,
+                runnerSnapshot.RawOutput,
+                runnerSnapshot.RenderedScreen,
+                buffer.Buffer,
+                runnerSnapshot.LastSequence);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Live snapshot unavailable for agent session {SessionId}", sessionId);
+            snapshot = default!;
+            return false;
+        }
     }
 
     public bool TryGetLiveMetadata(Guid sessionId, out AgentSessionLiveMetadata metadata)
     {
-        if (_sessions.TryGetValue(sessionId, out var session))
+        if (_testAdapters.ContainsKey(sessionId))
         {
-            metadata = new AgentSessionLiveMetadata(sessionId, session.DeltaSequence);
+            metadata = new AgentSessionLiveMetadata(sessionId, GetDeltaSequenceOrDefault(sessionId));
             return true;
         }
 
-        metadata = default!;
-        return false;
+        try
+        {
+            var session = _runnerClient.GetAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+            if (session.Status is not ("Running" or "Starting"))
+            {
+                metadata = default!;
+                return false;
+            }
+
+            metadata = new AgentSessionLiveMetadata(sessionId, session.LastSequence);
+            return true;
+        }
+        catch
+        {
+            metadata = default!;
+            return false;
+        }
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
-        var session = GetSession(sessionId);
         if (string.IsNullOrEmpty(input))
             return;
 
-        await session.Adapter.SendInputAsync(input, ct);
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+        {
+            var testSequenceBeforeInput = GetDeltaSequenceOrDefault(sessionId);
+            var testSubmittedCommand = RecordTerminalInput(sessionId, input);
+            await adapter.SendInputAsync(input, ct);
+            if (testSubmittedCommand)
+                TryStartManualTurnTracking(sessionId, testSequenceBeforeInput);
+            return;
+        }
+
+        var sequenceBeforeInput = GetRunnerSequenceOrDefault(sessionId, ct);
+        var submittedCommand = RecordTerminalInput(sessionId, input);
+        await _runnerClient.SendInputAsync(sessionId, input, ct);
+        if (submittedCommand)
+            TryStartManualTurnTracking(sessionId, sequenceBeforeInput);
     }
 
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
-        GetSession(sessionId).Adapter.ResizeAsync(cols, rows, ct);
+        _testAdapters.TryGetValue(sessionId, out var adapter)
+            ? adapter.ResizeAsync(cols, rows, ct)
+            : _runnerClient.ResizeAsync(sessionId, cols, rows, ct);
 
-    public Task<bool> KillAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct) =>
-        GetSession(sessionId).Adapter.KillAsync(timeout, ct);
+    public async Task<bool> KillAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
+    {
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+            return await adapter.KillAsync(timeout, ct);
+
+        var session = await _runnerClient.KillAsync(sessionId, ct);
+        return session.Status == "Exited" || session.ExitCode is not null;
+    }
+
+    public Task<SessionRunnerSessionDto> GetSessionAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_testAdapters.TryGetValue(sessionId, out var adapter))
+        {
+            int? exitCode = adapter.Exited.IsCompletedSuccessfully
+                ? adapter.Exited.Result
+                : null;
+            return Task.FromResult(new SessionRunnerSessionDto(
+                sessionId,
+                adapter.Pid,
+                UtcNow(),
+                exitCode is null ? "Running" : "Exited",
+                exitCode,
+                adapter.ExitReason,
+                GetDeltaSequenceOrDefault(sessionId)));
+        }
+
+        return _runnerClient.GetAsync(sessionId, ct);
+    }
 
     public bool TryRemove(Guid sessionId, out IAgentProtocolAdapter? adapter)
     {
-        if (!_sessions.TryRemove(sessionId, out var session))
-        {
-            adapter = null;
-            return false;
-        }
-
-        session.Adapter.OnTextDelta -= session.OnTextDelta;
-        session.Stop();
-        adapter = session.Adapter;
-        return true;
+        _pendingInputs.TryRemove(sessionId, out _);
+        _manualTurns.TryRemove(sessionId, out _);
+        _lastSequences.TryRemove(sessionId, out _);
+        _firstDeltas.TryRemove(sessionId, out _);
+        _testBuffers.TryRemove(sessionId, out _);
+        return _testAdapters.TryRemove(sessionId, out adapter);
     }
 
     public async Task DisposeSessionAsync(Guid sessionId)
     {
         if (TryRemove(sessionId, out var adapter) && adapter is not null)
             await adapter.DisposeAsync();
+    }
+
+    private long GetRunnerSequenceOrDefault(Guid sessionId, CancellationToken ct)
+    {
+        if (_testBuffers.ContainsKey(sessionId))
+            return GetDeltaSequenceOrDefault(sessionId);
+
+        try
+        {
+            var buffer = _runnerClient.GetBufferAsync(sessionId, ct).GetAwaiter().GetResult();
+            return buffer.LastSequence;
+        }
+        catch
+        {
+            return GetDeltaSequenceOrDefault(sessionId);
+        }
     }
 
     private async Task RecordActivityAsync(Guid sessionId)
@@ -186,9 +348,7 @@ public sealed class AgentSessionRuntime
 
             var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
             if (session is not null)
-            {
                 session.LastSeenAt = now;
-            }
 
             var attempt = await db.RunAttempts
                 .Where(a => a.AgentSessionId == sessionId
@@ -197,9 +357,7 @@ public sealed class AgentSessionRuntime
                 .OrderByDescending(a => a.AttemptNumber)
                 .FirstOrDefaultAsync();
             if (attempt is not null)
-            {
                 attempt.LastEventAt = now;
-            }
 
             if (session is not null || attempt is not null)
                 await db.SaveChangesAsync();
@@ -210,207 +368,324 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    private RuntimeSession GetSession(Guid sessionId)
+    private bool RecordTerminalInput(Guid sessionId, string input)
     {
-        if (_sessions.TryGetValue(sessionId, out var session))
-            return session;
-
-        throw new NotFoundException("AgentSessionRuntime", sessionId);
+        var pendingInput = _pendingInputs.GetOrAdd(sessionId, _ => new PendingTerminalInput());
+        return pendingInput.Append(input);
     }
 
-    private RuntimeBuffer CreateBuffer(Guid sessionId) =>
-        new(sessionId, Math.Max(1, _settings.ReplayBufferMaxChars), _settings.SessionLogPath);
-
-    private sealed class RuntimeSession
+    private void TryStartManualTurnTracking(Guid sessionId, long sequenceAtSubmit)
     {
-        private readonly Guid _sessionId;
-        private readonly RuntimeBuffer _buffer;
-        private readonly IEventBus _eventBus;
-        private readonly AgentSessionSettings _settings;
-        private readonly ILogger _logger;
-        private readonly Func<Guid, Task> _recordActivityAsync;
-        private readonly AgentMentionRouter? _mentionRouter;
-        private readonly Channel<RuntimeDelta> _deltas = Channel.CreateUnbounded<RuntimeDelta>(
-            new UnboundedChannelOptions
-            {
-                SingleReader = true,
-                SingleWriter = false
-            });
-        private readonly object _gate = new();
-        private long _deltaSequence;
+        if (!_manualTurns.TryAdd(sessionId, 0))
+            return;
 
-        public RuntimeSession(
-            Guid sessionId,
-            IAgentProtocolAdapter adapter,
-            RuntimeBuffer buffer,
-            IEventBus eventBus,
-            AgentSessionSettings settings,
-            ILogger logger,
-            Func<Guid, Task> recordActivityAsync,
-            AgentMentionRouter? mentionRouter)
+        _ = Task.Run(() => TrackManualTurnAsync(sessionId, sequenceAtSubmit));
+    }
+
+    private async Task TrackManualTurnAsync(Guid sessionId, long sequenceAtSubmit)
+    {
+        ManualTurnStart? turn = null;
+        try
         {
-            _sessionId = sessionId;
-            Adapter = adapter;
-            _buffer = buffer;
-            _eventBus = eventBus;
-            _settings = settings;
-            _logger = logger;
-            _recordActivityAsync = recordActivityAsync;
-            _mentionRouter = mentionRouter;
-            _ = ProcessDeltasAsync();
-        }
-
-        public IAgentProtocolAdapter Adapter { get; }
-        public TaskCompletionSource FirstDelta { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public long DeltaSequence => Interlocked.Read(ref _deltaSequence);
-
-        public void OnTextDelta(string text)
-        {
-            if (string.IsNullOrEmpty(text))
+            turn = await TryCreateManualRunAttemptAsync(sessionId);
+            if (turn is null)
                 return;
 
-            var deltas = new List<RuntimeDelta>();
-            var maxChunkChars = Math.Max(1, _settings.SignalRMaxChunkChars);
-            lock (_gate)
-            {
-                for (var offset = 0; offset < text.Length; offset += maxChunkChars)
-                {
-                    var chunk = text.Substring(offset, Math.Min(maxChunkChars, text.Length - offset));
-                    var deltaSequence = ++_deltaSequence;
-                    _buffer.Append(chunk);
-                    deltas.Add(new RuntimeDelta(deltaSequence, chunk));
-                }
-            }
-
-            foreach (var delta in deltas)
-            {
-                try
-                {
-                    _mentionRouter?.ObserveDelta(_sessionId, delta.Text);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to observe mention delta for session {SessionId}", _sessionId);
-                }
-            }
-
-            FirstDelta.TrySetResult();
-            foreach (var delta in deltas)
-            {
-                if (!_deltas.Writer.TryWrite(delta))
-                    _logger.LogWarning("Failed to enqueue PTY delta for session {SessionId}", _sessionId);
-            }
+            var result = await WaitForManualTurnQuietAsync(sessionId, sequenceAtSubmit);
+            await CompleteManualRunAttemptAsync(turn, result);
         }
-
-        public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot()
+        catch (Exception ex)
         {
-            lock (_gate)
-            {
-                return new AgentSessionRuntimeBufferSnapshot(_buffer.FullSnapshot(), _deltaSequence);
-            }
+            _logger.LogWarning(ex, "Failed to track manual terminal turn for session {SessionId}", sessionId);
+            if (turn is not null)
+                await TryFailManualRunAttemptAsync(turn, ex.Message);
         }
-
-        public AgentSessionLiveSnapshot GetLiveSnapshot() =>
-            new(
-                _sessionId,
-                string.Empty,
-                Adapter.SnapshotRenderedScreen(),
-                _buffer.TailSnapshot(Math.Max(1, _settings.ReplayBufferMaxChars)),
-                DeltaSequence);
-
-        public void Stop()
+        finally
         {
-            _deltas.Writer.TryComplete();
-        }
-
-        private async Task ProcessDeltasAsync()
-        {
-            await foreach (var delta in _deltas.Reader.ReadAllAsync())
-            {
-                try
-                {
-                    await _eventBus.PublishToGroupAsync(
-                        AgentSessionGroups.Session(_sessionId),
-                        "AgentTextDelta",
-                        new
-                        {
-                            sessionId = _sessionId,
-                            sequence = delta.DeltaSequence,
-                            text = delta.Text
-                        });
-
-                    await _recordActivityAsync(_sessionId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to publish AgentTextDelta for session {SessionId}", _sessionId);
-                }
-            }
+            _manualTurns.TryRemove(sessionId, out _);
         }
     }
 
-    private sealed class RuntimeBuffer
+    private async Task<ManualTurnStart?> TryCreateManualRunAttemptAsync(Guid sessionId)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = UtcNow();
+
+        var session = await db.AgentSessions
+            .Include(s => s.Card)
+            .FirstOrDefaultAsync(s => s.Id == sessionId);
+        if (session is null || session.Status != SessionStatus.Running)
+            return null;
+
+        var latestAttempt = await db.RunAttempts
+            .Where(a => a.CardId == session.CardId)
+            .OrderByDescending(a => a.AttemptNumber)
+            .ThenByDescending(a => a.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (latestAttempt is not null && !RunAttemptStateMachine.IsTerminal(latestAttempt.Phase))
+            return null;
+
+        var nextAttemptNumber = (await db.RunAttempts
+            .Where(a => a.CardId == session.CardId)
+            .MaxAsync(a => (int?)a.AttemptNumber)) ?? 0;
+
+        var attempt = new RunAttempt
+        {
+            Id = Guid.NewGuid(),
+            CardId = session.CardId,
+            AgentSessionId = session.Id,
+            WorktreeId = session.WorktreeId,
+            BoardWorkflowDefinitionId = latestAttempt?.BoardWorkflowDefinitionId,
+            AttemptNumber = nextAttemptNumber + 1,
+            Phase = RunPhase.StreamingTurn,
+            CreatedAt = now,
+            StartedAt = now,
+            LastEventAt = now,
+            PhaseStartedAt = now,
+            Prompt = "Manual terminal input from xterm.",
+            Card = session.Card,
+            AgentSession = session
+        };
+
+        db.RunAttempts.Add(attempt);
+        session.LastSeenAt = now;
+        session.EndedAt = null;
+        session.FailureReason = null;
+        session.Card.OwnerSessionId = session.Id;
+        session.Card.OwnerSession = session;
+        session.Card.ConcurrencyToken = Guid.NewGuid();
+        session.Card.UpdatedAt = now;
+        await db.SaveChangesAsync();
+
+        var turn = new ManualTurnStart(
+            session.Id,
+            attempt.Id,
+            session.CardId,
+            session.Card.BoardId);
+        await PublishRunAttemptChangedAsync(turn, RunPhase.StreamingTurn);
+        return turn;
+    }
+
+    private async Task<ManualTurnWaitResult> WaitForManualTurnQuietAsync(Guid sessionId, long sequenceAtSubmit)
+    {
+        var firstDeltaDeadline = UtcNow()
+            + TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs));
+        var sawDelta = false;
+        while (UtcNow() < firstDeltaDeadline)
+        {
+            if (!ListLiveSessions().Contains(sessionId))
+                return ManualTurnWaitResult.RuntimeMissing;
+
+            if (GetRunnerSequenceOrDefault(sessionId, CancellationToken.None) > sequenceAtSubmit)
+            {
+                sawDelta = true;
+                break;
+            }
+
+            await Task.Delay(ManualTurnPollInterval);
+        }
+
+        if (!sawDelta)
+            return ManualTurnWaitResult.Completed;
+
+        var quietPeriodMs = Math.Max(250, _settings.ManualTurnQuietPeriodMs);
+        var quietPeriod = TimeSpan.FromMilliseconds(quietPeriodMs);
+        var maxWait = TimeSpan.FromMilliseconds(Math.Max(_settings.StallTimeoutMs, quietPeriodMs * 2));
+        var deadline = UtcNow() + maxWait;
+        var lastSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);
+        var lastChange = UtcNow();
+
+        while (UtcNow() < deadline)
+        {
+            await Task.Delay(ManualTurnPollInterval);
+            if (!ListLiveSessions().Contains(sessionId))
+                return ManualTurnWaitResult.RuntimeMissing;
+
+            var currentSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);
+            if (currentSequence != lastSequence)
+            {
+                lastSequence = currentSequence;
+                lastChange = UtcNow();
+                continue;
+            }
+
+            if (UtcNow() - lastChange >= quietPeriod)
+                return ManualTurnWaitResult.Completed;
+        }
+
+        return ManualTurnWaitResult.TimedOut;
+    }
+
+    private async Task CompleteManualRunAttemptAsync(ManualTurnStart turn, ManualTurnWaitResult result)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var attempt = await db.RunAttempts
+            .Include(a => a.AgentSession)
+            .Include(a => a.Card)
+            .FirstOrDefaultAsync(a => a.Id == turn.AttemptId);
+        if (attempt is null || attempt.Phase != RunPhase.StreamingTurn)
+            return;
+
+        var now = UtcNow();
+        switch (result)
+        {
+            case ManualTurnWaitResult.Completed:
+                RunAttemptStateMachine.Transition(attempt, RunPhase.Finishing, now);
+                RunAttemptStateMachine.Transition(attempt, RunPhase.Succeeded, UtcNow());
+                break;
+            case ManualTurnWaitResult.RuntimeMissing:
+                RunAttemptStateMachine.Transition(attempt, RunPhase.Canceled, now);
+                attempt.ErrorDetails = "Runtime session ended before the manual terminal turn completed.";
+                break;
+            case ManualTurnWaitResult.TimedOut:
+                RunAttemptStateMachine.Transition(attempt, RunPhase.TimedOut, now);
+                attempt.ErrorDetails = "Timed out waiting for the manual terminal turn to become quiet.";
+                break;
+        }
+
+        if (attempt.AgentSession is not null)
+            attempt.AgentSession.LastSeenAt = UtcNow();
+
+        await db.SaveChangesAsync();
+        await PublishRunAttemptChangedAsync(turn, attempt.Phase);
+    }
+
+    private async Task TryFailManualRunAttemptAsync(ManualTurnStart turn, string errorDetails)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var attempt = await db.RunAttempts.FirstOrDefaultAsync(a => a.Id == turn.AttemptId);
+            if (attempt is null || attempt.Phase != RunPhase.StreamingTurn)
+                return;
+
+            RunAttemptStateMachine.Transition(attempt, RunPhase.Failed, UtcNow());
+            attempt.ErrorDetails = errorDetails;
+            await db.SaveChangesAsync();
+            await PublishRunAttemptChangedAsync(turn, RunPhase.Failed);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to mark manual terminal turn {RunAttemptId} failed", turn.AttemptId);
+        }
+    }
+
+    private async Task PublishRunAttemptChangedAsync(ManualTurnStart turn, RunPhase phase)
+    {
+        var payload = new
+        {
+            boardId = turn.BoardId,
+            cardId = turn.CardId,
+            sessionId = turn.SessionId,
+            runAttemptId = turn.AttemptId,
+            phase = phase.ToString()
+        };
+        await _eventBus.PublishToAllAsync("RunAttemptChanged", payload);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = turn.BoardId, cardId = turn.CardId });
+    }
+
+    private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private sealed class PendingTerminalInput
     {
         private readonly object _gate = new();
         private readonly StringBuilder _buffer = new();
-        private readonly int _maxChars;
-        private readonly string _filePath;
 
-        public RuntimeBuffer(Guid sessionId, int maxChars, string logRoot)
+        public bool Append(string input)
         {
-            _maxChars = maxChars;
-            Directory.CreateDirectory(logRoot);
-            _filePath = Path.Combine(logRoot, $"{sessionId:N}.ansi.log");
-            Hydrate();
-        }
-
-        public void Append(string text)
-        {
+            var submittedCommand = false;
             lock (_gate)
             {
-                File.AppendAllText(_filePath, text);
-                _buffer.Append(text);
-                if (_buffer.Length <= _maxChars)
-                    return;
+                foreach (var ch in input)
+                {
+                    if (ch is '\r' or '\n')
+                    {
+                        submittedCommand |= _buffer.ToString().Trim().Length > 0;
+                        _buffer.Clear();
+                        continue;
+                    }
 
-                _buffer.Remove(0, _buffer.Length - _maxChars);
+                    if (ch is '\b' or '\u007f')
+                    {
+                        if (_buffer.Length > 0)
+                            _buffer.Length--;
+                        continue;
+                    }
+
+                    if (ch == '\u0003')
+                    {
+                        _buffer.Clear();
+                        continue;
+                    }
+
+                    if (!char.IsControl(ch))
+                        _buffer.Append(ch);
+                }
             }
-        }
 
-        public string FullSnapshot()
-        {
-            lock (_gate)
-            {
-                if (File.Exists(_filePath))
-                    return File.ReadAllText(_filePath);
-
-                return _buffer.ToString();
-            }
-        }
-
-        public string TailSnapshot(int maxChars)
-        {
-            lock (_gate)
-            {
-                var text = _buffer.ToString();
-                return text.Length > maxChars ? text[^maxChars..] : text;
-            }
-        }
-
-        private void Hydrate()
-        {
-            if (!File.Exists(_filePath))
-                return;
-
-            var text = File.ReadAllText(_filePath);
-            if (text.Length > _maxChars)
-                text = text[^_maxChars..];
-
-            _buffer.Append(text);
+            return submittedCommand;
         }
     }
 
-    private sealed record RuntimeDelta(long DeltaSequence, string Text);
+    private sealed record ManualTurnStart(
+        Guid SessionId,
+        Guid AttemptId,
+        Guid CardId,
+        Guid BoardId);
+
+    private enum ManualTurnWaitResult
+    {
+        Completed,
+        RuntimeMissing,
+        TimedOut
+    }
+
+    private sealed class EmptySessionRunnerClient : ISessionRunnerClient
+    {
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
+            throw new NotSupportedException("No session runner client is configured for this test runtime.");
+
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotFoundException("AgentSessionRuntime", sessionId);
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerBufferDto(sessionId, string.Empty, 0));
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotFoundException("AgentSessionRuntime", sessionId);
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerSessionDto(
+                sessionId,
+                null,
+                DateTime.UtcNow,
+                "Exited",
+                0,
+                AgentExitReason.KilledByRequest,
+                0));
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
 }
 
 public sealed record AgentSessionRuntimeBufferSnapshot(string Buffer, long LastSequence);

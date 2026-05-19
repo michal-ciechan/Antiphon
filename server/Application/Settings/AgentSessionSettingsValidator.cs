@@ -22,6 +22,8 @@ public sealed class AgentSessionSettingsValidator : IValidateOptions<AgentSessio
             failures.Add("AgentSessions:StallTimeoutMs must be positive.");
         if (options.StallScanIntervalMs <= 0)
             failures.Add("AgentSessions:StallScanIntervalMs must be positive.");
+        if (options.ManualTurnQuietPeriodMs <= 0)
+            failures.Add("AgentSessions:ManualTurnQuietPeriodMs must be positive.");
         if (options.MemoryLimitMb < 0)
             failures.Add("AgentSessions:MemoryLimitMb must not be negative.");
 

@@ -14,6 +14,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.GitHub;
@@ -67,6 +68,7 @@ try
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
+    builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
     builder.Services.AddSingleton<IValidateOptions<AgentSessionSettings>, AgentSessionSettingsValidator>();
     builder.Services.AddOptions<AgentSessionSettings>()
         .Bind(builder.Configuration.GetSection("AgentSessions"))
@@ -84,6 +86,7 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<AgentRegistry>();
     builder.Services.AddSingleton<IAgentProtocolAdapterFactory, AgentProtocolAdapterFactory>();
+    builder.Services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>();
 
     // JSON serialization — serialize enums as strings for API responses
     builder.Services.ConfigureHttpJsonOptions(options =>
@@ -171,6 +174,7 @@ try
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
+    builder.Services.AddHostedService<SessionRunnerEventPump>();
 
     // HttpClient for provider connectivity testing
     builder.Services.AddHttpClient();
