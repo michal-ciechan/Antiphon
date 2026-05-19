@@ -1,0 +1,133 @@
+.card-page {
+  height: 100vh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--mantine-color-body);
+}
+
+.card-page__header {
+  min-height: 56px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-dark-8);
+}
+
+.card-page__titleBlock {
+  min-width: 0;
+  flex: 1;
+}
+
+.card-page__titleLine {
+  min-width: 0;
+}
+
+.card-page__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.15;
+}
+
+.card-page__badges {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.card-page__actions {
+  flex-shrink: 0;
+}
+
+.card-page__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+
+.card-page__workspace {
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--mantine-color-default-border);
+}
+
+.card-page__tabs {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-page__tabsList {
+  min-height: 38px;
+  padding: 4px 8px 0;
+  flex-shrink: 0;
+}
+
+.card-page__detailsTab,
+.card-page__detailsPanel {
+  display: none;
+}
+
+.card-page__panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.card-page__panelInner {
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+}
+
+.card-page__sidebar {
+  min-width: 0;
+  min-height: 0;
+  background: var(--mantine-color-dark-7);
+}
+
+.card-page__description {
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.card-page__metaGrid {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .card-page__header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .card-page__actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .card-page__body {
+    grid-template-columns: 1fr;
+  }
+
+  .card-page__workspace {
+    border-right: 0;
+  }
+
+  .card-page__detailsTab {
+    display: flex;
+  }
+
+  .card-page__detailsPanel {
+    display: block;
+  }
+
+  .card-page__sidebar {
+    display: none;
+  }
+}

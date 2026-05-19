@@ -19,7 +19,7 @@ import { notifications } from '@mantine/notifications'
 import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbFileCode, TbPlus } from 'react-icons/tb'
-import { useNavigate, useParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
   type BoardColumnDto,
@@ -60,6 +60,7 @@ const ALL_CARD_COLUMNS: Array<{
 export function BoardPage() {
   const { id } = useParams() as BoardRouteParams
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: boards, isLoading: boardsLoading } = useBoards()
   const { data: board, isLoading: boardLoading, error } = useBoard(id)
   const boardIds = useMemo(() => (boards ?? []).map((item) => item.id), [boards])
@@ -67,8 +68,7 @@ export function BoardPage() {
   const selectedBoardLoading = !!id && boardLoading
   const moveCard = useMoveCard(id ?? '')
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
-  const [selectedAllCardId, setSelectedAllCardId] = useState<string | null>(null)
+  const selectedCardId = searchParams.get('card')
   const [newBoardOpen, setNewBoardOpen] = useState(false)
   const [newCardOpen, setNewCardOpen] = useState(false)
   const [workflowOpen, setWorkflowOpen] = useState(false)
@@ -78,11 +78,11 @@ export function BoardPage() {
     return board.columns.flatMap((column) => column.cards).find((card) => card.id === selectedCardId) ?? null
   }, [board, selectedCardId])
   const selectedAllCard = useMemo(() => {
-    if (!selectedAllCardId) return null
+    if (!selectedCardId) return null
     return (allBoards.data ?? [])
       .flatMap((item) => item.columns.flatMap((column) => column.cards))
-      .find((card) => card.id === selectedAllCardId) ?? null
-  }, [allBoards.data, selectedAllCardId])
+      .find((card) => card.id === selectedCardId) ?? null
+  }, [allBoards.data, selectedCardId])
 
   const boardOptions = useMemo(
     () => [
@@ -118,11 +118,25 @@ export function BoardPage() {
 
   const handleBoardSelection = (value: string | null) => {
     if (!value) return
-    setSelectedCardId(null)
-    setSelectedAllCardId(null)
     setNewCardOpen(false)
     setWorkflowOpen(false)
     navigate(value === ALL_BOARDS_VALUE ? '/boards' : `/boards/${value}`)
+  }
+
+  const openCard = (cardId: string) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      next.set('card', cardId)
+      return next
+    })
+  }
+
+  const closeCard = () => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      next.delete('card')
+      return next
+    }, { replace: true })
   }
 
   return (
@@ -139,7 +153,7 @@ export function BoardPage() {
             boardId={board.id}
             card={selectedCard}
             opened={!!selectedCard}
-            onClose={() => setSelectedCardId(null)}
+            onClose={closeCard}
           />
           <WorkflowEditor
             boardId={board.id}
@@ -153,7 +167,7 @@ export function BoardPage() {
           boardId={selectedAllCard.boardId}
           card={selectedAllCard}
           opened
-          onClose={() => setSelectedAllCardId(null)}
+          onClose={closeCard}
         />
       )}
 
@@ -220,7 +234,7 @@ export function BoardPage() {
           <ScrollArea type="auto" offsetScrollbars>
             <Group align="flex-start" wrap="nowrap" gap="md" pb="sm">
               {board.columns.map((column) => (
-                <BoardColumn key={column.id} column={column} onOpenCard={setSelectedCardId} />
+                <BoardColumn key={column.id} column={column} onOpenCard={openCard} />
               ))}
             </Group>
           </ScrollArea>
@@ -232,7 +246,7 @@ export function BoardPage() {
           boards={allBoards.data ?? []}
           loading={allBoards.isLoading}
           error={allBoards.error}
-          onOpenCard={setSelectedAllCardId}
+          onOpenCard={openCard}
         />
       )}
     </Box>

@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Box, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
@@ -11,6 +11,8 @@ import { SessionTerminal } from './SessionTerminal'
 interface SessionTabsProps {
   boardId: string
   sessions: AgentSessionSummaryDto[]
+  compact?: boolean
+  fill?: boolean
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -24,7 +26,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 const CLAUDE_SESSION_NOT_FOUND_TEXT = 'Claude resume session was not found'
 
-export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
+export function SessionTabs({ boardId, sessions, compact = false, fill = false }: SessionTabsProps) {
   const resumeSession = useResumeSession(boardId)
   const stopSession = useStopSession(boardId)
   const terminalSessions = useMemo(
@@ -75,16 +77,18 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
   }
 
   return (
-    <Stack gap="sm">
-      <Group align="flex-end" justify="space-between">
+    <Stack gap={compact ? 6 : 'sm'} h={fill ? '100%' : undefined} style={{ minHeight: 0 }}>
+      <Group align={compact ? 'center' : 'flex-end'} justify="space-between" gap="xs">
         <Select
-          label="All sessions"
+          label={compact ? undefined : 'All sessions'}
+          aria-label={compact ? 'All sessions' : undefined}
           data={sessionOptions}
           value={active}
           onChange={setSelectedSessionId}
           allowDeselect={false}
           searchable
-          w={260}
+          size={compact ? 'xs' : undefined}
+          w={compact ? 220 : 260}
         />
         {selectedSession && (
           <Group gap={6} wrap="nowrap">
@@ -94,49 +98,97 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
             <CopyButton value={selectedSession.id}>
               {({ copied, copy }) => (
                 <Tooltip label={copied ? 'Copied session id' : 'Copy session id'} withArrow>
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    leftSection={<TbCopy size={12} />}
-                    onClick={copy}
-                    aria-label="Copy session id"
-                  >
-                    ID
-                  </Button>
+                  {compact ? (
+                    <ActionIcon size="sm" variant="subtle" onClick={copy} aria-label="Copy session id">
+                      <TbCopy size={14} />
+                    </ActionIcon>
+                  ) : (
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      leftSection={<TbCopy size={12} />}
+                      onClick={copy}
+                      aria-label="Copy session id"
+                    >
+                      ID
+                    </Button>
+                  )}
                 </Tooltip>
               )}
             </CopyButton>
             {canResume && (
-              <Button
-                size="compact-xs"
-                variant="light"
-                leftSection={<TbRefresh size={12} />}
-                loading={resumeSession.isPending}
-                onClick={() => resumeSelectedSession('Resume')}
-              >
-                Resume
-              </Button>
+              compact ? (
+                <Tooltip label="Resume session" withArrow>
+                  <ActionIcon
+                    size="sm"
+                    variant="light"
+                    loading={resumeSession.isPending}
+                    aria-label="Resume"
+                    onClick={() => resumeSelectedSession('Resume')}
+                  >
+                    <TbRefresh size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              ) : (
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  leftSection={<TbRefresh size={12} />}
+                  loading={resumeSession.isPending}
+                  onClick={() => resumeSelectedSession('Resume')}
+                >
+                  Resume
+                </Button>
+              )
             )}
             {canStop && (
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="red"
-                leftSection={<TbPlayerStop size={12} />}
-                loading={stopSession.isPending}
-                onClick={() => {
-                  stopSession.mutate(selectedSession.id, {
-                    onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
-                    onError: (error) => {
-                      notifications.show({ color: 'red', message: error instanceof Error ? error.message : 'Stop failed' })
-                    },
-                  })
-                }}
-              >
-                Stop
-              </Button>
+              compact ? (
+                <Tooltip label="Stop session" withArrow>
+                  <ActionIcon
+                    size="sm"
+                    variant="light"
+                    color="red"
+                    loading={stopSession.isPending}
+                    aria-label="Stop"
+                    onClick={() => {
+                      stopSession.mutate(selectedSession.id, {
+                        onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
+                        onError: (error) => {
+                          notifications.show({
+                            color: 'red',
+                            message: error instanceof Error ? error.message : 'Stop failed',
+                          })
+                        },
+                      })
+                    }}
+                  >
+                    <TbPlayerStop size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              ) : (
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  color="red"
+                  leftSection={<TbPlayerStop size={12} />}
+                  loading={stopSession.isPending}
+                  onClick={() => {
+                    stopSession.mutate(selectedSession.id, {
+                      onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
+                      onError: (error) => {
+                        notifications.show({
+                          color: 'red',
+                          message: error instanceof Error ? error.message : 'Stop failed',
+                        })
+                      },
+                    })
+                  }}
+                >
+                  Stop
+                </Button>
+              )
             )}
-            <Text size="xs" c="dimmed" lineClamp={1} maw={520}>
+            <Text size="xs" c="dimmed" lineClamp={1} maw={compact ? 420 : 520}>
               {selectedSession.definitionName} · {selectedSession.cwd}
             </Text>
           </Group>
@@ -180,7 +232,11 @@ export function SessionTabs({ boardId, sessions }: SessionTabsProps) {
           </Stack>
         </Alert>
       )}
-      {selectedSession && <SessionTerminal session={selectedSession} />}
+      {selectedSession && (
+        <Box style={{ flex: fill ? 1 : undefined, minHeight: fill ? 0 : undefined }}>
+          <SessionTerminal session={selectedSession} fill={fill} />
+        </Box>
+      )}
     </Stack>
   )
 }

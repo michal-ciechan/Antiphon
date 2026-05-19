@@ -220,6 +220,79 @@ public class BoardE2ETests
     }
 
     [Test]
+    public async Task Board_manual_xterm_command_marks_session_as_streaming_turn()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repoPath = await CreateLocalGitRepositoryAsync();
+        var projectId = await CreateProjectAsync($"Manual Xterm Project {suffix}", repoPath);
+        var boardId = await CreateBoardAsync(projectId, $"Manual Xterm Board {suffix}");
+        var cardTitle = $"Manual Xterm Card {suffix}";
+        var cardId = await CreateCardAsync(boardId, boardColumnId: null, cardTitle);
+        var sessionId = await SpawnCardAsync(cardId);
+
+        await WaitForSessionRunningAsync(boardId, sessionId);
+        await WaitForLatestAttemptPhaseAsync(cardId, RunPhase.Succeeded);
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/boards/{boardId}");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var card = page.GetByRole(AriaRole.Article, new PageGetByRoleOptions
+            {
+                NameRegex = new Regex(cardTitle)
+            });
+            await Expect(card).ToBeVisibleAsync();
+            await card.ClickAsync();
+
+            var dialog = page.GetByRole(AriaRole.Dialog);
+            var terminal = dialog.Locator(".xterm");
+            await Expect(terminal).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
+            {
+                Timeout = 10_000
+            });
+
+            await terminal.ClickAsync();
+            var marker = $"MANUAL_XTERM_{suffix}";
+            var command =
+                $"powershell -NoProfile -Command \"1..8 | ForEach-Object {{ Write-Output '{marker}_'$_; Start-Sleep -Milliseconds 500 }}\"";
+            await page.Keyboard.InsertTextAsync(command);
+            var inputResponse = await page.RunAndWaitForResponseAsync(
+                () => page.Keyboard.PressAsync("Enter"),
+                apiResponse => apiResponse.Url.Contains($"/api/sessions/{sessionId}/input", StringComparison.Ordinal)
+                    && apiResponse.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
+            inputResponse.Status.ShouldBeLessThan(300);
+
+            var orchestratorResponse = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/orchestrator");
+            orchestratorResponse.ShouldNotBeNull();
+            orchestratorResponse!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            var runningRow = page.GetByRole(AriaRole.Row).Filter(new LocatorFilterOptions
+            {
+                HasText = "CARD-0001"
+            });
+            await Expect(runningRow).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
+            {
+                Timeout = 10_000
+            });
+            await Expect(runningRow).ToContainTextAsync("StreamingTurn");
+
+            await StopSessionBestEffortAsync(sessionId);
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task Board_spawn_reuses_existing_worktree_outside_current_worktree_root()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -842,6 +915,41 @@ public class BoardE2ETests
         }
 
         throw new TimeoutException($"Session {sessionId} did not reach Running status.");
+    }
+
+    private async Task StopSessionBestEffortAsync(Guid sessionId)
+    {
+        try
+        {
+            await _appFixture.HttpClient.PostAsJsonAsync($"/api/sessions/{sessionId}/kill", new { }, JsonOptions);
+            await Task.Delay(500);
+        }
+        catch
+        {
+            // Best-effort cleanup for browser-driven terminal sessions.
+        }
+    }
+
+    private async Task WaitForLatestAttemptPhaseAsync(Guid cardId, RunPhase expectedPhase)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            using var scope = _appFixture.Services.CreateScope();
+            await using var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var latest = await db.RunAttempts
+                .AsNoTracking()
+                .Where(a => a.CardId == cardId)
+                .OrderByDescending(a => a.AttemptNumber)
+                .ThenByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+            if (latest?.Phase == expectedPhase)
+                return;
+
+            await Task.Delay(250);
+        }
+
+        throw new TimeoutException($"Card {cardId} latest attempt did not reach {expectedPhase}.");
     }
 
     private async Task<string> GetCurrentWorktreePathAsync(Guid cardId)

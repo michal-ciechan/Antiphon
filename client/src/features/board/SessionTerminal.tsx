@@ -9,6 +9,7 @@ import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/ses
 
 interface SessionTerminalProps {
   session: AgentSessionSummaryDto
+  fill?: boolean
 }
 
 interface AgentTextDeltaPayload {
@@ -62,7 +63,7 @@ export function createTerminalCopyKeyHandler(terminal: TerminalSelectionApi) {
   }
 }
 
-export function SessionTerminal({ session }: SessionTerminalProps) {
+export function SessionTerminal({ session, fill = false }: SessionTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionId = session.id
   const inputEnabled = session.status === 'Running'
@@ -205,7 +206,8 @@ export function SessionTerminal({ session }: SessionTerminalProps) {
   return (
     <Box
       data-testid="session-terminal"
-      h={420}
+      h={fill ? '100%' : 420}
+      mih={fill ? 0 : undefined}
       bg="#111317"
       style={{
         position: 'relative',

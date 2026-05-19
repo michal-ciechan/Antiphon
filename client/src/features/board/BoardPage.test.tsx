@@ -2,8 +2,9 @@ import { Button } from '@mantine/core'
 import { HttpResponse, delay, http } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { useQueryClient } from '@tanstack/react-query'
+import { Route, Routes } from 'react-router'
 import { boardKeys, type BoardDetailDto, useMoveCard } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { BoardPage } from './BoardPage'
 
@@ -95,6 +96,40 @@ function MoveHarness({ targetColumnId = 'column-active' }: { targetColumnId?: st
   )
 }
 
+function boardSummary(overrides: Partial<BoardDetailDto> = {}) {
+  return {
+    id: overrides.id ?? board.id,
+    projectId: overrides.projectId ?? board.projectId,
+    projectName: overrides.projectName ?? board.projectName,
+    name: overrides.name ?? board.name,
+    description: overrides.description ?? board.description,
+    trackerKind: overrides.trackerKind ?? board.trackerKind,
+    maxConcurrentSessions: overrides.maxConcurrentSessions ?? board.maxConcurrentSessions,
+    cardCount: overrides.columns?.reduce((total, column) => total + column.cards.length, 0) ?? 1,
+    createdAt: overrides.createdAt ?? board.createdAt,
+    updatedAt: overrides.updatedAt ?? board.updatedAt,
+  }
+}
+
+function agentDefinitionsHandler() {
+  return http.get('/api/agents/definitions', () =>
+    HttpResponse.json({
+      defaultDefinition: 'claude',
+      definitions: [{ name: 'claude', kind: 'ClaudeCode', isDefault: true }],
+    }),
+  )
+}
+
+function renderBoardRoute(initialPath: string) {
+  window.history.pushState({}, '', initialPath)
+  return renderWithProviders(
+    <Routes>
+      <Route path="/boards" element={<BoardPage />} />
+      <Route path="/boards/:id" element={<BoardPage />} />
+    </Routes>,
+  )
+}
+
 describe('board card movement', () => {
   it('optimistically moves a dragged card and sends the concurrency token', async () => {
     const patchSpy = vi.fn()
@@ -142,6 +177,42 @@ describe('board card movement', () => {
 })
 
 describe('BoardPage board selector', () => {
+  it('opens the card workspace from the card query string and clears it on close', async () => {
+    server.use(
+      http.get('/api/boards', () => HttpResponse.json([boardSummary()])),
+      http.get('/api/boards/board-1', () => HttpResponse.json(board)),
+      http.get('/api/projects', () => HttpResponse.json([])),
+      agentDefinitionsHandler(),
+    )
+
+    renderBoardRoute('/boards/board-1?card=card-1')
+
+    const cardPage = await screen.findByTestId('card-detail-page')
+    expect(cardPage).toBeInTheDocument()
+    expect(within(cardPage).getByRole('heading', { name: 'Drag me' })).toBeInTheDocument()
+    expect(screen.getByTestId('card-detail-sidebar')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close card' }))
+
+    await waitFor(() => expect(window.location.search).toBe(''))
+  })
+
+  it('stores the selected card in the URL when a board card opens', async () => {
+    server.use(
+      http.get('/api/boards', () => HttpResponse.json([boardSummary()])),
+      http.get('/api/boards/board-1', () => HttpResponse.json(board)),
+      http.get('/api/projects', () => HttpResponse.json([])),
+      agentDefinitionsHandler(),
+    )
+
+    renderBoardRoute('/boards/board-1')
+
+    await userEvent.click(await screen.findByRole('article', { name: 'CARD-0001 Drag me' }))
+
+    expect(await screen.findByTestId('card-detail-page')).toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('card')).toBe('card-1')
+  })
+
   it('keeps /boards on the All selection and shows cards from every board', async () => {
     const supportBoard: BoardDetailDto = {
       ...board,

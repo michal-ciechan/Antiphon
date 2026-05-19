@@ -69,6 +69,14 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },
   {
+    event: 'RunAttemptChanged',
+    getKeys: (p) => [
+      ['orchestrator', 'state'],
+      ['boards'],
+      ...(p.boardId ? [['boards', p.boardId]] : []),
+    ],
+  },
+  {
     event: 'AgentChanged',
     getKeys: (p) => [
       ['agents', 'list'],
