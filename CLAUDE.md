@@ -13,6 +13,8 @@ See [AGENTS.md](AGENTS.md) for all project conventions and context.
 
 ## Gotchas
 
+- **Canonical local restart**: Use `.\restart.ps1`. It restarts the Aspire resources, enforces the fixed dev ports, and smoke-checks backend health, the Vite API proxy, SignalR negotiate, and a Playwright render of `http://localhost:17282`.
+- **Stale dev ports**: If `.\restart.ps1` reports a process on `17281` or `17282`, either stop that PID manually or rerun `.\restart.ps1 -StopPortOwners` to intentionally stop the listed port owners.
 - **Dev compose file**: Always use `docker compose -f docker-compose.dev.yml up -d` — the default `docker-compose.yml` is not the dev stack.
 - **Startup order**: Postgres must be healthy before starting the .NET server. Check with `docker compose -f docker-compose.dev.yml ps`.
 - **npm install first**: `client/node_modules` may not exist — run `npm install` before `npm run dev` or `npm run storybook`.

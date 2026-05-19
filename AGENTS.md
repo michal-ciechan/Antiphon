@@ -24,7 +24,31 @@ and architectural decisions that all code must comply with.
    docker compose -f docker-compose.dev.yml up -d
    ```
 
-### Start the backend (ASP.NET Core — port 17281)
+### Canonical local restart
+
+Use the repo restart script so Aspire, the backend, and the Vite proxy agree on
+the fixed dev ports:
+
+```
+.\restart.ps1
+```
+
+The script restarts server and client resources, checks that stale processes are
+not occupying the fixed dev ports, and runs a smoke check against:
+
+- Backend health: `http://localhost:17281/health`
+- Frontend/API proxy: `http://localhost:17282/api/projects`
+- SignalR negotiate: `http://localhost:17282/hubs/antiphon/negotiate`
+- Browser render: `http://localhost:17282` showing `Workflows`
+
+If a stale process owns a dev port, the script prints the PID/process name and
+aborts. To intentionally stop the listed port owners, rerun:
+
+```
+.\restart.ps1 -StopPortOwners
+```
+
+### Manual backend fallback (ASP.NET Core — port 17281)
 
 ```
 cd server

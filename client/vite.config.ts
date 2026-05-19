@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // When running under Aspire, the server URL is injected via environment variable.
-// Falls back to localhost:5000 for standalone dev.
+// Falls back to the fixed standalone dev backend on localhost:17281.
 const serverUrl =
   process.env['services__antiphon-server__http__0'] ??
   process.env['services__server__http__0'] ??
