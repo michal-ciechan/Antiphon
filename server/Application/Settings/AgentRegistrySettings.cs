@@ -7,6 +7,10 @@ public class AgentRegistrySettings
     public int ClaudeReadyQuietPeriodMs { get; set; } = 5000;
     public int ClaudeReadyMaxWaitMs { get; set; } = 60000;
     public int ClaudeDoneMaxWaitMs { get; set; } = 300000;
+    public int CodexReadyQuietPeriodMs { get; set; } = 1000;
+    public int CodexReadyMaxWaitMs { get; set; } = 60000;
+    public int CodexDoneQuietPeriodMs { get; set; } = 3000;
+    public int CodexDoneMaxWaitMs { get; set; } = 300000;
 }
 
 public class AgentDefinition

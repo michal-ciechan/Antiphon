@@ -3,7 +3,7 @@ import { apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
 export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled'
-export type AgentKind = 'Raw' | 'ClaudeCode'
+export type AgentKind = 'Raw' | 'ClaudeCode' | 'Codex'
 export type SessionStatus = 'Created' | 'Starting' | 'Running' | 'Stopping' | 'Stopped' | 'Failed'
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 

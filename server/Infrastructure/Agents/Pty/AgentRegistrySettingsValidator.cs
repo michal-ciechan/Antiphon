@@ -57,6 +57,14 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
             failures.Add("Agents:ClaudeReadyMaxWaitMs must be positive.");
         if (options.ClaudeDoneMaxWaitMs <= 0)
             failures.Add("Agents:ClaudeDoneMaxWaitMs must be positive.");
+        if (options.CodexReadyQuietPeriodMs <= 0)
+            failures.Add("Agents:CodexReadyQuietPeriodMs must be positive.");
+        if (options.CodexReadyMaxWaitMs <= 0)
+            failures.Add("Agents:CodexReadyMaxWaitMs must be positive.");
+        if (options.CodexDoneQuietPeriodMs <= 0)
+            failures.Add("Agents:CodexDoneQuietPeriodMs must be positive.");
+        if (options.CodexDoneMaxWaitMs <= 0)
+            failures.Add("Agents:CodexDoneMaxWaitMs must be positive.");
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

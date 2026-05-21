@@ -21,20 +21,31 @@ public class AgentRegistrySettingsTests
             ["Agents:Definitions:claude:Env:FOO"] = "bar",
             ["Agents:Definitions:raw:Kind"] = "Raw",
             ["Agents:Definitions:raw:Exe"] = "pwsh.exe",
+            ["Agents:Definitions:codex:Kind"] = "Codex",
+            ["Agents:Definitions:codex:Exe"] = "pwsh.exe",
+            ["Agents:Definitions:codex:ArgsTemplate:0"] = "-File",
+            ["Agents:Definitions:codex:ArgsTemplate:1"] = "cx.ps1",
             ["Agents:ClaudeReadyQuietPeriodMs"] = "1234",
+            ["Agents:CodexReadyQuietPeriodMs"] = "4321",
+            ["Agents:CodexDoneQuietPeriodMs"] = "3456",
         };
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
         var settings = config.GetSection("Agents").Get<AgentRegistrySettings>()!;
 
         settings.DefaultDefinition.ShouldBe("claude");
-        settings.Definitions.Count.ShouldBe(2);
+        settings.Definitions.Count.ShouldBe(3);
         settings.Definitions["claude"].Kind.ShouldBe("ClaudeCode");
         settings.Definitions["claude"].Exe.ShouldBe("cl.bat");
         settings.Definitions["claude"].ArgsTemplate.ShouldBe(new[] { "--print" });
         settings.Definitions["claude"].Env["FOO"].ShouldBe("bar");
         settings.Definitions["raw"].Kind.ShouldBe("Raw");
+        settings.Definitions["codex"].Kind.ShouldBe("Codex");
+        settings.Definitions["codex"].Exe.ShouldBe("pwsh.exe");
+        settings.Definitions["codex"].ArgsTemplate.ShouldBe(new[] { "-File", "cx.ps1" });
         settings.ClaudeReadyQuietPeriodMs.ShouldBe(1234);
+        settings.CodexReadyQuietPeriodMs.ShouldBe(4321);
+        settings.CodexDoneQuietPeriodMs.ShouldBe(3456);
     }
 
     [Test]
@@ -46,6 +57,7 @@ public class AgentRegistrySettingsTests
             Definitions =
             {
                 ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" },
+                ["codex"] = new AgentDefinition { Kind = "Codex", Exe = "pwsh.exe" },
             }
         };
 
@@ -115,10 +127,14 @@ public class AgentRegistrySettingsTests
             Definitions = { ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" } },
             ClaudeReadyQuietPeriodMs = 0,
             ClaudeDoneMaxWaitMs = -5,
+            CodexReadyQuietPeriodMs = 0,
+            CodexDoneQuietPeriodMs = -1,
         });
 
         result.Failed.ShouldBeTrue();
         result.FailureMessage.ShouldContain("ClaudeReadyQuietPeriodMs must be positive");
         result.FailureMessage.ShouldContain("ClaudeDoneMaxWaitMs must be positive");
+        result.FailureMessage.ShouldContain("CodexReadyQuietPeriodMs must be positive");
+        result.FailureMessage.ShouldContain("CodexDoneQuietPeriodMs must be positive");
     }
 }

@@ -53,6 +53,12 @@
         "ArgsTemplate": [],
         "Env": {}
       },
+      "codex": {
+        "Kind": "Codex",
+        "Exe": "pwsh.exe",
+        "ArgsTemplate": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\<you>\\.local\\bin\\cx.ps1", "--no-alt-screen"],
+        "Env": {}
+      },
       "raw-pwsh": {
         "Kind": "Raw",
         "Exe": "pwsh.exe",
@@ -62,7 +68,11 @@
     },
     "ClaudeReadyQuietPeriodMs": 5000,
     "ClaudeReadyMaxWaitMs": 60000,
-    "ClaudeDoneMaxWaitMs": 300000
+    "ClaudeDoneMaxWaitMs": 300000,
+    "CodexReadyQuietPeriodMs": 1000,
+    "CodexReadyMaxWaitMs": 60000,
+    "CodexDoneQuietPeriodMs": 3000,
+    "CodexDoneMaxWaitMs": 300000
   },
   "Logging": {
     "LogLevel": {

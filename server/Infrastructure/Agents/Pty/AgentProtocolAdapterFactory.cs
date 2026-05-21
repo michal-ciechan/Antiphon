@@ -23,6 +23,7 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
     {
         AgentKind.Raw => new RunnerRawAdapter(_sessionRunnerClient),
         AgentKind.ClaudeCode => new RunnerClaudeAdapter(_sessionRunnerClient, _options),
+        AgentKind.Codex => new RunnerCodexAdapter(_sessionRunnerClient, _options),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"No adapter is registered for AgentKind '{kind}'."),
     };
 }

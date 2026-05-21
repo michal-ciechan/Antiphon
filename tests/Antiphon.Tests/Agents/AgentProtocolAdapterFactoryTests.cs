@@ -18,6 +18,10 @@ public class AgentProtocolAdapterFactoryTests
         {
             DefaultDefinition = "claude",
             Definitions = { ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" } },
+            CodexReadyQuietPeriodMs = 250,
+            CodexReadyMaxWaitMs = 5_000,
+            CodexDoneQuietPeriodMs = 250,
+            CodexDoneMaxWaitMs = 5_000,
         }),
         new ThrowingSessionRunnerClient());
 
@@ -35,6 +39,14 @@ public class AgentProtocolAdapterFactoryTests
         var factory = NewFactory();
         await using var adapter = factory.Create(AgentKind.ClaudeCode);
         adapter.ShouldBeOfType<RunnerClaudeAdapter>();
+    }
+
+    [Test]
+    public async Task Create_returns_RunnerCodexAdapter_for_Codex()
+    {
+        var factory = NewFactory();
+        await using var adapter = factory.Create(AgentKind.Codex);
+        adapter.ShouldBeOfType<RunnerCodexAdapter>();
     }
 
     [Test]
