@@ -36,6 +36,12 @@ if (-not $NoBuild) {
     Write-Host "`n▶ Restoring AppHost dependencies..." -ForegroundColor Cyan
     dotnet restore $appHostDir
     if ($LASTEXITCODE -ne 0) { Write-Error "dotnet restore failed." }
+
+    Write-Host "`n▶ Installing client npm packages..." -ForegroundColor Cyan
+    Push-Location "$root\client"
+    npm install
+    if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed." }
+    Pop-Location
 }
 
 Write-Host "`n▶ Starting Aspire AppHost..." -ForegroundColor Cyan
