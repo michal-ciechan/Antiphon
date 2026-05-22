@@ -1,0 +1,47 @@
+.node {
+	border-left: 2px solid transparent;
+	transition: border-color 150ms ease;
+}
+
+.node[data-reviewed='true'] {
+	border-left-color: var(--mantine-color-green-5);
+	background: color-mix(in srgb, var(--mantine-color-green-9) 30%, transparent);
+}
+
+.node[data-stale='true'] {
+	border-left-color: var(--mantine-color-yellow-5);
+	background: color-mix(in srgb, var(--mantine-color-yellow-9) 20%, transparent);
+}
+
+.header {
+	padding: 6px 8px;
+	cursor: pointer;
+	border-radius: 4px;
+	user-select: none;
+}
+
+.header:hover {
+	background: var(--mantine-color-dark-6);
+}
+
+.body {
+	padding-left: 20px;
+	padding-bottom: 4px;
+}
+
+.markdown {
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--mantine-color-dimmed);
+	padding: 4px 8px 8px;
+}
+
+.markdown p { margin: 0 0 8px; }
+.markdown pre { background: var(--mantine-color-dark-7); padding: 8px; border-radius: 4px; overflow-x: auto; }
+.markdown code { font-size: 12px; }
+.markdown ul, .markdown ol { padding-left: 20px; margin: 4px 0 8px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 {
+	font-size: 13px;
+	font-weight: 600;
+	margin: 8px 0 4px;
+}

@@ -46,6 +46,85 @@ public static class ArtifactEndpoints
             return Results.Ok(artifactDtos);
         });
 
+        // GET /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews — list reviews for an execution
+        artifacts.MapGet("/{stageExecutionId:guid}/section-reviews", async (
+            Guid id,
+            Guid stageExecutionId,
+            AppDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var reviews = await db.ArtifactSectionReviews
+                .Where(r => r.StageExecutionId == stageExecutionId)
+                .OrderBy(r => r.SectionPath)
+                .Select(r => new SectionReviewDto(r.Id, r.StageExecutionId, r.SectionPath, r.ContentHash, r.ReviewedAt))
+                .ToListAsync(cancellationToken);
+
+            return Results.Ok(reviews);
+        });
+
+        // POST /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews — upsert a review
+        artifacts.MapPost("/{stageExecutionId:guid}/section-reviews", async (
+            Guid id,
+            Guid stageExecutionId,
+            UpsertSectionReviewRequest request,
+            AppDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var existing = await db.ArtifactSectionReviews
+                .FirstOrDefaultAsync(
+                    r => r.StageExecutionId == stageExecutionId && r.SectionPath == request.SectionPath,
+                    cancellationToken);
+
+            if (existing is null)
+            {
+                existing = new ArtifactSectionReview
+                {
+                    Id = Guid.NewGuid(),
+                    StageExecutionId = stageExecutionId,
+                    SectionPath = request.SectionPath,
+                    ContentHash = request.ContentHash,
+                    ReviewedAt = DateTime.UtcNow,
+                };
+                db.ArtifactSectionReviews.Add(existing);
+            }
+            else
+            {
+                existing.ContentHash = request.ContentHash;
+                existing.ReviewedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+
+            return Results.Ok(new SectionReviewDto(
+                existing.Id,
+                existing.StageExecutionId,
+                existing.SectionPath,
+                existing.ContentHash,
+                existing.ReviewedAt));
+        });
+
+        // DELETE /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews/{sectionPath} — unmark reviewed
+        artifacts.MapDelete("/{stageExecutionId:guid}/section-reviews/{**sectionPath}", async (
+            Guid id,
+            Guid stageExecutionId,
+            string sectionPath,
+            AppDbContext db,
+            CancellationToken cancellationToken) =>
+        {
+            var review = await db.ArtifactSectionReviews
+                .FirstOrDefaultAsync(
+                    r => r.StageExecutionId == stageExecutionId && r.SectionPath == sectionPath,
+                    cancellationToken);
+
+            if (review is not null)
+            {
+                db.ArtifactSectionReviews.Remove(review);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            return Results.NoContent();
+        });
+
         // GET /api/workflows/{id}/artifacts/{stageId}?version={version} — get artifact content for a stage
         artifacts.MapGet("/{stageId:guid}", async (
             Guid id,
@@ -129,3 +208,12 @@ public record ArtifactDetailDto(
     int Version,
     bool IsPrimary,
     DateTime CreatedAt);
+
+public record SectionReviewDto(
+    Guid Id,
+    Guid StageExecutionId,
+    string SectionPath,
+    string ContentHash,
+    DateTime ReviewedAt);
+
+public record UpsertSectionReviewRequest(string SectionPath, string ContentHash);

@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
     public DbSet<ExternalIssueRef> ExternalIssueRefs => Set<ExternalIssueRef>();
     public DbSet<RetrySchedule> RetrySchedules => Set<RetrySchedule>();
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
+    public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -758,6 +759,27 @@ public class AppDbContext : DbContext
             entity.HasOne(t => t.RunAttempt)
                 .WithOne(a => a.TokenUsage)
                 .HasForeignKey<TokenUsage>(t => t.RunAttemptId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ArtifactSectionReview>(entity =>
+        {
+            entity.ToTable("ArtifactSectionReviews");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.StageExecutionId).IsRequired();
+            entity.Property(r => r.SectionPath).IsRequired().HasMaxLength(1000);
+            entity.Property(r => r.ContentHash).IsRequired().HasMaxLength(64);
+            entity.Property(r => r.ReviewedAt).IsRequired();
+
+            entity.HasIndex(r => r.StageExecutionId)
+                .HasDatabaseName("IX_ArtifactSectionReviews_StageExecutionId");
+            entity.HasIndex(r => new { r.StageExecutionId, r.SectionPath })
+                .IsUnique()
+                .HasDatabaseName("IX_ArtifactSectionReviews_StageExecutionId_SectionPath");
+
+            entity.HasOne(r => r.StageExecution)
+                .WithMany()
+                .HasForeignKey(r => r.StageExecutionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
