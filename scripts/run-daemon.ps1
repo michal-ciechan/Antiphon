@@ -6,8 +6,8 @@
 .NOTES
     ExeArgs is passed as a single space-joined string (PowerShell -File mode drops extra
     values from [string[]] params, so we do the split ourselves).
-    Output is not captured here — service stdout/stderr is discarded (no TTY available
-    in detached mode). Use `dotnet run` or `npm run dev` directly for interactive output.
+    Service stdout+stderr is appended to LogFile via cmd.exe shell redirection so the
+    Aspire log tailer can surface it in the dashboard console view.
 #>
 param(
     [string]$Name,
@@ -51,17 +51,16 @@ while ($true) {
 
     Write-Log "Starting $Exe $($exeArgList -join ' ')"
 
-    # Always use cmd.exe /c so .cmd shims (npm, npx) work in detached processes.
-    # UseShellExecute=false + no redirection means service output goes to null
-    # (supervisor has no console — started hidden by AppHost).
+    # cmd.exe /s /c handles .cmd shims (npm, npx) and >> redirection in detached processes.
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName        = 'cmd.exe'
     $psi.WorkingDirectory = $WorkDir
     $psi.UseShellExecute  = $false
     $psi.CreateNoWindow   = $true
-    $psi.ArgumentList.Add('/c')
-    $psi.ArgumentList.Add($Exe)
-    foreach ($a in $exeArgList) { $psi.ArgumentList.Add($a) }
+    # /s /c strips outer quotes and runs as a shell command, so >> redirection works.
+    # stdout+stderr are appended to the same log file the Aspire tailer reads.
+    $innerCmd = if ($exeArgList.Count -gt 0) { "$Exe $($exeArgList -join ' ')" } else { $Exe }
+    $psi.Arguments = "/s /c `"$innerCmd >> `"$LogFile`" 2>&1`""
 
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
