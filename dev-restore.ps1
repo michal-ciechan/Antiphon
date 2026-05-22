@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
     Restore the Antiphon database from a backup.
-    If no file is given, uses the most recent backup in C:\Antiphon\backups\.
+    If no file is given, uses the most recent backup in <repo>/backups/.
 .PARAMETER BackupFile
     Path to a .sql or .sql.zip backup file. Defaults to latest in BackupDir.
 .PARAMETER BackupDir
-    Where to look for the latest backup. Default: C:\Antiphon\backups.
+    Where to look for the latest backup. Default: <repo>/backups/.
 .PARAMETER Yes
     Skip the confirmation prompt.
 #>
 param(
     [string]$BackupFile,
-    [string]$BackupDir = 'C:\Antiphon\backups',
+    [string]$BackupDir = (Join-Path $PSScriptRoot 'backups'),
     [switch]$Yes
 )
 

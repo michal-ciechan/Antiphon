@@ -21,6 +21,8 @@ dist/
 .claude/*
 !.claude/settings.json
 server/logs/
+logs/
+backups/
 
 # Local working dirs
 .worktrees/

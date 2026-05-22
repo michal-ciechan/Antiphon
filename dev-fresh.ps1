@@ -15,7 +15,7 @@ Write-Host "`nAntiphon FRESH START" -ForegroundColor Red
 Write-Host "This will:" -ForegroundColor Yellow
 Write-Host "  • Stop the server and client" -ForegroundColor Yellow
 Write-Host "  • Destroy the postgres volume (ALL DATABASE DATA LOST)" -ForegroundColor Yellow
-Write-Host "  • Delete all worktrees under C:\Antiphon\worktrees\" -ForegroundColor Yellow
+Write-Host "  • Delete all worktrees under C:\Antiphon\worktrees\ (outside repo)" -ForegroundColor Yellow
 Write-Host "  • Re-start everything from scratch" -ForegroundColor Yellow
 Write-Host ""
 
