@@ -41,6 +41,8 @@ public sealed class DaemonProcessService(
         }
         else
         {
+            // Kill any stale supervisor from a previous AppHost run before spawning a new one.
+            KillPid(ReadPid(resource.SupervisorPidFile));
             await StartDaemonAsync(entry, resource, ct);
         }
 
@@ -272,8 +274,10 @@ public sealed class DaemonProcessService(
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StopAsync(CancellationToken cancellationToken)  { _cts.Cancel(); return Task.CompletedTask; }
 
+    private int _disposed;
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _cts.CancelAsync();
         _cts.Dispose();
     }
