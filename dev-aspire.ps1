@@ -25,6 +25,48 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "Docker Desktop is not running. Start it, wait for the tray icon, then re-run."
 }
 
+# ── Pre-flight: test Docker network creation ───────────────────────────────
+Write-Host "`n▶ Testing Docker network health..." -ForegroundColor Cyan
+$dockerNetworkHealthy = $false
+$testNetName = "aspire-preflight-$(Get-Random)"
+$netJob = Start-Job { param($n) & docker network create $n 2>&1; $LASTEXITCODE } -ArgumentList $testNetName
+$netCompleted = $netJob | Wait-Job -Timeout 8
+if ($netCompleted -and $netCompleted.State -eq 'Completed') {
+    $dockerNetworkHealthy = $true
+    $rmJob = Start-Job { param($n) & docker network rm $n 2>&1 } -ArgumentList $testNetName
+    $rmJob | Wait-Job -Timeout 5 | Out-Null; Remove-Job $rmJob -Force
+    Remove-Job $netJob -Force
+    Write-Host "  Docker networking: OK" -ForegroundColor DarkGray
+} else {
+    Remove-Job $netJob -Force -ErrorAction SilentlyContinue
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  WARNING: Docker network creation is unresponsive (>8s)." -ForegroundColor Yellow
+    Write-Host "  Postgres will NOT start. Restart Docker Desktop, then re-run this script." -ForegroundColor Red
+    Write-Host ""
+}
+
+# ── Pre-flight: remove stale Aspire-managed postgres containers ────────────
+Write-Host "`n▶ Removing stale containers..." -ForegroundColor Cyan
+$staleIds = docker ps -aq --filter 'name=DefaultConnection' 2>&1
+if ($staleIds) {
+    foreach ($id in $staleIds) {
+        docker rm -f $id 2>&1 | Out-Null
+    }
+    Write-Host "  Removed stale container(s)" -ForegroundColor DarkGray
+} else {
+    Write-Host "  None found" -ForegroundColor DarkGray
+}
+
+# ── Pre-flight: clean up old Aspire DCP temp state dirs ───────────────────
+$aspireDirs = Get-ChildItem 'C:\Users\lndco\AppData\Local\Temp' -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'aspire.*' -and $_.LastWriteTime -lt (Get-Date).AddHours(-2) }
+if ($aspireDirs) {
+    foreach ($d in $aspireDirs) {
+        Remove-Item $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "  Cleaned $($aspireDirs.Count) old DCP temp dir(s)" -ForegroundColor DarkGray
+}
+
 foreach ($d in @("$root\logs", "$root\server\logs", "$root\server\logs\sessions", "$root\backups")) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }
 }
@@ -109,6 +151,28 @@ if ($dashboardUrl) {
     Write-Host ""
     Write-Host "  Dashboard URL not found after ${timeout}s." -ForegroundColor Yellow
     Write-Host "  Check log: Get-Content '$logFile' -Tail 30" -ForegroundColor DarkGray
+}
+
+# ── Post-launch: verify Postgres started ──────────────────────────────────
+Write-Host "`n▶ Checking Postgres..." -ForegroundColor Cyan
+$pgDeadline = (Get-Date).AddSeconds(45)
+$pgOK = $false
+while ((Get-Date) -lt $pgDeadline) {
+    Start-Sleep 5
+    $runningPg = docker ps --filter name=DefaultConnection --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
+    if ($runningPg) { $pgOK = $true; Write-Host "  Postgres: Up" -ForegroundColor Green; break }
+    $stuckPg = docker ps -a --filter name=DefaultConnection --filter status=created --format "{{.Names}}" 2>&1
+    if ($stuckPg) {
+        Write-Host "  Postgres container exists but has not started yet..." -ForegroundColor DarkGray
+    }
+}
+if (-not $pgOK) {
+    Write-Host ""
+    Write-Host "  WARNING: Postgres did not start within 45s." -ForegroundColor Yellow
+    $stuck = docker ps -a --filter name=DefaultConnection --format "{{.Names}}\t{{.Status}}" 2>&1
+    if ($stuck) { Write-Host "  Container state: $stuck" -ForegroundColor DarkGray }
+    Write-Host "  Likely cause: Docker network creation failed (Windows HNS issue)." -ForegroundColor Yellow
+    Write-Host "  Fix: Restart Docker Desktop, then re-run this script." -ForegroundColor Yellow
 }
 
 Write-Host ""

@@ -78,7 +78,7 @@ Daemon processes (session-runner, server, client) survive AppHost exit and **loc
 ## Step 2 — Launch
 
 ```powershell
-Start-Process pwsh -ArgumentList @('-NoLogo', '-NoExit', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
+Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
 ```
 
 **Do NOT use `wt new-tab`** — fails with `0x80070002` when title contains a space.
@@ -162,7 +162,26 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
 Daemon processes from a prior AppHost run are still alive and have the DLLs open. Kill them (see pre-flight above), then re-run.
 
 ### DCP network reconciler error in logs ("object already exists")
-This is a **non-fatal warning** — DCP tries to create a network that already exists in its internal state. Services still start. Ignore it unless services actually fail to appear.
+Usually non-fatal — DCP reconciler tries to re-create a network already in its internal state. Services typically still start. **But if Postgres does NOT start**, this error is the symptom of a Docker HNS issue (see below).
+
+### Postgres container stuck in "Created" state (never starts)
+**Cause**: Windows HNS (Host Network Service) is in a bad state — `docker network create` hangs indefinitely. This prevents DCP from setting up the container's network before starting it.
+
+**Diagnose**:
+```powershell
+docker ps -a --filter name=DefaultConnection --format "table {{.Names}}\t{{.Status}}"
+# Shows "Created" but never "Up" → Docker networking is broken
+
+# Confirm: test network creation (should complete in <2s)
+$j = Start-Job { docker network create test-hns-check 2>&1 }
+$j | Wait-Job -Timeout 5
+if ($j.State -eq 'Running') { "HNS broken — network create is hanging" }
+Remove-Job $j -Force; docker network rm test-hns-check 2>&1 | Out-Null
+```
+
+**Fix**: Restart Docker Desktop. After it restarts, re-run `dev-aspire.ps1`.
+
+**Note**: `dev-aspire.ps1` now auto-detects this and warns you. If you see the warning, restart Docker Desktop before retrying.
 
 ### Stale supervisor processes (session-runner rapid-restart loop)
 ```powershell
@@ -186,7 +205,7 @@ Stop-Process -Id $proc -Force
 Check the log: `Get-Content C:\src\antiphon\logs\apphost.log -Tail 40`
 If empty, the hidden pwsh wrapper failed to start. Re-run with a visible window to see the error:
 ```powershell
-Start-Process pwsh -ArgumentList @('-NoLogo', '-NoExit', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
+Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
 ```
 
 ### client/node_modules missing (npm error on build)
