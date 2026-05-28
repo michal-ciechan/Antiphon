@@ -5,12 +5,12 @@ using Microsoft.Extensions.Hosting;
 namespace Antiphon.AppHost.Supervisor;
 
 /// <summary>
-/// Runs a minimal HTTP API on port 17289 for scripted start/stop/restart.
-/// Usage: POST http://localhost:17289/control/{name}/start|stop|restart
+/// Runs a minimal HTTP API on port 17207 for scripted start/stop/restart.
+/// Usage: POST http://localhost:17207/control/{name}/start|stop|restart
 /// </summary>
 internal sealed class ControlApiService(DaemonProcessService supervisor) : BackgroundService
 {
-    private const int Port = 17289;
+    private const int Port = 17207;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

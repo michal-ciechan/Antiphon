@@ -20,6 +20,7 @@ dist/
 *.swp
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 server/logs/
 logs/
 backups/
