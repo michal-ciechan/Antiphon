@@ -91,32 +91,20 @@ The script will:
 
 ---
 
-## Step 3 — Verify
+## Step 3 — Verify (use the script — do NOT hand-roll port checks)
 
-Poll until all core ports respond (allow 90s for first build):
+Run the one-shot health check. It covers Docker daemon, HNS network health, Postgres container, all listening ports, HTTP health endpoints, dashboard, and a browser smoke test — and prints a status table:
 
 ```powershell
-$deadline = (Get-Date).AddSeconds(90)
-while ((Get-Date) -lt $deadline) {
-    $ports = 17200, 17202, 17204, 17205
-    $open  = $ports | Where-Object {
-        try { $t = [Net.Sockets.TcpClient]::new('127.0.0.1', $_); $t.Close(); $true }
-        catch { $false }
-    }
-    $closed = $ports | Where-Object { $_ -notin $open }
-    Write-Host "Open: $open   Waiting: $closed"
-    if ($closed.Count -eq 0) { Write-Host "All up!"; break }
-    Start-Sleep 5
-}
+pwsh -File C:\src\antiphon\verify-dev-stack.ps1            # full check (Aspire mode)
+pwsh -File C:\src\antiphon\verify-dev-stack.ps1 -SkipBrowser   # faster, no Playwright
 ```
 
-Expected final state:
-- **17200** — AppHost resource service
-- **17202** — .NET server  
-- **17204** — Session runner (may already be up from prior run)
-- **17205** — Dashboard
+Exit 0 = healthy; exit 1 = it lists exactly which checks failed and the fix hint. **Always prefer this over manual `Get-NetTCPConnection` / `Test-NetConnection` loops** — that's what it's for.
 
-Port 17201 (Postgres) is Aspire-managed — it's up when AppHost starts but doesn't always appear in `Get-NetTCPConnection`. Verify with: `docker ps | Select-String postgres`
+Expected healthy state: ports 17200, 17202, 17203, 17204, 17205, 17206 listening; Postgres container "Up"; all health endpoints HTTP 200.
+
+Port 17201 (Postgres) is Aspire-managed and won't always appear in `Get-NetTCPConnection` — the script checks the container status instead.
 
 ---
 
@@ -136,12 +124,10 @@ Open it: `Start-Process "http://localhost:17205"`
 
 ## Troubleshooting
 
-### Docker not running
-```powershell
-# Check
-docker info
-# Fix: start Docker Desktop manually, wait for system tray icon, then re-run
-```
+### Docker not running / daemon unreachable / containers stuck
+**Use the `docker-desktop` skill** — don't hand-roll process kills. It handles start, restart, HNS diagnosis, and polling-until-ready.
+
+**Escalation if `docker-desktop` skill can't fix it:** if `docker version` shows the *client* but the server stays unreachable, and `wsl --shutdown` itself hangs (WSL2 VM wedged), the only reliable fix is a full PC restart: run `restart.cmd` (in repo root and `~\.local\bin`, just `shutdown /f /r /t 0`). After reboot, Docker + HNS come up clean.
 
 ### appsettings.json missing
 ```powershell
