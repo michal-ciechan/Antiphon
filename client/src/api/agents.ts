@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPost } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost } from './client'
 import { boardKeys, type AgentKind } from './boards'
 
 export interface AgentRegistryDto {
@@ -29,6 +29,8 @@ export interface AgentSummaryDto {
   status: AgentStatus
   persistentSessionId: string | null
   currentCardId: string | null
+  boardId: string | null
+  boardName: string | null
   queueLength: number
   createdAt: string
   updatedAt: string
@@ -57,6 +59,16 @@ export interface CreateAgentRequest {
   details?: string | null
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy?: AgentAssignmentPolicy
+  createWorkingDirectory?: boolean
+}
+
+export interface UpdateAgentRequest {
+  name: string
+  workingDirectory: string
+  details?: string | null
+  defaultWorkflowTemplateId?: string | null
+  assignmentPolicy: AgentAssignmentPolicy
+  boardId?: string | null
 }
 
 export interface DraftAgentRequest {
@@ -116,6 +128,34 @@ export function useCreateAgent() {
     onSuccess: (agent) => {
       queryClient.invalidateQueries({ queryKey: agentKeys.all })
       queryClient.setQueryData(agentKeys.detail(agent.id), agent)
+      // Creating an agent also creates its board (and possibly a project), so refresh boards.
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
+export function useUpdateAgent(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: UpdateAgentRequest) => apiPatch<AgentDetailDto>(`/agents/${id}`, request),
+    onSuccess: (agent) => {
+      queryClient.setQueryData(agentKeys.detail(id), agent)
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+    },
+  })
+}
+
+export function useDeleteAgent() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/agents/${id}`),
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: agentKeys.detail(id) })
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      // A deleted agent releases its cards, so refresh boards too.
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })
 }

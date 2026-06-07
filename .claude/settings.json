@@ -4,7 +4,17 @@
       "name": "Antiphon",
       "links": [
         {
-          "name": "Local",
+          "name": "Aspire (AppHost)",
+          "links": [
+            { "name": "Client", "url": "http://localhost:17203" },
+            { "name": "API Server", "url": "http://localhost:17202" },
+            { "name": "Aspire Dashboard", "url": "http://localhost:17205" },
+            { "name": "Session Runner", "url": "http://localhost:17204" },
+            { "name": "Control API", "url": "http://localhost:17207" }
+          ]
+        },
+        {
+          "name": "Local (Docker Compose)",
           "links": [
             { "name": "PostgreSQL", "url": "http://localhost:17280" },
             { "name": "API Server", "url": "http://localhost:17281" },

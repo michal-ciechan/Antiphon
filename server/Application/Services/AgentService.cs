@@ -15,17 +15,20 @@ public sealed class AgentService
     private readonly CardWorkflowRunFactory _workflowRunFactory;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    private readonly IDirectoryWriter _directoryWriter;
 
     public AgentService(
         AppDbContext db,
         CardWorkflowRunFactory workflowRunFactory,
         IEventBus eventBus,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IDirectoryWriter directoryWriter)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _directoryWriter = directoryWriter;
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -33,6 +36,7 @@ public sealed class AgentService
         var agents = await _db.Agents
             .AsNoTracking()
             .Include(a => a.DefaultWorkflowTemplate)
+            .Include(a => a.Board)
             .Include(a => a.QueueCards)
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
@@ -51,23 +55,40 @@ public sealed class AgentService
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
 
+        var workingDirectory = request.WorkingDirectory.Trim();
+
+        // Create the working directory before persisting so a failed mkdir doesn't leave
+        // behind an agent pointing at a directory that was never created.
+        if (request.CreateWorkingDirectory)
+            _directoryWriter.CreateDirectory(workingDirectory);
+
         var now = UtcNow();
+        var agentName = request.Name.Trim();
+
+        // Every agent gets its own board to organise its work. Boards belong to a project, so
+        // find-or-create a project keyed on the agent's working directory and hang the board off it.
+        var project = await ResolveProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
+        var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agentName, ct), now);
+        _db.Boards.Add(board);
+
         var agent = new Agent
         {
             Id = Guid.NewGuid(),
-            Name = request.Name.Trim(),
+            Name = agentName,
             Slug = await UniqueSlugAsync(Slugify(request.Name), excludeAgentId: null, ct),
-            WorkingDirectory = request.WorkingDirectory.Trim(),
+            WorkingDirectory = workingDirectory,
             Details = request.Details?.Trim() ?? string.Empty,
             DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId,
             AssignmentPolicy = request.AssignmentPolicy,
             Status = AgentStatus.Idle,
+            BoardId = board.Id,
             CreatedAt = now,
             UpdatedAt = now
         };
 
         _db.Agents.Add(agent);
         await SaveChangesOrConflictAsync("Agent could not be created because another operation changed agent data.", ct);
+        await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await GetByIdAsync(agent.Id, ct);
@@ -77,6 +98,7 @@ public sealed class AgentService
     {
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
+        await EnsureBoardExistsAsync(request.BoardId, ct);
 
         var agent = await _db.Agents
             .FirstOrDefaultAsync(a => a.Id == id, ct)
@@ -88,12 +110,55 @@ public sealed class AgentService
         agent.Details = request.Details?.Trim() ?? string.Empty;
         agent.DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId;
         agent.AssignmentPolicy = request.AssignmentPolicy;
+        agent.BoardId = request.BoardId;
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await GetByIdAsync(agent.Id, ct);
+    }
+
+    public async Task DeleteAsync(Guid id, CancellationToken ct)
+    {
+        var agent = await _db.Agents
+            .FirstOrDefaultAsync(a => a.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Agent), id);
+
+        // Release the agent's hold on any cards and drop its workflow runs. CardWorkflowRun.AgentId
+        // uses Restrict, so the runs must be removed explicitly before the agent can be deleted.
+        var now = UtcNow();
+        var assignedCards = await _db.Cards
+            .Where(c => c.AssignedAgentId == id)
+            .ToListAsync(ct);
+        foreach (var card in assignedCards)
+        {
+            card.AssignedAgentId = null;
+            card.AgentQueuePosition = null;
+            card.ActiveWorkflowRunId = null;
+            card.ActiveWorkflowRun = null;
+            card.UpdatedAt = now;
+            card.ConcurrencyToken = Guid.NewGuid();
+        }
+
+        var runs = await _db.CardWorkflowRuns.Where(r => r.AgentId == id).ToListAsync(ct);
+
+        // Card<->CardWorkflowRun and CardWorkflowRun<->CardWorkflowStage reference each other, so
+        // deleting in one batch forms a cycle EF can't order. Null the back-references and persist
+        // that first, then delete the runs (their stages cascade) and the agent.
+        foreach (var run in runs)
+            run.CurrentStageId = null;
+
+        if (assignedCards.Count > 0 || runs.Count > 0)
+            await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
+
+        _db.CardWorkflowRuns.RemoveRange(runs);
+        _db.Agents.Remove(agent);
+        await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
+
+        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(id), ct);
+        foreach (var card in assignedCards)
+            await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
     }
 
     public async Task<AgentDetailDto> AssignCardAsync(Guid id, AssignAgentCardRequest request, CancellationToken ct)
@@ -282,6 +347,7 @@ public sealed class AgentService
     {
         var query = _db.Agents
             .Include(a => a.DefaultWorkflowTemplate)
+            .Include(a => a.Board)
             .Include(a => a.QueueCards)
                 .ThenInclude(c => c.Board)
             .Include(a => a.QueueCards)
@@ -305,6 +371,95 @@ public sealed class AgentService
             throw new NotFoundException(nameof(WorkflowTemplate), id);
     }
 
+    private async Task EnsureBoardExistsAsync(Guid? boardId, CancellationToken ct)
+    {
+        if (boardId is not Guid id)
+            return;
+
+        var exists = await _db.Boards.AnyAsync(b => b.Id == id, ct);
+        if (!exists)
+            throw new NotFoundException(nameof(Board), id);
+    }
+
+    // Reuse an existing project that already points at the same working directory, otherwise create
+    // a lightweight internal project for it. The git URL is left blank — an agent's working directory
+    // is a local path, and the project exists only to anchor the agent's board.
+    private async Task<Project> ResolveProjectForWorkingDirectoryAsync(
+        string workingDirectory, string fallbackName, DateTime now, CancellationToken ct)
+    {
+        var existing = await _db.Projects
+            .FirstOrDefaultAsync(p => p.LocalRepositoryPath == workingDirectory, ct);
+        if (existing is not null)
+            return existing;
+
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = await UniqueProjectNameAsync(DeriveProjectName(workingDirectory, fallbackName), ct),
+            GitRepositoryUrl = string.Empty,
+            LocalRepositoryPath = workingDirectory,
+            BaseBranch = "master",
+            ConstitutionPath = "AGENTS.md;CLAUDE.md;README.md",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        _db.Projects.Add(project);
+        return project;
+    }
+
+    private static Board BuildAgentBoard(Project project, string name, DateTime now)
+    {
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Project = project,
+            Name = name,
+            Description = string.Empty,
+            TrackerKind = TrackerKind.Internal,
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        foreach (var column in BoardService.CreateDefaultColumns(board, now))
+            board.Columns.Add(column);
+        return board;
+    }
+
+    private static string DeriveProjectName(string workingDirectory, string fallback)
+    {
+        var trimmed = workingDirectory.TrimEnd('/', '\\');
+        var separator = trimmed.LastIndexOfAny(['/', '\\']);
+        var leaf = separator >= 0 ? trimmed[(separator + 1)..] : trimmed;
+        return string.IsNullOrWhiteSpace(leaf) ? fallback : leaf;
+    }
+
+    private async Task<string> UniqueProjectNameAsync(string baseName, CancellationToken ct)
+    {
+        var name = Cap(baseName);
+        var suffix = 2;
+        while (await _db.Projects.AnyAsync(p => p.Name == name, ct))
+            name = $"{Cap(baseName, suffix)} ({suffix++})";
+        return name;
+    }
+
+    private async Task<string> UniqueBoardNameAsync(Guid projectId, string baseName, CancellationToken ct)
+    {
+        var name = Cap(baseName);
+        var suffix = 2;
+        while (await _db.Boards.AnyAsync(b => b.ProjectId == projectId && b.Name == name, ct))
+            name = $"{Cap(baseName, suffix)} ({suffix++})";
+        return name;
+    }
+
+    // Project/board names are capped at 200 chars in the schema; leave room for the dedupe suffix.
+    private static string Cap(string value, int suffix = 0)
+    {
+        var reserve = suffix == 0 ? 0 : $" ({suffix})".Length;
+        var max = 200 - reserve;
+        return value.Length <= max ? value : value[..max].TrimEnd();
+    }
+
     private static AgentSummaryDto ToSummaryDto(Agent agent)
     {
         return new AgentSummaryDto(
@@ -319,6 +474,8 @@ public sealed class AgentService
             agent.Status,
             agent.PersistentSessionId,
             agent.CurrentCardId,
+            agent.BoardId,
+            agent.Board?.Name,
             agent.QueueCards.Count,
             agent.CreatedAt,
             agent.UpdatedAt);
@@ -355,6 +512,8 @@ public sealed class AgentService
             agent.Status,
             agent.PersistentSessionId,
             agent.CurrentCardId,
+            agent.BoardId,
+            agent.Board?.Name,
             queue,
             agent.CreatedAt,
             agent.UpdatedAt);

@@ -27,55 +27,68 @@ function createConnection() {
 export function useSignalR() {
   const connectionRef = useRef<HubConnection | null>(null)
   const setStatus = useConnectionStore((s) => s.setStatus)
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const stoppedRef = useRef(false)
 
   if (connectionRef.current === null) {
     connectionRef.current = createConnection()
   }
 
   useEffect(() => {
-    stoppedRef.current = false
+    // Per-effect-run cancellation flag. Using a local (not a shared ref) means a
+    // stale promise resolving after StrictMode's unmount/remount can't touch the
+    // live run — it only sees its own run's `cancelled`.
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
     const connection = connectionRef.current!
 
     const tryStart = () => {
-      if (stoppedRef.current) return
+      if (cancelled) return
+      // StrictMode may remount while a prior stop() is still in flight. start()
+      // throws unless the connection is fully Disconnected, so wait it out.
+      if (connection.state !== HubConnectionState.Disconnected) {
+        retryTimer = setTimeout(tryStart, 100)
+        return
+      }
       setStatus('connecting')
       connection
         .start()
         .then(() => {
+          if (cancelled) {
+            // Cleanup ran during negotiation; stop the now-open connection.
+            void connection.stop()
+            return
+          }
           setStatus('connected')
         })
         .catch(() => {
-          if (!stoppedRef.current) {
+          if (!cancelled) {
             setStatus('disconnected')
-            retryTimerRef.current = setTimeout(tryStart, RETRY_INTERVAL_MS)
+            retryTimer = setTimeout(tryStart, RETRY_INTERVAL_MS)
           }
         })
     }
 
     connection.onreconnecting(() => {
-      setStatus('reconnecting')
+      if (!cancelled) setStatus('reconnecting')
     })
 
     connection.onreconnected(() => {
-      setStatus('connected')
+      if (!cancelled) setStatus('connected')
     })
 
     connection.onclose(() => {
-      if (!stoppedRef.current) {
+      if (!cancelled) {
         setStatus('disconnected')
-        retryTimerRef.current = setTimeout(tryStart, RETRY_INTERVAL_MS)
+        retryTimer = setTimeout(tryStart, RETRY_INTERVAL_MS)
       }
     })
 
     tryStart()
 
     return () => {
-      stoppedRef.current = true
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       if (connection.state !== HubConnectionState.Disconnected) {
-        connection.stop()
+        void connection.stop()
       }
     }
   }, [setStatus])

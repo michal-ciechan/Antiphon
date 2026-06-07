@@ -5,6 +5,7 @@ import { TbSparkles } from 'react-icons/tb'
 import type { AgentAssignmentPolicy } from '../../api/agents'
 import { useCreateAgent, useDraftAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
+import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -23,6 +24,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [draftDescription, setDraftDescription] = useState('')
   const [name, setName] = useState('')
   const [workingDirectory, setWorkingDirectory] = useState('')
+  const [createDir, setCreateDir] = useState(false)
+  const [pathMissing, setPathMissing] = useState(false)
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
 
@@ -30,10 +33,15 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setDraftDescription('')
     setName('')
     setWorkingDirectory('')
+    setCreateDir(false)
+    setPathMissing(false)
     setDetails('')
     setAssignmentPolicy('AutoPick')
     draftAgent.reset()
   }
+
+  // A missing directory may only be submitted when the user opts to create it.
+  const blockedByMissingDir = pathMissing && !createDir
 
   const handleClose = () => {
     reset()
@@ -41,7 +49,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   }
 
   const handleSubmit = () => {
-    if (!name.trim() || !workingDirectory.trim()) return
+    if (!name.trim() || !workingDirectory.trim() || blockedByMissingDir) return
 
     createAgent.mutate(
       {
@@ -49,6 +57,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         workingDirectory: workingDirectory.trim(),
         details: details.trim() || null,
         assignmentPolicy,
+        createWorkingDirectory: createDir,
       },
       {
         onSuccess: () => {
@@ -118,10 +127,12 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
         />
-        <TextInput
-          label="Working directory"
+        <DirectoryAutocomplete
           value={workingDirectory}
-          onChange={(event) => setWorkingDirectory(event.currentTarget.value)}
+          onChange={setWorkingDirectory}
+          createIfMissing={createDir}
+          onCreateIfMissingChange={setCreateDir}
+          onPathMissingChange={setPathMissing}
         />
         <Textarea
           label="Details"
@@ -142,7 +153,9 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           <Button
             onClick={handleSubmit}
             loading={createAgent.isPending}
-            disabled={!name.trim() || !workingDirectory.trim() || draftAgent.isPending}
+            disabled={
+              !name.trim() || !workingDirectory.trim() || draftAgent.isPending || blockedByMissingDir
+            }
           >
             Create
           </Button>

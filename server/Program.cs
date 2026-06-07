@@ -17,6 +17,7 @@ using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
+using Antiphon.Server.Infrastructure.FileSystem;
 using Antiphon.Server.Infrastructure.GitHub;
 using Antiphon.Server.Infrastructure.IssueTrackers;
 using Antiphon.Server.Infrastructure.Orchestration;
@@ -147,6 +148,14 @@ try
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddSingleton(TimeProvider.System);
+    // Working-directory autocomplete (directory browsing + atomic dir creation).
+    builder.Services.AddSingleton<System.IO.Abstractions.IFileSystem>(new System.IO.Abstractions.FileSystem());
+    builder.Services.AddSingleton<IDirectoryLister, FileSystemDirectoryLister>();
+    builder.Services.AddSingleton<IDriveProvider, DriveProvider>();
+    builder.Services.AddSingleton<IDirectoryWriter, FileSystemDirectoryWriter>();
+    builder.Services.AddSingleton<DirectoryBrowseService>();
+    // Expose the browse cache for test reset (shared WebApplicationFactory keeps it alive across tests).
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<DirectoryBrowseService>());
     builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
     builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
@@ -255,6 +264,7 @@ try
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
     app.MapOrchestratorEndpoints();
+    app.MapFileSystemEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
@@ -274,3 +284,8 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+// Exposed as public so test projects can use WebApplicationFactory<Program> with public
+// subclasses (e.g. the shared AntiphonWebAppFactory). The top-level program otherwise emits
+// an internal Program class.
+public partial class Program { }

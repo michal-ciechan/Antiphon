@@ -431,6 +431,7 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(a => a.Slug).IsUnique().HasDatabaseName("IX_Agents_Slug");
             entity.HasIndex(a => a.Status).HasDatabaseName("IX_Agents_Status");
+            entity.HasIndex(a => a.BoardId).HasDatabaseName("IX_Agents_BoardId");
 
             entity.HasOne(a => a.DefaultWorkflowTemplate)
                 .WithMany()
@@ -440,6 +441,11 @@ public class AppDbContext : DbContext
             entity.HasOne(a => a.CurrentCard)
                 .WithMany()
                 .HasForeignKey(a => a.CurrentCardId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.Board)
+                .WithMany()
+                .HasForeignKey(a => a.BoardId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

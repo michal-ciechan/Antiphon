@@ -182,7 +182,7 @@ public sealed class BoardService
             ?? throw new NotFoundException(nameof(Board), id);
     }
 
-    private static IReadOnlyList<BoardColumn> CreateDefaultColumns(Board board, DateTime utcNow)
+    internal static IReadOnlyList<BoardColumn> CreateDefaultColumns(Board board, DateTime utcNow)
     {
         return
         [

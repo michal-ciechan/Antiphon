@@ -72,6 +72,15 @@ public static class AgentEndpoints
             return Results.Ok(await service.UpdateAsync(id, request, cancellationToken));
         });
 
+        agents.MapDelete("/{id:guid}", async (
+            Guid id,
+            AgentService service,
+            CancellationToken cancellationToken) =>
+        {
+            await service.DeleteAsync(id, cancellationToken);
+            return Results.NoContent();
+        });
+
         agents.MapPost("/{id:guid}/queue", async (
             Guid id,
             AssignAgentCardRequest request,

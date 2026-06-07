@@ -332,6 +332,8 @@ public class BoardServiceIntegrationTests
         services.AddScoped<OrchestratorService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();
+        services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
+            new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(new System.IO.Abstractions.FileSystem()));
         services.AddScoped<BoardService>();
         services.AddScoped<CardService>();
         services.AddLogging();

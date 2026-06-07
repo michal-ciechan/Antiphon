@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.FileSystem;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -41,6 +42,155 @@ public class AgentServiceIntegrationTests
         stored.Name.ShouldBe(agentName);
         stored.AssignmentPolicy.ShouldBe(AgentAssignmentPolicy.AutoPick);
         eventBus.PublishedEvents.Any(e => e.EventName == "AgentChanged").ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task CreateAsync_creates_board_and_project_for_working_directory()
+    {
+        await using var db = CreateContext();
+        var eventBus = new MockEventBus();
+        var service = CreateService(db, eventBus);
+        var workingDirectory = $"D:/src/{Guid.NewGuid():N}";
+        var agentName = UniqueAgentName("Board Owner");
+
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(agentName, workingDirectory),
+            CancellationToken.None);
+
+        created.BoardId.ShouldNotBeNull();
+        created.BoardName.ShouldBe(agentName);
+
+        await using var verify = CreateContext();
+        var board = await verify.Boards
+            .Include(b => b.Columns)
+            .Include(b => b.Project)
+            .SingleAsync(b => b.Id == created.BoardId!.Value);
+        board.Name.ShouldBe(agentName);
+        board.Project.LocalRepositoryPath.ShouldBe(workingDirectory);
+        board.Columns
+            .Select(c => c.StateKey)
+            .OrderBy(s => s)
+            .ShouldBe(["backlog", "done", "in-progress", "review"]);
+        eventBus.PublishedEvents.Any(e => e.EventName == "BoardChanged").ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task CreateAsync_reuses_project_for_shared_working_directory_with_distinct_boards()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var workingDirectory = $"D:/src/{Guid.NewGuid():N}";
+
+        var first = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("First Owner"), workingDirectory),
+            CancellationToken.None);
+        var second = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Second Owner"), workingDirectory),
+            CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var firstBoard = await verify.Boards.SingleAsync(b => b.Id == first.BoardId!.Value);
+        var secondBoard = await verify.Boards.SingleAsync(b => b.Id == second.BoardId!.Value);
+        secondBoard.Id.ShouldNotBe(firstBoard.Id);
+        secondBoard.ProjectId.ShouldBe(firstBoard.ProjectId);
+    }
+
+    [Test]
+    public async Task UpdateAsync_changes_default_board()
+    {
+        await using var db = CreateContext();
+        var graph = CreateGraph();
+        db.Add(graph.Template);
+        db.Add(graph.Project);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new MockEventBus());
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Editable Claude"), "D:/src/app"),
+            CancellationToken.None);
+        var targetBoardId = graph.CardA.BoardId;
+        agent.BoardId.ShouldNotBe(targetBoardId);
+
+        var updated = await service.UpdateAsync(
+            agent.Id,
+            new UpdateAgentRequest(
+                agent.Name,
+                agent.WorkingDirectory,
+                "edited details",
+                agent.DefaultWorkflowTemplateId,
+                AgentAssignmentPolicy.Paused,
+                targetBoardId),
+            CancellationToken.None);
+
+        updated.BoardId.ShouldBe(targetBoardId);
+        updated.BoardName.ShouldBe("Agent Board");
+        updated.Details.ShouldBe("edited details");
+        updated.AssignmentPolicy.ShouldBe(AgentAssignmentPolicy.Paused);
+
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).BoardId.ShouldBe(targetBoardId);
+    }
+
+    [Test]
+    public async Task UpdateAsync_rejects_unknown_board()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Strict Claude"), "D:/src/app"),
+            CancellationToken.None);
+
+        await Should.ThrowAsync<NotFoundException>(() =>
+            service.UpdateAsync(
+                agent.Id,
+                new UpdateAgentRequest(
+                    agent.Name,
+                    agent.WorkingDirectory,
+                    null,
+                    null,
+                    agent.AssignmentPolicy,
+                    Guid.NewGuid()),
+                CancellationToken.None));
+    }
+
+    [Test]
+    public async Task DeleteAsync_removes_agent_unassigns_cards_and_drops_runs()
+    {
+        await using var db = CreateContext();
+        var graph = CreateGraph();
+        db.Add(graph.Template);
+        db.Add(graph.Project);
+        await db.SaveChangesAsync();
+        var eventBus = new MockEventBus();
+        var service = CreateService(db, eventBus);
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Doomed Claude"), "D:/src/app", DefaultWorkflowTemplateId: graph.Template.Id),
+            CancellationToken.None);
+        await service.AssignCardAsync(agent.Id, new AssignAgentCardRequest(graph.CardA.Id), CancellationToken.None);
+        eventBus.Clear();
+
+        await service.DeleteAsync(agent.Id, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == agent.Id)).ShouldBeFalse();
+        var card = await verify.Cards.SingleAsync(c => c.Id == graph.CardA.Id);
+        card.AssignedAgentId.ShouldBeNull();
+        card.AgentQueuePosition.ShouldBeNull();
+        card.ActiveWorkflowRunId.ShouldBeNull();
+        (await verify.CardWorkflowRuns.AnyAsync(r => r.AgentId == agent.Id)).ShouldBeFalse();
+        eventBus.PublishedEvents.Any(e => e.EventName == "AgentChanged").ShouldBeTrue();
+        eventBus.PublishedEvents
+            .Where(e => e.EventName == "CardChanged")
+            .ShouldContain(e => HasPayloadValue(e.Payload, "cardId", graph.CardA.Id));
+    }
+
+    [Test]
+    public async Task DeleteAsync_rejects_unknown_agent()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+
+        await Should.ThrowAsync<NotFoundException>(() =>
+            service.DeleteAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
     [Test]
@@ -224,13 +374,64 @@ public class AgentServiceIntegrationTests
         ex.Errors["CardIds"].Single().ShouldBe("Card ids are required.");
     }
 
-    private static AgentService CreateService(AppDbContext db, IEventBus eventBus)
+    [Test]
+    public async Task CreateAsync_with_CreateWorkingDirectory_true_creates_missing_directory()
+    {
+        await using var db = CreateContext();
+        var mockFs = new System.IO.Abstractions.TestingHelpers.MockFileSystem();
+        var writer = new FileSystemDirectoryWriter(mockFs);
+        var service = CreateService(db, new MockEventBus(), writer);
+        var agentName = UniqueAgentName("Mkdir Claude");
+
+        mockFs.Directory.Exists("D:/src/newdir").ShouldBeFalse();
+
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(agentName, "D:/src/newdir", CreateWorkingDirectory: true),
+            CancellationToken.None);
+
+        mockFs.Directory.Exists("D:/src/newdir").ShouldBeTrue();
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.WorkingDirectory.ShouldBe("D:/src/newdir");
+    }
+
+    [Test]
+    public async Task CreateAsync_with_flag_false_does_not_create_directory()
+    {
+        await using var db = CreateContext();
+        var mockFs = new System.IO.Abstractions.TestingHelpers.MockFileSystem();
+        var writer = new FileSystemDirectoryWriter(mockFs);
+        var service = CreateService(db, new MockEventBus(), writer);
+        var agentName = UniqueAgentName("NoMkdir Claude");
+
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(agentName, "D:/src/skipdir", CreateWorkingDirectory: false),
+            CancellationToken.None);
+
+        mockFs.Directory.Exists("D:/src/skipdir").ShouldBeFalse();
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.WorkingDirectory.ShouldBe("D:/src/skipdir");
+    }
+
+    private static AgentService CreateService(
+        AppDbContext db,
+        IEventBus eventBus,
+        IDirectoryWriter? directoryWriter = null)
     {
         return new AgentService(
             db,
             new CardWorkflowRunFactory(db, TimeProvider.System),
             eventBus,
-            TimeProvider.System);
+            TimeProvider.System,
+            directoryWriter ?? new NoOpDirectoryWriter());
+    }
+
+    private sealed class NoOpDirectoryWriter : IDirectoryWriter
+    {
+        public void CreateDirectory(string path) { }
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());

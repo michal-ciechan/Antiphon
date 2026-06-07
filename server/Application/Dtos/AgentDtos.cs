@@ -23,6 +23,8 @@ public sealed record AgentSummaryDto(
     AgentStatus Status,
     string? PersistentSessionId,
     Guid? CurrentCardId,
+    Guid? BoardId,
+    string? BoardName,
     int QueueLength,
     DateTime CreatedAt,
     DateTime UpdatedAt);
@@ -39,6 +41,8 @@ public sealed record AgentDetailDto(
     AgentStatus Status,
     string? PersistentSessionId,
     Guid? CurrentCardId,
+    Guid? BoardId,
+    string? BoardName,
     IReadOnlyList<AgentQueueCardDto> Queue,
     DateTime CreatedAt,
     DateTime UpdatedAt);
@@ -60,7 +64,8 @@ public sealed record CreateAgentRequest(
     string WorkingDirectory,
     string? Details = null,
     Guid? DefaultWorkflowTemplateId = null,
-    AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick);
+    AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
+    bool CreateWorkingDirectory = false);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -76,7 +81,8 @@ public sealed record UpdateAgentRequest(
     string WorkingDirectory,
     string? Details,
     Guid? DefaultWorkflowTemplateId,
-    AgentAssignmentPolicy AssignmentPolicy);
+    AgentAssignmentPolicy AssignmentPolicy,
+    Guid? BoardId = null);
 
 public sealed record AssignAgentCardRequest(Guid CardId);
 

@@ -25,6 +25,8 @@ const agentSummary: AgentSummaryDto = {
   status: 'Idle',
   persistentSessionId: null,
   currentCardId: null,
+  boardId: 'board-1',
+  boardName: 'Frontend Board',
   queueLength: 2,
   createdAt: '2026-05-18T09:00:00Z',
   updatedAt: '2026-05-18T09:00:00Z',
@@ -99,6 +101,21 @@ function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: Agen
   ]
 }
 
+// The working-directory autocomplete in AgentCreateModal browses on focus/typing.
+// Report any non-empty path as existing so the missing-dir rule doesn't gate Create,
+// and satisfy MSW's onUnhandledRequest: 'error'.
+function browseHandler() {
+  return http.get('/api/filesystem/browse', ({ request }) => {
+    const path = new URL(request.url).searchParams.get('path') ?? ''
+    return HttpResponse.json({
+      normalizedPath: path,
+      exists: path.length > 0,
+      isDrivesListing: path.length === 0,
+      suggestions: [],
+    })
+  })
+}
+
 function getVisibleInput(label: string) {
   return screen
     .getAllByLabelText(label)
@@ -116,6 +133,65 @@ describe('AgentsPage', () => {
     expect(await screen.findByText('Frontend Claude')).toBeInTheDocument()
     expect(screen.getAllByText('Idle')[0]).toBeInTheDocument()
     expect(screen.getByText('2 queued')).toBeInTheDocument()
+  })
+
+  it('links the selected agent to its board', async () => {
+    server.use(...agentHandlers())
+
+    renderWithProviders(<AgentsPage />)
+
+    const boardLink = await screen.findByRole('link', { name: /Frontend Board/ })
+    expect(boardLink).toHaveAttribute('href', '/boards/board-1')
+  })
+
+  it('edits an agent and changes its board via the settings modal', async () => {
+    const patchSpy = vi.fn()
+    server.use(
+      ...agentHandlers(),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+      http.patch('/api/agents/:id', async ({ request }) => {
+        patchSpy(await request.json())
+        return HttpResponse.json({ ...agentDetail, details: 'updated details' })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings Frontend Claude' }))
+
+    const detailsField = await screen.findByLabelText('Details')
+    await userEvent.clear(detailsField)
+    await userEvent.type(detailsField, 'updated details')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1))
+    expect(patchSpy.mock.calls[0][0]).toMatchObject({
+      name: 'Frontend Claude',
+      details: 'updated details',
+      boardId: 'board-1',
+      assignmentPolicy: 'AutoPick',
+    })
+  })
+
+  it('deletes an agent via the settings modal', async () => {
+    const deleteSpy = vi.fn()
+    server.use(
+      ...agentHandlers(),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+      http.delete('/api/agents/:id', ({ params }) => {
+        deleteSpy(params.id)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings Frontend Claude' }))
+    // Two-step confirmation: the trigger reveals the confirm button (same label).
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete agent' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete agent' }))
+
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('agent-1'))
   })
 
   it('loads selected agent detail and shows queue card title', async () => {
@@ -207,6 +283,7 @@ describe('AgentsPage', () => {
     const createSpy = vi.fn()
     server.use(
       ...agentHandlers([]),
+      browseHandler(),
       http.post('/api/agents', async ({ request }) => {
         createSpy(await request.json())
         return HttpResponse.json({ ...agentDetail, id: 'agent-created', queueLength: 0 }, { status: 201 })
@@ -217,7 +294,7 @@ describe('AgentsPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
     await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
-    await userEvent.type(screen.getByLabelText('Working directory'), 'D:/src/app')
+    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
     await userEvent.type(screen.getByLabelText('Details'), 'UI work')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
@@ -227,6 +304,7 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/app',
         details: 'UI work',
         assignmentPolicy: 'AutoPick',
+        createWorkingDirectory: false,
       }),
     )
   })
@@ -236,6 +314,7 @@ describe('AgentsPage', () => {
     const createSpy = vi.fn()
     server.use(
       ...agentHandlers([]),
+      browseHandler(),
       http.post('/api/agents/draft', async ({ request }) => {
         draftSpy(await request.json())
         return HttpResponse.json({
@@ -287,6 +366,7 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/Antiphon/client',
         details: 'Owns React and Mantine UI work.',
         assignmentPolicy: 'ManualConfirm',
+        createWorkingDirectory: false,
       }),
     )
   })
@@ -294,6 +374,7 @@ describe('AgentsPage', () => {
   it('shows backend validation text when agent creation fails', async () => {
     server.use(
       ...agentHandlers([]),
+      browseHandler(),
       http.post('/api/agents', () =>
         HttpResponse.json({
           title: 'Validation failed',
@@ -309,7 +390,7 @@ describe('AgentsPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
     await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
-    await userEvent.type(screen.getByLabelText('Working directory'), 'D:/src/app')
+    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     await waitFor(() =>
