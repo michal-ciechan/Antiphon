@@ -13,6 +13,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: parseInt(process.env['VITE_PORT'] ?? '17203'),
+    // Allow access via the laptop reverse proxy (antiphon.laptop.codeperf.net) in addition to
+    // localhost. The leading dot matches the domain and all its subdomains.
+    allowedHosts: ['.laptop.codeperf.net'],
     proxy: {
       '/api': {
         target: serverUrl,
