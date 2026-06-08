@@ -159,6 +159,8 @@ public sealed class AgentSessionService
                 new { boardId = card.BoardId, cardId = card.Id },
                 ct);
 
+            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, ct);
+
             await adapter.SendPromptAsync(prompt, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs)),
@@ -553,6 +555,27 @@ public sealed class AgentSessionService
     {
         if (!await adapter.WaitForReadyAsync(ct))
             throw new InvalidOperationException("Agent process did not become ready.");
+    }
+
+    // Cap on how long we wait for each remote-control slash command to echo output before moving on.
+    private static readonly TimeSpan RemoteControlCommandTimeout = TimeSpan.FromSeconds(3);
+
+    // When an agent is booted for remote monitoring, rename its session and flip it into
+    // remote-control mode before the work prompt lands, so the user can watch from elsewhere.
+    // Each command waits for the agent to echo output (or times out) before the next is sent,
+    // so the commands don't get jammed together over the PTY.
+    private static async Task SendRemoteControlCommandsAsync(
+        IAgentProtocolAdapter adapter,
+        string? remoteControlName,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(remoteControlName))
+            return;
+
+        await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
+        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+        await adapter.SendPromptAsync("/remote-control", ct);
+        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
     }
 
     private static bool IsClaudeSessionNotFound(IAgentProtocolAdapter? adapter, Exception ex)

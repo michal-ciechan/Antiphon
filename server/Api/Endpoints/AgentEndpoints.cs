@@ -81,6 +81,23 @@ public static class AgentEndpoints
             return Results.NoContent();
         });
 
+        agents.MapPost("/{id:guid}/start", async (
+            Guid id,
+            StartAgentRequest request,
+            AgentControlService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.StartAsync(id, request, cancellationToken));
+        });
+
+        agents.MapPost("/{id:guid}/stop", async (
+            Guid id,
+            AgentControlService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.StopAsync(id, cancellationToken));
+        });
+
         agents.MapPost("/{id:guid}/queue", async (
             Guid id,
             AssignAgentCardRequest request,

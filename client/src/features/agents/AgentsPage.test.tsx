@@ -400,9 +400,10 @@ describe('AgentsPage', () => {
     )
   })
 
-  it('creates a new card and queues it as work on the agent', async () => {
+  it('creates a new card, queues it, and starts the agent in remote control', async () => {
     const createSpy = vi.fn()
     const assignSpy = vi.fn()
+    const startSpy = vi.fn()
     const newCard = { ...boardDetail.columns[0].cards[0], id: 'new-card', title: 'Wire the thing' }
     const queuedDetail: AgentDetailDto = {
       ...agentDetail,
@@ -433,6 +434,10 @@ describe('AgentsPage', () => {
         assignSpy(await request.json())
         return HttpResponse.json(queuedDetail)
       }),
+      http.post('/api/agents/agent-1/start', async ({ request }) => {
+        startSpy(await request.json())
+        return HttpResponse.json({ ...queuedDetail, status: 'Working', persistentSessionId: 'session-1' })
+      }),
     )
 
     renderWithProviders(<AgentsPage />)
@@ -446,6 +451,44 @@ describe('AgentsPage', () => {
     await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1))
     expect(createSpy.mock.calls[0][0]).toMatchObject({ title: 'Wire the thing', description: 'do it well' })
     await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'new-card' }))
-    expect(await screen.findByText(/Wire the thing/)).toBeInTheDocument()
+    // Remote control is on by default, so the booted agent should be put into remote control.
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
+  })
+
+  it('starts the agent process from the detail panel', async () => {
+    const startSpy = vi.fn()
+    const queuedDetail: AgentDetailDto = {
+      ...agentDetail,
+      queue: [
+        {
+          cardId: 'card-1',
+          boardId: 'board-1',
+          boardName: 'Frontend Board',
+          identifier: 'CARD-0001',
+          title: 'Build agent UI',
+          priority: 1,
+          queuePosition: 1,
+          activeWorkflowRunId: null,
+          workflowStatus: null,
+          currentStageName: null,
+        },
+      ],
+    }
+
+    server.use(
+      ...agentHandlers([agentSummary], queuedDetail),
+      http.post('/api/agents/agent-1/start', async ({ request }) => {
+        startSpy(await request.json())
+        return HttpResponse.json({ ...queuedDetail, status: 'Working', persistentSessionId: 'session-1' })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Start' }))
+
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
+    // Once running, the control flips to Stop.
+    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
   })
 })

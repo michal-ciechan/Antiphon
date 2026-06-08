@@ -13,7 +13,10 @@ public sealed record StartAgentSessionRequest(
     IReadOnlyDictionary<string, string>? ExtraEnv = null,
     Guid? PreclaimedSessionId = null,
     Guid? BoardWorkflowDefinitionId = null,
-    bool UseWorkflowPrompt = false);
+    bool UseWorkflowPrompt = false,
+    // When set, send '/rename <name>' then '/remote-control' once the agent is ready,
+    // before the work prompt — so a freshly booted agent can be monitored remotely.
+    string? RemoteControlName = null);
 
 public sealed record AgentSessionStartResult(
     Guid SessionId,

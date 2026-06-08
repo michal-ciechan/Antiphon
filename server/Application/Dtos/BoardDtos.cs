@@ -96,6 +96,9 @@ public sealed record SpawnCardRequest(
     int Cols = 120,
     int Rows = 30,
     string? Prompt = null,
-    Guid? ConcurrencyToken = null);
+    Guid? ConcurrencyToken = null,
+    // When set, the launched agent is renamed to this and put into remote-control mode
+    // (via /rename + /remote-control) before the work prompt is sent.
+    string? RemoteControlName = null);
 
 public sealed record SpawnCardResult(Guid CardId, Guid SessionId);

@@ -84,6 +84,8 @@ public sealed record UpdateAgentRequest(
     AgentAssignmentPolicy AssignmentPolicy,
     Guid? BoardId = null);
 
+public sealed record StartAgentRequest(bool RemoteControl = false);
+
 public sealed record AssignAgentCardRequest(Guid CardId);
 
 public sealed record ReorderAgentQueueRequest(IReadOnlyList<Guid> CardIds);

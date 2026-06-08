@@ -25,6 +25,10 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;
     public string SentPrompt { get; private set; } = string.Empty;
+    private readonly List<string> _prompts = [];
+    // Every prompt sent, in order — lets tests assert the /rename + /remote-control sequence
+    // that precedes the work prompt. SentPrompt still holds the last prompt for older tests.
+    public IReadOnlyList<string> Prompts => _prompts;
     public IReadOnlyList<string> StartedArgs { get; private set; } = [];
     public int Cols { get; private set; }
     public int Rows { get; private set; }
@@ -61,6 +65,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         _firstPromptOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Emit(NoiseDuringSendPrompt);
         SentPrompt = prompt;
+        _prompts.Add(prompt);
         if (!string.IsNullOrEmpty(PromptOutput))
         {
             _ = Task.Run(async () =>

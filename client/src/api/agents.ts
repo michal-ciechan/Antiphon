@@ -87,6 +87,10 @@ export interface AssignAgentCardRequest {
   cardId: string
 }
 
+export interface StartAgentRequest {
+  remoteControl?: boolean
+}
+
 export const agentKeys = {
   definitions: ['agents', 'definitions'] as const,
   all: ['agents', 'list'] as const,
@@ -155,6 +159,31 @@ export function useDeleteAgent() {
       queryClient.invalidateQueries({ queryKey: agentKeys.all })
       // A deleted agent releases its cards, so refresh boards too.
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
+export function useStartAgent(agentId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: StartAgentRequest = {}) => apiPost<AgentDetailDto>(`/agents/${agentId}/start`, request),
+    onSuccess: (agent) => {
+      queryClient.setQueryData(agentKeys.detail(agentId), agent)
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
+      // Starting boots a session and may move a card into an active column.
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
+export function useStopAgent(agentId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<AgentDetailDto>(`/agents/${agentId}/stop`, {}),
+    onSuccess: (agent) => {
+      queryClient.setQueryData(agentKeys.detail(agentId), agent)
+      queryClient.invalidateQueries({ queryKey: agentKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
   })

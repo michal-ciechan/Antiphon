@@ -1,8 +1,8 @@
-import { Button, Group, Modal, NumberInput, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentSummaryDto } from '../../api/agents'
-import { useAssignAgentCard } from '../../api/agents'
+import { useAssignAgentCard, useStartAgent } from '../../api/agents'
 import { useBoards, useCreateCard } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -23,6 +23,7 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState(0)
   const [pickedBoardId, setPickedBoardId] = useState<string | null>(null)
+  const [remoteControl, setRemoteControl] = useState(true)
 
   useEffect(() => {
     if (!opened) return
@@ -30,18 +31,20 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
     setDescription('')
     setPriority(0)
     setPickedBoardId(null)
+    setRemoteControl(true)
   }, [opened])
 
   const targetBoardId = agent.boardId ?? pickedBoardId ?? ''
   const createCard = useCreateCard(targetBoardId)
   const assignCard = useAssignAgentCard(agent.id)
+  const startAgent = useStartAgent(agent.id)
 
   const boardOptions = useMemo(
     () => (boards.data ?? []).map((board) => ({ value: board.id, label: `${board.projectName} / ${board.name}` })),
     [boards.data],
   )
 
-  const pending = createCard.isPending || assignCard.isPending
+  const pending = createCard.isPending || assignCard.isPending || startAgent.isPending
   const canSubmit = title.trim().length > 0 && targetBoardId.length > 0 && !pending
 
   const handleSubmit = () => {
@@ -56,8 +59,28 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
             { cardId: card.id },
             {
               onSuccess: () => {
-                notifications.show({ color: 'green', message: 'Work added' })
-                onClose()
+                // Boot the agent process (no-op if it's already running). When remote control is
+                // ticked a freshly booted agent is renamed + put into /remote-control first.
+                startAgent.mutate(
+                  { remoteControl },
+                  {
+                    onSuccess: () => {
+                      notifications.show({
+                        color: 'green',
+                        message: remoteControl ? 'Work added — agent starting (remote control)' : 'Work added — agent starting',
+                      })
+                      onClose()
+                    },
+                    onError: (error) => {
+                      // The card is queued even if the agent can't start right now; let the user know but don't lose the work.
+                      notifications.show({
+                        color: 'yellow',
+                        message: getApiErrorMessage(error, 'Work added, but the agent could not be started'),
+                      })
+                      onClose()
+                    },
+                  },
+                )
               },
               onError: (error) => {
                 notifications.show({
@@ -113,6 +136,12 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
             searchable
           />
         )}
+        <Checkbox
+          label="Remote control"
+          description="Rename the agent and put it into /remote-control before the work, so you can monitor it."
+          checked={remoteControl}
+          onChange={(event) => setRemoteControl(event.currentTarget.checked)}
+        />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>
             Cancel

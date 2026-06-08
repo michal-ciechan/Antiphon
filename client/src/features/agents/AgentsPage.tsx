@@ -5,6 +5,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Group,
   Loader,
   Paper,
@@ -13,13 +14,16 @@ import {
   Table,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
 import { useEffect, useState } from 'react'
-import { TbAlertCircle, TbLayoutKanban, TbPlus, TbSettings } from 'react-icons/tb'
+import { TbAlertCircle, TbLayoutKanban, TbPlayerPlay, TbPlayerStop, TbPlus, TbSettings } from 'react-icons/tb'
 import { Link } from 'react-router'
 import type { AgentSummaryDto } from '../../api/agents'
-import { useAgent, useAgentList } from '../../api/agents'
+import { useAgent, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
+import { getApiErrorMessage } from '../../api/client'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { AgentCreateModal } from './AgentCreateModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
@@ -31,6 +35,9 @@ export function AgentsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [addWorkOpen, setAddWorkOpen] = useState(false)
   const [settingsAgent, setSettingsAgent] = useState<AgentSummaryDto | null>(null)
+  const [remoteControl, setRemoteControl] = useState(true)
+  const startAgent = useStartAgent(selectedAgentId ?? '')
+  const stopAgent = useStopAgent(selectedAgentId ?? '')
 
   useEffect(() => {
     if (!selectedAgentId && agents.data?.[0]) {
@@ -162,9 +169,58 @@ export function AgentsPage() {
                 )}
                 {selected.data.details && <Text size="sm">{selected.data.details}</Text>}
               </Stack>
-              <Button variant="light" leftSection={<TbPlus size={16} />} onClick={() => setAddWorkOpen(true)}>
-                Add Card
-              </Button>
+              <Group gap="sm" align="center">
+                {selected.data.status === 'Working' ? (
+                  <Button
+                    variant="light"
+                    color="red"
+                    leftSection={<TbPlayerStop size={16} />}
+                    loading={stopAgent.isPending}
+                    onClick={() =>
+                      stopAgent.mutate(undefined, {
+                        onError: (error) =>
+                          notifications.show({
+                            color: 'red',
+                            message: getApiErrorMessage(error, 'Could not stop the agent'),
+                          }),
+                      })
+                    }
+                  >
+                    Stop
+                  </Button>
+                ) : (
+                  <Tooltip label="Boots the agent process on its next queued card" openDelay={400}>
+                    <Button
+                      variant="light"
+                      leftSection={<TbPlayerPlay size={16} />}
+                      loading={startAgent.isPending}
+                      disabled={selected.data.queue.length === 0 && !selected.data.currentCardId}
+                      onClick={() =>
+                        startAgent.mutate(
+                          { remoteControl },
+                          {
+                            onError: (error) =>
+                              notifications.show({
+                                color: 'red',
+                                message: getApiErrorMessage(error, 'Could not start the agent'),
+                              }),
+                          },
+                        )
+                      }
+                    >
+                      Start
+                    </Button>
+                  </Tooltip>
+                )}
+                <Checkbox
+                  label="Remote control"
+                  checked={remoteControl}
+                  onChange={(event) => setRemoteControl(event.currentTarget.checked)}
+                />
+                <Button variant="light" leftSection={<TbPlus size={16} />} onClick={() => setAddWorkOpen(true)}>
+                  Add Card
+                </Button>
+              </Group>
             </Group>
 
             <Table>

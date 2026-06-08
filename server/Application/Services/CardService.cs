@@ -173,7 +173,8 @@ public sealed class CardService
                 request.Rows,
                 PreclaimedSessionId: sessionId,
                 BoardWorkflowDefinitionId: activeDefinition?.Id,
-                UseWorkflowPrompt: useWorkflowPrompt),
+                UseWorkflowPrompt: useWorkflowPrompt,
+                RemoteControlName: request.RemoteControlName),
             spec);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
