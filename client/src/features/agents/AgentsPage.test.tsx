@@ -400,21 +400,23 @@ describe('AgentsPage', () => {
     )
   })
 
-  it('assigns an unassigned board card to an agent queue', async () => {
+  it('creates a new card and queues it as work on the agent', async () => {
+    const createSpy = vi.fn()
     const assignSpy = vi.fn()
-    const assignedDetail: AgentDetailDto = {
+    const newCard = { ...boardDetail.columns[0].cards[0], id: 'new-card', title: 'Wire the thing' }
+    const queuedDetail: AgentDetailDto = {
       ...agentDetail,
       queue: [
         {
-          cardId: 'card-1',
+          cardId: 'new-card',
           boardId: 'board-1',
-          boardName: 'Delivery',
-          identifier: 'CARD-0001',
-          title: 'Build agent UI',
-          priority: 1,
+          boardName: 'Frontend Board',
+          identifier: 'CARD-0002',
+          title: 'Wire the thing',
+          priority: 0,
           queuePosition: 1,
-          activeWorkflowRunId: 'run-1',
-          workflowStatus: 'Queued',
+          activeWorkflowRunId: null,
+          workflowStatus: null,
           currentStageName: null,
         },
       ],
@@ -423,22 +425,27 @@ describe('AgentsPage', () => {
     server.use(
       ...agentHandlers([agentSummary], agentDetail),
       http.get('/api/boards', () => HttpResponse.json([boardSummary])),
-      http.get('/api/boards/board-1', () => HttpResponse.json(boardDetail)),
+      http.post('/api/boards/board-1/cards', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json(newCard, { status: 201 })
+      }),
       http.post('/api/agents/agent-1/queue', async ({ request }) => {
         assignSpy(await request.json())
-        return HttpResponse.json(assignedDetail)
+        return HttpResponse.json(queuedDetail)
       }),
     )
 
     renderWithProviders(<AgentsPage />)
 
+    // The agent owns board-1, so the modal creates the card there directly (no board picker).
     await userEvent.click(await screen.findByRole('button', { name: 'Add Card' }))
-    expect(await screen.findByDisplayValue('Project One / Delivery')).toBeInTheDocument()
-    await userEvent.click(getVisibleInput('Card'))
-    await userEvent.click(await screen.findByText('CARD-0001 - Build agent UI'))
-    await userEvent.click(screen.getByRole('button', { name: 'Assign' }))
+    await userEvent.type(await screen.findByLabelText('Title'), 'Wire the thing')
+    await userEvent.type(screen.getByLabelText('Description'), 'do it well')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'card-1' }))
-    expect(await screen.findByText(/Build agent UI/)).toBeInTheDocument()
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1))
+    expect(createSpy.mock.calls[0][0]).toMatchObject({ title: 'Wire the thing', description: 'do it well' })
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'new-card' }))
+    expect(await screen.findByText(/Wire the thing/)).toBeInTheDocument()
   })
 })

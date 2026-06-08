@@ -20,8 +20,8 @@ import { TbAlertCircle, TbLayoutKanban, TbPlus, TbSettings } from 'react-icons/t
 import { Link } from 'react-router'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useAgentList } from '../../api/agents'
+import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { AgentCreateModal } from './AgentCreateModal'
-import { AgentQueueAssignModal } from './AgentQueueAssignModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
 
 export function AgentsPage() {
@@ -29,7 +29,7 @@ export function AgentsPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const selected = useAgent(selectedAgentId)
   const [createOpen, setCreateOpen] = useState(false)
-  const [assignOpen, setAssignOpen] = useState(false)
+  const [addWorkOpen, setAddWorkOpen] = useState(false)
   const [settingsAgent, setSettingsAgent] = useState<AgentSummaryDto | null>(null)
 
   useEffect(() => {
@@ -162,7 +162,7 @@ export function AgentsPage() {
                 )}
                 {selected.data.details && <Text size="sm">{selected.data.details}</Text>}
               </Stack>
-              <Button variant="light" leftSection={<TbPlus size={16} />} onClick={() => setAssignOpen(true)}>
+              <Button variant="light" leftSection={<TbPlus size={16} />} onClick={() => setAddWorkOpen(true)}>
                 Add Card
               </Button>
             </Group>
@@ -211,12 +211,8 @@ export function AgentsPage() {
           onDeleted={handleAgentDeleted}
         />
       )}
-      {selectedAgentId && assignOpen && (
-        <AgentQueueAssignModal
-          agentId={selectedAgentId}
-          opened={assignOpen}
-          onClose={() => setAssignOpen(false)}
-        />
+      {selected.data && addWorkOpen && (
+        <AgentAddWorkModal agent={selected.data} opened onClose={() => setAddWorkOpen(false)} />
       )}
     </Box>
   )
