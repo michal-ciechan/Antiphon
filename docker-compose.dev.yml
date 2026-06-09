@@ -1,7 +1,22 @@
-# docker-compose.dev.yml — PostgreSQL only for local development
+# docker-compose.dev.yml — always-on PostgreSQL for local development.
+#
+# This is the single Postgres instance for BOTH launch modes:
+#   - standalone server (dev-start.ps1)            → connects to localhost:17280
+#   - Aspire AppHost (dev-aspire.ps1)              → AddConnectionString points here too
+#
+# restart: unless-stopped + Docker Desktop "AutoStart" means this container comes
+# back automatically on login/boot, so the backend (and the agents that depend on
+# it) are always available without launching the AppHost. Bring it up once with:
+#   docker compose -f docker-compose.dev.yml up -d
+# or run scripts/install-autostart.ps1, which does this and registers the
+# session-runner logon task.
+name: antiphon
+
 services:
   postgres:
     image: postgres:16
+    container_name: antiphon-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: antiphon
       POSTGRES_USER: antiphon

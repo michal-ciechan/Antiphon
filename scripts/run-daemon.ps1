@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Long-lived supervisor wrapper for one Antiphon service.
-    Started detached (UseShellExecute=true) by the AppHost — survives AppHost exit.
+    Started detached (UseShellExecute=true) by the AppHost - survives AppHost exit.
     Tracks the service PID, auto-restarts on crash, respects desired-state file.
 .NOTES
     ExeArgs is passed as a single space-joined string (PowerShell -File mode drops extra
@@ -44,7 +44,7 @@ Write-Log "Supervisor started (PID $PID)"
 while ($true) {
     $desired = Get-DesiredState
     if ($desired -eq 'stopped') {
-        Write-Log "Desired state is stopped — exiting."
+        Write-Log "Desired state is stopped - exiting."
         Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
         exit 0
     }
@@ -79,7 +79,7 @@ while ($true) {
 
     $desired = Get-DesiredState
     if ($desired -ne 'running') {
-        Write-Log "Desired state is '$desired' — stopping."
+        Write-Log "Desired state is '$desired' - stopping."
         exit 0
     }
 

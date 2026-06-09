@@ -8,13 +8,13 @@ var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..
 // ── Supervisor infrastructure ─────────────────────────────────────────────────
 builder.AddDaemonSupervisor();
 
-// ── PostgreSQL (Aspire-managed container, persistent named volume) ────────────
-// Fixed password so the persistent volume survives AppHost restarts.
-var pgPassword = builder.AddParameter("pg-password", "antiphon_dev", secret: true);
-
-var postgres = builder.AddPostgres("DefaultConnection", password: pgPassword)
-    .WithImageTag("16")
-    .WithDataVolume("antiphon-pgdata");
+// ── PostgreSQL (always-on, EXTERNAL container — not managed by Aspire) ─────────
+// Postgres runs as a standalone docker-compose container (docker-compose.dev.yml,
+// restart: unless-stopped) so it auto-starts on login and stays up whether or not
+// the AppHost is running. We only reference its connection string here; the value
+// comes from appsettings.json (Host=localhost;Port=17280;...). This sidesteps the
+// Aspire-managed-postgres flakiness (stale DefaultConnection containers, HNS hangs).
+var postgres = builder.AddConnectionString("DefaultConnection");
 
 // ── Session runner (daemon — survives AppHost exit, keeps live PTY sessions alive)
 builder.AddDaemonProcess("session-runner", new DaemonProcessConfig(
@@ -28,7 +28,6 @@ builder.AddDaemonProcess("session-runner", new DaemonProcessConfig(
 var server = builder
     .AddProject<Projects.Antiphon_Server>("server", options => options.ExcludeLaunchProfile = true)
     .WithReference(postgres)
-    .WaitFor(postgres)
     .WithEnvironment("SessionRunner__BaseUrl", "http://localhost:17204")
     .WithHttpEndpoint(port: 17202, env: "ASPNETCORE_HTTP_PORTS");
 

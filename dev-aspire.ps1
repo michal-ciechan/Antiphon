@@ -45,16 +45,16 @@ if ($netCompleted -and $netCompleted.State -eq 'Completed') {
     Write-Host ""
 }
 
-# ── Pre-flight: remove stale Aspire-managed postgres containers ────────────
-Write-Host "`n▶ Removing stale containers..." -ForegroundColor Cyan
-$staleIds = docker ps -aq --filter 'name=DefaultConnection' 2>&1
-if ($staleIds) {
-    foreach ($id in $staleIds) {
-        docker rm -f $id 2>&1 | Out-Null
-    }
-    Write-Host "  Removed stale container(s)" -ForegroundColor DarkGray
+# ── Pre-flight: ensure the always-on Postgres container is up ──────────────
+# Postgres is an EXTERNAL standalone container (docker-compose.dev.yml, restart:
+# unless-stopped) — not Aspire-managed. The AppHost references it via
+# AddConnectionString. Bring it up here in case it isn't already (idempotent).
+Write-Host "`n▶ Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
+docker compose -f "$root\docker-compose.dev.yml" up -d 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  WARNING: could not start Postgres via docker compose." -ForegroundColor Yellow
 } else {
-    Write-Host "  None found" -ForegroundColor DarkGray
+    Write-Host "  Postgres container ensured" -ForegroundColor DarkGray
 }
 
 # ── Pre-flight: clean up old Aspire DCP temp state dirs ───────────────────
@@ -153,26 +153,21 @@ if ($dashboardUrl) {
     Write-Host "  Check log: Get-Content '$logFile' -Tail 30" -ForegroundColor DarkGray
 }
 
-# ── Post-launch: verify Postgres started ──────────────────────────────────
+# ── Post-launch: verify Postgres is up ─────────────────────────────────────
 Write-Host "`n▶ Checking Postgres..." -ForegroundColor Cyan
 $pgDeadline = (Get-Date).AddSeconds(45)
 $pgOK = $false
 while ((Get-Date) -lt $pgDeadline) {
     Start-Sleep 5
-    $runningPg = docker ps --filter name=DefaultConnection --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
+    $runningPg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
     if ($runningPg) { $pgOK = $true; Write-Host "  Postgres: Up" -ForegroundColor Green; break }
-    $stuckPg = docker ps -a --filter name=DefaultConnection --filter status=created --format "{{.Names}}" 2>&1
-    if ($stuckPg) {
-        Write-Host "  Postgres container exists but has not started yet..." -ForegroundColor DarkGray
-    }
 }
 if (-not $pgOK) {
     Write-Host ""
-    Write-Host "  WARNING: Postgres did not start within 45s." -ForegroundColor Yellow
-    $stuck = docker ps -a --filter name=DefaultConnection --format "{{.Names}}\t{{.Status}}" 2>&1
-    if ($stuck) { Write-Host "  Container state: $stuck" -ForegroundColor DarkGray }
-    Write-Host "  Likely cause: Docker network creation failed (Windows HNS issue)." -ForegroundColor Yellow
-    Write-Host "  Fix: Restart Docker Desktop, then re-run this script." -ForegroundColor Yellow
+    Write-Host "  WARNING: Postgres ('antiphon-postgres') is not up after 45s." -ForegroundColor Yellow
+    $state = docker ps -a --filter name=antiphon-postgres --format "{{.Names}}`t{{.Status}}" 2>&1
+    if ($state) { Write-Host "  Container state: $state" -ForegroundColor DarkGray }
+    Write-Host "  Fix: docker compose -f docker-compose.dev.yml up -d   (restart Docker Desktop if it hangs)." -ForegroundColor Yellow
 }
 
 Write-Host ""
