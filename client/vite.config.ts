@@ -14,9 +14,9 @@ export default defineConfig({
   server: {
     port: parseInt(process.env['VITE_PORT'] ?? '17203'),
     // Allow access via the per-machine reverse proxies (antiphon.laptop.codeperf.net /
-    // antiphon.desktop.codeperf.net) in addition to localhost. The leading dot matches the
-    // domain and all its subdomains.
-    allowedHosts: ['.laptop.codeperf.net', '.desktop.codeperf.net'],
+    // antiphon.desktop.codeperf.net) and the machine-agnostic antiphon.localhost.codeperf.net,
+    // in addition to localhost. The leading dot matches the domain and all its subdomains.
+    allowedHosts: ['.laptop.codeperf.net', '.desktop.codeperf.net', '.localhost.codeperf.net'],
     proxy: {
       '/api': {
         target: serverUrl,
