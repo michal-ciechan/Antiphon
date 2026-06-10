@@ -65,9 +65,11 @@ if (-not $SimpleMode) {
         if ($hnsOk) { docker network rm $testNet 2>&1 | Out-Null }
         Add-Result "Docker network (HNS)" $hnsOk ($hnsOk ? "create OK" : "HANGS — restart Docker Desktop (Windows HNS broken)")
 
-        # Postgres container up
-        $pg = docker ps --filter name=DefaultConnection --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
-        Add-Result "Postgres container" ([bool]$pg) ($pg ? "$pg" : "not Up — check 'docker ps -a --filter name=DefaultConnection'")
+        # Postgres container up — always-on external container 'antiphon-postgres'
+        # (docker-compose.dev.yml, restart: unless-stopped). It is NOT the old
+        # Aspire-managed 'DefaultConnection' container, which no longer exists.
+        $pg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
+        Add-Result "Postgres container" ([bool]$pg) ($pg ? "$pg" : "not Up — check 'docker ps -a --filter name=antiphon-postgres'")
     }
 }
 
