@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from './client'
-import { boardKeys, type AgentKind } from './boards'
+import { boardKeys, type AgentKind, type AgentSessionSummaryDto } from './boards'
 
 export interface AgentRegistryDto {
   defaultDefinition: string
@@ -34,6 +34,8 @@ export interface AgentSummaryDto {
   queueLength: number
   createdAt: string
   updatedAt: string
+  /** The agent's persistent session when currently live (Starting/Running/Stopping), else null. */
+  liveSession: AgentSessionSummaryDto | null
 }
 
 export interface AgentQueueCardDto {

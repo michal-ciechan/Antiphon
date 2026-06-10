@@ -398,7 +398,7 @@ public class AgentChannelServiceIntegrationTests
 
         var boardIds = await db.Boards.Where(b => projectIds.Contains(b.ProjectId)).Select(b => b.Id).ToListAsync();
         var cardIds = await db.Cards.Where(c => boardIds.Contains(c.BoardId)).Select(c => c.Id).ToListAsync();
-        var sessionIds = await db.AgentSessions.Where(s => cardIds.Contains(s.CardId)).Select(s => s.Id).ToListAsync();
+        var sessionIds = await db.AgentSessions.Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value)).Select(s => s.Id).ToListAsync();
         await db.Cards
             .Where(c => cardIds.Contains(c.Id))
             .ExecuteUpdateAsync(updates => updates.SetProperty(c => c.OwnerSessionId, (Guid?)null));

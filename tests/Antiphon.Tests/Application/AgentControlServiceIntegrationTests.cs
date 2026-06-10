@@ -292,7 +292,7 @@ public class AgentControlServiceIntegrationTests
             .Select(c => c.Id)
             .ToListAsync();
         var sessionIds = await db.AgentSessions
-            .Where(s => cardIds.Contains(s.CardId))
+            .Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value))
             .Select(s => s.Id)
             .ToListAsync();
         var workflowRunIds = await db.CardWorkflowRuns

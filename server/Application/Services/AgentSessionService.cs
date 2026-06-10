@@ -234,6 +234,65 @@ public sealed class AgentSessionService
         }
     }
 
+    /// <summary>
+    /// Launches a cardless, human-driven interactive session that was pre-created in Starting state.
+    /// Unlike <see cref="StartAsync"/> there is no card, worktree, workflow or run attempt: the agent
+    /// process is spawned in the session's Cwd and left Running for the user to drive via the web
+    /// terminal. No work prompt is sent (optionally the remote-control commands are, if requested).
+    /// </summary>
+    public async Task LaunchInteractiveAsync(
+        Guid sessionId,
+        Guid agentId,
+        AgentLaunchSpec launchSpec,
+        string? remoteControlName,
+        CancellationToken ct)
+    {
+        var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
+            ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        IAgentProtocolAdapter? adapter = null;
+        try
+        {
+            adapter = _adapterFactory.Create(session.AgentKind);
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, session.Cwd, resumeMode: null);
+            await adapter.StartAsync(spec, ct);
+
+            await WaitForReadyOrThrowAsync(adapter, ct);
+            session.Status = SessionStatus.Running;
+            session.LastSeenAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
+
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(session.Id),
+                "SessionStarted",
+                new { sessionId = session.Id, cardId = (Guid?)null },
+                ct);
+            // Nudge the agent UI to refetch so its live session flips Starting -> Running (enables input).
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+
+            // Interactive: no work prompt — the human drives the agent via the terminal. We only push
+            // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
+            await SendRemoteControlCommandsAsync(adapter, remoteControlName, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
+            session.Status = SessionStatus.Failed;
+            session.FailureReason = ex.Message;
+            session.EndedAt = UtcNow();
+            session.LastSeenAt = session.EndedAt.Value;
+            await _db.SaveChangesAsync(CancellationToken.None);
+            // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
+            // to offering a fresh start instead of a dead terminal.
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
+
+            if (adapter is not null)
+                await adapter.DisposeAsync();
+
+            throw;
+        }
+    }
+
     public async Task KillAsync(Guid sessionId, CancellationToken ct)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
@@ -286,17 +345,21 @@ public sealed class AgentSessionService
             "SessionExited",
             new { sessionId, status = session.Status.ToString(), session.ExitCode },
             ct);
-        var card = await _db.Cards
-            .AsNoTracking()
-            .Where(c => c.Id == session.CardId)
-            .Select(c => new { c.BoardId, c.Id })
-            .FirstOrDefaultAsync(ct);
-        if (card is not null)
+        // Cardless (interactive) sessions have nothing to notify a board about.
+        if (session.CardId is Guid cardId)
         {
-            await _eventBus.PublishToAllAsync(
-                "CardChanged",
-                new { boardId = card.BoardId, cardId = card.Id },
-                ct);
+            var card = await _db.Cards
+                .AsNoTracking()
+                .Where(c => c.Id == cardId)
+                .Select(c => new { c.BoardId, c.Id })
+                .FirstOrDefaultAsync(ct);
+            if (card is not null)
+            {
+                await _eventBus.PublishToAllAsync(
+                    "CardChanged",
+                    new { boardId = card.BoardId, cardId = card.Id },
+                    ct);
+            }
         }
     }
 
@@ -317,6 +380,9 @@ public sealed class AgentSessionService
 
         if (session.AgentKind != AgentKind.ClaudeCode)
             throw new ConflictException("Only Claude Code sessions can be resumed.");
+        // Resume rebuilds a card's worktree-bound session; a cardless interactive session has neither.
+        if (session.CardId is not Guid cardId)
+            throw new ConflictException($"Agent session '{sessionId}' has no card and cannot be resumed.");
         if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             throw new ConflictException($"Agent session '{sessionId}' is already active.");
         if (_runtime.ListLiveSessions().Contains(sessionId))
@@ -373,7 +439,7 @@ public sealed class AgentSessionService
                 new { boardId = session.Card.BoardId, cardId = session.CardId },
                 ct);
 
-            return new AgentSessionResumeResult(session.Id, session.CardId);
+            return new AgentSessionResumeResult(session.Id, cardId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

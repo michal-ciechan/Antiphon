@@ -19,12 +19,21 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useState } from 'react'
-import { TbAlertCircle, TbLayoutKanban, TbPlayerPlay, TbPlayerStop, TbPlus, TbSettings } from 'react-icons/tb'
+import {
+  TbAlertCircle,
+  TbLayoutKanban,
+  TbPlayerPlay,
+  TbPlayerStop,
+  TbPlus,
+  TbSettings,
+  TbTerminal2,
+} from 'react-icons/tb'
 import { Link } from 'react-router'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
+import { AgentCliModal } from './AgentCliModal'
 import { AgentCreateModal } from './AgentCreateModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
 
@@ -35,6 +44,7 @@ export function AgentsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [addWorkOpen, setAddWorkOpen] = useState(false)
   const [settingsAgent, setSettingsAgent] = useState<AgentSummaryDto | null>(null)
+  const [terminalAgent, setTerminalAgent] = useState<AgentSummaryDto | null>(null)
   const [remoteControl, setRemoteControl] = useState(true)
   const startAgent = useStartAgent(selectedAgentId ?? '')
   const stopAgent = useStopAgent(selectedAgentId ?? '')
@@ -101,7 +111,7 @@ export function AgentsPage() {
                   }}
                 >
                   <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start" wrap="nowrap" pr={28}>
+                    <Group justify="space-between" align="flex-start" wrap="nowrap" pr={56}>
                       <Text fw={700} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
                         {agent.name}
                       </Text>
@@ -121,6 +131,23 @@ export function AgentsPage() {
                   </Stack>
                 </Paper>
               </UnstyledButton>
+              <Tooltip
+                label={agent.liveSession ? 'Open running terminal' : 'No terminal — start agent'}
+                openDelay={400}
+                withArrow
+              >
+                <ActionIcon
+                  variant="subtle"
+                  color={agent.liveSession ? 'teal' : 'gray'}
+                  aria-label={`Terminal ${agent.name}`}
+                  onClick={() => setTerminalAgent(agent)}
+                  pos="absolute"
+                  top={8}
+                  right={36}
+                >
+                  <TbTerminal2 size={18} />
+                </ActionIcon>
+              </Tooltip>
               <ActionIcon
                 variant="subtle"
                 color="gray"
@@ -189,12 +216,14 @@ export function AgentsPage() {
                     Stop
                   </Button>
                 ) : (
-                  <Tooltip label="Boots the agent process on its next queued card" openDelay={400}>
+                  <Tooltip
+                    label="Boots the agent on its next queued card, or an interactive session if nothing is queued"
+                    openDelay={400}
+                  >
                     <Button
                       variant="light"
                       leftSection={<TbPlayerPlay size={16} />}
                       loading={startAgent.isPending}
-                      disabled={selected.data.queue.length === 0 && !selected.data.currentCardId}
                       onClick={() =>
                         startAgent.mutate(
                           { remoteControl },
@@ -269,6 +298,14 @@ export function AgentsPage() {
       )}
       {selected.data && addWorkOpen && (
         <AgentAddWorkModal agent={selected.data} opened onClose={() => setAddWorkOpen(false)} />
+      )}
+      {terminalAgent && (
+        <AgentCliModal
+          agent={terminalAgent}
+          remoteControl={remoteControl}
+          opened
+          onClose={() => setTerminalAgent(null)}
+        />
       )}
     </Box>
   )

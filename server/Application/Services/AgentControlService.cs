@@ -24,6 +24,8 @@ public sealed class AgentControlService
     private readonly AgentService _agentService;
     private readonly CardService _cardService;
     private readonly AgentSessionService _agentSessionService;
+    private readonly AgentRegistry _agentRegistry;
+    private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
 
@@ -32,6 +34,8 @@ public sealed class AgentControlService
         AgentService agentService,
         CardService cardService,
         AgentSessionService agentSessionService,
+        AgentRegistry agentRegistry,
+        AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider)
     {
@@ -39,6 +43,8 @@ public sealed class AgentControlService
         _agentService = agentService;
         _cardService = cardService;
         _agentSessionService = agentSessionService;
+        _agentRegistry = agentRegistry;
+        _launchQueue = launchQueue;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
     }
@@ -46,6 +52,8 @@ public sealed class AgentControlService
     /// <summary>
     /// Boots the agent's process if it isn't already running. Idempotent: if the agent already
     /// has a live session this is a no-op (it does NOT re-rename / re-enable remote control).
+    /// With a queued/current card it spawns work on that card; with no card it starts a cardless,
+    /// human-driven interactive session in the agent's working directory.
     /// </summary>
     public async Task<AgentDetailDto> StartAsync(Guid agentId, StartAgentRequest request, CancellationToken ct)
     {
@@ -55,22 +63,73 @@ public sealed class AgentControlService
         if (await HasLiveSessionAsync(agent, ct))
             return await _agentService.GetByIdAsync(agent.Id, ct);
 
-        var card = await ResolveStartCardAsync(agent, ct)
-            ?? throw new ConflictException($"Agent '{agent.Name}' has no queued card to start on.");
+        var remoteControlName = request.RemoteControl ? agent.Name : null;
+        var card = await ResolveStartCardAsync(agent, ct);
 
-        var spawn = await _cardService.SpawnAsync(
-            card.Id,
-            new SpawnCardRequest(RemoteControlName: request.RemoteControl ? agent.Name : null),
-            ct);
+        Guid sessionId;
+        if (card is not null)
+        {
+            var spawn = await _cardService.SpawnAsync(
+                card.Id,
+                new SpawnCardRequest(RemoteControlName: remoteControlName),
+                ct);
+            sessionId = spawn.SessionId;
+            agent.CurrentCardId = card.Id;
+        }
+        else
+        {
+            sessionId = await StartInteractiveSessionAsync(agent, remoteControlName, ct);
+            agent.CurrentCardId = null;
+        }
 
-        agent.CurrentCardId = card.Id;
-        agent.PersistentSessionId = spawn.SessionId.ToString("D");
+        agent.PersistentSessionId = sessionId.ToString("D");
         agent.Status = AgentStatus.Working;
         agent.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await _agentService.GetByIdAsync(agent.Id, ct);
+    }
+
+    // Pre-creates a cardless session row (Starting) in the agent's working directory and hands the
+    // actual process launch to the background queue, mirroring how card spawns return immediately.
+    private async Task<Guid> StartInteractiveSessionAsync(Agent agent, string? remoteControlName, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
+            throw new ConflictException($"Agent '{agent.Name}' has no working directory to start a session in.");
+
+        // Canonicalise to a native OS path. Working directories are often stored with forward slashes
+        // (e.g. "C:/src/foo"); ConPTY resolves a bare exe (cl.bat) against the cwd, and a non-native
+        // path breaks that lookup ("cannot find the file specified"). The card flow dodges this by
+        // running in a worktree path that's already backslashed.
+        var cwd = Path.GetFullPath(agent.WorkingDirectory);
+        if (!Directory.Exists(cwd))
+            throw new ConflictException($"Agent '{agent.Name}' working directory does not exist: {cwd}");
+
+        var definitionName = _agentRegistry.Settings.DefaultDefinition;
+        var spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30));
+
+        var now = UtcNow();
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            CardId = null,
+            WorktreeId = null,
+            DefinitionName = definitionName,
+            AgentKind = spec.Kind,
+            Status = SessionStatus.Starting,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now
+        };
+        _db.AgentSessions.Add(session);
+        await _db.SaveChangesAsync(ct);
+
+        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName);
+        return session.Id;
     }
 
     /// <summary>Stops the agent's persistent session (if live) and marks the agent stopped.</summary>

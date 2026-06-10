@@ -11,6 +11,9 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentService
 {
+    private static readonly SessionStatus[] LiveSessionStatuses =
+        [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
+
     private readonly AppDbContext _db;
     private readonly CardWorkflowRunFactory _workflowRunFactory;
     private readonly IEventBus _eventBus;
@@ -41,14 +44,56 @@ public sealed class AgentService
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
 
-        return agents.Select(ToSummaryDto).ToList();
+        var liveSessions = await LoadLiveSessionsAsync(agents.Select(a => a.PersistentSessionId), ct);
+        return agents.Select(a => ToSummaryDto(a, ResolveLiveSession(liveSessions, a.PersistentSessionId))).ToList();
     }
 
     public async Task<AgentDetailDto> GetByIdAsync(Guid id, CancellationToken ct)
     {
         var agent = await LoadAgentDetailAsync(id, asNoTracking: true, ct);
-        return ToDetailDto(agent);
+        var liveSessions = await LoadLiveSessionsAsync([agent.PersistentSessionId], ct);
+        return ToDetailDto(agent, ResolveLiveSession(liveSessions, agent.PersistentSessionId));
     }
+
+    // Loads the live (Starting/Running/Stopping) AgentSession for each agent's persistent session id,
+    // keyed by session id. Stale/ended sessions are excluded so the UI only offers to open a real terminal.
+    private async Task<Dictionary<Guid, AgentSessionSummaryDto>> LoadLiveSessionsAsync(
+        IEnumerable<string?> persistentSessionIds, CancellationToken ct)
+    {
+        var ids = persistentSessionIds
+            .Select(s => Guid.TryParse(s, out var g) ? (Guid?)g : null)
+            .Where(g => g is not null)
+            .Select(g => g!.Value)
+            .Distinct()
+            .ToList();
+        if (ids.Count == 0)
+            return [];
+
+        var sessions = await _db.AgentSessions
+            .AsNoTracking()
+            .Where(s => ids.Contains(s.Id) && LiveSessionStatuses.Contains(s.Status))
+            .Select(s => new AgentSessionSummaryDto(
+                s.Id,
+                s.DefinitionName,
+                s.AgentKind,
+                s.Status,
+                s.Cwd,
+                s.CreatedAt,
+                s.StartedAt,
+                s.LastSeenAt,
+                s.EndedAt,
+                s.ExitCode,
+                s.FailureReason))
+            .ToListAsync(ct);
+
+        return sessions.ToDictionary(s => s.Id);
+    }
+
+    private static AgentSessionSummaryDto? ResolveLiveSession(
+        Dictionary<Guid, AgentSessionSummaryDto> liveSessions, string? persistentSessionId)
+        => Guid.TryParse(persistentSessionId, out var id) && liveSessions.TryGetValue(id, out var session)
+            ? session
+            : null;
 
     public async Task<AgentDetailDto> CreateAsync(CreateAgentRequest request, CancellationToken ct)
     {
@@ -460,7 +505,7 @@ public sealed class AgentService
         return value.Length <= max ? value : value[..max].TrimEnd();
     }
 
-    private static AgentSummaryDto ToSummaryDto(Agent agent)
+    private static AgentSummaryDto ToSummaryDto(Agent agent, AgentSessionSummaryDto? liveSession)
     {
         return new AgentSummaryDto(
             agent.Id,
@@ -478,10 +523,11 @@ public sealed class AgentService
             agent.Board?.Name,
             agent.QueueCards.Count,
             agent.CreatedAt,
-            agent.UpdatedAt);
+            agent.UpdatedAt,
+            liveSession);
     }
 
-    private static AgentDetailDto ToDetailDto(Agent agent)
+    private static AgentDetailDto ToDetailDto(Agent agent, AgentSessionSummaryDto? liveSession)
     {
         var queue = agent.QueueCards
             .Where(c => c.AgentQueuePosition is not null)
@@ -516,7 +562,8 @@ public sealed class AgentService
             agent.Board?.Name,
             queue,
             agent.CreatedAt,
-            agent.UpdatedAt);
+            agent.UpdatedAt,
+            liveSession);
     }
 
     private async Task<string> UniqueSlugAsync(string baseSlug, Guid? excludeAgentId, CancellationToken ct)

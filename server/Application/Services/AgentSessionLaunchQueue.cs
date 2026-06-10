@@ -35,6 +35,37 @@ public sealed class AgentSessionLaunchQueue
         Enqueue(request, spec, AgentSessionLaunchBehavior.Interactive);
     }
 
+    /// <summary>
+    /// Background-launches a pre-created cardless interactive session (no card/worktree/workflow).
+    /// On failure the session is marked Failed by <see cref="AgentSessionService.LaunchInteractiveAsync"/>.
+    /// </summary>
+    public void EnqueueInteractiveSession(Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName)
+    {
+        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName));
+        lock (_gate)
+            _launches.Add(launch);
+
+        launch.ContinueWith(
+            task =>
+            {
+                lock (_gate)
+                    _launches.Remove(task);
+
+                if (task.Exception is not null)
+                    _logger.LogWarning(task.Exception, "Queued interactive session launch failed for session {SessionId}", sessionId);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task LaunchInteractiveSessionAsync(Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, CancellationToken.None);
+    }
+
     private void Enqueue(
         StartAgentSessionRequest request,
         AgentLaunchSpec spec,

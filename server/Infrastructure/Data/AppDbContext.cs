@@ -587,7 +587,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentSessions");
             entity.HasKey(s => s.Id);
-            entity.Property(s => s.CardId).IsRequired();
+            entity.Property(s => s.CardId).IsRequired(false);
             entity.Property(s => s.DefinitionName).IsRequired().HasMaxLength(100);
             entity.Property(s => s.AgentKind).IsRequired();
             entity.Property(s => s.Status).IsRequired();
@@ -607,6 +607,7 @@ public class AppDbContext : DbContext
             entity.HasOne(s => s.Card)
                 .WithMany(c => c.AgentSessions)
                 .HasForeignKey(s => s.CardId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasOne(s => s.Worktree)

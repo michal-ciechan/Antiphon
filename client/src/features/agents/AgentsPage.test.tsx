@@ -30,6 +30,7 @@ const agentSummary: AgentSummaryDto = {
   queueLength: 2,
   createdAt: '2026-05-18T09:00:00Z',
   updatedAt: '2026-05-18T09:00:00Z',
+  liveSession: null,
 }
 
 const agentDetail: AgentDetailDto = {
@@ -490,5 +491,24 @@ describe('AgentsPage', () => {
     await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
     // Once running, the control flips to Stop.
     expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
+  })
+
+  it('offers to start the agent from the card CLI icon when no terminal is running', async () => {
+    const startSpy = vi.fn()
+    server.use(
+      ...agentHandlers(),
+      http.post('/api/agents/agent-1/start', async ({ request }) => {
+        startSpy(await request.json())
+        return HttpResponse.json({ ...agentDetail, status: 'Working', persistentSessionId: 'session-1' })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    // The card's terminal icon opens the CLI modal; with no live session it offers to start.
+    await userEvent.click(await screen.findByRole('button', { name: 'Terminal Frontend Claude' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Start agent' }))
+
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
   })
 })

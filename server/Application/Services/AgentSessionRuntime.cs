@@ -417,9 +417,12 @@ public sealed class AgentSessionRuntime
             .FirstOrDefaultAsync(s => s.Id == sessionId);
         if (session is null || session.Status != SessionStatus.Running)
             return null;
+        // Cardless interactive sessions have no card/run-attempt to record manual turns against.
+        if (session.CardId is not Guid cardId)
+            return null;
 
         var latestAttempt = await db.RunAttempts
-            .Where(a => a.CardId == session.CardId)
+            .Where(a => a.CardId == cardId)
             .OrderByDescending(a => a.AttemptNumber)
             .ThenByDescending(a => a.CreatedAt)
             .FirstOrDefaultAsync();
@@ -427,13 +430,13 @@ public sealed class AgentSessionRuntime
             return null;
 
         var nextAttemptNumber = (await db.RunAttempts
-            .Where(a => a.CardId == session.CardId)
+            .Where(a => a.CardId == cardId)
             .MaxAsync(a => (int?)a.AttemptNumber)) ?? 0;
 
         var attempt = new RunAttempt
         {
             Id = Guid.NewGuid(),
-            CardId = session.CardId,
+            CardId = cardId,
             AgentSessionId = session.Id,
             WorktreeId = session.WorktreeId,
             BoardWorkflowDefinitionId = latestAttempt?.BoardWorkflowDefinitionId,
@@ -461,7 +464,7 @@ public sealed class AgentSessionRuntime
         var turn = new ManualTurnStart(
             session.Id,
             attempt.Id,
-            session.CardId,
+            cardId,
             session.Card.BoardId);
         await PublishRunAttemptChangedAsync(turn, RunPhase.StreamingTurn);
         return turn;

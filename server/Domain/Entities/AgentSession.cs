@@ -5,7 +5,10 @@ namespace Antiphon.Server.Domain.Entities;
 public class AgentSession
 {
     public Guid Id { get; set; }
-    public Guid CardId { get; set; }
+
+    // Nullable: a session can be cardless (a long-running, human-driven interactive terminal).
+    // When the session is working a card, this points at it; otherwise null.
+    public Guid? CardId { get; set; }
     public Guid? WorktreeId { get; set; }
     public string DefinitionName { get; set; } = string.Empty;
     public AgentKind AgentKind { get; set; }

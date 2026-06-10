@@ -167,7 +167,8 @@ public sealed class OrchestratorService
             .Include(s => s.RunAttempts).ThenInclude(a => a.TokenUsage)
             .AsSplitQuery());
         var activeSessions = await scopedSessions
-            .Where(s => activeStatuses.Contains(s.Status))
+            // Cardless interactive sessions aren't orchestrated card work — keep them out of this view.
+            .Where(s => activeStatuses.Contains(s.Status) && s.CardId != null)
             .OrderByDescending(s => s.LastSeenAt)
             .ToListAsync(ct);
 
@@ -210,7 +211,7 @@ public sealed class OrchestratorService
 
                 return new OrchestratorRunningSessionDto(
                     session.Id,
-                    session.CardId,
+                    session.CardId!.Value,
                     session.Card.Identifier,
                     session.Card.Title,
                     session.Card.BoardId,

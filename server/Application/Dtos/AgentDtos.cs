@@ -27,7 +27,10 @@ public sealed record AgentSummaryDto(
     string? BoardName,
     int QueueLength,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // The agent's persistent session when it is currently live (Starting/Running/Stopping),
+    // otherwise null. Lets the UI open the running terminal without a separate lookup.
+    AgentSessionSummaryDto? LiveSession = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -45,7 +48,9 @@ public sealed record AgentDetailDto(
     string? BoardName,
     IReadOnlyList<AgentQueueCardDto> Queue,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    // See AgentSummaryDto.LiveSession.
+    AgentSessionSummaryDto? LiveSession = null);
 
 public sealed record AgentQueueCardDto(
     Guid CardId,

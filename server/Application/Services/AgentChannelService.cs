@@ -64,12 +64,15 @@ public sealed class AgentChannelService
             .FirstOrDefaultAsync(s => s.Id == sourceSessionId && SourceStatuses.Contains(s.Status), ct);
         if (source is null)
             return false;
+        // Cardless interactive sessions don't participate in card-scoped channel routing.
+        if (source.CardId is not Guid sourceCardId)
+            return false;
 
         var matches = await FindMentionTargetsAsync(source, mention.Target, ct);
         if (matches.Count != 1)
         {
             await _eventBus.PublishToGroupAsync(
-                AgentChannelGroups.Card(source.CardId),
+                AgentChannelGroups.Card(sourceCardId),
                 "ChannelMentionIgnored",
                 new
                 {
@@ -184,16 +187,20 @@ public sealed class AgentChannelService
         bool routedByMention,
         CancellationToken ct)
     {
+        // Cardless interactive targets have no card channel to broadcast on.
+        if (target.CardId is not Guid targetCardId)
+            return;
+
         try
         {
             await _eventBus.PublishToGroupAsync(
-                AgentChannelGroups.Card(target.CardId),
+                AgentChannelGroups.Card(targetCardId),
                 "ChannelMessage",
                 new
                 {
                     sourceSessionId = source?.Id,
                     targetSessionId = target.Id,
-                    targetCardId = target.CardId,
+                    targetCardId,
                     message,
                     routedByMention
                 },
