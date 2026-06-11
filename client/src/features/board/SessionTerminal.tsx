@@ -1,11 +1,13 @@
 import '@xterm/xterm/css/xterm.css'
 import { Box, Stack, Text } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { useEffect, useRef } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
+import { TerminalKeypad } from './TerminalKeypad'
 
 interface SessionTerminalProps {
   session: AgentSessionSummaryDto
@@ -67,6 +69,8 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionId = session.id
   const inputEnabled = session.status === 'Running'
+  // Touch devices / narrow viewports can't produce TUI keys (arrows, esc, tab, ctrl) — give them buttons.
+  const showKeypad = useMediaQuery('(max-width: 48em), (pointer: coarse)')
 
   useEffect(() => {
     const host = hostRef.current
@@ -204,13 +208,15 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
   }, [inputEnabled, sessionId])
 
   return (
+    <Stack gap="xs" h={fill ? '100%' : undefined} style={{ minHeight: 0 }}>
     <Box
       data-testid="session-terminal"
-      h={fill ? '100%' : 420}
-      mih={fill ? 0 : undefined}
+      h={fill ? undefined : 420}
       bg="#111317"
       style={{
         position: 'relative',
+        flex: fill ? 1 : undefined,
+        minHeight: fill ? 0 : undefined,
         border: '1px solid var(--mantine-color-dark-4)',
         borderRadius: 6,
         overflow: 'hidden',
@@ -245,5 +251,9 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
         </Box>
       )}
     </Box>
+      {showKeypad && inputEnabled && (
+        <TerminalKeypad onKey={(sequence) => void sendSessionInput(sessionId, sequence)} />
+      )}
+    </Stack>
   )
 }

@@ -61,6 +61,12 @@ function ConnectionIndicator() {
   )
 }
 
+// Storybook is served at storybook.<app-host> behind Caddy on codeperf, else :17283 locally.
+function storybookUrl(): string {
+  const { protocol, host, hostname } = window.location
+  return host.endsWith('.codeperf.net') ? `${protocol}//storybook.${host}` : `${protocol}//${hostname}:17283`
+}
+
 export function Layout() {
   const navigate = useNavigate()
 
@@ -142,6 +148,19 @@ export function Layout() {
             >
               Settings
             </Anchor>
+            {import.meta.env.DEV && (
+              <Anchor
+                href={storybookUrl()}
+                target="_blank"
+                rel="noreferrer"
+                underline="never"
+                c="dimmed"
+                fw={500}
+                title="Open Storybook (dev)"
+              >
+                Storybook ↗
+              </Anchor>
+            )}
           </Group>
 
           {/* Right — connection status + user avatar */}

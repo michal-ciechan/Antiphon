@@ -32,7 +32,8 @@ $logFile = Join-Path $logDir 'apphost.log'
 $devScript = Join-Path $root 'dev-aspire.ps1'
 
 # Everything the AppHost owns. 17204 (session-runner) is deliberately EXCLUDED.
-$appHostPorts = 17200, 17202, 17203, 17205, 17206, 17207
+# 17283 = Storybook (AppHost-managed npm app; escapes the wrapper tree like the Vite client).
+$appHostPorts = 17200, 17202, 17203, 17205, 17206, 17207, 17283
 $sessionRunnerPort = 17204
 
 function Read-PidFile([string]$file) {
