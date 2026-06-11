@@ -7,7 +7,12 @@ import {
   UnstyledButton,
   Tooltip,
   ThemeIcon,
+  Burger,
+  Drawer,
+  Stack,
+  Badge,
 } from '@mantine/core'
+import { useDisclosure, useViewportSize } from '@mantine/hooks'
 import { TbWifi, TbWifiOff, TbLoader } from 'react-icons/tb'
 import { Outlet, useNavigate, NavLink } from 'react-router'
 import { useConnectionStore } from '../stores/connectionStore'
@@ -61,19 +66,91 @@ function ConnectionIndicator() {
   )
 }
 
+const NAV_ITEMS = [
+  { to: '/', label: 'Workflows', end: true },
+  { to: '/boards', label: 'Boards' },
+  { to: '/agents', label: 'Agents' },
+  { to: '/orchestrator', label: 'Orchestrator' },
+  { to: '/settings', label: 'Settings' },
+]
+
 // Storybook is served at storybook.<app-host> behind Caddy on codeperf, else :17283 locally.
 function storybookUrl(): string {
   const { protocol, host, hostname } = window.location
   return host.endsWith('.codeperf.net') ? `${protocol}//storybook.${host}` : `${protocol}//${hostname}:17283`
 }
 
+// Shared by the desktop header and the mobile drawer. onNavigate closes the drawer on tap.
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <>
+      {NAV_ITEMS.map((item) => (
+        <Anchor
+          key={item.to}
+          component={NavLink}
+          to={item.to}
+          end={item.end}
+          onClick={onNavigate}
+          underline="never"
+          c="dimmed"
+          fw={500}
+          style={({ isActive }: { isActive: boolean }) =>
+            isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
+          }
+        >
+          {item.label}
+        </Anchor>
+      ))}
+      {import.meta.env.DEV && (
+        <Anchor
+          href={storybookUrl()}
+          target="_blank"
+          rel="noreferrer"
+          onClick={onNavigate}
+          underline="never"
+          c="dimmed"
+          fw={500}
+          title="Open Storybook (dev)"
+        >
+          Storybook ↗
+        </Anchor>
+      )}
+    </>
+  )
+}
+
+// Dev-only live viewport readout so you can read your phone's real CSS viewport size.
+function ViewportBadge() {
+  const { width, height } = useViewportSize()
+  if (!import.meta.env.DEV || width === 0) return null
+  return (
+    <Badge
+      variant="filled"
+      color="dark"
+      radius="sm"
+      style={{
+        position: 'fixed',
+        bottom: 8,
+        right: 8,
+        zIndex: 1000,
+        fontFamily: 'var(--mantine-font-family-monospace)',
+        opacity: 0.65,
+        pointerEvents: 'none',
+      }}
+    >
+      {width} × {height}
+    </Badge>
+  )
+}
+
 export function Layout() {
   const navigate = useNavigate()
+  const [drawerOpened, { toggle: toggleDrawer, close: closeDrawer }] = useDisclosure(false)
 
   return (
     <AppShell header={{ height: 56 }} padding="md">
       <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
+        <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           {/* Logo — left */}
           <UnstyledButton onClick={() => navigate('/')}>
             <Text
@@ -86,98 +163,49 @@ export function Layout() {
             </Text>
           </UnstyledButton>
 
-          {/* Nav links — center */}
-          <Group gap="lg">
-            <Anchor
-              component={NavLink}
-              to="/"
-              underline="never"
-              c="dimmed"
-              fw={500}
-              style={({ isActive }: { isActive: boolean }) =>
-                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
-              }
-            >
-              Workflows
-            </Anchor>
-            <Anchor
-              component={NavLink}
-              to="/boards"
-              underline="never"
-              c="dimmed"
-              fw={500}
-              style={({ isActive }: { isActive: boolean }) =>
-                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
-              }
-            >
-              Boards
-            </Anchor>
-            <Anchor
-              component={NavLink}
-              to="/agents"
-              underline="never"
-              c="dimmed"
-              fw={500}
-              style={({ isActive }: { isActive: boolean }) =>
-                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
-              }
-            >
-              Agents
-            </Anchor>
-            <Anchor
-              component={NavLink}
-              to="/orchestrator"
-              underline="never"
-              c="dimmed"
-              fw={500}
-              style={({ isActive }: { isActive: boolean }) =>
-                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
-              }
-            >
-              Orchestrator
-            </Anchor>
-            <Anchor
-              component={NavLink}
-              to="/settings"
-              underline="never"
-              c="dimmed"
-              fw={500}
-              style={({ isActive }: { isActive: boolean }) =>
-                isActive ? { color: 'var(--mantine-color-active-4)' } : undefined
-              }
-            >
-              Settings
-            </Anchor>
-            {import.meta.env.DEV && (
-              <Anchor
-                href={storybookUrl()}
-                target="_blank"
-                rel="noreferrer"
-                underline="never"
-                c="dimmed"
-                fw={500}
-                title="Open Storybook (dev)"
-              >
-                Storybook ↗
-              </Anchor>
-            )}
+          {/* Nav links — center (desktop only) */}
+          <Group gap="lg" visibleFrom="sm">
+            <NavLinks />
           </Group>
 
-          {/* Right — connection status + user avatar */}
-          <Group gap="sm">
+          {/* Right — connection status + user avatar + mobile burger */}
+          <Group gap="sm" wrap="nowrap">
             <ConnectionIndicator />
             <Tooltip label="May the Force be with you, Admin" withArrow position="bottom-end">
               <Avatar radius="xl" size="sm" color="active" style={{ cursor: 'default' }}>
                 <RebelLogo size={18} />
               </Avatar>
             </Tooltip>
+            <Burger
+              opened={drawerOpened}
+              onClick={toggleDrawer}
+              hiddenFrom="sm"
+              size="sm"
+              aria-label="Toggle navigation menu"
+            />
           </Group>
         </Group>
       </AppShell.Header>
 
+      {/* Mobile navigation drawer */}
+      <Drawer
+        opened={drawerOpened}
+        onClose={closeDrawer}
+        title="Menu"
+        position="right"
+        size="70%"
+        hiddenFrom="sm"
+      >
+        <Stack gap="lg">
+          <NavLinks onNavigate={closeDrawer} />
+        </Stack>
+      </Drawer>
+
       <AppShell.Main>
         <Outlet />
       </AppShell.Main>
+
+      <ViewportBadge />
     </AppShell>
   )
 }
