@@ -132,13 +132,21 @@ export function AgentsPage() {
                 </Paper>
               </UnstyledButton>
               <Tooltip
-                label={agent.liveSession ? 'Open running terminal' : 'No terminal — start agent'}
+                label={
+                  agent.liveSession?.status === 'Running'
+                    ? 'Open running terminal'
+                    : agent.liveSession
+                      ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
+                      : 'No terminal — start agent'
+                }
                 openDelay={400}
                 withArrow
               >
                 <ActionIcon
                   variant="subtle"
-                  color={agent.liveSession ? 'teal' : 'gray'}
+                  color={
+                    agent.liveSession?.status === 'Running' ? 'green' : agent.liveSession ? 'yellow' : 'gray'
+                  }
                   aria-label={`Terminal ${agent.name}`}
                   onClick={() => setTerminalAgent(agent)}
                   pos="absolute"
