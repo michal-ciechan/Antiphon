@@ -38,10 +38,12 @@ public sealed class AgentSessionLaunchQueue
     /// <summary>
     /// Background-launches a pre-created cardless interactive session (no card/worktree/workflow).
     /// On failure the session is marked Failed by <see cref="AgentSessionService.LaunchInteractiveAsync"/>.
+    /// With <paramref name="resume"/> the agent's previous Claude conversation is resumed.
     /// </summary>
-    public void EnqueueInteractiveSession(Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName)
+    public void EnqueueInteractiveSession(
+        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume = false)
     {
-        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName));
+        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName, resume));
         lock (_gate)
             _launches.Add(launch);
 
@@ -59,11 +61,12 @@ public sealed class AgentSessionLaunchQueue
             TaskScheduler.Default);
     }
 
-    private async Task LaunchInteractiveSessionAsync(Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName)
+    private async Task LaunchInteractiveSessionAsync(
+        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
-        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, CancellationToken.None);
+        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, resume, CancellationToken.None);
     }
 
     private void Enqueue(

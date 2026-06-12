@@ -155,9 +155,160 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Start_interactive_resumes_previous_claude_session_by_default()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Resume Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            first.PersistentSessionId.ShouldNotBeNull();
+            firstAdapter.StartedArgs.ShouldContain("--session-id");
+            firstAdapter.StartedArgs.ShouldContain(first.PersistentSessionId);
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
+
+            // A fresh scope mirrors a new HTTP request — no stale tracked entities.
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            // Same session id, relaunched with --resume: the terminal picks up where it left off.
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+            resumeAdapter.StartedArgs.ShouldContain("--resume");
+            resumeAdapter.StartedArgs.ShouldContain(first.PersistentSessionId);
+            resumeAdapter.StartedArgs.ShouldNotContain("--session-id");
+
+            await using var verify = CreateContext();
+            var sessions = await verify.AgentSessions.Where(s => s.Cwd == workspace).ToListAsync();
+            sessions.Count.ShouldBe(1);
+            sessions[0].Status.ShouldBe(SessionStatus.Running);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_interactive_falls_back_to_fresh_session_when_claude_conversation_is_missing()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var failingResumeAdapter = new FakeAgentProtocolAdapter { ReadyResult = false };
+            var freshAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [firstAdapter, failingResumeAdapter, freshAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Fallback Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            failingResumeAdapter.StartupOutput = $"No conversation found with session ID: {first.PersistentSessionId}";
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            // The --resume attempt reported a missing conversation, so the launch fell back to a
+            // fresh conversation under the same session id.
+            failingResumeAdapter.StartedArgs.ShouldContain("--resume");
+            failingResumeAdapter.Disposed.ShouldBeTrue();
+            freshAdapter.StartedArgs.ShouldContain("--session-id");
+            freshAdapter.StartedArgs.ShouldContain(first.PersistentSessionId);
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+
+            await using var verify = CreateContext();
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id.ToString() == first.PersistentSessionId);
+            session.Status.ShouldBe(SessionStatus.Running);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_interactive_with_fresh_request_starts_a_new_session()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var freshAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, freshAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Fresh Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldNotBeNull();
+            second.PersistentSessionId.ShouldNotBe(first.PersistentSessionId);
+            freshAdapter.StartedArgs.ShouldContain("--session-id");
+            freshAdapter.StartedArgs.ShouldContain(second.PersistentSessionId);
+            freshAdapter.StartedArgs.ShouldNotContain("--resume");
+
+            await using var verify = CreateContext();
+            var sessionCount = await verify.AgentSessions.CountAsync(s => s.Cwd == workspace);
+            sessionCount.ShouldBe(2);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
+    {
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id.ToString() == sessionId);
+        session.Status = status;
+        session.EndedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static Harness BuildHarness(string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters)
+    private static Harness BuildHarness(
+        string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters, string defaultKind = "Raw")
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -185,7 +336,7 @@ public class AgentControlServiceIntegrationTests
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
-            Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = "fake" } }
+            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = "fake" } }
         }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
@@ -279,6 +430,12 @@ public class AgentControlServiceIntegrationTests
             .ToListAsync();
         if (projectIds.Count == 0)
         {
+            // Interactive-only tests have no project: clean their agents and cardless sessions directly.
+            await db.Agents
+                .Where(a => a.WorkingDirectory.StartsWith(tempRoot))
+                .ExecuteUpdateAsync(updates => updates.SetProperty(a => a.PersistentSessionId, (string?)null));
+            await db.AgentSessions.Where(s => s.CardId == null && s.Cwd.StartsWith(tempRoot)).ExecuteDeleteAsync();
+            await db.Agents.Where(a => a.WorkingDirectory.StartsWith(tempRoot)).ExecuteDeleteAsync();
             await db.WorkflowTemplates.Where(t => workflowTemplateIds.Contains(t.Id)).ExecuteDeleteAsync();
             return;
         }
@@ -341,6 +498,8 @@ public class AgentControlServiceIntegrationTests
         await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.RunAttempts.Where(a => attemptIds.Contains(a.Id)).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
+        // Cardless interactive sessions are keyed only by their Cwd inside the temp root.
+        await db.AgentSessions.Where(s => s.CardId == null && s.Cwd.StartsWith(tempRoot)).ExecuteDeleteAsync();
         await db.Worktrees.Where(w => worktreeIds.Contains(w.Id)).ExecuteDeleteAsync();
         await db.Cards.Where(c => cardIds.Contains(c.Id)).ExecuteDeleteAsync();
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync();

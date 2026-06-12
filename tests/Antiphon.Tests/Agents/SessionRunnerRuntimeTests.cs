@@ -57,6 +57,56 @@ public class SessionRunnerRuntimeTests
         }
     }
 
+    [Test]
+    public async Task Session_id_can_be_relaunched_after_exit_but_not_while_running()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-relaunch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(tempRoot, "logs")
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        var sessionId = Guid.NewGuid();
+        RunnerLaunchRequest Request() => new(
+            sessionId,
+            Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            new Dictionary<string, string>(),
+            tempRoot,
+            120,
+            30);
+
+        try
+        {
+            var first = await runtime.StartAsync(Request(), CancellationToken.None);
+            first.Status.ShouldBe("Running");
+
+            // A live session keeps its id reserved.
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                runtime.StartAsync(Request(), CancellationToken.None));
+
+            (await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None))
+                .Status.ShouldBe("Exited");
+
+            // After exit the same id is relaunchable (claude --resume reuses the original id).
+            var second = await runtime.StartAsync(Request(), CancellationToken.None);
+            second.SessionId.ShouldBe(sessionId);
+            second.Status.ShouldBe("Running");
+
+            await runtime.SendInputAsync(sessionId, "echo RELAUNCH_OK\r", CancellationToken.None);
+            await WaitUntilAsync(() =>
+                runtime.GetBuffer(sessionId).Buffer.Contains("RELAUNCH_OK", StringComparison.OrdinalIgnoreCase));
+
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);

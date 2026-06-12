@@ -91,6 +91,8 @@ export interface AssignAgentCardRequest {
 
 export interface StartAgentRequest {
   remoteControl?: boolean
+  /** Force a brand-new conversation. By default an interactive start resumes the agent's previous Claude session. */
+  fresh?: boolean
 }
 
 export const agentKeys = {

@@ -27,9 +27,9 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
   const liveSession = source.liveSession
   const hasCard = Boolean(source.currentCardId) || source.queueLength > 0
 
-  const handleStart = () => {
+  const handleStart = (fresh = false) => {
     startAgent.mutate(
-      { remoteControl },
+      { remoteControl, fresh },
       {
         onError: (error) =>
           notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Could not start the agent') }),
@@ -79,14 +79,25 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
           </Text>
           {!hasCard && (
             <Text size="sm" c="dimmed">
-              Nothing is queued, so this starts a human-driven terminal you can type into directly.
+              Nothing is queued, so this starts a human-driven terminal you can type into directly. It
+              resumes the agent&apos;s previous Claude session when one exists — use &quot;Start fresh&quot;
+              for a clean conversation.
             </Text>
           )}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>
               Cancel
             </Button>
-            <Button leftSection={<TbPlayerPlay size={16} />} loading={startAgent.isPending} onClick={handleStart}>
+            {!hasCard && (
+              <Button variant="default" loading={startAgent.isPending} onClick={() => handleStart(true)}>
+                Start fresh
+              </Button>
+            )}
+            <Button
+              leftSection={<TbPlayerPlay size={16} />}
+              loading={startAgent.isPending}
+              onClick={() => handleStart()}
+            >
               Start agent
             </Button>
           </Group>

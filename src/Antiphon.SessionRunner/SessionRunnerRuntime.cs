@@ -36,8 +36,19 @@ public sealed class SessionRunnerRuntime
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger);
         if (!_sessions.TryAdd(request.SessionId, session))
         {
-            await session.DisposeAsync();
-            throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
+            // A session id can be relaunched once its process has exited (claude --resume reuses
+            // the original id); only a live session blocks the id.
+            if (_sessions.TryGetValue(request.SessionId, out var existing)
+                && existing.HasExited
+                && _sessions.TryUpdate(request.SessionId, session, existing))
+            {
+                await existing.DisposeAsync();
+            }
+            else
+            {
+                await session.DisposeAsync();
+                throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
+            }
         }
 
         try
@@ -154,6 +165,15 @@ public sealed class SessionRunnerRuntime
             }
 
             _ = ObserveExitAsync();
+        }
+
+        public bool HasExited
+        {
+            get
+            {
+                lock (_gate)
+                    return _status == "Exited";
+            }
         }
 
         public RunnerSessionDto ToDto()

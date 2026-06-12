@@ -78,7 +78,7 @@ public sealed class AgentControlService
         }
         else
         {
-            sessionId = await StartInteractiveSessionAsync(agent, remoteControlName, ct);
+            sessionId = await StartInteractiveSessionAsync(agent, remoteControlName, request.Fresh, ct);
             agent.CurrentCardId = null;
         }
 
@@ -93,7 +93,10 @@ public sealed class AgentControlService
 
     // Pre-creates a cardless session row (Starting) in the agent's working directory and hands the
     // actual process launch to the background queue, mirroring how card spawns return immediately.
-    private async Task<Guid> StartInteractiveSessionAsync(Agent agent, string? remoteControlName, CancellationToken ct)
+    // By default the agent's previous Claude session is resumed (same id, `claude --resume`) so the
+    // terminal picks up where it left off; `fresh` forces a brand-new conversation.
+    private async Task<Guid> StartInteractiveSessionAsync(
+        Agent agent, string? remoteControlName, bool fresh, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
             throw new ConflictException($"Agent '{agent.Name}' has no working directory to start a session in.");
@@ -108,6 +111,27 @@ public sealed class AgentControlService
 
         var definitionName = _agentRegistry.Settings.DefaultDefinition;
         var spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30));
+
+        if (!fresh)
+        {
+            var previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, ct);
+            if (previous is not null)
+            {
+                var resumeNow = UtcNow();
+                previous.DefinitionName = definitionName;
+                previous.Status = SessionStatus.Starting;
+                previous.StartedAt = resumeNow;
+                previous.LastSeenAt = resumeNow;
+                previous.EndedAt = null;
+                previous.ExitCode = null;
+                previous.FailureReason = null;
+                await _db.SaveChangesAsync(ct);
+
+                _launchQueue.EnqueueInteractiveSession(
+                    previous.Id, agent.Id, spec, remoteControlName, resume: true);
+                return previous.Id;
+            }
+        }
 
         var now = UtcNow();
         var session = new AgentSession
@@ -130,6 +154,31 @@ public sealed class AgentControlService
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName);
         return session.Id;
+    }
+
+    // The agent's last interactive session is resumable when it is the same Claude-kind definition,
+    // ended (Stopped/Failed), and ran in the same working directory — Claude scopes its transcripts
+    // per directory, so resuming an id from a different cwd would fail. Only Claude Code has a
+    // resumable conversation; Codex/Raw always start fresh.
+    private async Task<AgentSession?> FindResumableSessionAsync(
+        Agent agent, AgentKind kind, string cwd, CancellationToken ct)
+    {
+        if (kind != AgentKind.ClaudeCode || !Guid.TryParse(agent.PersistentSessionId, out var previousId))
+            return null;
+
+        var previous = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == previousId, ct);
+        if (previous is null
+            || previous.CardId is not null
+            || previous.AgentKind != AgentKind.ClaudeCode
+            || previous.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
+            || !string.Equals(
+                Path.GetFullPath(previous.Cwd), cwd,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return previous;
     }
 
     /// <summary>Stops the agent's persistent session (if live) and marks the agent stopped.</summary>

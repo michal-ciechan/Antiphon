@@ -239,22 +239,67 @@ public sealed class AgentSessionService
     /// Unlike <see cref="StartAsync"/> there is no card, worktree, workflow or run attempt: the agent
     /// process is spawned in the session's Cwd and left Running for the user to drive via the web
     /// terminal. No work prompt is sent (optionally the remote-control commands are, if requested).
+    /// With <paramref name="resume"/> the agent's previous Claude conversation (same session id) is
+    /// resumed; if Claude reports the conversation no longer exists, a fresh conversation is started
+    /// under the same id so the terminal still opens.
     /// </summary>
     public async Task LaunchInteractiveAsync(
         Guid sessionId,
         Guid agentId,
         AgentLaunchSpec launchSpec,
         string? remoteControlName,
+        bool resume,
         CancellationToken ct)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
 
+        try
+        {
+            try
+            {
+                await LaunchInteractiveProcessAsync(
+                    session, agentId, launchSpec, remoteControlName,
+                    resume ? AgentSessionResumeMode.Resume : null, ct);
+            }
+            catch (ClaudeSessionNotFoundException)
+            {
+                _logger.LogInformation(
+                    "Claude conversation for session {SessionId} was not found; starting fresh with the same id",
+                    sessionId);
+                await LaunchInteractiveProcessAsync(
+                    session, agentId, launchSpec, remoteControlName, resumeMode: null, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
+            session.Status = SessionStatus.Failed;
+            session.FailureReason = ex.Message;
+            session.EndedAt = UtcNow();
+            session.LastSeenAt = session.EndedAt.Value;
+            await _db.SaveChangesAsync(CancellationToken.None);
+            // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
+            // to offering a fresh start instead of a dead terminal.
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
+
+            throw;
+        }
+    }
+
+    private async Task LaunchInteractiveProcessAsync(
+        AgentSession session,
+        Guid agentId,
+        AgentLaunchSpec launchSpec,
+        string? remoteControlName,
+        AgentSessionResumeMode? resumeMode,
+        CancellationToken ct)
+    {
         IAgentProtocolAdapter? adapter = null;
         try
         {
             adapter = _adapterFactory.Create(session.AgentKind);
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, session.Cwd, resumeMode: null);
+            var spec = BuildRuntimeLaunchSpec(launchSpec, session, session.Cwd, resumeMode);
             await adapter.StartAsync(spec, ct);
 
             await WaitForReadyOrThrowAsync(adapter, ct);
@@ -276,21 +321,22 @@ public sealed class AgentSessionService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
-            session.Status = SessionStatus.Failed;
-            session.FailureReason = ex.Message;
-            session.EndedAt = UtcNow();
-            session.LastSeenAt = session.EndedAt.Value;
-            await _db.SaveChangesAsync(CancellationToken.None);
-            // Let the UI refetch: the now-Failed session is no longer "live", so the agent card returns
-            // to offering a fresh start instead of a dead terminal.
-            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), CancellationToken.None);
-
+            var sessionNotFound = resumeMode == AgentSessionResumeMode.Resume
+                && IsClaudeSessionNotFound(adapter, ex);
             if (adapter is not null)
                 await adapter.DisposeAsync();
 
+            if (sessionNotFound)
+                throw new ClaudeSessionNotFoundException();
+
             throw;
         }
+    }
+
+    // Internal control-flow marker: a Claude --resume launch failed because the conversation is gone.
+    private sealed class ClaudeSessionNotFoundException : Exception
+    {
+        public ClaudeSessionNotFoundException() : base(ClaudeSessionNotFoundFailureReason) { }
     }
 
     public async Task KillAsync(Guid sessionId, CancellationToken ct)
