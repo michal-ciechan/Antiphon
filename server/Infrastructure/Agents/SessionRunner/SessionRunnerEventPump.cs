@@ -40,6 +40,8 @@ public sealed class SessionRunnerEventPump : BackgroundService
                         await runtime.ObserveOutputAsync(evt.Output.SessionId, evt.Output.Sequence, evt.Output.Text, stoppingToken);
                     else if (evt.Exited is not null)
                         await runtime.ObserveExitAsync(evt.Exited.SessionId, evt.Exited.ExitCode, evt.Exited.ExitReason, stoppingToken);
+                    else if (evt.Transcript is not null)
+                        await runtime.ObserveTranscriptAsync(evt.Transcript, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

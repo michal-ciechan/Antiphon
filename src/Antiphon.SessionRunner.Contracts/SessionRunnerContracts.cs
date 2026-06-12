@@ -8,7 +8,10 @@ public sealed record RunnerLaunchRequest(
     string Cwd,
     int Cols,
     int Rows,
-    int MemoryLimitMb = 0);
+    int MemoryLimitMb = 0,
+    // When true the runner tails the agent's Claude Code JSONL session transcript and emits
+    // structured SessionTranscript events. Only meaningful for ClaudeCode agents.
+    bool TranscriptEnabled = false);
 
 public sealed record RunnerInputRequest(string Input);
 
@@ -51,6 +54,44 @@ public sealed record RunnerSessionExitedEvent(
     string ExitReason,
     long LastSequence);
 
+/// <summary>
+/// One normalized entry parsed from the agent's Claude Code JSONL session transcript.
+/// <see cref="Sequence"/> is monotonic per session in file order (stable across re-tails of the
+/// append-only file), so consumers can order and de-duplicate on (SessionId, Sequence).
+/// </summary>
+public sealed record RunnerTranscriptEvent(
+    Guid SessionId,
+    long Sequence,
+    string Kind,
+    string? Uuid,
+    string? ParentUuid,
+    DateTimeOffset? Timestamp,
+    string? Role,
+    string? Text,
+    string? ToolName,
+    string? ToolInput,
+    string? ToolUseId,
+    bool? ToolIsError,
+    string? StopReason);
+
+/// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
+public sealed record RunnerTranscriptDto(
+    Guid SessionId,
+    IReadOnlyList<RunnerTranscriptEvent> Entries,
+    long LastSequence);
+
+/// <summary>Normalized transcript entry kinds (see <see cref="RunnerTranscriptEvent.Kind"/>).</summary>
+public static class TranscriptKinds
+{
+    public const string UserPrompt = "UserPrompt";
+    public const string AssistantText = "AssistantText";
+    public const string Thinking = "Thinking";
+    public const string ToolCall = "ToolCall";
+    public const string ToolResult = "ToolResult";
+    public const string TurnTitle = "TurnTitle";
+    public const string TurnEnd = "TurnEnd";
+}
+
 public static class SessionRunnerEventNames
 {
     public const string SessionStarted = "SessionStarted";
@@ -58,4 +99,5 @@ public static class SessionRunnerEventNames
     public const string SessionExited = "SessionExited";
     public const string SessionError = "SessionError";
     public const string SessionHeartbeat = "SessionHeartbeat";
+    public const string SessionTranscript = "SessionTranscript";
 }

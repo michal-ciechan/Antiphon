@@ -1,10 +1,11 @@
-import { Button, Group, Modal, Stack, Text } from '@mantine/core'
+import { Button, Group, Modal, Stack, Tabs, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { TbPlayerPlay, TbTerminal2 } from 'react-icons/tb'
+import { TbListDetails, TbPlayerPlay, TbTerminal2 } from 'react-icons/tb'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { SessionTerminal } from '../board/SessionTerminal'
+import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 
 interface AgentCliModalProps {
   agent: AgentSummaryDto
@@ -51,7 +52,22 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
       }
     >
       {liveSession ? (
-        <SessionTerminal session={liveSession} />
+        <Tabs defaultValue="terminal" keepMounted={false}>
+          <Tabs.List mb="sm">
+            <Tabs.Tab value="terminal" leftSection={<TbTerminal2 size={14} />}>
+              Terminal
+            </Tabs.Tab>
+            <Tabs.Tab value="transcript" leftSection={<TbListDetails size={14} />}>
+              Transcript
+            </Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="terminal">
+            <SessionTerminal session={liveSession} />
+          </Tabs.Panel>
+          <Tabs.Panel value="transcript">
+            <SessionTranscriptPanel sessionId={liveSession.id} />
+          </Tabs.Panel>
+        </Tabs>
       ) : (
         <Stack gap="md" py="sm">
           <Text>

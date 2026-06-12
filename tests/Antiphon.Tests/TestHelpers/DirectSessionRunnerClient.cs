@@ -72,6 +72,16 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             snapshot.StartedAt));
     }
 
+    public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var transcript = _runtime.GetTranscript(sessionId);
+        return Task.FromResult(new SessionRunnerTranscriptDto(
+            transcript.SessionId,
+            transcript.Entries.Select(MapTranscript).ToList(),
+            transcript.LastSequence));
+    }
+
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _runtime.SendInputAsync(sessionId, input, ct);
 
@@ -141,8 +151,21 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
                 : new SessionRunnerEvent(eventName, started.SessionId);
         }
 
+        if (eventName == SessionRunnerEventNames.SessionTranscript)
+        {
+            var entry = JsonSerializer.Deserialize<RunnerTranscriptEvent>(json, JsonOptions);
+            return entry is null
+                ? null
+                : new SessionRunnerEvent(eventName, entry.SessionId, Transcript: MapTranscript(entry));
+        }
+
         return null;
     }
+
+    private static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
+        new(
+            e.SessionId, e.Sequence, e.Kind, e.Uuid, e.ParentUuid, e.Timestamp,
+            e.Role, e.Text, e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

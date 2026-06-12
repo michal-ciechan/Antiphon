@@ -8,6 +8,45 @@ export interface AgentSessionBufferDto {
   lastSequence: number
 }
 
+export type TranscriptKind =
+  | 'UserPrompt'
+  | 'AssistantText'
+  | 'Thinking'
+  | 'ToolCall'
+  | 'ToolResult'
+  | 'TurnTitle'
+  | 'TurnEnd'
+
+export interface TranscriptEntryDto {
+  sequence: number
+  kind: TranscriptKind | string
+  uuid: string | null
+  parentUuid: string | null
+  timestamp: string | null
+  role: string | null
+  text: string | null
+  toolName: string | null
+  toolInput: string | null
+  toolUseId: string | null
+  toolIsError: boolean | null
+  stopReason: string | null
+}
+
+export interface SessionTranscriptDto {
+  sessionId: string
+  entries: TranscriptEntryDto[]
+  lastSequence: number
+}
+
+/** Live SignalR `SessionTranscript` payload — a transcript entry plus its session id. */
+export interface SessionTranscriptPayload extends TranscriptEntryDto {
+  sessionId: string
+}
+
+export async function getSessionTranscript(sessionId: string, since = 0) {
+  return apiGet<SessionTranscriptDto>(`/sessions/${sessionId}/transcript?since=${since}`)
+}
+
 export interface AgentSessionResumeResult {
   sessionId: string
   cardId: string

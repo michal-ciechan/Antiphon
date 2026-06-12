@@ -132,6 +132,111 @@ public sealed class AgentSessionRuntime
             ct);
     }
 
+    /// <summary>Relays a structured transcript entry to the session's SignalR group and persists it (idempotently).</summary>
+    public async Task ObserveTranscriptAsync(SessionRunnerTranscriptEvent entry, CancellationToken ct)
+    {
+        await _eventBus.PublishToGroupAsync(
+            AgentSessionGroups.Session(entry.SessionId),
+            "SessionTranscript",
+            ToTranscriptPayload(entry),
+            ct);
+        await PersistTranscriptAsync(entry.SessionId, new[] { entry });
+    }
+
+    /// <summary>
+    /// Best-effort catch-up: pull the full transcript snapshot from the live runner and upsert it, so the
+    /// persisted history stays complete even if some live SessionTranscript events were missed during a
+    /// stream disconnect. No-op (swallowed) when the session is not live in the runner.
+    /// </summary>
+    public async Task SyncTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+            await PersistTranscriptAsync(sessionId, snapshot.Entries);
+        }
+        catch (Exception ex)
+        {
+            // Session is not live in the runner (or runner unavailable) — the DB still holds whatever streamed.
+            _logger.LogDebug(ex, "Transcript sync skipped for session {SessionId}", sessionId);
+        }
+    }
+
+    private async Task PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    {
+        if (entries.Count == 0)
+            return;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
+            if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId))
+                return;
+
+            var incoming = entries.Select(e => e.Sequence).ToHashSet();
+            var seen = (await db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == sessionId && incoming.Contains(t.Sequence))
+                    .Select(t => t.Sequence)
+                    .ToListAsync())
+                .ToHashSet();
+
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var added = false;
+            foreach (var e in entries)
+            {
+                if (!seen.Add(e.Sequence))
+                    continue; // already persisted, or a duplicate within this batch
+
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = e.Sequence,
+                    Kind = e.Kind,
+                    Uuid = e.Uuid,
+                    ParentUuid = e.ParentUuid,
+                    Timestamp = e.Timestamp?.UtcDateTime,
+                    Role = e.Role,
+                    Text = e.Text,
+                    ToolName = e.ToolName,
+                    ToolInput = e.ToolInput,
+                    ToolUseId = e.ToolUseId,
+                    ToolIsError = e.ToolIsError,
+                    StopReason = e.StopReason,
+                    CreatedAt = now,
+                });
+                added = true;
+            }
+
+            if (added)
+                await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
+        }
+    }
+
+    private static object ToTranscriptPayload(SessionRunnerTranscriptEvent e) => new
+    {
+        sessionId = e.SessionId,
+        sequence = e.Sequence,
+        kind = e.Kind,
+        uuid = e.Uuid,
+        parentUuid = e.ParentUuid,
+        timestamp = e.Timestamp,
+        role = e.Role,
+        text = e.Text,
+        toolName = e.ToolName,
+        toolInput = e.ToolInput,
+        toolUseId = e.ToolUseId,
+        toolIsError = e.ToolIsError,
+        stopReason = e.StopReason,
+    };
+
     public async Task<bool> WaitForFirstDeltaAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
     {
         var firstDelta = _firstDeltas.GetOrAdd(sessionId, _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -662,6 +767,9 @@ public sealed class AgentSessionRuntime
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotFoundException("AgentSessionRuntime", sessionId);
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
 
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
             Task.CompletedTask;

@@ -34,7 +34,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             spec.Cwd,
             spec.Cols,
             spec.Rows,
-            spec.MemoryLimitMb);
+            spec.MemoryLimitMb,
+            // Only Claude Code writes the JSONL transcript we tail.
+            TranscriptEnabled: spec.Kind == AgentKind.ClaudeCode);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         response.EnsureSuccessStatusCode();
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
@@ -69,6 +71,16 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             snapshot.RenderedScreen,
             snapshot.LastSequence,
             snapshot.StartedAt);
+    }
+
+    public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        var transcript = await _httpClient.GetFromJsonAsync<RunnerTranscriptDto>($"sessions/{sessionId:D}/transcript", JsonOptions, ct)
+            ?? throw new InvalidOperationException("Session runner returned an empty transcript response.");
+        return new SessionRunnerTranscriptDto(
+            transcript.SessionId,
+            transcript.Entries.Select(MapTranscript).ToList(),
+            transcript.LastSequence);
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
@@ -188,8 +200,32 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 : new SessionRunnerEvent(eventName, started.SessionId);
         }
 
+        if (eventName == SessionRunnerEventNames.SessionTranscript)
+        {
+            var entry = JsonSerializer.Deserialize<RunnerTranscriptEvent>(json, JsonOptions);
+            return entry is null
+                ? null
+                : new SessionRunnerEvent(eventName, entry.SessionId, Transcript: MapTranscript(entry));
+        }
+
         return null;
     }
+
+    private static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
+        new(
+            e.SessionId,
+            e.Sequence,
+            e.Kind,
+            e.Uuid,
+            e.ParentUuid,
+            e.Timestamp,
+            e.Role,
+            e.Text,
+            e.ToolName,
+            e.ToolInput,
+            e.ToolUseId,
+            e.ToolIsError,
+            e.StopReason);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

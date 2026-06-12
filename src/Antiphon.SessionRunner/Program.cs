@@ -30,6 +30,9 @@ app.MapGet("/sessions/{id:guid}/buffer", (Guid id, SessionRunnerRuntime runtime)
 app.MapGet("/sessions/{id:guid}/snapshot", (Guid id, SessionRunnerRuntime runtime) =>
     Results.Ok(runtime.GetSnapshot(id)));
 
+app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
+    Results.Ok(runtime.GetTranscript(id)));
+
 app.MapPost("/sessions/{id:guid}/input", async (
     Guid id,
     RunnerInputRequest request,

@@ -231,6 +231,9 @@ public class AgentSessionRuntimeTests
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
+
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
             throw new NotSupportedException();
 

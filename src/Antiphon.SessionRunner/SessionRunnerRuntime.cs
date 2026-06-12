@@ -62,6 +62,8 @@ public sealed class SessionRunnerRuntime
 
     public RunnerSnapshotDto GetSnapshot(Guid sessionId) => GetSession(sessionId).GetSnapshot();
 
+    public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
+
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         string.IsNullOrEmpty(input)
             ? Task.CompletedTask
@@ -105,6 +107,7 @@ public sealed class SessionRunnerRuntime
         private readonly ILogger _logger;
         private readonly PtyAgentRunner _runner = new();
         private readonly object _gate = new();
+        private TranscriptTailer? _tailer;
         private long _lastSequence;
         private string _status = "Starting";
         private int? _exitCode;
@@ -143,6 +146,12 @@ public sealed class SessionRunnerRuntime
             _events.Publish(
                 SessionRunnerEventNames.SessionStarted,
                 new RunnerSessionStartedEvent(_sessionId, _runner.Pid, _runner.StartedAt));
+
+            if (request.TranscriptEnabled)
+            {
+                _tailer = new TranscriptTailer(_sessionId, request.Cwd, _events, _logger);
+                _tailer.Start();
+            }
 
             _ = ObserveExitAsync();
         }
@@ -183,6 +192,9 @@ public sealed class SessionRunnerRuntime
             }
         }
 
+        public RunnerTranscriptDto GetTranscript() =>
+            _tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0);
+
         public Task WriteAsync(string input, CancellationToken ct) => _runner.WriteAsync(input, ct);
 
         public void ClearLiveBuffer() => _runner.ClearLiveBuffer();
@@ -198,6 +210,8 @@ public sealed class SessionRunnerRuntime
         public async ValueTask DisposeAsync()
         {
             _runner.OnData -= OnData;
+            if (_tailer is not null)
+                await _tailer.DisposeAsync();
             await _runner.DisposeAsync();
         }
 

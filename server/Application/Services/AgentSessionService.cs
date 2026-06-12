@@ -490,6 +490,28 @@ public sealed class AgentSessionService
         return new AgentSessionBufferDto(sessionId, snapshot.Buffer, snapshot.LastSequence);
     }
 
+    public async Task<SessionTranscriptDto> GetTranscriptAsync(Guid sessionId, long since, CancellationToken ct)
+    {
+        var exists = await _db.AgentSessions.AnyAsync(s => s.Id == sessionId, ct);
+        if (!exists)
+            throw new NotFoundException(nameof(AgentSession), sessionId);
+
+        // Best-effort: fill any gaps from the live runner (no-op if the session isn't live) before reading.
+        await _runtime.SyncTranscriptAsync(sessionId, ct);
+
+        var entries = await _db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Sequence > since)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TranscriptEntryDto(
+                t.Sequence, t.Kind, t.Uuid, t.ParentUuid, t.Timestamp, t.Role, t.Text,
+                t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason))
+            .ToListAsync(ct);
+
+        var last = entries.Count > 0 ? entries[^1].Sequence : since;
+        return new SessionTranscriptDto(sessionId, entries, last);
+    }
+
     private async Task<Card> LoadCardAsync(Guid cardId, CancellationToken ct)
     {
         return await _db.Cards

@@ -34,8 +34,29 @@ public sealed record SessionRunnerExitedEvent(
     AgentExitReason ExitReason,
     long LastSequence);
 
+public sealed record SessionRunnerTranscriptEvent(
+    Guid SessionId,
+    long Sequence,
+    string Kind,
+    string? Uuid,
+    string? ParentUuid,
+    DateTimeOffset? Timestamp,
+    string? Role,
+    string? Text,
+    string? ToolName,
+    string? ToolInput,
+    string? ToolUseId,
+    bool? ToolIsError,
+    string? StopReason);
+
+public sealed record SessionRunnerTranscriptDto(
+    Guid SessionId,
+    IReadOnlyList<SessionRunnerTranscriptEvent> Entries,
+    long LastSequence);
+
 public sealed record SessionRunnerEvent(
     string EventName,
     Guid SessionId,
     SessionRunnerOutputEvent? Output = null,
-    SessionRunnerExitedEvent? Exited = null);
+    SessionRunnerExitedEvent? Exited = null,
+    SessionRunnerTranscriptEvent? Transcript = null);

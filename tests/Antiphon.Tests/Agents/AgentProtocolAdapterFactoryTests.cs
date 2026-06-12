@@ -73,6 +73,9 @@ public class AgentProtocolAdapterFactoryTests
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
             throw new NotSupportedException();
 

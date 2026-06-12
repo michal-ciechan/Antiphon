@@ -45,6 +45,15 @@ public static class SessionEndpoints
             return Results.Ok(await service.GetBufferAsync(id, cancellationToken));
         });
 
+        sessions.MapGet("/{id:guid}/transcript", async (
+            Guid id,
+            long? since,
+            AgentSessionService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetTranscriptAsync(id, since ?? 0, cancellationToken));
+        });
+
         sessions.MapPost("/{id:guid}/input", async (
             Guid id,
             SendSessionInputRequest request,

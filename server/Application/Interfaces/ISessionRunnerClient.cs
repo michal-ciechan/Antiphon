@@ -9,6 +9,7 @@ public interface ISessionRunnerClient
     Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct);
+    Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct);
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
     Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct);
     Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct);

@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<CardWorkflowRun> CardWorkflowRuns => Set<CardWorkflowRun>();
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
+    public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
@@ -614,6 +615,32 @@ public class AppDbContext : DbContext
                 .WithMany(w => w.AgentSessions)
                 .HasForeignKey(s => s.WorktreeId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<TranscriptEntry>(entity =>
+        {
+            entity.ToTable("TranscriptEntries");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.AgentSessionId).IsRequired();
+            entity.Property(t => t.Sequence).IsRequired();
+            entity.Property(t => t.Kind).IsRequired().HasMaxLength(40);
+            entity.Property(t => t.Uuid).HasMaxLength(64);
+            entity.Property(t => t.ParentUuid).HasMaxLength(64);
+            entity.Property(t => t.Role).HasMaxLength(40);
+            entity.Property(t => t.ToolName).HasMaxLength(200);
+            entity.Property(t => t.ToolUseId).HasMaxLength(120);
+            entity.Property(t => t.StopReason).HasMaxLength(60);
+            entity.Property(t => t.CreatedAt).IsRequired();
+
+            // (AgentSessionId, Sequence) is the natural idempotency key for ingestion.
+            entity.HasIndex(t => new { t.AgentSessionId, t.Sequence })
+                .IsUnique()
+                .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Sequence");
+
+            entity.HasOne(t => t.AgentSession)
+                .WithMany()
+                .HasForeignKey(t => t.AgentSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RunAttempt>(entity =>
