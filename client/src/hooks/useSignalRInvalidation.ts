@@ -101,6 +101,15 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
   },
   {
+    event: 'SessionFinished',
+    getKeys: (p) => [
+      ['agents', 'list'],
+      ...(p.agentId ? [['agents', 'detail', p.agentId]] : []),
+      ['boards'],
+      ...(p.boardId ? [['boards', p.boardId]] : []),
+    ],
+  },
+  {
     event: 'OrchestratorTick',
     getKeys: () => [['orchestrator', 'state']],
   },

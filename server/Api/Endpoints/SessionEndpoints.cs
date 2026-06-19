@@ -64,6 +64,41 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
 
+        sessions.MapGet("/{id:guid}/messages", async (
+            Guid id,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.GetQueueAsync(id, cancellationToken));
+        });
+
+        sessions.MapPost("/{id:guid}/messages", async (
+            Guid id,
+            EnqueueMessageRequest request,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.EnqueueAsync(id, request.Body, request.Mode, cancellationToken));
+        });
+
+        sessions.MapDelete("/{id:guid}/messages/{messageId:guid}", async (
+            Guid id,
+            Guid messageId,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.CancelAsync(id, messageId, cancellationToken));
+        });
+
+        sessions.MapPost("/{id:guid}/messages/{messageId:guid}/send-now", async (
+            Guid id,
+            Guid messageId,
+            SessionMessageQueueService queue,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await queue.SendNowAsync(id, messageId, cancellationToken));
+        });
+
         sessions.MapPost("/{id:guid}/resize", async (
             Guid id,
             ResizeSessionRequest request,

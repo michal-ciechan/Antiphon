@@ -162,6 +162,7 @@ try
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
+    builder.Services.AddSingleton<SessionMessageQueueService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();

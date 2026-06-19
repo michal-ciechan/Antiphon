@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { boardKeys } from './boards'
-import { apiGet, apiPost } from './client'
+import { apiDelete, apiGet, apiPost } from './client'
 
 export interface AgentSessionBufferDto {
   sessionId: string
@@ -45,6 +45,48 @@ export interface SessionTranscriptPayload extends TranscriptEntryDto {
 
 export async function getSessionTranscript(sessionId: string, since = 0) {
   return apiGet<SessionTranscriptDto>(`/sessions/${sessionId}/transcript?since=${since}`)
+}
+
+export type MessageSendMode = 'Now' | 'WhenIdle'
+
+export interface QueuedMessageDto {
+  id: string
+  sequence: number
+  body: string
+  status: string
+  createdAt: string
+}
+
+/** Pending messages for a session, plus whether the agent is currently working. */
+export interface SessionQueueDto {
+  sessionId: string
+  messages: QueuedMessageDto[]
+  working: boolean
+}
+
+/** Global SignalR `SessionFinished` payload — broadcast when an agent finishes with an empty queue. */
+export interface SessionFinishedPayload {
+  sessionId: string
+  cardId: string | null
+  boardId: string | null
+  agentId: string | null
+  label: string
+}
+
+export async function getSessionQueue(sessionId: string) {
+  return apiGet<SessionQueueDto>(`/sessions/${sessionId}/messages`)
+}
+
+export async function enqueueSessionMessage(sessionId: string, body: string, mode: MessageSendMode) {
+  return apiPost<SessionQueueDto>(`/sessions/${sessionId}/messages`, { body, mode })
+}
+
+export async function cancelQueuedMessage(sessionId: string, messageId: string) {
+  return apiDelete<SessionQueueDto>(`/sessions/${sessionId}/messages/${messageId}`)
+}
+
+export async function sendQueuedMessageNow(sessionId: string, messageId: string) {
+  return apiPost<SessionQueueDto>(`/sessions/${sessionId}/messages/${messageId}/send-now`, {})
 }
 
 export interface AgentSessionResumeResult {

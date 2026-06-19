@@ -1,10 +1,11 @@
 import { Button, Group, Modal, Stack, Tabs, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { TbListDetails, TbPlayerPlay, TbTerminal2 } from 'react-icons/tb'
+import { TbListDetails, TbPlayerPlay, TbSend, TbTerminal2 } from 'react-icons/tb'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { SessionTerminal } from '../board/SessionTerminal'
+import { SessionMessageQueue } from './SessionMessageQueue'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 
 interface AgentCliModalProps {
@@ -57,12 +58,18 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
             <Tabs.Tab value="terminal" leftSection={<TbTerminal2 size={14} />}>
               Terminal
             </Tabs.Tab>
+            <Tabs.Tab value="messages" leftSection={<TbSend size={14} />}>
+              Messages
+            </Tabs.Tab>
             <Tabs.Tab value="transcript" leftSection={<TbListDetails size={14} />}>
               Transcript
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="terminal">
             <SessionTerminal session={liveSession} />
+          </Tabs.Panel>
+          <Tabs.Panel value="messages">
+            <SessionMessageQueue sessionId={liveSession.id} />
           </Tabs.Panel>
           <Tabs.Panel value="transcript">
             <SessionTranscriptPanel sessionId={liveSession.id} />

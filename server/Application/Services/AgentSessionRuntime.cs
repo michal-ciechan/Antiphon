@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -141,6 +142,28 @@ public sealed class AgentSessionRuntime
             ToTranscriptPayload(entry),
             ct);
         await PersistTranscriptAsync(entry.SessionId, new[] { entry });
+
+        // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
+        // "wait until idle" message, or — when nothing is queued — to mark the session finished.
+        if (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
+            await FlushQueueOnIdleAsync(entry.SessionId, ct);
+    }
+
+    // Resolve the (singleton) queue service lazily from a scope to avoid a constructor cycle with this
+    // runtime, then let it deliver the next queued message or emit the finished signal.
+    private async Task FlushQueueOnIdleAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
+            if (queue is not null)
+                await queue.OnTurnEndAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to flush message queue on idle for session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>

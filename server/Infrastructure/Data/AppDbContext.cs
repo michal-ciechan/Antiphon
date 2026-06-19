@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
+    public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
@@ -640,6 +641,26 @@ public class AppDbContext : DbContext
             entity.HasOne(t => t.AgentSession)
                 .WithMany()
                 .HasForeignKey(t => t.AgentSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SessionQueuedMessage>(entity =>
+        {
+            entity.ToTable("SessionQueuedMessages");
+            entity.HasKey(m => m.Id);
+            entity.Property(m => m.AgentSessionId).IsRequired();
+            entity.Property(m => m.Body).IsRequired().HasColumnType("text");
+            entity.Property(m => m.Status).IsRequired();
+            entity.Property(m => m.Sequence).IsRequired();
+            entity.Property(m => m.CreatedAt).IsRequired();
+
+            // Pending messages for a session are flushed in FIFO order.
+            entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
+                .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_Status_Sequence");
+
+            entity.HasOne(m => m.AgentSession)
+                .WithMany()
+                .HasForeignKey(m => m.AgentSessionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
