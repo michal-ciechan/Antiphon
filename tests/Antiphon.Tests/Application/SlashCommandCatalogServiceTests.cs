@@ -159,6 +159,36 @@ public class SlashCommandCatalogServiceTests
     }
 
     [Test]
+    public async Task Slugifies_skill_folder_names_with_spaces_and_caps()
+    {
+        var fs = new MockFileSystem();
+        AddFile(fs, @"C:\proj\.claude\skills\Object Type Router\SKILL.md", "---\ndescription: Routes objects\n---\nx");
+        var service = Build(fs);
+
+        var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
+
+        result.ShouldContain(c => c.Name == "/object-type-router" && c.Source == "skill");
+        result.ShouldNotContain(c => c.Name.Contains(' ') || c.Name.Any(char.IsUpper));
+    }
+
+    [Test]
+    public async Task Enumerates_installed_plugin_skills_and_commands()
+    {
+        var fs = new MockFileSystem();
+        const string installPath = @"C:\Users\test\.claude\plugins\cache\mp\myplugin\1.0";
+        var manifest = "{\"plugins\":{\"myplugin@mp\":[{\"installPath\":\"" + installPath.Replace("\\", "\\\\") + "\"}]}}";
+        AddFile(fs, @"C:\Users\test\.claude\plugins\installed_plugins.json", manifest);
+        AddFile(fs, installPath + @"\skills\cool-skill\SKILL.md", "---\ndescription: A cool plugin skill\n---\nx");
+        AddFile(fs, installPath + @"\commands\do-thing.md", "---\ndescription: A plugin command\n---\nx");
+        var service = Build(fs);
+
+        var result = await service.GetForDirsAsync(UserDir, ProjectDir, CancellationToken.None);
+
+        result.ShouldContain(c => c.Name == "/cool-skill" && c.Source == "skill" && c.Scope == "plugin");
+        result.ShouldContain(c => c.Name == "/do-thing" && c.Source == "command" && c.Scope == "plugin");
+    }
+
+    [Test]
     public async Task Null_project_dir_skips_project_scope()
     {
         var fs = new MockFileSystem();
