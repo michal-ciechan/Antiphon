@@ -64,6 +64,14 @@ public static class SessionEndpoints
             return Results.NoContent();
         });
 
+        sessions.MapGet("/{id:guid}/commands", async (
+            Guid id,
+            SlashCommandCatalogService catalog,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await catalog.GetCommandsAsync(id, cancellationToken));
+        });
+
         sessions.MapGet("/{id:guid}/messages", async (
             Guid id,
             SessionMessageQueueService queue,

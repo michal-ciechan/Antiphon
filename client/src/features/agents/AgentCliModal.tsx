@@ -6,6 +6,7 @@ import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { SessionTerminal } from '../board/SessionTerminal'
 import { SessionMessageQueue } from './SessionMessageQueue'
+import { SmartComposer } from './SmartComposer'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 
 interface AgentCliModalProps {
@@ -66,7 +67,10 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="terminal">
-            <SessionTerminal session={liveSession} />
+            <Stack gap="xs">
+              <SessionTerminal session={liveSession} />
+              <SmartComposer sessionId={liveSession.id} variant="terminal" defaultMode="raw" />
+            </Stack>
           </Tabs.Panel>
           <Tabs.Panel value="messages">
             <SessionMessageQueue sessionId={liveSession.id} />

@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { boardKeys } from './boards'
 import { apiDelete, apiGet, apiPost } from './client'
 
@@ -75,6 +75,32 @@ export interface SessionFinishedPayload {
 
 export async function getSessionQueue(sessionId: string) {
   return apiGet<SessionQueueDto>(`/sessions/${sessionId}/messages`)
+}
+
+/** A slash-command/skill suggestion for the composer's `/` autocomplete. */
+export interface SlashCommandDto {
+  name: string
+  description: string
+  source: string
+  scope: string
+}
+
+export async function getSessionCommands(sessionId: string) {
+  return apiGet<SlashCommandDto[]>(`/sessions/${sessionId}/commands`)
+}
+
+/**
+ * Available slash-commands + skills for a session's `/` autocomplete. `staleTime` matches the
+ * server's catalog cache (~10s) so typing doesn't re-fetch; only enabled once the user types `/`.
+ */
+export function useSessionCommands(sessionId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['session', sessionId, 'commands'],
+    queryFn: () => getSessionCommands(sessionId),
+    enabled,
+    staleTime: 10_000,
+    gcTime: 60_000,
+  })
 }
 
 export async function enqueueSessionMessage(sessionId: string, body: string, mode: MessageSendMode) {

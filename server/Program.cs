@@ -157,6 +157,10 @@ try
     builder.Services.AddSingleton<DirectoryBrowseService>();
     // Expose the browse cache for test reset (shared WebApplicationFactory keeps it alive across tests).
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<DirectoryBrowseService>());
+    // Slash-command / skill autocomplete catalog (built-ins + ~/.claude + project .claude).
+    builder.Services.AddSingleton<IClaudeConfigDirProvider, ClaudeConfigDirProvider>();
+    builder.Services.AddSingleton<SlashCommandCatalogService>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<SlashCommandCatalogService>());
     builder.Services.AddSingleton<IWorktreeManager, WorktreeManager>();
     builder.Services.AddSingleton<IWorkspaceHookRunner, WorkspaceHookRunner>();
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();

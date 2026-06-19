@@ -1,28 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Group,
-  Paper,
-  SegmentedControl,
-  Stack,
-  Text,
-  Textarea,
-  Tooltip,
-} from '@mantine/core'
+import { ActionIcon, Badge, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
-import { TbSend, TbTrash, TbClock } from 'react-icons/tb'
+import { TbSend, TbTrash } from 'react-icons/tb'
 import {
   cancelQueuedMessage,
-  enqueueSessionMessage,
   getSessionQueue,
   sendQueuedMessageNow,
-  type MessageSendMode,
   type SessionQueueDto,
 } from '../../api/sessions'
 import { getApiErrorMessage } from '../../api/client'
+import { SmartComposer } from './SmartComposer'
 
 const HUB_URL = '/hubs/antiphon'
 
@@ -37,8 +25,6 @@ interface SessionMessageQueueProps {
  */
 export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
   const [queue, setQueue] = useState<SessionQueueDto>({ sessionId, messages: [], working: false })
-  const [body, setBody] = useState('')
-  const [mode, setMode] = useState<MessageSendMode>('WhenIdle')
   const [busy, setBusy] = useState(false)
   const queueRef = useRef(queue)
   queueRef.current = queue
@@ -107,13 +93,6 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
     }
   }
 
-  const submit = async () => {
-    const text = body.trim()
-    if (!text) return
-    await run(() => enqueueSessionMessage(sessionId, text, mode), 'Could not send the message')
-    setBody('')
-  }
-
   const { messages, working } = queue
   const statusBadge = working
     ? { color: 'yellow', label: 'Working…' }
@@ -132,48 +111,7 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
         </Text>
       </Group>
 
-      <Stack gap="xs">
-        <Textarea
-          placeholder="Message to the agent…"
-          autosize
-          minRows={2}
-          maxRows={6}
-          value={body}
-          onChange={(e) => setBody(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault()
-              void submit()
-            }
-          }}
-        />
-        <Group justify="space-between">
-          <SegmentedControl
-            size="xs"
-            value={mode}
-            onChange={(v) => setMode(v as MessageSendMode)}
-            data={[
-              { label: 'When idle', value: 'WhenIdle' },
-              { label: 'Send now', value: 'Now' },
-            ]}
-          />
-          <Button
-            size="xs"
-            leftSection={mode === 'Now' ? <TbSend size={14} /> : <TbClock size={14} />}
-            loading={busy}
-            disabled={!body.trim()}
-            onClick={() => void submit()}
-          >
-            {mode === 'Now' ? 'Send now' : 'Queue'}
-          </Button>
-        </Group>
-        <Text size="xs" c="dimmed">
-          {mode === 'Now'
-            ? 'Delivered immediately, even mid-task.'
-            : 'Held until the agent finishes its current turn, then delivered automatically.'}{' '}
-          Ctrl/⌘+Enter to send.
-        </Text>
-      </Stack>
+      <SmartComposer sessionId={sessionId} variant="messages" />
 
       {messages.length > 0 && (
         <Stack gap={6}>
