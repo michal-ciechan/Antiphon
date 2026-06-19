@@ -56,6 +56,13 @@ public sealed class AgentRegistry
                 env[k] = v;
         }
 
+        // Claude Code's background auto-updater fails ("Auto-update failed: claude.exe in use") and
+        // wedges the agent's TUI when another claude.exe holds the binary (e.g. the orchestrating
+        // session). DISABLE_AUTOUPDATER=1 stops the background check entirely (no network call, no
+        // "Auto-updating…" UI), so spawned Claude agents start clean. Config/options can still override.
+        if (kind == AgentKind.ClaudeCode && !env.ContainsKey("DISABLE_AUTOUPDATER"))
+            env["DISABLE_AUTOUPDATER"] = "1";
+
         var cwd = string.IsNullOrWhiteSpace(options.Cwd)
             ? Environment.CurrentDirectory
             : options.Cwd;

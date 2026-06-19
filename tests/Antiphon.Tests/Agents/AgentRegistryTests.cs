@@ -106,6 +106,37 @@ public class AgentRegistryTests
     }
 
     [Test]
+    public void Resolve_disables_claude_auto_updater_by_default()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions());
+
+        spec.Env["DISABLE_AUTOUPDATER"].ShouldBe("1");
+    }
+
+    [Test]
+    public void Resolve_does_not_set_auto_updater_env_for_non_claude_kinds()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("raw", new AgentLaunchOptions());
+
+        spec.Env.ContainsKey("DISABLE_AUTOUPDATER").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Resolve_lets_config_override_the_auto_updater_default()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions(
+            ExtraEnv: new Dictionary<string, string> { ["DISABLE_AUTOUPDATER"] = "0" }));
+
+        spec.Env["DISABLE_AUTOUPDATER"].ShouldBe("0");
+    }
+
+    [Test]
     public void Resolve_rejects_non_positive_dimensions()
     {
         var registry = BuildRegistry(WithClaudeAndRaw());
