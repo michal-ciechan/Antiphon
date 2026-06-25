@@ -43,7 +43,7 @@ change per instance:
 
 ```yaml
   messaging-redpanda:                                  # this instance's own Kafka
-    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    image: docker.redpanda.com/redpandadata/redpanda:latest   # see note below
     command: [redpanda, start, "--kafka-addr=internal://0.0.0.0:9092",
               "--advertise-kafka-addr=internal://messaging-redpanda:9092",
               "--mode=dev-container", "--smp=1"]
@@ -63,6 +63,11 @@ change per instance:
 Then `rpk topic create channels.inbound channels.outbound` once, and the consumers attach.
 A second instance (e.g. `antiphon_messaging_telegram_bot`) is the same block with a different
 token/username, its own Redpanda, and its own DB.
+
+> **⚠️ Redpanda version:** use a **current** Redpanda. The `Confluent.Kafka` 2.6.0 client uses
+> **Fetch API v12**; older brokers (e.g. `v24.2.7`) reject it — the *producer* still works but
+> *consumers* loop with `Disconnected … after 1ms in state UP` / broker-side
+> `Unsupported version 12 for fetch API`, so the inbox stays empty. `:latest` (v26.x) works.
 
 ## Build the image
 
