@@ -53,6 +53,9 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
 
     private string Url(string method) => $"{_settings.ApiBaseUrl}/bot{_settings.BotToken}/{method}";
 
+    private TimeSpan ErrorBackoff => TimeSpan.FromSeconds(Math.Max(0, _settings.ErrorBackoffSeconds));
+    private TimeSpan CapRetryAfter(int seconds) => TimeSpan.FromSeconds(Math.Clamp(seconds, 0, Math.Max(0, _settings.MaxRetryAfterSeconds)));
+
     public async IAsyncEnumerable<ChannelMessage> ReceiveAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // getUpdates returns 409 if a webhook is set — clear it first (idempotent).
@@ -61,10 +64,10 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         long offset = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
-            IReadOnlyList<ChannelMessage> batch;
+            PollOutcome outcome;
             try
             {
-                (batch, offset) = await FetchBatchAsync(offset, cancellationToken);
+                outcome = await FetchBatchAsync(offset, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -72,47 +75,86 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[telegram] getUpdates failed; retrying in 3s");
-                if (!await DelayQuietAsync(TimeSpan.FromSeconds(3), cancellationToken))
+                // Network/transport failure — back off so we don't hammer Telegram or spin the CPU.
+                _logger.LogWarning(ex, "[telegram] getUpdates failed; backing off {Backoff}s", ErrorBackoff.TotalSeconds);
+                if (!await DelayQuietAsync(ErrorBackoff, cancellationToken))
                     yield break;
                 continue;
             }
 
-            foreach (var message in batch)
+            offset = outcome.NextOffset;
+            foreach (var message in outcome.Messages)
                 yield return message;
+
+            // ok:false (409/401/429/...) returns a backoff so the loop paces itself instead of tight-looping.
+            if (outcome.Backoff is { } delay && delay > TimeSpan.Zero && !await DelayQuietAsync(delay, cancellationToken))
+                yield break;
         }
     }
 
-    private async Task<(IReadOnlyList<ChannelMessage> Messages, long NextOffset)> FetchBatchAsync(long offset, CancellationToken ct)
+    private async Task<PollOutcome> FetchBatchAsync(long offset, CancellationToken ct)
     {
         var url = $"{Url("getUpdates")}?timeout={_settings.LongPollTimeoutSeconds.ToString(CultureInfo.InvariantCulture)}&offset={offset.ToString(CultureInfo.InvariantCulture)}";
         using var resp = await _http.GetAsync(url, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
 
-        var messages = new List<ChannelMessage>();
-        var next = offset;
-
-        if (doc.RootElement.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False)
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(json); }
+        catch (JsonException)
         {
-            _logger.LogWarning("[telegram] getUpdates not ok: {Body}", json);
-            return (messages, next);
-        }
-        if (!doc.RootElement.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Array)
-            return (messages, next);
-
-        foreach (var update in result.EnumerateArray())
-        {
-            if (update.TryGetProperty("update_id", out var uid) && uid.TryGetInt64(out var id))
-                next = id + 1;
-
-            var message = TryNormalize(update);
-            if (message is not null)
-                messages.Add(message);
+            // e.g. a proxy 5xx HTML page — treat as transient and back off.
+            _logger.LogWarning("[telegram] getUpdates HTTP {Status} with non-JSON body; backing off {Backoff}s", (int)resp.StatusCode, ErrorBackoff.TotalSeconds);
+            return new PollOutcome([], offset, ErrorBackoff);
         }
 
-        return (messages, next);
+        using (doc)
+        {
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False)
+            {
+                var (code, desc, retryAfter) = ReadError(root);
+                var backoff = retryAfter is { } ra ? CapRetryAfter(ra) : ErrorBackoff;
+                if (code == 409)
+                    _logger.LogWarning("[telegram] getUpdates 409 Conflict — another instance is polling this bot token; backing off {Backoff}s. {Desc}", backoff.TotalSeconds, desc);
+                else
+                    _logger.LogWarning("[telegram] getUpdates not ok (code {Code}); backing off {Backoff}s. {Desc}", code, backoff.TotalSeconds, desc);
+                return new PollOutcome([], offset, backoff);
+            }
+
+            if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Array)
+                return new PollOutcome([], offset, null);
+
+            var messages = new List<ChannelMessage>();
+            var next = offset;
+            foreach (var update in result.EnumerateArray())
+            {
+                if (update.TryGetProperty("update_id", out var uid) && uid.TryGetInt64(out var id))
+                    next = id + 1;
+
+                var message = TryNormalize(update);
+                if (message is not null)
+                    messages.Add(message);
+            }
+
+            return new PollOutcome(messages, next, null);
+        }
     }
+
+    /// <summary>Result of one getUpdates poll. <see cref="Backoff"/> is non-null when Telegram returned a
+    /// retryable error (so the loop should pace itself); null means continue immediately.</summary>
+    private readonly record struct PollOutcome(IReadOnlyList<ChannelMessage> Messages, long NextOffset, TimeSpan? Backoff);
+
+    private static (int? Code, string? Desc, int? RetryAfter) ReadError(JsonElement root)
+    {
+        var retryAfter = root.TryGetProperty("parameters", out var p) && p.ValueKind == JsonValueKind.Object
+            ? GetInt(p, "retry_after")
+            : null;
+        return (GetInt(root, "error_code"), GetString(root, "description"), retryAfter);
+    }
+
+    private static bool IsTransient(int? code, int? retryAfter)
+        => retryAfter is not null || code == 429 || code is >= 500 and <= 599;
 
     private ChannelMessage? TryNormalize(JsonElement update)
     {
@@ -274,6 +316,73 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         if (string.IsNullOrEmpty(target))
             return SendResult.Failed("Reply has no ConversationId or ReplyHandle.");
 
+        var payloadJson = BuildSendPayload(reply, target);
+        var maxAttempts = Math.Max(0, _settings.SendRetryAttempts) + 1;
+
+        // The outbound consumer auto-commits, so a transient blip (429/5xx/network) would silently drop
+        // the reply. Retry those a bounded number of times, honoring retry_after; fail fast on 4xx.
+        for (var attempt = 1; ; attempt++)
+        {
+            var (result, retryDelay) = await TrySendOnceAsync(payloadJson, lastAttempt: attempt >= maxAttempts, cancellationToken);
+            if (result is not null)
+                return result;
+
+            _logger.LogWarning("[telegram] sendMessage transient failure; retry {Attempt}/{Max} after {Delay}s",
+                attempt, maxAttempts - 1, retryDelay.GetValueOrDefault().TotalSeconds);
+            await Task.Delay(retryDelay.GetValueOrDefault(ErrorBackoff), cancellationToken);
+        }
+    }
+
+    /// <summary>One sendMessage attempt. Returns a terminal <see cref="SendResult"/>, or (null, delay) when the
+    /// failure is transient and the caller should retry after <c>delay</c>.</summary>
+    private async Task<(SendResult? Result, TimeSpan? RetryDelay)> TrySendOnceAsync(string payloadJson, bool lastAttempt, CancellationToken ct)
+    {
+        try
+        {
+            using var content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+            using var resp = await _http.PostAsync(Url("sendMessage"), content, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(body); }
+            catch (JsonException)
+            {
+                // Non-JSON (e.g. proxy 5xx) — transient.
+                return lastAttempt
+                    ? (SendResult.Failed($"Telegram sendMessage HTTP {(int)resp.StatusCode}: non-JSON body"), null)
+                    : (null, ErrorBackoff);
+            }
+
+            using (doc)
+            {
+                var root = doc.RootElement;
+                if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
+                {
+                    var sentId = root.TryGetProperty("result", out var result) && GetLong(result, "message_id") is { } sid
+                        ? sid.ToString(CultureInfo.InvariantCulture)
+                        : null;
+                    return (SendResult.Sent(sentId), null);
+                }
+
+                var (code, _, retryAfter) = ReadError(root);
+                if (lastAttempt || !IsTransient(code, retryAfter))
+                    return (SendResult.Failed($"Telegram sendMessage failed: {body}"), null);
+
+                return (null, retryAfter is { } ra ? CapRetryAfter(ra) : ErrorBackoff);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
+        }
+    }
+
+    private string BuildSendPayload(ChannelReply reply, string target)
+    {
         var payload = new Dictionary<string, object?>
         {
             ["chat_id"] = long.TryParse(target, out var chatId) ? chatId : target,
@@ -290,26 +399,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 payload[prop.Name] = prop.Value;
         }
 
-        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        try
-        {
-            using var resp = await _http.PostAsync(Url("sendMessage"), content, cancellationToken);
-            var body = await resp.Content.ReadAsStringAsync(cancellationToken);
-            using var doc = JsonDocument.Parse(body);
-
-            if (doc.RootElement.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
-            {
-                var sentId = doc.RootElement.TryGetProperty("result", out var result) && GetLong(result, "message_id") is { } sid
-                    ? sid.ToString(CultureInfo.InvariantCulture)
-                    : null;
-                return SendResult.Sent(sentId);
-            }
-            return SendResult.Failed($"Telegram sendMessage failed: {body}");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return SendResult.Failed(ex.Message);
-        }
+        return JsonSerializer.Serialize(payload);
     }
 
     private async Task TryDeleteWebhookAsync(CancellationToken ct)

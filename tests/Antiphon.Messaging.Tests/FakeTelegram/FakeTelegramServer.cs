@@ -23,12 +23,18 @@ public sealed class FakeTelegramServer : IAsyncDisposable
     private readonly object _gate = new();
     private readonly List<JsonObject> _updates = [];        // pending updates (the long-poll queue)
     private readonly List<SentMessage> _sent = [];
+    private readonly Queue<Fault> _getUpdatesFaults = new();   // one-shot faults, consumed in order
+    private readonly Queue<Fault> _sendFaults = new();
     private long _nextUpdateId = 1;
     private long _nextMessageId = 1000;
 
     public string BotToken { get; }
     public string BaseUrl { get; private set; } = "";
     public bool WebhookDeleted { get; private set; }
+
+    /// <summary>How many times getUpdates / sendMessage have been called (incl. faulted calls).</summary>
+    public int GetUpdatesCalls { get; private set; }
+    public int SendCalls { get; private set; }
 
     public IReadOnlyList<SentMessage> SentMessages
     {
@@ -82,6 +88,31 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         }
     }
 
+    // --- Fault injection (each enqueued fault is returned once, in order, then normal behavior resumes) ---
+
+    /// <summary>409 Conflict — Telegram's response when another consumer is already long-polling this token.</summary>
+    public void EnqueueGetUpdatesConflict() =>
+        Enqueue(_getUpdatesFaults, new Fault(409, 409, "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running", null));
+
+    /// <summary>429 Too Many Requests with a <c>retry_after</c> hint.</summary>
+    public void EnqueueGetUpdatesRateLimit(int retryAfterSeconds) =>
+        Enqueue(_getUpdatesFaults, new Fault(429, 429, $"Too Many Requests: retry after {retryAfterSeconds}", retryAfterSeconds));
+
+    /// <summary>A gateway-style 5xx with a non-JSON body (e.g. an HTML error page from a proxy).</summary>
+    public void EnqueueGetUpdatesServerError(int status = 502) =>
+        Enqueue(_getUpdatesFaults, new Fault(status, null, "Bad Gateway", null, NonJson: true));
+
+    public void EnqueueSendRateLimit(int retryAfterSeconds) =>
+        Enqueue(_sendFaults, new Fault(429, 429, $"Too Many Requests: retry after {retryAfterSeconds}", retryAfterSeconds));
+
+    public void EnqueueSendBadRequest(string description = "Bad Request: chat not found") =>
+        Enqueue(_sendFaults, new Fault(400, 400, description, null));
+
+    public void EnqueueSendServerError(int status = 500) =>
+        Enqueue(_sendFaults, new Fault(status, null, "Internal Server Error", null, NonJson: true));
+
+    private void Enqueue(Queue<Fault> q, Fault f) { lock (_gate) q.Enqueue(f); }
+
     private void MapEndpoints(WebApplication app)
     {
         app.MapGet("/{bot}/getUpdates", (string bot, long? offset, int? timeout) =>
@@ -89,6 +120,10 @@ public sealed class FakeTelegramServer : IAsyncDisposable
             if (!TokenOk(bot)) return Unauthorized();
             lock (_gate)
             {
+                GetUpdatesCalls++;
+                if (_getUpdatesFaults.Count > 0)
+                    return FaultResult(_getUpdatesFaults.Dequeue());
+
                 var off = offset ?? 0;
                 if (off > 0) _updates.RemoveAll(u => UpdateId(u) < off);   // offset confirms earlier updates
                 var result = new JsonArray(_updates
@@ -102,6 +137,13 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         app.MapPost("/{bot}/sendMessage", async (string bot, HttpContext ctx) =>
         {
             if (!TokenOk(bot)) return Unauthorized();
+
+            lock (_gate)
+            {
+                SendCalls++;
+                if (_sendFaults.Count > 0)
+                    return FaultResult(_sendFaults.Dequeue());
+            }
 
             JsonObject? body;
             try { body = (await JsonNode.ParseAsync(ctx.Request.Body)) as JsonObject; }
@@ -171,6 +213,20 @@ public sealed class FakeTelegramServer : IAsyncDisposable
             "application/json", statusCode: code);
 
     private static IResult Unauthorized() => Error(401, "Unauthorized");
+
+    private static IResult FaultResult(Fault f)
+    {
+        if (f.NonJson)   // e.g. a proxy HTML error page — exercises the adapter's non-JSON handling
+            return Results.Text($"<html><body>{f.Description}</body></html>", "text/html", statusCode: f.StatusCode);
+
+        var obj = new JsonObject { ["ok"] = false };
+        if (f.ErrorCode is { } ec) obj["error_code"] = ec;
+        obj["description"] = f.Description;
+        if (f.RetryAfter is { } ra) obj["parameters"] = new JsonObject { ["retry_after"] = ra };   // Telegram's 429 shape
+        return Results.Text(obj.ToJsonString(), "application/json", statusCode: f.StatusCode);
+    }
+
+    private sealed record Fault(int StatusCode, int? ErrorCode, string Description, int? RetryAfter, bool NonJson = false);
 
     public async ValueTask DisposeAsync() => await _app.DisposeAsync();
 }
