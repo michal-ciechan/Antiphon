@@ -42,6 +42,37 @@ public class PtySessionAuditTests
     }
 
     [Test]
+    public void PruneOldAudits_enforces_max_dir_count_keeping_newest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-pty-audits-count-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        try
+        {
+            // 6 recent dirs (within the age window), staggered mtimes so "newest" is well-defined.
+            var now = DateTime.UtcNow;
+            for (var i = 0; i < 6; i++)
+            {
+                var d = Path.Combine(root, $"s{i}");
+                Directory.CreateDirectory(d);
+                Directory.SetLastWriteTimeUtc(d, now.AddMinutes(-i)); // s0 newest, s5 oldest
+            }
+
+            // Keep only the newest 3 even though all are within the age window.
+            PtySessionAudit.PruneOldAudits(root, TimeSpan.FromDays(7), maxDirs: 3);
+
+            Directory.GetDirectories(root).Length.ShouldBe(3);
+            Directory.Exists(Path.Combine(root, "s0")).ShouldBeTrue();
+            Directory.Exists(Path.Combine(root, "s1")).ShouldBeTrue();
+            Directory.Exists(Path.Combine(root, "s2")).ShouldBeTrue();
+            Directory.Exists(Path.Combine(root, "s5")).ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Test]
     public void PruneOldAudits_is_safe_when_root_missing()
     {
         var missing = Path.Combine(Path.GetTempPath(), "antiphon-pty-audits-missing-" + Guid.NewGuid().ToString("N")[..8]);

@@ -1,4 +1,3 @@
-using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Serilog;
@@ -23,13 +22,12 @@ builder.Host.UseSerilog((ctx, lc) =>
             retainedFileCountLimit: 14);
 });
 
-// Clean up stale PTY-audit dumps on startup regardless of whether auditing is enabled. A runaway audit
-// dump here once filled a disk with ~894 GB; this keeps %TEMP%\antiphon-pty-audits bounded.
-_ = Task.Run(() => PtySessionAudit.PruneOldAudits(TimeSpan.FromDays(2)));
-
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
 builder.Services.AddSingleton<SessionRunnerRuntime>();
 builder.Services.AddHealthChecks();
+// Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
+// (regardless of whether auditing is enabled). A runaway audit dump here once filled a disk with ~894 GB.
+builder.Services.AddHostedService<AuditCleanupService>();
 
 var app = builder.Build();
 

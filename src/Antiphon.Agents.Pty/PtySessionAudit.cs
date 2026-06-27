@@ -25,7 +25,9 @@ public sealed class PtySessionAudit : IAsyncDisposable
     private static readonly long s_maxBytes =
         Math.Max(1, ReadInt("ANTIPHON_PTY_AUDIT_MAX_MB", 20)) * 1024L * 1024L;
     private static readonly int s_retainDays = Math.Max(0, ReadInt("ANTIPHON_PTY_AUDIT_RETAIN_DAYS", 2));
-    private static int s_prunedOnce;
+    // Cap on the NUMBER of retained audit dirs. Total disk is bounded by s_maxDirs * s_maxBytes
+    // (default 50 * 20 MB = ~1 GB), regardless of how many sessions run.
+    private static readonly int s_maxDirs = Math.Max(1, ReadInt("ANTIPHON_PTY_AUDIT_MAX_DIRS", 50));
 
     private readonly string _dir;
     private readonly StreamWriter _timeline;
@@ -48,13 +50,14 @@ public sealed class PtySessionAudit : IAsyncDisposable
         if (!s_enabled)
             return null;
 
-        // Prune stale audit directories once per process (best-effort, off the hot path).
-        if (Interlocked.Exchange(ref s_prunedOnce, 1) == 0)
-            _ = Task.Run(() => PruneOldAudits(TimeSpan.FromDays(s_retainDays)));
-
         var id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N")[..6];
         var dir = Path.Combine(Path.GetTempPath(), RootName, id);
         System.IO.Directory.CreateDirectory(dir);
+
+        // Enforce the age + count caps on every new session (off the hot path). Pruning after creating
+        // this dir keeps the total bounded as sessions accumulate — the just-created dir is newest, so
+        // it survives the count cap.
+        _ = Task.Run(PruneOldAudits);
 
         var meta = new StringBuilder();
         meta.AppendLine($"StartedAt : {DateTime.UtcNow:O}");
@@ -82,11 +85,16 @@ public sealed class PtySessionAudit : IAsyncDisposable
     /// <paramref name="maxAge"/> ago. Safe to call on startup even when auditing is disabled, so old
     /// dumps get cleaned up regardless. Best-effort: never throws.
     /// </summary>
-    public static void PruneOldAudits(TimeSpan maxAge) =>
-        PruneOldAudits(Path.Combine(Path.GetTempPath(), RootName), maxAge);
+    /// <summary>Prunes the default audit root using the configured retention (age + dir-count) caps.</summary>
+    public static void PruneOldAudits() =>
+        PruneOldAudits(Path.Combine(Path.GetTempPath(), RootName), TimeSpan.FromDays(s_retainDays), s_maxDirs);
 
-    /// <summary>Prunes audit directories under an explicit <paramref name="root"/> (for tests).</summary>
-    public static void PruneOldAudits(string root, TimeSpan maxAge)
+    /// <summary>
+    /// Deletes audit directories under <paramref name="root"/> that are older than <paramref name="maxAge"/>,
+    /// then, if more than <paramref name="maxDirs"/> remain, deletes the oldest until only that many are kept.
+    /// Together these bound total audit disk use. Best-effort: never throws.
+    /// </summary>
+    public static void PruneOldAudits(string root, TimeSpan maxAge, int maxDirs = int.MaxValue)
     {
         try
         {
@@ -94,23 +102,36 @@ public sealed class PtySessionAudit : IAsyncDisposable
                 return;
 
             var cutoff = DateTime.UtcNow - maxAge;
+            var survivors = new List<(string Path, DateTime Mtime)>();
             foreach (var dir in System.IO.Directory.EnumerateDirectories(root))
             {
-                try
-                {
-                    if (System.IO.Directory.GetLastWriteTimeUtc(dir) < cutoff)
-                        System.IO.Directory.Delete(dir, recursive: true);
-                }
-                catch
-                {
-                    // Skip dirs that are locked / in use.
-                }
+                DateTime mtime;
+                try { mtime = System.IO.Directory.GetLastWriteTimeUtc(dir); }
+                catch { continue; }
+
+                if (mtime < cutoff)
+                    TryDelete(dir);
+                else
+                    survivors.Add((dir, mtime));
+            }
+
+            // Count cap: keep the newest maxDirs, delete the rest.
+            if (survivors.Count > maxDirs)
+            {
+                foreach (var (path, _) in survivors.OrderByDescending(s => s.Mtime).Skip(maxDirs))
+                    TryDelete(path);
             }
         }
         catch
         {
             // Never let cleanup crash the host.
         }
+    }
+
+    private static void TryDelete(string dir)
+    {
+        try { System.IO.Directory.Delete(dir, recursive: true); }
+        catch { /* skip dirs that are locked / in use */ }
     }
 
     private PtySessionAudit(string dir, Func<string> getSnapshot)
