@@ -63,6 +63,15 @@ public sealed class AgentRegistry
         if (kind == AgentKind.ClaudeCode && !env.ContainsKey("DISABLE_AUTOUPDATER"))
             env["DISABLE_AUTOUPDATER"] = "1";
 
+        // Force the classic (inline) renderer for spawned Claude agents. Fullscreen mode (tui: fullscreen,
+        // which a user may set globally in ~/.claude/settings.json) draws on the terminal's alternate screen
+        // buffer (\e[?1049h) with complex cursor positioning — our PTY capture + TerminalScreen reconstruction
+        // can't faithfully replay that. Today Claude already falls back to classic under our ConPTY, so this
+        // is belt-and-suspenders against a future default change; it also trims alt-screen escape sequences,
+        // keeping the captured stream cleaner. Config/options can still override.
+        if (kind == AgentKind.ClaudeCode && !env.ContainsKey("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"))
+            env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1";
+
         var cwd = string.IsNullOrWhiteSpace(options.Cwd)
             ? Environment.CurrentDirectory
             : options.Cwd;

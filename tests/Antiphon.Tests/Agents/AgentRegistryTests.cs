@@ -137,6 +137,37 @@ public class AgentRegistryTests
     }
 
     [Test]
+    public void Resolve_forces_classic_renderer_for_claude_by_default()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions());
+
+        spec.Env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"].ShouldBe("1");
+    }
+
+    [Test]
+    public void Resolve_does_not_set_alternate_screen_env_for_non_claude_kinds()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("raw", new AgentLaunchOptions());
+
+        spec.Env.ContainsKey("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Resolve_lets_config_override_the_alternate_screen_default()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions(
+            ExtraEnv: new Dictionary<string, string> { ["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "0" }));
+
+        spec.Env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"].ShouldBe("0");
+    }
+
+    [Test]
     public void Resolve_rejects_non_positive_dimensions()
     {
         var registry = BuildRegistry(WithClaudeAndRaw());
