@@ -1,7 +1,31 @@
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging with a bounded rolling file: one file per day, capped size, and only a window of
+// files retained so logs can never run the disk out. Console stays so the supervisor still captures stdout.
+builder.Host.UseSerilog((ctx, lc) =>
+{
+    var logPath = ctx.Configuration["Serilog:LogPath"]
+        ?? Path.Combine(Path.GetTempPath(), "antiphon-logs");
+    lc
+        .ReadFrom.Configuration(ctx.Configuration)
+        .Enrich.FromLogContext()
+        .WriteTo.Console()
+        .WriteTo.File(
+            Path.Combine(logPath, "session-runner-.log"),
+            rollingInterval: RollingInterval.Day,
+            fileSizeLimitBytes: 50 * 1024 * 1024,
+            rollOnFileSizeLimit: true,
+            retainedFileCountLimit: 14);
+});
+
+// Clean up stale PTY-audit dumps on startup regardless of whether auditing is enabled. A runaway audit
+// dump here once filled a disk with ~894 GB; this keeps %TEMP%\antiphon-pty-audits bounded.
+_ = Task.Run(() => PtySessionAudit.PruneOldAudits(TimeSpan.FromDays(2)));
 
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
 builder.Services.AddSingleton<SessionRunnerRuntime>();

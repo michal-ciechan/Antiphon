@@ -46,6 +46,11 @@ try
             .WriteTo.File(
                 Path.Combine(logPath, "antiphon-.log"),
                 rollingInterval: RollingInterval.Day,
+                // Cap each day's file and roll within the day if exceeded; keep a bounded window of files
+                // so logs can never run the disk out (they previously rolled daily but were never deleted).
+                fileSizeLimitBytes: 100 * 1024 * 1024,
+                rollOnFileSizeLimit: true,
+                retainedFileCountLimit: 14,
                 outputTemplate:
                     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
             );
