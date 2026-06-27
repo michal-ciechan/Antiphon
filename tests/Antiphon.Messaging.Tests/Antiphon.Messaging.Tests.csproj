@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Antiphon.Messaging.Tests</RootNamespace>
+    <EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.44.0" />
+    <PackageReference Include="Shouldly" Version="4.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <!-- Self-host the FakeTelegramServer (Kestrel + minimal API). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Telegram\Antiphon.Messaging.Telegram.csproj" />
+  </ItemGroup>
+
+</Project>

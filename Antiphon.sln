@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Messaging.Telegram
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Messaging.Service", "src\Antiphon.Messaging.Service\Antiphon.Messaging.Service.csproj", "{7B09CDB9-51E3-48EB-A0F3-FC3BB97FD6DE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Messaging.Tests", "tests\Antiphon.Messaging.Tests\Antiphon.Messaging.Tests.csproj", "{83E22A67-CF75-44E8-A33E-CF41388753DA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -171,6 +173,18 @@ Global
 		{7B09CDB9-51E3-48EB-A0F3-FC3BB97FD6DE}.Release|x64.Build.0 = Release|Any CPU
 		{7B09CDB9-51E3-48EB-A0F3-FC3BB97FD6DE}.Release|x86.ActiveCfg = Release|Any CPU
 		{7B09CDB9-51E3-48EB-A0F3-FC3BB97FD6DE}.Release|x86.Build.0 = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|x64.Build.0 = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Debug|x86.Build.0 = Debug|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|x64.ActiveCfg = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|x64.Build.0 = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|x86.ActiveCfg = Release|Any CPU
+		{83E22A67-CF75-44E8-A33E-CF41388753DA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -183,5 +197,6 @@ Global
 		{50D1889A-274E-4696-B88E-2EB2B9EAC55A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{0E032925-8FC2-4AE3-9CE3-1D894368F1A0} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{7B09CDB9-51E3-48EB-A0F3-FC3BB97FD6DE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{83E22A67-CF75-44E8-A33E-CF41388753DA} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
