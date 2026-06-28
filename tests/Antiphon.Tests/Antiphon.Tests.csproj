@@ -23,6 +23,18 @@
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
+    <!-- Build the fake Claude (don't reference its assembly) so the end-to-end queue->PTY test can exec it. -->
+    <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyFakeClaude" AfterTargets="Build">
+    <ItemGroup>
+      <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\bin\$(Configuration)\net9.0\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FakeClaudeOutput)"
+          DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

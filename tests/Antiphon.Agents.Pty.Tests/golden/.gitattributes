@@ -1,0 +1,3 @@
+# Golden recordings are raw Claude PTY byte streams (ESC sequences, mixed CR/LF). Keep them byte-exact —
+# never let git normalise line endings or treat them as text, or the captured escapes/newlines change.
+*.golden.txt -text

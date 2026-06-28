@@ -39,6 +39,29 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    // Regression lock for the queue-submit bug: Claude's TUI treats text and a trailing CR arriving in
+    // ONE write as a bracketed paste — the CR becomes a literal newline and the message never submits.
+    // DeliverAsync must therefore send the body and the submitting CR as TWO separate writes. The
+    // companion FakeClaudeContractTests prove (against a real PTY) that two writes submit and one does
+    // not; this test pins that the queue actually produces the two-write shape.
+    [Test]
+    public async Task Delivery_sends_body_then_a_separate_CR_not_one_combined_write()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await h.Queue.EnqueueAsync(h.SessionId, "queued hello", MessageSendMode.Now, CancellationToken.None);
+
+            h.Adapter.Inputs.Count.ShouldBe(2, "body and CR must be two separate writes, not one combined write");
+            h.Adapter.Inputs[0].ShouldBe("queued hello");
+            h.Adapter.Inputs[1].ShouldBe("\r");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
     [Test]
     public async Task When_idle_message_is_held_while_the_agent_is_working()
     {

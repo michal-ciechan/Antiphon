@@ -17,7 +17,27 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <!-- Golden recordings of REAL Claude PTY bytes — replayed to pin our parsers/detectors/screen
+         reconstruction against ground truth. Copied verbatim to the test output. -->
+    <Content Include="golden\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <!-- Build the fake Claude alongside the tests but don't reference its assembly — tests exec the
+         built exe through ConPTY, they don't call into it. The CopyFakeClaude target below stages its
+         full output (exe + runtimeconfig + deps) into bin\...\fakeclaude\ so the exe runs standalone. -->
+    <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="CopyFakeClaude" AfterTargets="Build">
+    <ItemGroup>
+      <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\bin\$(Configuration)\net9.0\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FakeClaudeOutput)"
+          DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

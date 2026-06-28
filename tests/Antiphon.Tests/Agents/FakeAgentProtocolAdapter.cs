@@ -24,6 +24,11 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool TurnCompleted { get; set; } = true;
     public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;
+    private readonly List<string> _inputs = [];
+    // Every SendInputAsync call, in order — lets tests assert the SHAPE of delivery, not just the
+    // concatenated bytes. Critical for the queue's two-write submit (body, then a separate "\r"):
+    // SentInput alone can't distinguish one write of "body\r" from two writes "body" + "\r".
+    public IReadOnlyList<string> Inputs => _inputs;
     public string SentPrompt { get; private set; } = string.Empty;
     private readonly List<string> _prompts = [];
     // Every prompt sent, in order — lets tests assert the /rename + /remote-control sequence
@@ -98,6 +103,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public Task SendInputAsync(string input, CancellationToken ct)
     {
         SentInput += input;
+        _inputs.Add(input);
         return Task.CompletedTask;
     }
 

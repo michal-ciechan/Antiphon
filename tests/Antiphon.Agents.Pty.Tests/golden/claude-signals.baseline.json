@@ -1,0 +1,4 @@
+{
+  "_comment": "Baseline for the real-Claude signal canary (ClaudeSignalCanaryTests). Re-baseline deliberately when Claude's terminal contract legitimately changes, and note why in the commit. claudeEmitsDonePattern is the robust, ConPTY-independent turn-end signal our detectors depend on.",
+  "claudeEmitsDonePattern": true
+}
