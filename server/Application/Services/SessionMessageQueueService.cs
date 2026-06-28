@@ -221,10 +221,18 @@ public sealed class SessionMessageQueueService
         return true;
     }
 
-    // Inject text into the session terminal and submit it (carriage return), reusing the runtime's
-    // input path (which also kicks off manual-turn tracking).
-    private Task DeliverAsync(Guid sessionId, string body, CancellationToken ct) =>
-        _runtime.SendInputAsync(sessionId, body.TrimEnd() + "\r", ct);
+    // Inject text into the session terminal and submit it, reusing the runtime's input path (which also
+    // kicks off manual-turn tracking). The body and the submitting carriage return are sent as two
+    // separate writes with a short pause between — NOT concatenated. Claude Code's TUI treats text and a
+    // trailing CR arriving in a single write as a bracketed paste and folds the CR into a literal newline,
+    // so the message lands in the composer but never submits. A delayed, separate CR is the same path
+    // RunnerTerminalSession.SendLineAsync uses for prompts, and it submits reliably.
+    private async Task DeliverAsync(Guid sessionId, string body, CancellationToken ct)
+    {
+        await _runtime.SendInputAsync(sessionId, body.TrimEnd(), ct);
+        await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
+        await _runtime.SendInputAsync(sessionId, "\r", ct);
+    }
 
     private static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
