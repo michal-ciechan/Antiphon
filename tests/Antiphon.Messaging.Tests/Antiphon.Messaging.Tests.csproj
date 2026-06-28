@@ -21,6 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.Messaging\Antiphon.Messaging.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Telegram\Antiphon.Messaging.Telegram.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
   </ItemGroup>
 
 </Project>

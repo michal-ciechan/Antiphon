@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.Messaging.Client.Testing</RootNamespace>
+    <AssemblyName>Antiphon.Messaging.Client.Testing</AssemblyName>
+    <!-- TODO: pack as NuGet alongside Antiphon.Messaging.Client so consumers' tests reference a package. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
+  </ItemGroup>
+
+</Project>

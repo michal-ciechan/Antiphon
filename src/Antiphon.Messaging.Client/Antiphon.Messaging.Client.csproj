@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.Messaging.Client</RootNamespace>
+    <AssemblyName>Antiphon.Messaging.Client</AssemblyName>
+    <!-- TODO: pack this (and Antiphon.Messaging + .Testing) as NuGet so consumers reference packages, not source. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+</Project>
