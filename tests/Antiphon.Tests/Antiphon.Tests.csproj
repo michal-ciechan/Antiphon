@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
     <!-- Build the fake Claude (don't reference its assembly) so the end-to-end queue->PTY test can exec it. -->
     <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
                       ReferenceOutputAssembly="false" />

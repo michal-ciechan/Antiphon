@@ -38,6 +38,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
     <ProjectReference Include="..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
   </ItemGroup>
 

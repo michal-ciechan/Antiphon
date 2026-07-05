@@ -38,10 +38,33 @@ public class AppDbContext : DbContext
     public DbSet<RetrySchedule> RetrySchedules => Set<RetrySchedule>();
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
+    public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<ChatChannel>(entity =>
+        {
+            entity.ToTable("ChatChannels");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Provider).IsRequired().HasMaxLength(50);
+            entity.Property(c => c.ExternalId).IsRequired().HasMaxLength(200);
+            entity.Property(c => c.Title).HasMaxLength(500);
+            entity.Property(c => c.ReplyHandle).HasMaxLength(500);
+            entity.Property(c => c.LastMessagePreview).HasMaxLength(500);
+            entity.Property(c => c.LastAuthor).HasMaxLength(200);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.Property(c => c.UpdatedAt).IsRequired();
+
+            // Upsert key: one row per provider conversation.
+            entity.HasIndex(c => new { c.Provider, c.ExternalId }).IsUnique();
+
+            entity.HasOne(c => c.Agent)
+                .WithMany()
+                .HasForeignKey(c => c.AgentId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
 
         // Enable JSONB column support for flexible config storage
         // Individual entity configurations will use .HasColumnType("jsonb") on properties

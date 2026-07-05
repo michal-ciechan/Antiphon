@@ -113,6 +113,10 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     event: 'OrchestratorTick',
     getKeys: () => [['orchestrator', 'state']],
   },
+  {
+    event: 'ChannelChanged',
+    getKeys: () => [['channels']],
+  },
 ]
 
 export function useSignalRInvalidation(connectionRef: RefObject<HubConnection | null>) {

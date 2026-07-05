@@ -388,7 +388,15 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             ["chat_id"] = long.TryParse(target, out var chatId) ? chatId : target,
         };
         if (reply.Text is not null)
-            payload["text"] = reply.Text;
+            payload["text"] = reply.Kind switch
+            {
+                // Render the reply kind visibly: interim progress notes and blocking questions read
+                // differently from a final answer. Plain text markers (not parse_mode) so RawOverrides
+                // stay free to set their own formatting.
+                ChannelReplyKind.Progress => $"⏳ {reply.Text}",
+                ChannelReplyKind.Question => $"❓ {reply.Text}",
+                _ => reply.Text,
+            };
         if (!string.IsNullOrEmpty(reply.ReplyToMessageId))
             payload["reply_to_message_id"] = long.TryParse(reply.ReplyToMessageId, out var rid) ? rid : reply.ReplyToMessageId;
 

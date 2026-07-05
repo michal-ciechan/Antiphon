@@ -18,6 +18,7 @@ import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
 import { OrchestratorPanel } from './features/orchestrator/OrchestratorPanel'
 import { AgentsPage } from './features/agents/AgentsPage'
+import { ChannelsPage } from './features/channels/ChannelsPage'
 
 const queryClient = new QueryClient()
 
@@ -84,6 +85,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Agents error">
                       <SuspenseBoundary variant="page">
                         <AgentsPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="channels"
+                  element={
+                    <ErrorBoundary fallbackTitle="Channels error">
+                      <SuspenseBoundary variant="page">
+                        <ChannelsPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

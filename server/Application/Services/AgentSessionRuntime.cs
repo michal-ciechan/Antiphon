@@ -150,12 +150,20 @@ public sealed class AgentSessionRuntime
     }
 
     // Resolve the (singleton) queue service lazily from a scope to avoid a constructor cycle with this
-    // runtime, then let it deliver the next queued message or emit the finished signal.
+    // runtime, then let it deliver the next queued message or emit the finished signal. The channel
+    // reply dispatcher runs FIRST: it reads the just-finished turn's transcript to route the agent's
+    // answer back down its external channel (Telegram etc.), and must see the transcript before the
+    // queue injects the next prompt.
     private async Task FlushQueueOnIdleAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
+
+            var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
+            if (channelReplies is not null)
+                await channelReplies.OnTurnEndAsync(sessionId, ct);
+
             var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
             if (queue is not null)
                 await queue.OnTurnEndAsync(sessionId, ct);

@@ -5,6 +5,7 @@ using Npgsql;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using Antiphon.Messaging.Client;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
@@ -172,6 +173,17 @@ try
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
+
+    // Channel bridge: external chats (Telegram via the messaging gateway; more providers later) mapped
+    // to agents. The Kafka client + reply dispatcher are always registered (construction is lazy and
+    // connection-free); the consuming hosted service only runs when ChannelBridge:Enabled is true.
+    builder.Services.Configure<ChannelBridgeSettings>(
+        builder.Configuration.GetSection(ChannelBridgeSettings.SectionName));
+    builder.Services.AddAntiphonMessaging(builder.Configuration);
+    builder.Services.AddScoped<ChatChannelService>();
+    builder.Services.AddSingleton<ChannelReplyDispatcher>();
+    if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
+        builder.Services.AddHostedService<ChannelBridgeService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
@@ -267,6 +279,7 @@ try
     app.MapBoardEndpoints();
     app.MapCardEndpoints();
     app.MapAgentEndpoints();
+    app.MapChannelEndpoints();
     app.MapWorkflowEndpoints();
     app.MapGateEndpoints();
     app.MapCascadeEndpoints();
