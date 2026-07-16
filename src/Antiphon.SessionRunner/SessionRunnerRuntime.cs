@@ -105,6 +105,29 @@ public sealed class SessionRunnerRuntime
 
     public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) => _events.Subscribe(ct);
 
+    /// <summary>
+    /// Marks every "Running" session whose OS process is gone as Exited (reason ProcessVanished)
+    /// and publishes the missed SessionExited event. This is the liveness backstop for exits the
+    /// normal observer never saw — a session once sat "Running" on a dead PID for a week, keeping
+    /// its agent badged Working in the UI with no process behind it. Returns the ids it marked.
+    /// </summary>
+    public IReadOnlyList<Guid> SweepVanishedSessions(IProcessLivenessProbe probe)
+    {
+        var marked = new List<Guid>();
+        foreach (var (sessionId, session) in _sessions)
+        {
+            if (session.MarkVanishedIfDead(probe))
+            {
+                _logger.LogWarning(
+                    "Liveness sweep marked session {SessionId} as Exited: its process vanished without an exit event",
+                    sessionId);
+                marked.Add(sessionId);
+            }
+        }
+
+        return marked;
+    }
+
     private RunnerSession GetSession(Guid sessionId) =>
         _sessions.TryGetValue(sessionId, out var session)
             ? session
@@ -227,6 +250,45 @@ public sealed class SessionRunnerRuntime
             await _runner.KillAsync(timeout);
         }
 
+        /// <summary>
+        /// Liveness backstop: if this session claims Running but its OS process is gone, transition
+        /// to Exited and publish the SessionExited event the normal observer missed. Idempotent and
+        /// race-safe: re-checks the status under the gate before transitioning.
+        /// </summary>
+        public bool MarkVanishedIfDead(IProcessLivenessProbe probe)
+        {
+            int? pid;
+            DateTime startedAt;
+            lock (_gate)
+            {
+                if (_status != "Running")
+                    return false;
+                pid = _runner.Pid;
+                startedAt = _runner.StartedAt;
+            }
+
+            if (pid is int livePid && probe.IsAlive(livePid, startedAt))
+                return false;
+
+            long lastSequence;
+            int? exitCode;
+            lock (_gate)
+            {
+                if (_status != "Running")
+                    return false; // a real exit event won the race — keep its verdict
+                _status = "Exited";
+                _exitCode ??= -1;
+                _exitReason = "ProcessVanished";
+                exitCode = _exitCode;
+                lastSequence = _lastSequence;
+            }
+
+            _events.Publish(
+                SessionRunnerEventNames.SessionExited,
+                new RunnerSessionExitedEvent(_sessionId, exitCode, "ProcessVanished", lastSequence));
+            return true;
+        }
+
         public async ValueTask DisposeAsync()
         {
             _runner.OnData -= OnData;
@@ -271,6 +333,33 @@ public sealed class SessionRunnerRuntime
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed while observing runner session {SessionId} exit", _sessionId);
+
+                // The observer is the ONLY thing that moves a session out of "Running" on exit; if
+                // it dies the session would claim Running forever while nothing is actually being
+                // observed. Fail the session loudly instead of lying about its state.
+                long lastSequence;
+                int? exitCode;
+                bool transitioned;
+                lock (_gate)
+                {
+                    transitioned = _status != "Exited";
+                    if (transitioned)
+                    {
+                        _status = "Exited";
+                        _exitCode ??= -1;
+                        _exitReason = "ObserverFailed";
+                    }
+                    exitCode = _exitCode;
+                    lastSequence = _lastSequence;
+                }
+
+                if (transitioned)
+                {
+                    _events.Publish(
+                        SessionRunnerEventNames.SessionExited,
+                        new RunnerSessionExitedEvent(_sessionId, exitCode, "ObserverFailed", lastSequence));
+                }
+
                 _events.Publish(
                     SessionRunnerEventNames.SessionError,
                     new { sessionId = _sessionId, message = ex.Message });

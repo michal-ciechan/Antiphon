@@ -126,11 +126,62 @@ public sealed class AgentSessionRuntime
 
     public async Task ObserveExitAsync(Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct)
     {
+        await CloseSessionOnExitAsync(sessionId, exitCode, exitReason, ct);
         await _eventBus.PublishToGroupAsync(
             AgentSessionGroups.Session(sessionId),
             "SessionExited",
             new { sessionId, status = "Exited", exitCode, exitReason = exitReason.ToString() },
             ct);
+    }
+
+    // A runner exit must also land in the DATABASE, not just the SignalR group: the session row is
+    // what the UI's liveSession/agent-status derive from. Before this, an exit that arrived via the
+    // event pump left the session Running and its agent Working forever — a phantom with no process.
+    // Idempotent: sessions already closed by another path (kill, launch-failure, reconciler) are
+    // left untouched. Card-owned agents are skipped; their lifecycle belongs to the orchestrator.
+    private async Task CloseSessionOnExitAsync(Guid sessionId, int? exitCode, AgentExitReason exitReason, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is null)
+                return;
+
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var changed = false;
+            if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+            {
+                session.Status = exitCode == 0 ? SessionStatus.Stopped : SessionStatus.Failed;
+                session.ExitCode = exitCode;
+                if (session.Status == SessionStatus.Failed)
+                    session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
+                session.EndedAt ??= now;
+                session.LastSeenAt = now;
+                changed = true;
+            }
+
+            Guid? changedAgentId = null;
+            var sessionIdText = sessionId.ToString("D");
+            var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
+            if (agent is not null && agent.Status == AgentStatus.Working && agent.CurrentCardId is null)
+            {
+                agent.Status = exitCode == 0 ? AgentStatus.Stopped : AgentStatus.Failed;
+                agent.UpdatedAt = now;
+                changed = true;
+                changedAgentId = agent.Id;
+            }
+
+            if (changed)
+                await db.SaveChangesAsync(ct);
+            if (changedAgentId is Guid agentId)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to persist exit of session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>Relays a structured transcript entry to the session's SignalR group and persists it (idempotently).</summary>

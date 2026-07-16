@@ -85,6 +85,7 @@ try
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
+    builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -143,6 +144,7 @@ try
     builder.Services.AddSingleton<WatchdogMatcher>();
     builder.Services.AddSingleton<WatchdogCooldownStore>();
     builder.Services.AddScoped<WatchdogService>();
+    builder.Services.AddScoped<SessionReconciliationService>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -204,6 +206,7 @@ try
     builder.Services.AddHostedService<WorktreeJanitorHostedService>();
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<WatchdogHostedService>();
+    builder.Services.AddHostedService<SessionReconciliationHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();

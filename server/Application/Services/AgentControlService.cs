@@ -112,6 +112,11 @@ public sealed class AgentControlService
         var definitionName = _agentRegistry.Settings.DefaultDefinition;
         var spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30));
 
+        // Reject an unspawnable executable NOW, before the agent is flipped to Working or any
+        // session row exists — otherwise the launch fails in the background and the UI shows a
+        // phantom "Working" agent with no process behind it (the claude.cmd → claude.exe incident).
+        AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
+
         if (!fresh)
         {
             var previous = await FindResumableSessionAsync(agent, spec.Kind, cwd, ct);

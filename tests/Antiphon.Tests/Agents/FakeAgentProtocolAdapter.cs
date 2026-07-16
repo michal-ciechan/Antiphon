@@ -42,11 +42,17 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool Killed { get; private set; }
     public bool Disposed { get; private set; }
     public bool KillResult { get; set; } = true;
+    // When set, StartAsync throws this — simulates a spawn failure (missing exe, runner 500) so
+    // tests can assert the launch-failure paths (session Failed + agent rolled back from Working).
+    public Exception? ThrowOnStart { get; set; }
 
     public event Action<string>? OnTextDelta;
 
     public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
     {
+        if (ThrowOnStart is not null)
+            throw ThrowOnStart;
+
         Started = true;
         StartedArgs = spec.Args.ToArray();
         Cols = spec.Cols;

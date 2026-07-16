@@ -326,7 +326,7 @@ public class CardReviewServiceIntegrationTests
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
-            Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = "fake" } }
+            Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
         }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));

@@ -28,6 +28,10 @@ builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
 // (regardless of whether auditing is enabled). A runaway audit dump here once filled a disk with ~894 GB.
 builder.Services.AddHostedService<AuditCleanupService>();
+// Liveness backstop: a session once sat "Running" on a dead PID for a week because the exit was
+// never observed — the sweep catches vanished processes and emits the missed SessionExited.
+builder.Services.AddSingleton<IProcessLivenessProbe, SystemProcessLivenessProbe>();
+builder.Services.AddHostedService<SessionLivenessSweepService>();
 
 var app = builder.Build();
 

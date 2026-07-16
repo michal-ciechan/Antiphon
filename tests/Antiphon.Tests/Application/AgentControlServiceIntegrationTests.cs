@@ -336,7 +336,7 @@ public class AgentControlServiceIntegrationTests
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
-            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = "fake" } }
+            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
         }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));

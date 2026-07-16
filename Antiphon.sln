@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Messaging.Client.T
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.FakeClaude", "src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj", "{24E8E5B7-0E08-4FAE-BECB-695F7CBAEA80}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.SessionRunner.Tests", "tests\Antiphon.SessionRunner.Tests\Antiphon.SessionRunner.Tests.csproj", "{88A7299E-A9D5-4CAD-8524-E15741074EFE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -227,6 +229,18 @@ Global
 		{24E8E5B7-0E08-4FAE-BECB-695F7CBAEA80}.Release|x64.Build.0 = Release|Any CPU
 		{24E8E5B7-0E08-4FAE-BECB-695F7CBAEA80}.Release|x86.ActiveCfg = Release|Any CPU
 		{24E8E5B7-0E08-4FAE-BECB-695F7CBAEA80}.Release|x86.Build.0 = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|x64.Build.0 = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Debug|x86.Build.0 = Debug|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|x64.ActiveCfg = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|x64.Build.0 = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|x86.ActiveCfg = Release|Any CPU
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -243,5 +257,6 @@ Global
 		{60D8A49D-313D-47D6-A041-A1293E76DC72} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{34444EC9-768E-4D4C-8DC1-6E34866BEC37} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{24E8E5B7-0E08-4FAE-BECB-695F7CBAEA80} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{88A7299E-A9D5-4CAD-8524-E15741074EFE} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

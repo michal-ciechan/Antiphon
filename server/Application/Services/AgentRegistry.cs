@@ -81,10 +81,17 @@ public sealed class AgentRegistry
         if (options.Rows <= 0)
             throw new ArgumentException("Rows must be positive.", nameof(options));
 
+        // Resolve a bare exe name to an absolute path when possible. ConPTY resolves bare names
+        // against the session cwd (not PATH), and the installed launcher flavor drifts over time
+        // (npm claude.cmd vs native claude.exe) — an absolute path sidesteps both. Unresolvable
+        // names pass through untouched so fakes/tests and exotic setups keep working; launch paths
+        // that need a hard guarantee call AgentExecutableResolver.EnsureSpawnable explicitly.
+        var exe = AgentExecutableResolver.Default.TryResolve(def.Exe) ?? def.Exe;
+
         return new AgentLaunchSpec(
             DefinitionName: definitionName,
             Kind: kind,
-            Exe: def.Exe,
+            Exe: exe,
             Args: args.AsReadOnly(),
             Env: env,
             Cwd: cwd,
