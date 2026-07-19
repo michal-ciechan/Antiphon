@@ -35,6 +35,18 @@ builder.Services.AddHostedService<SessionLivenessSweepService>();
 
 var app = builder.Build();
 
+// Readiness gating: adopt pty-hosts that survived the previous runner BEFORE the HTTP API starts
+// listening. The server's reconciler treats "runner doesn't know this session" as fatal, so the
+// runner must never answer /sessions with a half-adopted list — during the sweep the port is
+// simply down, which the reconciler already treats as "skip this cycle".
+{
+    var runtime = app.Services.GetRequiredService<SessionRunnerRuntime>();
+    var probe = app.Services.GetRequiredService<IProcessLivenessProbe>();
+    var adopted = await runtime.AdoptOrphanedHostsAsync(probe, CancellationToken.None);
+    if (adopted > 0)
+        app.Logger.LogInformation("Adopted {Count} surviving pty-host session(s) from a previous runner", adopted);
+}
+
 app.MapHealthChecks("/health");
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));

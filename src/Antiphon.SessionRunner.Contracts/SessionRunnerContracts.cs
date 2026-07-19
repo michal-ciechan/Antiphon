@@ -55,6 +55,17 @@ public sealed record RunnerSessionExitedEvent(
     long LastSequence);
 
 /// <summary>
+/// A restarted runner re-attached to a still-live pty-host (the session kept running the whole
+/// time). Consumers should treat it as "still running, refresh buffers via the resync path" -
+/// NOT as a fresh start.
+/// </summary>
+public sealed record RunnerSessionAdoptedEvent(
+    Guid SessionId,
+    int? Pid,
+    DateTime StartedAt,
+    long LastSequence);
+
+/// <summary>
 /// One normalized entry parsed from the agent's Claude Code JSONL session transcript.
 /// <see cref="Sequence"/> is monotonic per session in file order (stable across re-tails of the
 /// append-only file), so consumers can order and de-duplicate on (SessionId, Sequence).
@@ -95,6 +106,7 @@ public static class TranscriptKinds
 public static class SessionRunnerEventNames
 {
     public const string SessionStarted = "SessionStarted";
+    public const string SessionAdopted = "SessionAdopted";
     public const string SessionOutput = "SessionOutput";
     public const string SessionExited = "SessionExited";
     public const string SessionError = "SessionError";
