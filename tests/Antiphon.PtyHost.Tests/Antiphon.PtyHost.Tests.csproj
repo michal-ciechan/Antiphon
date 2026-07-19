@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
   </ItemGroup>
 

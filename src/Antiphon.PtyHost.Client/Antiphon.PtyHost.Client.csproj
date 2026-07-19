@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.PtyHost.Client</RootNamespace>
+    <AssemblyName>Antiphon.PtyHost.Client</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

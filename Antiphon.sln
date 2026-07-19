@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.PtyHost", "src\Ant
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.PtyHost.Tests", "tests\Antiphon.PtyHost.Tests\Antiphon.PtyHost.Tests.csproj", "{9B97371A-82F2-40F8-BA08-8FAA5392BBA9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.PtyHost.Client", "src\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj", "{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -283,6 +285,18 @@ Global
 		{9B97371A-82F2-40F8-BA08-8FAA5392BBA9}.Release|x64.Build.0 = Release|Any CPU
 		{9B97371A-82F2-40F8-BA08-8FAA5392BBA9}.Release|x86.ActiveCfg = Release|Any CPU
 		{9B97371A-82F2-40F8-BA08-8FAA5392BBA9}.Release|x86.Build.0 = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|x64.Build.0 = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -303,5 +317,6 @@ Global
 		{5493A5BC-946E-4B34-9545-51170BAEED05} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{42008704-46E5-4229-8EBB-A3282BFBA444} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{9B97371A-82F2-40F8-BA08-8FAA5392BBA9} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{C2C19BFF-9CD5-4D62-8BDE-5870974E2A41} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
