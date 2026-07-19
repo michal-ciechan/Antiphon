@@ -1,12 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Messaging.Pack.props" />
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Antiphon.Messaging.Client</RootNamespace>
     <AssemblyName>Antiphon.Messaging.Client</AssemblyName>
-    <!-- TODO: pack this (and Antiphon.Messaging + .Testing) as NuGet so consumers reference packages, not source. -->
+    <Description>Typed Kafka producer/consumer client for the Antiphon messaging bridge.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,12 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Messaging.Pack.props" />
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Antiphon.Messaging.Client.Testing</RootNamespace>
     <AssemblyName>Antiphon.Messaging.Client.Testing</AssemblyName>
-    <!-- TODO: pack as NuGet alongside Antiphon.Messaging.Client so consumers' tests reference a package. -->
+    <Description>In-memory fake of the Antiphon messaging client for consumer tests (no Kafka, no Telegram).</Description>
   </PropertyGroup>
 
   <ItemGroup>

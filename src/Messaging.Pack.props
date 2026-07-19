@@ -1,0 +1,13 @@
+<!-- Shared NuGet pack metadata for the Antiphon.Messaging* packages.
+     Bump <Version> here when publishing a new release of any of the three;
+     they version together (the client and testing packages depend on the contracts). -->
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Mike Ciechan</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/michal-ciechan/Antiphon</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/michal-ciechan/Antiphon</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  </PropertyGroup>
+</Project>

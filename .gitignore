@@ -32,3 +32,6 @@ analysis/
 %TEMP%/
 server/%TEMP%/
 tests/Antiphon.E2E/TestOutput/
+
+# local dotnet pack output
+out/

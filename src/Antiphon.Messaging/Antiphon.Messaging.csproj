@@ -1,11 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Messaging.Pack.props" />
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Antiphon.Messaging</RootNamespace>
     <AssemblyName>Antiphon.Messaging</AssemblyName>
+    <Description>Wire contracts (ChannelMessage/ChannelReply) for the Antiphon messaging bridge.</Description>
   </PropertyGroup>
 
 </Project>
