@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.PtyHost</RootNamespace>
+    <AssemblyName>Antiphon.PtyHost</AssemblyName>
+    <!-- The host is a long-lived detached process; keep it dependency-light on purpose.
+         No ASP.NET, no DI, no Serilog - startup time and stability over convenience. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\Antiphon.PtyHost.Protocol\Antiphon.PtyHost.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
