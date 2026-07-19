@@ -36,6 +36,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         string? pipeName = null,
         TimeSpan? launchTimeout = null,
         TimeSpan? lingerTtl = null,
+        int? ringCapChars = null,
         CancellationToken ct = default)
     {
         var exe = Path.Combine(CurrentShadowDir, HostExeName);
@@ -50,7 +51,8 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var arg in BuildHostArgs(sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl))
+        foreach (var arg in BuildHostArgs(
+                     sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl, ringCapChars))
             psi.ArgumentList.Add(arg);
 
         using var intermediary = Process.Start(psi)
@@ -73,7 +75,8 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         string? hostLogFile,
         string? pipeName,
         TimeSpan? launchTimeout,
-        TimeSpan? lingerTtl)
+        TimeSpan? lingerTtl,
+        int? ringCapChars)
     {
         yield return "--spawn";
         yield return "--session";
@@ -98,6 +101,12 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         {
             yield return "--linger-hours";
             yield return ttl.TotalHours.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (ringCapChars is { } cap)
+        {
+            yield return "--ring-cap-chars";
+            yield return cap.ToString();
         }
     }
 }

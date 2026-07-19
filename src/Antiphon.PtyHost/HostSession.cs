@@ -152,6 +152,7 @@ public sealed class HostSession : IAsyncDisposable
             if (lastSeq + 1 < firstAvailable)
                 return new ResyncMessage(firstAvailable, _lastSeq);
 
+            sink.TryWrite(new AttachedMessage(lastSeq + 1, _lastSeq));
             foreach (var (seq, chunk) in _ring)
             {
                 if (seq > lastSeq)

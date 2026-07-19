@@ -36,6 +36,7 @@ public class FramingTests
             new StatusRequestMessage(),
             new ShutdownMessage(),
             new HelloAckMessage(1, "1.2.3", sessionId, PtyHostStatus.Running),
+            new AttachedMessage(1, 42),
             new LaunchedMessage(1234, DateTime.UtcNow),
             new OutputMessage(7, "chunk[0m"),
             new ExitedMessage(0, "ProcessExited", 99),

@@ -35,3 +35,5 @@ tests/Antiphon.E2E/TestOutput/
 
 # local dotnet pack output
 out/
+
+bin-ptyhost/

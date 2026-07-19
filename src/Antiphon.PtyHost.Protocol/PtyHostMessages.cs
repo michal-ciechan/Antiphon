@@ -22,6 +22,7 @@ namespace Antiphon.PtyHost.Protocol;
 [JsonDerivedType(typeof(ShutdownMessage), "shutdown")]
 // host -> client
 [JsonDerivedType(typeof(HelloAckMessage), "helloAck")]
+[JsonDerivedType(typeof(AttachedMessage), "attached")]
 [JsonDerivedType(typeof(LaunchedMessage), "launched")]
 [JsonDerivedType(typeof(OutputMessage), "output")]
 [JsonDerivedType(typeof(ExitedMessage), "exited")]
@@ -84,6 +85,12 @@ public sealed record HelloAckMessage(
     string Status) : PtyHostMessage;
 
 public sealed record LaunchedMessage(int ChildPid, DateTime ChildStartTimeUtc) : PtyHostMessage;
+
+/// <summary>
+/// Successful attach ack, sent BEFORE any replayed output so the client can distinguish
+/// "attached, replay follows" from "resync required" deterministically.
+/// </summary>
+public sealed record AttachedMessage(long ReplayFromSeq, long LastSeq) : PtyHostMessage;
 
 public sealed record OutputMessage(long Seq, string Chunk) : PtyHostMessage;
 

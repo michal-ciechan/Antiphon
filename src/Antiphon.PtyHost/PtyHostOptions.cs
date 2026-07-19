@@ -39,7 +39,10 @@ public sealed record PtyHostOptions
                 case "--manifest-dir": manifestDir = args[++i]; break;
                 case "--log": logFile = args[++i]; break;
                 case "--launch-timeout-sec": launchTimeout = TimeSpan.FromSeconds(int.Parse(args[++i])); break;
-                case "--linger-hours": lingerTtl = TimeSpan.FromHours(double.Parse(args[++i])); break;
+                case "--linger-hours":
+                    lingerTtl = TimeSpan.FromHours(
+                        double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture));
+                    break;
                 case "--ring-cap-chars": ringCap = int.Parse(args[++i]); break;
             }
         }

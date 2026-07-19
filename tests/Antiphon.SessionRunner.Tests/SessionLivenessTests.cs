@@ -138,7 +138,12 @@ public class SessionLivenessTests
     {
         var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-liveness-tests-{Guid.NewGuid():N}");
         var runtime = new SessionRunnerRuntime(
-            Options.Create(new SessionRunnerSettings { SessionLogPath = logRoot }),
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = logRoot,
+                // Keep any host a test orphans short-lived instead of the production 24 h.
+                PtyHostLingerHours = 0.02,
+            }),
             NullLogger<SessionRunnerRuntime>.Instance);
         return (runtime, logRoot);
     }

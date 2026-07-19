@@ -2,16 +2,25 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Threading.Channels;
 using Antiphon.Agents.Pty;
+using Antiphon.PtyHost.Client;
+using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.SessionRunner;
 
+/// <summary>
+/// Session registry and orchestration. Since the pty-host split, the runner does NOT own ConPTY
+/// processes: each session's child lives in a detached per-session Antiphon.PtyHost process, and
+/// the runner talks to it over a named pipe. The runner keeps all interpretation (screen render,
+/// transcripts, events) so it can be restarted freely without killing a single session.
+/// </summary>
 public sealed class SessionRunnerRuntime
 {
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
     private readonly SessionRunnerEventHub _events = new();
     private readonly SessionRunnerSettings _settings;
+    private readonly PtyHostLauncher _launcher;
     private readonly ILogger<SessionRunnerRuntime> _logger;
 
     public SessionRunnerRuntime(
@@ -20,6 +29,9 @@ public sealed class SessionRunnerRuntime
     {
         _settings = settings.Value;
         _logger = logger;
+        _launcher = new PtyHostLauncher(
+            new ShadowCopyStore(_settings.PtyHostBinDir),
+            _settings.ResolvedPtyHostSourceDir);
     }
 
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
@@ -53,7 +65,7 @@ public sealed class SessionRunnerRuntime
 
         try
         {
-            await session.StartAsync(request, ct);
+            await session.StartAsync(request, _launcher, ct);
             return session.ToDto();
         }
         catch
@@ -83,8 +95,7 @@ public sealed class SessionRunnerRuntime
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        GetSession(sessionId).ClearLiveBuffer();
-        return Task.CompletedTask;
+        return GetSession(sessionId).ClearLiveBufferAsync(ct);
     }
 
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
@@ -92,8 +103,7 @@ public sealed class SessionRunnerRuntime
         if (cols <= 0 || rows <= 0)
             throw new ArgumentException("Terminal size must be positive.");
 
-        GetSession(sessionId).Resize(cols, rows);
-        return Task.CompletedTask;
+        return GetSession(sessionId).ResizeAsync(cols, rows, ct);
     }
 
     public async Task<RunnerSessionDto> KillAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
@@ -136,11 +146,20 @@ public sealed class SessionRunnerRuntime
     private sealed class RunnerSession : IAsyncDisposable
     {
         private readonly Guid _sessionId;
-        private readonly RunnerBuffer _buffer;
+        private readonly SessionRunnerSettings _settings;
         private readonly SessionRunnerEventHub _events;
         private readonly ILogger _logger;
-        private readonly PtyAgentRunner _runner = new();
         private readonly object _gate = new();
+        private readonly StringBuilder _liveBuffer = new();
+        private readonly TaskCompletionSource _exited =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private PtyHostClient? _client;
+        private int _hostPid;
+        private int? _childPid;
+        private DateTime _startedAt;
+        private TerminalScreen? _screen;
+        private string? _ansiLogPath;
         private TranscriptTailer? _tailer;
         private long _lastSequence;
         private string _status = "Starting";
@@ -154,40 +173,85 @@ public sealed class SessionRunnerRuntime
             ILogger logger)
         {
             _sessionId = sessionId;
-            _buffer = new RunnerBuffer(sessionId, Math.Max(1, settings.ReplayBufferMaxChars), settings.SessionLogPath);
+            _settings = settings;
             _events = events;
             _logger = logger;
         }
 
-        public async Task StartAsync(RunnerLaunchRequest request, CancellationToken ct)
+        public DateTime StartedAt => _startedAt;
+
+        public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher, CancellationToken ct)
         {
-            _runner.OnData += OnData;
-            await _runner.StartAsync(
-                request.Exe,
-                request.Args.ToArray(),
-                request.Cwd,
-                request.Env.ToDictionary(kv => kv.Key, kv => kv.Value),
-                request.Cols,
-                request.Rows,
-                request.MemoryLimitMb,
-                ct);
+            Directory.CreateDirectory(_settings.SessionLogPath);
+            Directory.CreateDirectory(_settings.PtyHostLogDir);
+            _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
+            _screen = new TerminalScreen(request.Cols, request.Rows);
 
-            lock (_gate)
+            _hostPid = await launcher.LaunchDetachedAsync(
+                _sessionId,
+                _settings.PtyHostManifestDir,
+                hostLogFile: Path.Combine(_settings.PtyHostLogDir, $"{_sessionId:N}.log"),
+                launchTimeout: TimeSpan.FromSeconds(_settings.PtyHostLaunchTimeoutSec),
+                lingerTtl: TimeSpan.FromHours(_settings.PtyHostLingerHours),
+                ringCapChars: Math.Max(1, _settings.ReplayBufferMaxChars),
+                ct: ct);
+
+            try
             {
-                _status = "Running";
+                _client = await PtyHostClient.ConnectAsync(
+                    PtyHostProtocol.PipeNameFor(_sessionId),
+                    TimeSpan.FromSeconds(_settings.PtyHostConnectTimeoutSec),
+                    ct);
+                _client.OnOutput += HandleOutput;
+                _client.OnExited += HandleExited;
+                _client.OnDisconnected += HandleDisconnected;
+
+                var launched = await _client.LaunchAsync(
+                    new LaunchMessage(
+                        request.Exe,
+                        request.Args,
+                        request.Env,
+                        request.Cwd,
+                        request.Cols,
+                        request.Rows,
+                        request.MemoryLimitMb,
+                        request.TranscriptEnabled,
+                        _ansiLogPath),
+                    ct);
+
+                _childPid = launched.ChildPid;
+                _startedAt = launched.ChildStartTimeUtc;
+                lock (_gate)
+                {
+                    _status = "Running";
+                }
+
+                _events.Publish(
+                    SessionRunnerEventNames.SessionStarted,
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+
+                if (await _client.AttachAsync(0, ct) is { } resync)
+                {
+                    // Impossible on a fresh host (nothing can have left the ring yet) — but if it
+                    // ever happens, the ansi log still has everything; log and continue live.
+                    _logger.LogWarning(
+                        "Fresh session {SessionId} answered attach with resync ({First}..{Last})",
+                        _sessionId, resync.FirstAvailableSeq, resync.LastSeq);
+                    await _client.AttachAsync(resync.LastSeq, ct);
+                }
+
+                if (request.TranscriptEnabled)
+                {
+                    _tailer = new TranscriptTailer(_sessionId, request.Cwd, _events, _logger);
+                    _tailer.Start();
+                }
             }
-
-            _events.Publish(
-                SessionRunnerEventNames.SessionStarted,
-                new RunnerSessionStartedEvent(_sessionId, _runner.Pid, _runner.StartedAt));
-
-            if (request.TranscriptEnabled)
+            catch
             {
-                _tailer = new TranscriptTailer(_sessionId, request.Cwd, _events, _logger);
-                _tailer.Start();
+                // Never leave an orphaned empty host behind a failed start.
+                KillHostBestEffort();
+                throw;
             }
-
-            _ = ObserveExitAsync();
         }
 
         public bool HasExited
@@ -205,8 +269,8 @@ public sealed class SessionRunnerRuntime
             {
                 return new RunnerSessionDto(
                     _sessionId,
-                    _runner.Pid,
-                    _runner.StartedAt,
+                    _childPid,
+                    _startedAt,
                     _status,
                     _exitCode,
                     _exitReason,
@@ -216,10 +280,10 @@ public sealed class SessionRunnerRuntime
 
         public RunnerBufferDto GetBuffer()
         {
+            long lastSequence;
             lock (_gate)
-            {
-                return new RunnerBufferDto(_sessionId, _buffer.FullSnapshot(), _lastSequence);
-            }
+                lastSequence = _lastSequence;
+            return new RunnerBufferDto(_sessionId, ReadAnsiLog(), lastSequence);
         }
 
         public RunnerSnapshotDto GetSnapshot()
@@ -228,26 +292,39 @@ public sealed class SessionRunnerRuntime
             {
                 return new RunnerSnapshotDto(
                     _sessionId,
-                    _runner.SnapshotText(),
-                    _runner.SnapshotScreen(),
+                    _liveBuffer.ToString(),
+                    _screen?.GetScreenText() ?? "",
                     _lastSequence,
-                    _runner.StartedAt);
+                    _startedAt);
             }
         }
 
         public RunnerTranscriptDto GetTranscript() =>
             _tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0);
 
-        public Task WriteAsync(string input, CancellationToken ct) => _runner.WriteAsync(input, ct);
+        public Task WriteAsync(string input, CancellationToken ct) =>
+            RequireClient().InputAsync(input, ct);
 
-        public void ClearLiveBuffer() => _runner.ClearLiveBuffer();
+        public async Task ClearLiveBufferAsync(CancellationToken ct)
+        {
+            lock (_gate)
+                _liveBuffer.Clear();
+            if (_client is { } client)
+                await client.ClearLiveBufferAsync(ct);
+        }
 
-        public void Resize(int cols, int rows) => _runner.Resize(cols, rows);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) =>
+            RequireClient().ResizeAsync(cols, rows, ct);
 
         public async Task KillAsync(TimeSpan timeout, CancellationToken ct)
         {
-            ct.ThrowIfCancellationRequested();
-            await _runner.KillAsync(timeout);
+            if (HasExited || _client is not { } client)
+                return;
+
+            await client.KillAsync(timeout, ct);
+            // Parity with the old in-proc KillAsync: wait for the exit (with a grace margin for
+            // the pipe round-trip); the liveness sweep is the backstop if it never arrives.
+            await Task.WhenAny(_exited.Task, Task.Delay(timeout + TimeSpan.FromSeconds(2), ct));
         }
 
         /// <summary>
@@ -263,8 +340,8 @@ public sealed class SessionRunnerRuntime
             {
                 if (_status != "Running")
                     return false;
-                pid = _runner.Pid;
-                startedAt = _runner.StartedAt;
+                pid = _childPid;
+                startedAt = _startedAt;
             }
 
             if (pid is int livePid && probe.IsAlive(livePid, startedAt))
@@ -286,126 +363,132 @@ public sealed class SessionRunnerRuntime
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
                 new RunnerSessionExitedEvent(_sessionId, exitCode, "ProcessVanished", lastSequence));
+            _exited.TrySetResult();
+
+            // The session is declared dead; the host (if any survives) has no further purpose.
+            _ = Task.Run(ShutdownHostAsync);
             return true;
         }
 
         public async ValueTask DisposeAsync()
         {
-            _runner.OnData -= OnData;
+            // Dispose detaches from the host — it must NOT kill it: surviving the runner's own
+            // teardown is the entire point of the pty-host split.
+            if (_client is { } client)
+            {
+                _client = null;
+                client.OnOutput -= HandleOutput;
+                client.OnExited -= HandleExited;
+                client.OnDisconnected -= HandleDisconnected;
+                await client.DisposeAsync();
+            }
+
             if (_tailer is not null)
                 await _tailer.DisposeAsync();
-            await _runner.DisposeAsync();
         }
 
-        private void OnData(string text)
+        private void HandleOutput(long seq, string chunk)
         {
-            if (string.IsNullOrEmpty(text))
+            if (string.IsNullOrEmpty(chunk))
                 return;
 
-            long sequence;
             lock (_gate)
             {
-                sequence = ++_lastSequence;
-                _buffer.Append(text);
+                _lastSequence = Math.Max(_lastSequence, seq);
+                _liveBuffer.Append(chunk);
+                _screen?.Feed(chunk);
             }
 
             _events.Publish(
                 SessionRunnerEventNames.SessionOutput,
-                new RunnerOutputEvent(_sessionId, sequence, text));
+                new RunnerOutputEvent(_sessionId, seq, chunk));
         }
 
-        private async Task ObserveExitAsync()
+        private void HandleExited(ExitedMessage exited)
         {
-            try
+            bool transitioned;
+            lock (_gate)
             {
-                var exitCode = await _runner.Exited;
-                lock (_gate)
+                transitioned = _status != "Exited";
+                if (transitioned)
                 {
                     _status = "Exited";
-                    _exitCode = exitCode;
-                    _exitReason = _runner.ExitReason.ToString();
+                    _exitCode = exited.ExitCode;
+                    _exitReason = exited.ExitReason;
+                    _lastSequence = Math.Max(_lastSequence, exited.LastSeq);
                 }
+            }
 
+            if (transitioned)
+            {
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    new RunnerSessionExitedEvent(_sessionId, exitCode, _runner.ExitReason.ToString(), _lastSequence));
+                    new RunnerSessionExitedEvent(_sessionId, exited.ExitCode, exited.ExitReason, exited.LastSeq));
+            }
+
+            _exited.TrySetResult();
+            // Fate is recorded — ack so the host deletes its manifest and exits. Run outside the
+            // client's read loop (this handler IS the read loop).
+            _ = Task.Run(ShutdownHostAsync);
+        }
+
+        private void HandleDisconnected(Exception? failure)
+        {
+            if (HasExited)
+                return;
+
+            // The host outlives us by design; a dropped pipe on a running session means the runner
+            // is shutting down (adoption reconnects on next start) or the host died (the liveness
+            // sweep will mark the vanished child). Nothing to do here but record it.
+            _logger.LogWarning(
+                failure,
+                "pty-host pipe for running session {SessionId} disconnected (host pid {HostPid})",
+                _sessionId, _hostPid);
+        }
+
+        private async Task ShutdownHostAsync()
+        {
+            var client = _client;
+            if (client is null)
+                return;
+
+            try
+            {
+                await client.ShutdownAsync(CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed while observing runner session {SessionId} exit", _sessionId);
-
-                // The observer is the ONLY thing that moves a session out of "Running" on exit; if
-                // it dies the session would claim Running forever while nothing is actually being
-                // observed. Fail the session loudly instead of lying about its state.
-                long lastSequence;
-                int? exitCode;
-                bool transitioned;
-                lock (_gate)
-                {
-                    transitioned = _status != "Exited";
-                    if (transitioned)
-                    {
-                        _status = "Exited";
-                        _exitCode ??= -1;
-                        _exitReason = "ObserverFailed";
-                    }
-                    exitCode = _exitCode;
-                    lastSequence = _lastSequence;
-                }
-
-                if (transitioned)
-                {
-                    _events.Publish(
-                        SessionRunnerEventNames.SessionExited,
-                        new RunnerSessionExitedEvent(_sessionId, exitCode, "ObserverFailed", lastSequence));
-                }
-
-                _events.Publish(
-                    SessionRunnerEventNames.SessionError,
-                    new { sessionId = _sessionId, message = ex.Message });
+                _logger.LogDebug(ex,
+                    "Shutdown ack to pty-host for session {SessionId} failed (host likely already gone)",
+                    _sessionId);
             }
         }
-    }
 
-    private sealed class RunnerBuffer
-    {
-        private readonly StringBuilder _buffer = new();
-        private readonly int _maxChars;
-        private readonly string _filePath;
-
-        public RunnerBuffer(Guid sessionId, int maxChars, string logRoot)
+        private void KillHostBestEffort()
         {
-            _maxChars = maxChars;
-            Directory.CreateDirectory(logRoot);
-            _filePath = Path.Combine(logRoot, $"{sessionId:N}.ansi.log");
-            Hydrate();
+            try
+            {
+                System.Diagnostics.Process.GetProcessById(_hostPid).Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Already gone.
+            }
         }
 
-        public void Append(string text)
+        private PtyHostClient RequireClient() =>
+            _client ?? throw new InvalidOperationException("Session has no live pty-host connection.");
+
+        private string ReadAnsiLog()
         {
-            File.AppendAllText(_filePath, text);
-            _buffer.Append(text);
-            if (_buffer.Length <= _maxChars)
-                return;
+            if (_ansiLogPath is null || !File.Exists(_ansiLogPath))
+                return "";
 
-            _buffer.Remove(0, _buffer.Length - _maxChars);
-        }
-
-        public string FullSnapshot() =>
-            File.Exists(_filePath)
-                ? File.ReadAllText(_filePath)
-                : _buffer.ToString();
-
-        private void Hydrate()
-        {
-            if (!File.Exists(_filePath))
-                return;
-
-            var text = File.ReadAllText(_filePath);
-            if (text.Length > _maxChars)
-                text = text[^_maxChars..];
-
-            _buffer.Append(text);
+            // The host appends concurrently; open shared so reads never fail or block it.
+            using var stream = new FileStream(
+                _ansiLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
     }
 }

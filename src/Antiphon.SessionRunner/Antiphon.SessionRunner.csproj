@@ -17,6 +17,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
     <ProjectReference Include="..\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
+    <!-- The pty-host ships inside the runner's output; hosts are shadow-copied from there at launch. -->
+    <ProjectReference Include="..\Antiphon.PtyHost\Antiphon.PtyHost.csproj" />
+    <ProjectReference Include="..\Antiphon.PtyHost.Client\Antiphon.PtyHost.Client.csproj" />
   </ItemGroup>
 
 </Project>
