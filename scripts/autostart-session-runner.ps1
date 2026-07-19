@@ -39,11 +39,17 @@ Add-Content -LiteralPath $logFile -Value `
     -Encoding UTF8 -ErrorAction SilentlyContinue
 
 # Blocks in the supervise/restart loop until desired-state = 'stopped'.
+# Launch the BUILT exe directly (not 'dotnet run'): 'dotnet run' wraps the app in a
+# kill-on-close Job Object that captures our detached pty-hosts and kills them on restart.
+# run-daemon rebuilds via -BuildProjectDir before each (re)launch, so soft restarts still
+# pick up new code. See docs/superpowers/specs/2026-07-19-pty-host-split.md.
+$runnerExe = Join-Path $runnerDir 'bin\Debug\net9.0\Antiphon.SessionRunner.exe'
 & (Join-Path $PSScriptRoot 'run-daemon.ps1') `
-    -Name           'session-runner' `
-    -WorkDir        $runnerDir `
-    -Exe            'dotnet' `
-    -ExeArgs        'run --urls http://localhost:17204' `
-    -LogFile        $logFile `
-    -ServicePidFile $servicePidFile `
-    -StateFile      $stateFile
+    -Name            'session-runner' `
+    -WorkDir         $runnerDir `
+    -Exe             $runnerExe `
+    -ExeArgs         '--urls http://localhost:17204' `
+    -LogFile         $logFile `
+    -ServicePidFile  $servicePidFile `
+    -StateFile       $stateFile `
+    -BuildProjectDir $runnerDir

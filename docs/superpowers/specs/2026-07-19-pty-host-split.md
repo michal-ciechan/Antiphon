@@ -149,6 +149,35 @@ Rough total: a solid multi-day epic. Slices 1–2 are risk-free to land early (n
 - **Orphaned hosts** (runner never comes back): linger TTL (24 h) + `rc`-style visibility — hosts are enumerable via manifests, and `-KillSessions` reaps them. The planned discovery service (separate spec) can surface them in the UI.
 - **Protocol drift:** mitigated by keeping interpretation out of the host, versioned hello, degraded-mode adopt.
 
+## Deployment gotcha & fix — the `dotnet run` kill-on-close job (found during rollout, 2026-07-19)
+
+The first live rollout revealed sessions did **not** survive a runner restart, despite the Slice-2
+detachment tests passing. Root cause: the production runner ran via
+`Scheduled Task → pwsh supervisor → cmd /c "dotnet run" → dotnet MUXER → SessionRunner.exe`. The
+**`dotnet run` muxer creates a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`** so the
+app is cleaned up when the muxer dies. Pty-hosts spawned by the app request
+`CREATE_BREAKAWAY_FROM_JOB`, but that muxer job does not set `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, so
+`CreateProcessW` returns `ERROR_ACCESS_DENIED` and our fallback spawns the host **inside** the job.
+On restart the muxer job closes and kill-on-close terminates every pty-host too. The double-spawn
+correctly breaks the *parent chain* (taskkill's tree-walk misses the hosts), but the *job* captures
+them regardless — and you cannot break out of a kill-on-close job you were born into without the
+job's permission.
+
+Why Slice-2 tests passed anyway: the test harness spawns hosts from the test process, which is **not**
+inside a `dotnet run` kill-on-close job, so breakaway was never needed there.
+
+**Fix (implemented 2026-07-19):** stop launching the daemon with `dotnet run`. `run-daemon.ps1`
+gained a `-BuildProjectDir` mode that runs `dotnet build` before each (re)launch and then runs the
+**built exe directly** — removing the muxer job entirely. Both launch paths use it:
+`scripts/autostart-session-runner.ps1` (the Scheduled Task) and `Antiphon.AppHost/Program.cs`
+(`DaemonProcessConfig.BuildProjectDir`). Build-before-launch preserves the "soft restart picks up new
+code" behaviour `dotnet run` gave for free. With the muxer job gone, hosts sit only in the Task
+Scheduler job, which persists across a soft restart (the supervisor stays alive), so they survive.
+A guard test (`PtyHostDeploymentGuardTests`) asserts neither launch path reverts to `dotnet run`.
+
+Note the safety property held throughout: while hosts were still dying, the restarted runner's
+adoption sweep correctly registered them as `ProcessVanished` (Exited) — no phantom Working agents.
+
 ## Non-goals
 
 - Multi-session hosts, host pooling, remote hosts (one session = one host, localhost only).

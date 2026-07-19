@@ -17,12 +17,18 @@ builder.AddDaemonSupervisor();
 var postgres = builder.AddConnectionString("DefaultConnection");
 
 // ── Session runner (daemon — survives AppHost exit, keeps live PTY sessions alive)
+// Launch the BUILT exe directly (not 'dotnet run'): 'dotnet run' wraps the app in a
+// kill-on-close Job Object that captures the runner's detached pty-hosts and kills them on
+// restart, defeating session survival. BuildProjectDir makes the supervisor rebuild before
+// each launch so soft restarts still pick up new code. See the 2026-07-19 pty-host-split spec.
+var sessionRunnerDir = Path.Combine(repoRoot, "src", "Antiphon.SessionRunner");
 builder.AddDaemonProcess("session-runner", new DaemonProcessConfig(
-    Executable:       "dotnet",
-    Args:             ["run", "--urls", "http://localhost:17204"],
-    WorkingDirectory: Path.Combine(repoRoot, "src", "Antiphon.SessionRunner"),
+    Executable:       Path.Combine(sessionRunnerDir, "bin", "Debug", "net9.0", "Antiphon.SessionRunner.exe"),
+    Args:             ["--urls", "http://localhost:17204"],
+    WorkingDirectory: sessionRunnerDir,
     Port:             17204,
-    HealthPath:       "/health"));
+    HealthPath:       "/health",
+    BuildProjectDir:  sessionRunnerDir));
 
 // ── .NET API server ───────────────────────────────────────────────────────────
 var server = builder

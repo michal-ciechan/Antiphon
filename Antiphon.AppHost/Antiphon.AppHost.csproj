@@ -24,8 +24,9 @@
     <ProjectReference Include="..\server\Antiphon.Server.csproj" />
     <!--
       NOTE: No ProjectReference to Antiphon.SessionRunner. The session-runner is an
-      always-on daemon (launched via AddDaemonProcess → `dotnet run` in its own dir,
-      not Projects.Antiphon_SessionRunner). Referencing it here pulls it into the
+      always-on daemon (launched via AddDaemonProcess, which builds it and runs its
+      built exe directly in its own dir, not Projects.Antiphon_SessionRunner).
+      Referencing it here pulls it into the
       AppHost build graph, and the build's copy-to-output step then fails with
       MSB3027 because the running daemon locks Antiphon.SessionRunner.exe. Keeping it
       out lets the AppHost rebuild while the always-on session-runner stays running

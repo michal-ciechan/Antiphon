@@ -256,7 +256,7 @@ public sealed class DaemonProcessService(
         // ExeArgs is passed as a single space-joined string — PowerShell -File mode
         // only binds the first value to [string[]] params, so the PS script splits it.
         var exeArgs = string.Join(" ", r.Config.Args);
-        return string.Join(" ", new[]
+        var args = new List<string>
         {
             "-NonInteractive", "-NoProfile", "-File", $"\"{scriptPath}\"",
             "-Name",           $"\"{r.Name}\"",
@@ -266,7 +266,17 @@ public sealed class DaemonProcessService(
             "-LogFile",        $"\"{r.LogFile}\"",
             "-ServicePidFile", $"\"{r.ServicePidFile}\"",
             "-StateFile",      $"\"{r.StateFile}\"",
-        });
+        };
+
+        // Build-before-launch + run the exe directly, so no 'dotnet run' kill-on-close job
+        // captures the daemon's detached child processes (see DaemonProcessConfig.BuildProjectDir).
+        if (!string.IsNullOrWhiteSpace(r.Config.BuildProjectDir))
+        {
+            args.Add("-BuildProjectDir");
+            args.Add($"\"{r.Config.BuildProjectDir}\"");
+        }
+
+        return string.Join(" ", args);
     }
 
     // ── IHostedService (no-op; InitialiseAsync is called by the lifecycle hook) ──

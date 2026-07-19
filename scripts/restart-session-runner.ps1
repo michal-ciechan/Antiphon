@@ -8,8 +8,10 @@
 
     Restart strategy:
       - Soft (default): kill the running service process; the live supervisor's
-        restart loop relaunches it (~3s). 'dotnet run' rebuilds first, so a soft
-        restart picks up new SessionRunner code.
+        restart loop rebuilds (run-daemon -BuildProjectDir) then relaunches the
+        built exe (~a few s), so a soft restart picks up new SessionRunner code.
+        (The daemon runs the exe directly, not 'dotnet run', so pty-hosts are not
+        captured by a kill-on-close muxer job - see the pty-host-split spec.)
       - If no supervisor is alive: (re)start it via the Scheduled Task.
       - Hard (-Hard): also kill the supervisor, then restart via the Scheduled
         Task. Use after a crash/wedge or when the supervisor is orphaned.

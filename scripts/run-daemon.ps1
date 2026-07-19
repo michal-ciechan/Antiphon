@@ -8,6 +8,14 @@
     values from [string[]] params, so we do the split ourselves).
     Service stdout+stderr is appended to LogFile via cmd.exe shell redirection so the
     Aspire log tailer can surface it in the dashboard console view.
+
+    BuildProjectDir: when set, 'dotnet build' runs before each (re)launch and the daemon
+    then runs the built EXE directly (Exe = the built exe path), NOT 'dotnet run'. This is
+    required for the session-runner: 'dotnet run' wraps the app in a kill-on-close Job
+    Object, and our detached pty-hosts (which deliberately break their parent chain) still
+    get captured by that job and die when the runner is torn down. Running the exe directly
+    removes that muxer job so pty-hosts survive a runner restart. Build-before-launch keeps
+    the "soft restart picks up new code" behaviour 'dotnet run' gave us for free. ASCII-only.
 #>
 param(
     [string]$Name,
@@ -16,7 +24,8 @@ param(
     [string]$ExeArgs,
     [string]$LogFile,
     [string]$ServicePidFile,
-    [string]$StateFile
+    [string]$StateFile,
+    [string]$BuildProjectDir = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -47,6 +56,24 @@ while ($true) {
         Write-Log "Desired state is stopped - exiting."
         Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
         exit 0
+    }
+
+    # Build before launch so a soft restart (kill the service; the loop relaunches) picks up
+    # new code, exactly as 'dotnet run' did - but we then launch the built exe directly so no
+    # kill-on-close muxer job captures the pty-hosts. The old service is already dead here, so
+    # its exe is unlocked and the build can overwrite it.
+    if ($BuildProjectDir) {
+        Write-Log "Building $BuildProjectDir (Debug)..."
+        $buildOut = & dotnet build $BuildProjectDir -c Debug --nologo 2>&1
+        foreach ($l in $buildOut) {
+            Add-Content -LiteralPath $LogFile -Value $l -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "[ERR] Build failed (exit $LASTEXITCODE). Retrying in 5 s..."
+            Start-Sleep 5
+            continue
+        }
+        Write-Log "Build succeeded."
     }
 
     Write-Log "Starting $Exe $($exeArgList -join ' ')"
