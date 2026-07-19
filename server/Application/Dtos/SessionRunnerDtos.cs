@@ -9,7 +9,11 @@ public sealed record SessionRunnerSessionDto(
     string Status,
     int? ExitCode,
     AgentExitReason ExitReason,
-    long LastSequence);
+    long LastSequence,
+    // Pid of the detached pty-host owning this session's ConPTY (null pre-split/unknown).
+    int? HostPid = null,
+    // True when the runner re-attached to a host that survived a previous runner's death.
+    bool Adopted = false);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
@@ -54,9 +58,16 @@ public sealed record SessionRunnerTranscriptDto(
     IReadOnlyList<SessionRunnerTranscriptEvent> Entries,
     long LastSequence);
 
+/// <summary>A restarted runner re-attached to a surviving pty-host; the session never stopped.</summary>
+public sealed record SessionRunnerAdoptedEvent(
+    Guid SessionId,
+    int? Pid,
+    long LastSequence);
+
 public sealed record SessionRunnerEvent(
     string EventName,
     Guid SessionId,
     SessionRunnerOutputEvent? Output = null,
     SessionRunnerExitedEvent? Exited = null,
-    SessionRunnerTranscriptEvent? Transcript = null);
+    SessionRunnerTranscriptEvent? Transcript = null,
+    SessionRunnerAdoptedEvent? Adopted = null);

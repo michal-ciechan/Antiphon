@@ -192,6 +192,17 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                         exited.LastSequence));
         }
 
+        if (eventName == SessionRunnerEventNames.SessionAdopted)
+        {
+            var adopted = JsonSerializer.Deserialize<RunnerSessionAdoptedEvent>(json, JsonOptions);
+            return adopted is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName,
+                    adopted.SessionId,
+                    Adopted: new SessionRunnerAdoptedEvent(adopted.SessionId, adopted.Pid, adopted.LastSequence));
+        }
+
         if (eventName == SessionRunnerEventNames.SessionStarted)
         {
             var started = JsonSerializer.Deserialize<RunnerSessionStartedEvent>(json, JsonOptions);
@@ -235,7 +246,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.Status,
             dto.ExitCode,
             MapExitReason(dto.ExitReason),
-            dto.LastSequence);
+            dto.LastSequence,
+            dto.HostPid,
+            dto.Adopted);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

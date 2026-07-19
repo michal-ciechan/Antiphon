@@ -42,6 +42,22 @@ public sealed class SessionRunnerEventPump : BackgroundService
                         await runtime.ObserveExitAsync(evt.Exited.SessionId, evt.Exited.ExitCode, evt.Exited.ExitReason, stoppingToken);
                     else if (evt.Transcript is not null)
                         await runtime.ObserveTranscriptAsync(evt.Transcript, stoppingToken);
+                    else if (evt.Adopted is not null)
+                    {
+                        // The session survived a runner restart (pty-host split). No state change:
+                        // the DB row is already Running and stays Running. Nudge any connected
+                        // terminal to resync its buffer since output streamed while the runner
+                        // (and therefore SignalR fanout) was down.
+                        _logger.LogInformation(
+                            "Session {SessionId} adopted by restarted runner (last sequence {LastSequence})",
+                            evt.Adopted.SessionId, evt.Adopted.LastSequence);
+                        var eventBus = scope.ServiceProvider.GetRequiredService<IEventBus>();
+                        await eventBus.PublishToGroupAsync(
+                            AgentSessionGroups.Session(evt.Adopted.SessionId),
+                            "SessionAdopted",
+                            new { sessionId = evt.Adopted.SessionId, lastSequence = evt.Adopted.LastSequence },
+                            stoppingToken);
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

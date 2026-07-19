@@ -268,6 +268,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string _status = "Starting";
         private int? _exitCode;
         private string _exitReason = PtyExitReason.Unknown.ToString();
+        private bool _adopted;
 
         public RunnerSession(
             Guid sessionId,
@@ -367,6 +368,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _hostPid = manifest.HostPid;
             _childPid = manifest.ChildPid;
+            _adopted = true;
             _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc;
             _ansiLogPath = manifest.AnsiLogPath
                 ?? Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
@@ -439,6 +441,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _childPid = manifest.ChildPid,
                 _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc,
                 _ansiLogPath = manifest.AnsiLogPath,
+                _adopted = true,
                 _status = "Exited",
                 _exitCode = manifest.ExitCode ?? -1,
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
@@ -488,7 +491,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _status,
                     _exitCode,
                     _exitReason,
-                    _lastSequence);
+                    _lastSequence,
+                    _hostPid > 0 ? _hostPid : null,
+                    _adopted);
             }
         }
 
