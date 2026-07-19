@@ -14,14 +14,22 @@
       - Hard (-Hard): also kill the supervisor, then restart via the Scheduled
         Task. Use after a crash/wedge or when the supervisor is orphaned.
 
-.PARAMETER Hard        Also kill the supervisor and re-own via the Scheduled Task.
-.PARAMETER TimeoutSec  Seconds to wait for /health to return 200 (default 60).
+    SESSIONS SURVIVE: since the pty-host split, live agent sessions run in
+    detached Antiphon.PtyHost processes that are NOT part of the runner's tree.
+    A restart drops their pipes only; the restarted runner re-adopts them.
+    Use -KillSessions for the old scorched-earth behavior.
+
+.PARAMETER Hard         Also kill the supervisor and re-own via the Scheduled Task.
+.PARAMETER KillSessions Also kill every live session (pty-hosts + children).
+.PARAMETER TimeoutSec   Seconds to wait for /health to return 200 (default 60).
 .EXAMPLE
     pwsh -File scripts/restart-session-runner.ps1
     pwsh -File scripts/restart-session-runner.ps1 -Hard
+    pwsh -File scripts/restart-session-runner.ps1 -KillSessions
 #>
 param(
     [switch]$Hard,
+    [switch]$KillSessions,
     [int]$TimeoutSec = 60
 )
 
@@ -71,8 +79,27 @@ Set-Content -LiteralPath $stateFile -Value 'running' -Encoding UTF8
 $supPid   = Read-PidFile $supervisorPid
 $supAlive = $supPid -and (Get-Process -Id $supPid -ErrorAction SilentlyContinue)
 
+# 0) -KillSessions: ask the (still-running) runner to kill every session first, then
+#    reap any pty-host stragglers by name. Without this flag, detached pty-hosts and
+#    their sessions survive the restart and are re-adopted.
+if ($KillSessions) {
+    if (Test-Port $port) {
+        try {
+            Invoke-WebRequest "http://localhost:$port/sessions/kill-all" -Method Post -UseBasicParsing -TimeoutSec 15 | Out-Null
+            Write-Host "  killed all live sessions via /sessions/kill-all"
+        } catch {
+            Write-Host "  kill-all endpoint failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    Get-Process Antiphon.PtyHost -ErrorAction SilentlyContinue | ForEach-Object {
+        taskkill /T /F /PID $_.Id 2>&1 | Out-Null
+        Write-Host "  killed pty-host (PID $($_.Id))"
+    }
+}
+
 # 1) Kill the running service. Try the recorded wrapper PID (cmd.exe tree), then
 #    the actual listener on 17204, then any stray SessionRunner.exe by name.
+#    (taskkill /T cannot reach pty-hosts: their parent chain is deliberately broken.)
 Stop-Tree (Read-PidFile $servicePidFile) 'service wrapper'
 Stop-Tree (Get-PortPid $port)            'port listener'
 Get-Process Antiphon.SessionRunner -ErrorAction SilentlyContinue |

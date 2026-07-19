@@ -1,7 +1,7 @@
 # Spec: PTY-Host Split — Sessions Survive Runner Restarts
 
 Date: 2026-07-19
-Status: **Draft — awaiting review** (answer the Q-IDs in [Decisions](#decisions-for-review), same format as the 2026-05-19 spec)
+Status: **Implemented** (2026-07-19, slices 1–6: skeleton `62c5cb8`, detachment `62fcff0`, cutover `efe4216`, adoption `b148bec`, server `d41a6cb`, ops+docs — see git log). Q-decisions recorded below.
 Predecessor: [2026-05-19-session-runner-split-questions.md](2026-05-19-session-runner-split-questions.md) — which deliberately deferred this: *"Q23: Should a running session survive runner restart? No, not initially"* and listed "Preserving sessions across runner process restart" as a non-goal. This spec lifts that non-goal.
 
 ## Problem

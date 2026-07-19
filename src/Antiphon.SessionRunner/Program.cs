@@ -27,6 +27,7 @@ builder.Services.AddSingleton<SessionRunnerRuntime>();
 builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
 // (regardless of whether auditing is enabled). A runaway audit dump here once filled a disk with ~894 GB.
+// Also prunes pty-host shadow-copy dirs and stale host logs.
 builder.Services.AddHostedService<AuditCleanupService>();
 // Liveness backstop: a session once sat "Running" on a dead PID for a week because the exit was
 // never observed — the sweep catches vanished processes and emits the missed SessionExited.
@@ -98,6 +99,14 @@ app.MapPost("/sessions/{id:guid}/resize", async (
 {
     await runtime.ResizeAsync(id, request.Cols, request.Rows, cancellationToken);
     return Results.NoContent();
+});
+
+app.MapPost("/sessions/kill-all", async (
+    SessionRunnerRuntime runtime,
+    CancellationToken cancellationToken) =>
+{
+    var killed = await runtime.KillAllAsync(TimeSpan.FromSeconds(5), cancellationToken);
+    return Results.Ok(killed);
 });
 
 app.MapPost("/sessions/{id:guid}/kill", async (

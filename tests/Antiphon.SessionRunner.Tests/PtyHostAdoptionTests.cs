@@ -171,6 +171,36 @@ public class PtyHostAdoptionTests
         KillBestEffort(dto.Pid);
     }
 
+    [Test]
+    public async Task KillAll_kills_every_live_session_and_their_hosts()
+    {
+        var settings = BuildSettings();
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var dtoA = await StartInteractiveSessionAsync(runtime, first);
+        var dtoB = await StartInteractiveSessionAsync(runtime, second);
+        var hostA = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, first))!.HostPid;
+        var hostB = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, second))!.HostPid;
+        try
+        {
+            var killed = await runtime.KillAllAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+
+            killed.Count.ShouldBe(2);
+            killed.ShouldAllBe(dto => dto.Status == "Exited");
+
+            // Hosts exit after the runner acks the kill-induced exits.
+            await WaitUntilAsync(() => !IsProcessAlive(hostA) && !IsProcessAlive(hostB), TimeSpan.FromSeconds(15));
+            await runtime.DisposeAsync();
+        }
+        finally
+        {
+            KillBestEffort(dtoA.Pid);
+            KillBestEffort(dtoB.Pid);
+        }
+    }
+
     // ---------- helpers ----------
 
     private static SessionRunnerSettings BuildSettings() => new()

@@ -20,6 +20,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
     private readonly SessionRunnerEventHub _events = new();
     private readonly SessionRunnerSettings _settings;
+    private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
     private readonly ILogger<SessionRunnerRuntime> _logger;
 
@@ -29,9 +30,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     {
         _settings = settings.Value;
         _logger = logger;
-        _launcher = new PtyHostLauncher(
-            new ShadowCopyStore(_settings.PtyHostBinDir),
-            _settings.ResolvedPtyHostSourceDir);
+        _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
+        _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
     }
 
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
@@ -114,6 +114,82 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     }
 
     public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) => _events.Subscribe(ct);
+
+    /// <summary>
+    /// Kills every live session (and thereby its host, via the exit-&gt;Shutdown ack). The
+    /// scorched-earth path behind <c>restart-session-runner.ps1 -KillSessions</c> and
+    /// <c>POST /sessions/kill-all</c> - the ONLY sanctioned way to take hosts down in bulk.
+    /// </summary>
+    public async Task<IReadOnlyList<RunnerSessionDto>> KillAllAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        var killed = new List<RunnerSessionDto>();
+        foreach (var (sessionId, session) in _sessions)
+        {
+            if (session.HasExited)
+                continue;
+            try
+            {
+                await session.KillAsync(timeout, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Kill-all failed for session {SessionId}", sessionId);
+            }
+
+            killed.Add(session.ToDto());
+        }
+
+        return killed;
+    }
+
+    /// <summary>
+    /// Best-effort disk hygiene for pty-host state: prunes shadow-copy version dirs no live host
+    /// runs from (oldest first) and host logs past the retention window. Never throws.
+    /// </summary>
+    public void CleanupPtyHostState()
+    {
+        try
+        {
+            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Directory.Exists(_settings.PtyHostBinDir))
+                referenced.Add(_launcher.CurrentShadowDir);
+
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName("Antiphon.PtyHost"))
+            {
+                try
+                {
+                    if (Path.GetDirectoryName(process.MainModule?.FileName) is { } dir)
+                        referenced.Add(dir);
+                }
+                catch
+                {
+                    // Access denied / exited mid-scan - a locked dir survives deletion anyway.
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            var deleted = _shadowStore.CleanupUnreferenced(referenced);
+            if (deleted > 0)
+                _logger.LogInformation("Pruned {Count} unreferenced pty-host shadow-copy dir(s)", deleted);
+
+            if (Directory.Exists(_settings.PtyHostLogDir))
+            {
+                var cutoff = DateTime.UtcNow.AddDays(-14);
+                foreach (var log in Directory.EnumerateFiles(_settings.PtyHostLogDir, "*.log"))
+                {
+                    if (File.GetLastWriteTimeUtc(log) < cutoff)
+                        TryDeleteFile(log);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "pty-host state cleanup pass failed");
+        }
+    }
 
     /// <summary>
     /// Startup adoption sweep: reconnects to pty-hosts that survived a runner restart. MUST run
