@@ -55,7 +55,7 @@ public class WorkspaceHookRunnerTests
             context,
             "before_run",
             CommandFor(script),
-            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
             CancellationToken.None);
 
         result.Succeeded.ShouldBeTrue();
@@ -94,7 +94,7 @@ public class WorkspaceHookRunnerTests
             new WorkspaceHookContext(workspace.Path, CardId: "E06-124", WorktreePath: workspace.Path),
             "after_create",
             CommandFor(script),
-            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(30),
             CancellationToken.None);
 
         result.Succeeded.ShouldBeFalse();
@@ -108,17 +108,20 @@ public class WorkspaceHookRunnerTests
     public async Task HookRunner_timeout_kills_hung_hook()
     {
         using var workspace = TempWorkspace.Create();
+        // The sleep must dwarf the timeout, and the timeout must dwarf PowerShell cold-start:
+        // with a 1s timeout the hook was killed before the script even began under parallel
+        // test load, so the started-marker assertion flaked.
         var script = await WriteScriptAsync(
             workspace.Path,
             "hung-hook",
             """
             "started" | Set-Content -Path timeout-started.txt
-            Start-Sleep -Seconds 10
+            Start-Sleep -Seconds 60
             exit 0
             """,
             """
             echo started > timeout-started.txt
-            sleep 10
+            sleep 60
             exit 0
             """);
 
@@ -126,12 +129,13 @@ public class WorkspaceHookRunnerTests
             new WorkspaceHookContext(workspace.Path, CardId: "E06-125", WorktreePath: workspace.Path),
             "before_run",
             CommandFor(script),
-            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(5),
             CancellationToken.None);
 
         result.Succeeded.ShouldBeFalse();
         result.TimedOut.ShouldBeTrue();
-        result.Duration.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+        // Proves the hook was killed at the timeout, not run to completion (the 60s sleep).
+        result.Duration.ShouldBeLessThan(TimeSpan.FromSeconds(30));
         File.Exists(Path.Combine(workspace.Path, "timeout-started.txt")).ShouldBeTrue();
     }
 
@@ -151,7 +155,7 @@ public class WorkspaceHookRunnerTests
             exit 0
             """);
 
-        var hook = new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(5));
+        var hook = new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(30));
 
         var result = await BuildRunner().RunAsync(
             new WorkspaceHookContext(workspace.Path, CardId: "E06-126", WorktreePath: workspace.Path),
@@ -183,7 +187,7 @@ public class WorkspaceHookRunnerTests
         var service = BuildService();
         var hooks = new WorkflowHooks(
             AfterCreate: null,
-            BeforeRun: new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(5)),
+            BeforeRun: new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(30)),
             AfterRun: null,
             BeforeRemove: null);
 
@@ -216,7 +220,7 @@ public class WorkspaceHookRunnerTests
         var hooks = new WorkflowHooks(
             AfterCreate: null,
             BeforeRun: null,
-            AfterRun: new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(5)),
+            AfterRun: new WorkspaceHookDefinition(CommandFor(script), TimeSpan.FromSeconds(30)),
             BeforeRemove: null);
 
         var result = await service.RunAfterRunAsync(

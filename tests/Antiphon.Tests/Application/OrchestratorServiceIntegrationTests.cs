@@ -791,8 +791,9 @@ public class OrchestratorServiceIntegrationTests
             await using var harness = BuildHarness(tempRoot, []);
 
             var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
-            await Should.ThrowAsync<InvalidOperationException>(() =>
-                harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None));
+            // WaitForIdleAsync settles without rethrowing launch faults; the failure outcome is
+            // asserted via the retry schedule + session state below.
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
             result.Dispatched.ShouldBe(1);
             await using var verify = CreateContext();

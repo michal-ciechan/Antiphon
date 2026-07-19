@@ -41,10 +41,12 @@ public class ClaudeAdapterLocalShellTests
     {
         DefaultDefinition = "claude-fake",
         Definitions = { ["claude-fake"] = new AgentDefinition { Kind = "ClaudeCode", Exe = Cmd } },
-        // Tight budgets — synthetic marker arrives instantly, no LLM latency.
-        ClaudeReadyQuietPeriodMs = 250,
-        ClaudeReadyMaxWaitMs = 5_000,
-        ClaudeDoneMaxWaitMs = 5_000,
+        // Tight budgets — synthetic marker arrives instantly, no LLM latency. Quiet period must
+        // still exceed the ConPTY echo round-trip under parallel test load (250ms flaked: quiet
+        // was declared in the latency gap before cmd's output arrived).
+        ClaudeReadyQuietPeriodMs = 750,
+        ClaudeReadyMaxWaitMs = 15_000,
+        ClaudeDoneMaxWaitMs = 15_000,
     });
 
     [Test]

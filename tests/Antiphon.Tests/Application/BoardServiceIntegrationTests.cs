@@ -267,8 +267,9 @@ public class BoardServiceIntegrationTests
                 new SpawnCardRequest("fake", 100, 24),
                 CancellationToken.None);
 
-            await Should.ThrowAsync<InvalidOperationException>(() =>
-                harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None));
+            // WaitForIdleAsync settles without rethrowing launch faults (they're logged and
+            // persisted); the failure outcome is asserted via DB/event state below.
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
             await using var verify = CreateContext();
             var storedCard = await verify.Cards.SingleAsync(c => c.Id == card.Id);

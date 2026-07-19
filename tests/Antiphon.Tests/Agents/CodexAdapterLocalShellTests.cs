@@ -49,14 +49,18 @@ public class CodexAdapterLocalShellTests
         Cols: 120,
         Rows: 30);
 
+    // "Fast" relative to production, but the quiet periods must stay comfortably above the
+    // ConPTY echo round-trip under parallel test load: at 250ms the adapter declared
+    // ready/turn-complete during the latency gap BEFORE cmd's output arrived, so snapshots
+    // were missing the expected text (flaked ~2/3 of loaded full-suite runs).
     private static IOptions<AgentRegistrySettings> FastOptions() => Options.Create(new AgentRegistrySettings
     {
         DefaultDefinition = "codex-fake",
         Definitions = { ["codex-fake"] = new AgentDefinition { Kind = "Codex", Exe = Cmd } },
-        CodexReadyQuietPeriodMs = 250,
-        CodexReadyMaxWaitMs = 5_000,
-        CodexDoneQuietPeriodMs = 250,
-        CodexDoneMaxWaitMs = 5_000,
+        CodexReadyQuietPeriodMs = 750,
+        CodexReadyMaxWaitMs = 15_000,
+        CodexDoneQuietPeriodMs = 750,
+        CodexDoneMaxWaitMs = 15_000,
     });
 
     [Test]

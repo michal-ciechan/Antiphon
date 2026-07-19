@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace Antiphon.PtyHost.Client;
 
@@ -99,13 +100,88 @@ public sealed class ShadowCopyStore(string binRoot)
 
     private static IEnumerable<(string FullPath, string RelativePath)> EnumerateContentFiles(string root)
     {
+        // When the source dir carries more than the host (the runner's own bin, or a test bin with
+        // hundreds of MB of unrelated assemblies), restrict to the host's dependency closure - the
+        // host can only ever load what its deps.json names. Falls back to everything when absent.
+        var closure = TryBuildHostClosure(root);
+
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(root, file);
             var topSegment = relative.Split(Path.DirectorySeparatorChar, 2)[0];
             if (ExcludedDirNames.Contains(topSegment, StringComparer.OrdinalIgnoreCase))
                 continue;
+            if (closure is not null && !closure.Contains(Path.GetFileName(file)))
+                continue;
             yield return (file, relative);
+        }
+    }
+
+    /// <summary>
+    /// File basenames the host needs at runtime, from <c>Antiphon.PtyHost.deps.json</c>: every
+    /// managed/native asset name mentioned anywhere in the document, plus the host's own files.
+    /// Returns null (no filtering) when the deps.json is not present.
+    /// </summary>
+    private static HashSet<string>? TryBuildHostClosure(string sourceDir)
+    {
+        var depsPath = Path.Combine(sourceDir, "Antiphon.PtyHost.deps.json");
+        if (!File.Exists(depsPath))
+            return null;
+
+        var closure = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Antiphon.PtyHost.exe",
+            "Antiphon.PtyHost.dll",
+            "Antiphon.PtyHost.pdb",
+            "Antiphon.PtyHost.deps.json",
+            "Antiphon.PtyHost.runtimeconfig.json",
+        };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(depsPath));
+            CollectAssetNames(doc.RootElement, closure);
+        }
+        catch (JsonException)
+        {
+            return null; // corrupt deps.json - copy everything rather than guess
+        }
+
+        return closure;
+    }
+
+    private static void CollectAssetNames(JsonElement element, HashSet<string> closure)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    AddIfAsset(property.Name, closure);
+                    CollectAssetNames(property.Value, closure);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    CollectAssetNames(item, closure);
+                break;
+            case JsonValueKind.String:
+                AddIfAsset(element.GetString(), closure);
+                break;
+        }
+    }
+
+    private static void AddIfAsset(string? value, HashSet<string> closure)
+    {
+        if (value is null)
+            return;
+        if (value.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".so", StringComparison.OrdinalIgnoreCase)
+            || value.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase))
+        {
+            closure.Add(Path.GetFileName(value.Replace('/', Path.DirectorySeparatorChar)));
         }
     }
 

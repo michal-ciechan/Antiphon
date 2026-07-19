@@ -21,7 +21,9 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         _runtime = new SessionRunnerRuntime(
             Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
             {
-                SessionLogPath = sessionLogPath
+                SessionLogPath = sessionLogPath,
+                // Tests must not strand detached hosts for the production 24 h linger.
+                PtyHostLingerHours = 0.02,
             }),
             NullLogger<SessionRunnerRuntime>.Instance);
     }

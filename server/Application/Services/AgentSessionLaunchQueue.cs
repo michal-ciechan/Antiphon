@@ -101,12 +101,27 @@ public sealed class AgentSessionLaunchQueue
         {
             Task[] launches;
             lock (_gate)
-                launches = _launches.ToArray();
+                // Completed-but-not-yet-removed tasks count as settled (the cleanup continuation
+                // races this snapshot); including them would make WhenAll rethrow immediately.
+                launches = _launches.Where(t => !t.IsCompleted).ToArray();
 
             if (launches.Length == 0)
                 return;
 
-            await Task.WhenAll(launches).WaitAsync(cts.Token);
+            try
+            {
+                await Task.WhenAll(launches).WaitAsync(cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                throw; // timeout / caller cancellation — the only failures idle-waiting owns
+            }
+            catch
+            {
+                // A faulted launch is still a SETTLED launch. Its failure is already logged by the
+                // enqueue continuation and persisted as a Failed session; "wait for idle" must not
+                // re-throw it at whoever happens to be waiting.
+            }
         }
     }
 
