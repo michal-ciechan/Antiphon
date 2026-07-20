@@ -255,7 +255,12 @@ public sealed class DaemonProcessService(
     {
         // ExeArgs is passed as a single space-joined string — PowerShell -File mode
         // only binds the first value to [string[]] params, so the PS script splits it.
+        // A LEADING HYPHEN would make -File treat the value as a parameter name ("Missing an
+        // argument for parameter 'ExeArgs'"), so hyphen-leading args (e.g. "--urls …") get a
+        // leading space; run-daemon splits on whitespace, so it is harmless.
         var exeArgs = string.Join(" ", r.Config.Args);
+        if (exeArgs.StartsWith('-'))
+            exeArgs = " " + exeArgs;
         var args = new List<string>
         {
             "-NonInteractive", "-NoProfile", "-File", $"\"{scriptPath}\"",
