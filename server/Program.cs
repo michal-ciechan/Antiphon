@@ -86,6 +86,7 @@ try
         .ValidateOnStart();
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
+    builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -145,6 +146,7 @@ try
     builder.Services.AddSingleton<WatchdogCooldownStore>();
     builder.Services.AddScoped<WatchdogService>();
     builder.Services.AddScoped<SessionReconciliationService>();
+    builder.Services.AddScoped<AgentSupervisorService>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -207,6 +209,7 @@ try
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();

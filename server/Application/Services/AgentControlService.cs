@@ -59,11 +59,18 @@ public sealed class AgentControlService
     {
         var agent = await LockAgentAsync(agentId, ct);
 
+        // Any Start (human, bridge, supervisor) lifts the supervision suspend latch and cancels a
+        // pending scheduled restart — a start IS the intent supervision waits for. The failure
+        // counter is deliberately NOT reset here (only sustained healthy uptime resets it), so a
+        // manual retry of a still-broken agent doesn't collapse the backoff ladder back to 5s.
+        await ClearSupervisionLatchAsync(agent, ct);
+
         // Already running — leave the existing process (and its remote-control state) untouched.
         if (await HasLiveSessionAsync(agent, ct))
             return await _agentService.GetByIdAsync(agent.Id, ct);
 
-        var remoteControlName = request.RemoteControl ? agent.Name : null;
+        var remoteControl = request.RemoteControl ?? agent.RemoteControlEnabled;
+        var remoteControlName = remoteControl ? agent.Name : null;
         var card = await ResolveStartCardAsync(agent, ct);
 
         Guid sessionId;
@@ -199,10 +206,71 @@ public sealed class AgentControlService
 
         agent.Status = AgentStatus.Stopped;
         agent.UpdatedAt = UtcNow();
+
+        // Deliberate stop of an always-on agent suspends supervision until a manual Start —
+        // supervision must never fight a human's explicit intent.
+        if (agent.AlwaysOn)
+        {
+            var state = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
+            if (!state.Suspended)
+            {
+                state.Suspended = true;
+                state.NextRestartAt = null;
+                state.UpdatedAt = UtcNow();
+                _db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(),
+                    AgentId = agent.Id,
+                    Kind = AgentIncidentKind.SuspendedByUser,
+                    Severity = AlertSeverity.Info,
+                    Message = "Stopped by user; always-on supervision suspended until the next manual start.",
+                    CreatedAt = UtcNow(),
+                });
+            }
+        }
+
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await _agentService.GetByIdAsync(agent.Id, ct);
+    }
+
+    private async Task ClearSupervisionLatchAsync(Agent agent, CancellationToken ct)
+    {
+        var state = await _db.AgentSupervisionStates.FirstOrDefaultAsync(s => s.AgentId == agent.Id, ct);
+        if (state is null || (!state.Suspended && state.NextRestartAt is null))
+            return;
+
+        var wasSuspended = state.Suspended;
+        state.Suspended = false;
+        state.NextRestartAt = null;
+        state.UpdatedAt = UtcNow();
+        if (wasSuspended)
+        {
+            _db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agent.Id,
+                Kind = AgentIncidentKind.ResumedByUser,
+                Severity = AlertSeverity.Info,
+                Message = "Started; always-on supervision resumed.",
+                CreatedAt = UtcNow(),
+            });
+        }
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private async Task<AgentSupervisionState> GetOrCreateSupervisionStateAsync(Guid agentId, CancellationToken ct)
+    {
+        var state = await _db.AgentSupervisionStates.FirstOrDefaultAsync(s => s.AgentId == agentId, ct);
+        if (state is null)
+        {
+            state = new AgentSupervisionState { AgentId = agentId, UpdatedAt = UtcNow() };
+            _db.AgentSupervisionStates.Add(state);
+        }
+
+        return state;
     }
 
     private async Task<bool> HasLiveSessionAsync(Agent agent, CancellationToken ct)

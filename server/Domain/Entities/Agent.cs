@@ -12,6 +12,16 @@ public class Agent
     public Guid? DefaultWorkflowTemplateId { get; set; }
     public AgentAssignmentPolicy AssignmentPolicy { get; set; } = AgentAssignmentPolicy.AutoPick;
     public AgentStatus Status { get; set; } = AgentStatus.Idle;
+
+    /// <summary>Supervised: auto-started at boot and auto-restarted on crash (never-give-up backoff ladder).</summary>
+    public bool AlwaysOn { get; set; }
+
+    /// <summary>
+    /// Remote control is part of this agent's normal setup: every start path (manual, channel
+    /// bridge, supervised) arms /remote-control when true and the request doesn't override.
+    /// </summary>
+    public bool RemoteControlEnabled { get; set; }
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The board automatically created for this agent when it was added.</summary>

@@ -91,7 +91,9 @@ public sealed record UpdateAgentRequest(
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.
-public sealed record StartAgentRequest(bool RemoteControl = false, bool Fresh = false);
+// RemoteControl: null = use the agent's persisted RemoteControlEnabled setting (the normal case);
+// true/false override for this start only.
+public sealed record StartAgentRequest(bool? RemoteControl = null, bool Fresh = false);
 
 public sealed record AssignAgentCardRequest(Guid CardId);
 

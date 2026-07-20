@@ -39,10 +39,41 @@ public class AppDbContext : DbContext
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
+    public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
+    public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AgentSupervisionState>(entity =>
+        {
+            entity.ToTable("AgentSupervisionStates");
+            entity.HasKey(s => s.AgentId);
+            entity.Property(s => s.UpdatedAt).IsRequired();
+
+            entity.HasOne(s => s.Agent)
+                .WithOne()
+                .HasForeignKey<AgentSupervisionState>(s => s.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentIncident>(entity =>
+        {
+            entity.ToTable("AgentIncidents");
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Message).IsRequired().HasMaxLength(4000);
+            entity.Property(i => i.FailureReason).HasMaxLength(4000);
+            entity.Property(i => i.CreatedAt).IsRequired();
+
+            entity.HasIndex(i => new { i.AgentId, i.CreatedAt })
+                .HasDatabaseName("IX_AgentIncidents_AgentId_CreatedAt");
+
+            entity.HasOne(i => i.Agent)
+                .WithMany()
+                .HasForeignKey(i => i.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<ChatChannel>(entity =>
         {
