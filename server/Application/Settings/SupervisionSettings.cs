@@ -54,8 +54,14 @@ public sealed class LivenessProbeSettings
 {
     public bool Enabled { get; set; } = true;
 
-    /// <summary>TUI echo probe (type + verify screen delta + backspace; free, no tokens).</summary>
-    public int TuiEchoIntervalMinutes { get; set; } = 60;
+    /// <summary>
+    /// TUI echo probe (type + verify screen delta + backspace; free, no tokens). 0 = DISABLED —
+    /// the current default: on 2026-07-20 the probe false-positive-killed healthy idle sessions
+    /// (typed char produced no rendered-screen delta within the settle window on real Claude
+    /// TUIs), each kill costing a session generation. Re-enable only after the screen-delta
+    /// detection is fixed and proven against a live idle session.
+    /// </summary>
+    public int TuiEchoIntervalMinutes { get; set; }
 
     /// <summary>Round-trip probe (queued healthcheck prompt; costs a model turn).</summary>
     public int RoundTripIntervalHours { get; set; } = 6;
