@@ -12,7 +12,7 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { TbBrandTelegram, TbBrandWhatsapp, TbBrandDiscord, TbMessageCircle } from 'react-icons/tb'
-import { useChannels, useUpdateChannel, type ChatChannelDto } from '../../api/channels'
+import { useChannels, useUpdateChannel, type AlertSeverity, type ChatChannelDto } from '../../api/channels'
 import { useAgentList } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -61,6 +61,19 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
   const onEnabledChange = (enabled: boolean) => {
     update.mutate(
       { id: channel.id, request: { enabled } },
+      {
+        onError: (e) =>
+          notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update channel') }),
+      },
+    )
+  }
+
+  const onAlertsChange = (value: string | null) => {
+    update.mutate(
+      {
+        id: channel.id,
+        request: value ? { alertMinSeverity: value as AlertSeverity } : { clearAlertMinSeverity: true },
+      },
       {
         onError: (e) =>
           notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update channel') }),
@@ -119,6 +132,27 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
           />
         </Tooltip>
       </Table.Td>
+      <Table.Td>
+        <Tooltip
+          label="Deliver operational alerts (grouped, max 1 message per 5 min) at or above this severity"
+          withArrow
+        >
+          <Select
+            placeholder="Alerts off"
+            data={[
+              { value: 'Warning', label: 'Warning+' },
+              { value: 'Error', label: 'Error+' },
+              { value: 'Critical', label: 'Critical' },
+            ]}
+            value={channel.alertMinSeverity}
+            onChange={onAlertsChange}
+            clearable
+            size="xs"
+            w={130}
+            disabled={update.isPending}
+          />
+        </Tooltip>
+      </Table.Td>
     </Table.Tr>
   )
 }
@@ -145,6 +179,7 @@ export function ChannelsPage() {
               <Table.Th>Last message</Table.Th>
               <Table.Th w={220}>Agent</Table.Th>
               <Table.Th w={90}>Enabled</Table.Th>
+              <Table.Th w={140}>Alerts</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>

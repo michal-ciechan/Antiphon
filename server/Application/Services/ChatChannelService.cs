@@ -59,6 +59,11 @@ public sealed class ChatChannelService
         if (request.Enabled is bool enabled)
             channel.Enabled = enabled;
 
+        if (request.ClearAlertMinSeverity)
+            channel.AlertMinSeverity = null;
+        else if (request.AlertMinSeverity is { } alertMinSeverity)
+            channel.AlertMinSeverity = alertMinSeverity;
+
         channel.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         return ToDto(channel);
@@ -121,7 +126,8 @@ public sealed class ChatChannelService
     private static ChatChannelDto ToDto(ChatChannel c) => new(
         c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
         c.AgentId, c.Agent?.Name, c.Enabled,
-        c.LastMessageAt, c.LastMessagePreview, c.LastAuthor, c.MessageCount, c.CreatedAt);
+        c.LastMessageAt, c.LastMessagePreview, c.LastAuthor, c.MessageCount, c.CreatedAt,
+        c.AlertMinSeverity);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }

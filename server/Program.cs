@@ -87,6 +87,7 @@ try
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
+    builder.Services.Configure<AlertsSettings>(builder.Configuration.GetSection("Alerts"));
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();
@@ -154,7 +155,9 @@ try
         Antiphon.Server.Infrastructure.Supervision.WindowsRcBridgeProbe>();
     builder.Services.AddSingleton<SessionHealthStateStore>();
     builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.IAlertService, AlertService>();
-    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.IAlertRouter, NullAlertRouter>();
+    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.IAlertRouter, ChannelAlertRouter>();
+    builder.Services.AddScoped<AlertDigestFlusher>();
+    builder.Services.AddSingleton<AlertThrottle>();
     builder.Services.AddSingleton<RunnerReachabilityState>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
@@ -220,6 +223,7 @@ try
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
