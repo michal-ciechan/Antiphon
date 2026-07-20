@@ -242,14 +242,33 @@ sampling/throttled *before* the router's dedup even sees it. Config:
 the tap (they surface via the server's structured events already); revisit with the
 discovery-service spec if needed.
 
-### Dependency callout: the messaging gateway must be running
+### Dependency callout: gateway stays OUT of our process — a fake gateway is the dev/test tool
 
-Alert *delivery* (not recording) requires `Antiphon.Messaging.Service` + Redpanda. Today the
-gateway is a standalone app, not part of the AppHost/always-on set. This spec adds it to the
-AppHost as a daemon (same `AddDaemonProcess` + built-exe pattern as the session-runner — the
-`dotnet run` job lesson from the pty-host spec applies here too). Making it a login-autostart
-daemon like the runner is optional (Q9): while the server is down there is no alert producer
-anyway, so AppHost-managed is sufficient unless the server itself later moves to always-on.
+Alert *delivery* (not recording) requires a gateway consuming `channels.outbound` + Redpanda.
+**User decision (2026-07-20): the real `Antiphon.Messaging.Service` (which talks to real
+Telegram) is NOT added to the AppHost/always-on set.** It stays a separately deployed/operated
+app. What the dev stack and E2E tests get instead is a **fake gateway** — a real-Kafka-connected
+stand-in that acts as a test tool:
+
+**New `src/Antiphon.Messaging.FakeGateway`** (tiny web app, same contracts, no Telegram):
+- **Records deliveries**: consumes `channels.outbound` (own consumer group), appends every
+  `ChannelReply` it would have delivered to `logs/fake-gateway/outbound.jsonl` and the console —
+  a local, greppable delivery log.
+- **Assertable over HTTP**: `GET /deliveries?since=&channel=&conversationId=` returns recorded
+  deliveries (what tests poll to assert "the alert reached the sink"); `DELETE /deliveries`
+  resets between tests.
+- **Pushes data through**: `POST /inbound` produces a synthetic `ChannelMessage` onto
+  `channels.inbound` (templates for direct/group Telegram-shaped messages) — drives the whole
+  bridge path (inbound → catalog upsert → agent prompt → reply → outbound → recorded delivery)
+  without any external service.
+- **Failure injection**: config/endpoint to simulate delivery failures (`SendResult.Failed`,
+  delays) so retry/degraded-mode paths are testable.
+- AppHost wires the **fake** gateway into the dev stack (built-exe daemon pattern — the
+  `dotnet run` job lesson applies to anything that spawns children; the fake spawns none, but
+  consistency is free). The real gateway's deployment is explicitly out of scope for this spec.
+- Layering: `FakeAntiphonMessagingClient` (in-memory, no Kafka) stays the unit-test seam; the
+  fake gateway is the *integration/E2E* seam — real producer, real Redpanda, real consumer group
+  semantics, fake egress.
 
 ## Slices (reviewable increments)
 
@@ -260,7 +279,7 @@ anyway, so AppHost-managed is sufficient unless the server itself later moves to
 | 3 | RC health watch | Server-side bridge probe (`.claude/sessions/<pid>.json` + TCP table), idle detection, re-arm → restart-when-idle escalation, `RcDegraded/RcReArmed/RcRestart` incidents; tests with a fake probe | M |
 | 4 | Alert core | `Alerts` table, `IAlertService`, SignalR `AlertRaised` + toast, producers wired (supervisor incl. RC watch, reconciler, launch, bridge, runner edge) | M |
 | 5 | Routing + Telegram sink | `ChatChannel.AlertMinSeverity` + Channels UI select, `AlertRoutingService` + `AlertThrottle` (dedup/rate/digest), delivery via producer; E2E with `FakeAntiphonMessagingClient` + a real end-to-end smoke to the designated Telegram channel | M–L |
-| 6 | Gateway always-on + log tap + docs | Messaging.Service into AppHost daemon set (built-exe pattern), `AlertingLogSink` (off by default, loop-guarded), retention/pruning pass, spec/CLAUDE.md/AGENTS.md updates | M |
+| 6 | Fake gateway + log tap + docs | `Antiphon.Messaging.FakeGateway` (outbound recorder + HTTP assert/inject API + failure injection) wired into the AppHost dev stack; alert E2E rewritten against it; `AlertingLogSink` (off by default, loop-guarded); retention/pruning pass; spec/CLAUDE.md/AGENTS.md updates | M–L |
 
 Rough total: another multi-day epic; slices 1–2 deliver the user-visible "always on" promise on
 their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is hardening.
@@ -271,8 +290,10 @@ their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is harde
   through the real `AgentControlService` + supervisor tick with a controlled `TimeProvider`
   (already DI-injected) — deterministic backoff/circuit tests, no real sleeps.
 - Alerts: unit-test the throttle (dedup windows, digests) with `TimeProvider`; pipeline tests via
-  `FakeAntiphonMessagingClient` asserting exact `ChannelReply`s; one gated headed E2E that posts to
-  a real Telegram test channel (skipped unless env var set, per repo convention).
+  `FakeAntiphonMessagingClient` asserting exact `ChannelReply`s; integration/E2E through real
+  Redpanda against the **fake gateway** (`GET /deliveries` assertions, `POST /inbound` to drive
+  the bridge path, failure injection for retry paths). A gated headed smoke to a real Telegram
+  test channel remains optional (skipped unless env var set, per repo convention).
 - Guard tests: supervisor never acts on `Suspended` or card-owned agents; alert pipeline exception
   never propagates to a caller.
 
@@ -284,6 +305,10 @@ their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is harde
 - Added instead: the **RC health watch** — when a supervised idle session's remote-control bridge
   looks old/disconnected, re-arm `/remote-control` in place, and if that keeps failing, restart
   the session while idle to restore remote access.
+- The real messaging gateway (talks to real Telegram) is **not** added to the AppHost/dev
+  process. Instead a Kafka-connected **fake gateway** joins the dev stack as a test tool:
+  records would-be deliveries (JSONL + HTTP assertions), injects inbound messages, simulates
+  failures. Real gateway deployment stays out of scope.
 
 ## Decisions for review
 
@@ -299,5 +324,5 @@ Reply by Q-ID ("use defaults" accepts all recommendations).
 | Q6 | Default alert threshold for the first Telegram sink: Warning+ or Error+? | **Warning+** with dedup/digest on |
 | Q7 | RC health watch: probe every 60s, act only after 5 idle minutes, 2 re-arm attempts before a restart-when-idle? | As stated |
 | Q8 | Log tap ships in slice 5 but **disabled** by default until the domain alerts prove quiet? | Yes |
-| Q9 | Messaging gateway: AppHost daemon only, or also login-autostart (like the session-runner)? | AppHost daemon only for now |
+| Q9 | Fake gateway surface: JSONL delivery log + HTTP assert/inject/failure-injection API — enough, or also a minimal web page listing deliveries? | API + logs first; page only if it earns its keep |
 | Q10 | Which Telegram destination: new dedicated "Antiphon Alerts" group with the existing bot? | New dedicated group |
