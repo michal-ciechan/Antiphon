@@ -147,6 +147,12 @@ try
     builder.Services.AddScoped<WatchdogService>();
     builder.Services.AddScoped<SessionReconciliationService>();
     builder.Services.AddScoped<AgentSupervisorService>();
+    builder.Services.AddScoped<SessionHealthService>();
+    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ISessionHealthActions,
+        Antiphon.Server.Infrastructure.Supervision.SessionHealthActions>();
+    builder.Services.AddSingleton<Antiphon.Server.Application.Interfaces.IRcBridgeProbe,
+        Antiphon.Server.Infrastructure.Supervision.WindowsRcBridgeProbe>();
+    builder.Services.AddSingleton<SessionHealthStateStore>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
@@ -210,6 +216,7 @@ try
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();

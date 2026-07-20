@@ -176,14 +176,17 @@ setting), no bridge connection across `ConsecutiveFailedProbes` (see below), and
 *everything*: a working agent is never disturbed, and busy sessions legitimately churn
 connections.
 
-**Thresholds are calibrated, not guessed (Q7 decision).** Slice 3 starts with a measurement
-task: instrument an idle RC-armed session and record (a) how often Claude refreshes
-`.claude/sessions/<pid>.json` (`updatedAt` cadence) and (b) bridge TCP connection stability /
-reconnect churn over several hours of true idleness. The dead-verdict threshold is then set as
-**5–10 missed normal heartbeats** at the *measured* cadence — i.e.
-`ConsecutiveFailedProbes × ProbeInterval ≥ 5–10 × observed-heartbeat-interval` — so transient
-blips (a single reconnect, a slow heartbeat) can never trigger repair. The numbers below are
-placeholders until that evidence lands; the config shape is final.
+**Thresholds are calibrated, not guessed (Q7 decision) — CALIBRATED 2026-07-20.** Measurement on
+two idle RC-armed sessions, 74 samples each at 30s cadence over ~37 min:
+- `.claude/sessions/<pid>.json` `updatedAt` **never changed during idleness** (1 distinct value
+  per session) — it is a status-transition stamp, NOT a heartbeat. It cannot be a liveness signal.
+- Bridge TCP connections were **continuously ≥ 2 (min 2, max 3), with zero samples at 0** across
+  both sessions. The connection count is the reliable, always-on liveness signal.
+
+Verdict thresholds derived from that evidence: dead = **5 consecutive zero-connection probes at
+60s cadence** (5 min of sustained absence, vs a healthy signal that never blipped once in 148
+samples) — comfortably within the "miss 5–10 normal probes" rule with the measured signal being
+100% stable. `ConsecutiveFailedProbesBeforeAction: 5` is therefore the shipped default.
 
 **Repair escalation** (each step is an incident + alert):
 1. **Re-arm in place** — send `/remote-control` into the live PTY (the existing

@@ -24,4 +24,42 @@ public sealed class SupervisionSettings
 
     public int IncidentRetentionDays { get; set; } = 30;
     public int IncidentCapPerAgent { get; set; } = 500;
+
+    public RcWatchSettings RcWatch { get; set; } = new();
+    public LivenessProbeSettings LivenessProbe { get; set; } = new();
+}
+
+/// <summary>
+/// Remote-control bridge watch. Thresholds calibrated 2026-07-20: an idle healthy session holds
+/// 2-3 Anthropic connections continuously (never observed at zero across 57 consecutive samples),
+/// so 5 consecutive zero-connection probes at 60s cadence (= 5 min of sustained absence, i.e.
+/// "5-10 missed normal probes") is a confident dead verdict, never a blip.
+/// </summary>
+public sealed class RcWatchSettings
+{
+    public bool Enabled { get; set; } = true;
+    public int ProbeIntervalSeconds { get; set; } = 60;
+
+    /// <summary>Only repair sessions idle this long (no new output sequence).</summary>
+    public int IdleQuietMinutes { get; set; } = 5;
+
+    public int ConsecutiveFailedProbesBeforeAction { get; set; } = 5;
+    public int ReArmAttemptsBeforeRestart { get; set; } = 2;
+
+    /// <summary>How long after a re-arm before the bridge is probed again (arming takes seconds).</summary>
+    public int ReArmSettleMinutes { get; set; } = 3;
+}
+
+public sealed class LivenessProbeSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>TUI echo probe (type + verify screen delta + backspace; free, no tokens).</summary>
+    public int TuiEchoIntervalMinutes { get; set; } = 60;
+
+    /// <summary>Round-trip probe (queued healthcheck prompt; costs a model turn).</summary>
+    public int RoundTripIntervalHours { get; set; } = 6;
+
+    /// <summary>Round-trip verdict window: output must advance within this after the enqueue.</summary>
+    public int RoundTripTimeoutMinutes { get; set; } = 10;
 }
