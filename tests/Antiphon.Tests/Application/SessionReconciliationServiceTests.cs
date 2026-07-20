@@ -181,6 +181,8 @@ public class SessionReconciliationServiceTests
             db,
             runnerClient,
             eventBus,
+            new NoOpAlertService(),
+            new RunnerReachabilityState(),
             Options.Create(new SessionReconciliationSettings
             {
                 Enabled = true,
@@ -189,6 +191,13 @@ public class SessionReconciliationServiceTests
             }),
             TimeProvider.System,
             NullLogger<SessionReconciliationService>.Instance);
+
+    private sealed class NoOpAlertService : Antiphon.Server.Application.Interfaces.IAlertService
+    {
+        public Task RaiseAsync(
+            Antiphon.Server.Application.Interfaces.AlertRaise alert, CancellationToken ct) =>
+            Task.CompletedTask;
+    }
 
     private static string NewMarker() => $"antiphon-reconciliation-tests-{Guid.NewGuid():N}";
 

@@ -8,6 +8,7 @@ import { useSignalR } from './hooks/useSignalR'
 import { useSignalRInvalidation } from './hooks/useSignalRInvalidation'
 import { useStreamingEvents } from './hooks/useStreamingEvents'
 import { useSessionFinishedToasts } from './hooks/useSessionFinishedToasts'
+import { useAlertToasts } from './hooks/useAlertToasts'
 import { theme } from './theme'
 import { Layout } from './shared/Layout'
 import { ErrorBoundary } from './shared/ErrorBoundary'
@@ -27,6 +28,7 @@ function SignalRProvider({ children }: { children: React.ReactNode }) {
   useSignalRInvalidation(connectionRef)
   useStreamingEvents(connectionRef)
   useSessionFinishedToasts(connectionRef)
+  useAlertToasts(connectionRef)
   return <>{children}</>
 }
 

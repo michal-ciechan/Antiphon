@@ -30,6 +30,8 @@ public sealed class SessionReconciliationService
     private readonly AppDbContext _db;
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
+    private readonly IAlertService _alerts;
+    private readonly RunnerReachabilityState _reachability;
     private readonly SessionReconciliationSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionReconciliationService> _logger;
@@ -38,6 +40,8 @@ public sealed class SessionReconciliationService
         AppDbContext db,
         ISessionRunnerClient runnerClient,
         IEventBus eventBus,
+        IAlertService alerts,
+        RunnerReachabilityState reachability,
         IOptions<SessionReconciliationSettings> settings,
         TimeProvider timeProvider,
         ILogger<SessionReconciliationService> logger)
@@ -45,6 +49,8 @@ public sealed class SessionReconciliationService
         _db = db;
         _runnerClient = runnerClient;
         _eventBus = eventBus;
+        _alerts = alerts;
+        _reachability = reachability;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -77,12 +83,30 @@ public sealed class SessionReconciliationService
         try
         {
             runnerSessions = await _runnerClient.ListAsync(ct);
+            // Edge-triggered recovery alert only (steady-state reachability is not news).
+            if (_reachability.MarkReachable())
+            {
+                await _alerts.RaiseAsync(
+                    new AlertRaise(
+                        AlertSeverity.Info, "runner", "Session runner reachable again",
+                        DedupKey: "runner:reachability"),
+                    ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Runner unreachable — could be a restart in progress. Don't guess; the next sweep
             // after it comes back will see its (empty) session list and close what's gone.
             _logger.LogDebug(ex, "Session reconciliation skipped: session runner unreachable");
+            if (_reachability.MarkUnreachable())
+            {
+                await _alerts.RaiseAsync(
+                    new AlertRaise(
+                        AlertSeverity.Error, "runner", "Session runner unreachable",
+                        Detail: ex.Message, DedupKey: "runner:reachability"),
+                    ct);
+            }
+
             return 0;
         }
 
@@ -130,6 +154,12 @@ public sealed class SessionReconciliationService
             return 0;
 
         await _db.SaveChangesAsync(ct);
+        await _alerts.RaiseAsync(
+            new AlertRaise(
+                AlertSeverity.Warning, "reconciler", "Reconciliation closed phantom session(s)",
+                Detail: $"{closedSessionIds.Count} DB-live session(s) had no real process behind them and were closed.",
+                DedupKey: "reconciler:sessions"),
+            ct);
         foreach (var sessionId in closedSessionIds)
         {
             await _eventBus.PublishToGroupAsync(
@@ -177,6 +207,12 @@ public sealed class SessionReconciliationService
             return 0;
 
         await _db.SaveChangesAsync(ct);
+        await _alerts.RaiseAsync(
+            new AlertRaise(
+                AlertSeverity.Warning, "reconciler", "Reconciliation failed phantom Working agent(s)",
+                Detail: $"{changedAgentIds.Count} Working agent(s) had no live session and were flipped to Failed.",
+                DedupKey: "reconciler:agents"),
+            ct);
         foreach (var agentId in changedAgentIds)
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
 

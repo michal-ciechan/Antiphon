@@ -123,6 +123,7 @@ public sealed class ChannelBridgeService : BackgroundService
             _logger.LogWarning(
                 "Channel {ChannelId} is bound to agent {AgentId} but no session became ready; message {MessageId} not routed",
                 channel.Id, agentId, message.ChannelMessageId);
+            await RaiseBridgeDropAlertAsync(channel, agentId, ct);
             return;
         }
 
@@ -141,6 +142,28 @@ public sealed class ChannelBridgeService : BackgroundService
         _logger.LogInformation(
             "Routed {Provider} message {MessageId} on channel {ChannelId} to agent {AgentId} session {SessionId}",
             channel.Provider, message.ChannelMessageId, channel.Id, agentId, liveSessionId);
+    }
+
+    private async Task RaiseBridgeDropAlertAsync(ChatChannel channel, Guid agentId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<IAlertService>().RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Warning,
+                    Source: "bridge",
+                    Title: "Inbound channel message dropped",
+                    Detail: $"Channel '{channel.Title ?? channel.ExternalId}' ({channel.Provider}) is bound to an "
+                        + "agent whose session never became ready; the message was not routed.",
+                    DedupKey: $"bridge:drop:{channel.Id}",
+                    AgentId: agentId),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Bridge drop alert failed");
+        }
     }
 
     // The channel context header keeps the agent oriented (which chat, who's talking) without any

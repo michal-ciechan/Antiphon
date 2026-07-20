@@ -267,6 +267,8 @@ public class SessionHealthTests
         services.AddSingleton<SessionHealthStateStore>();
         services.AddScoped<SessionHealthService>();
         services.AddScoped<AgentSupervisorService>();
+        services.AddScoped<IAlertService, AlertService>();
+        services.AddScoped<IAlertRouter, NullAlertRouter>();
         services.AddScoped<AgentControlService>();
         services.AddScoped<AgentService>();
         services.AddScoped<AgentSessionService>();
@@ -318,6 +320,7 @@ public class SessionHealthTests
             .Select(a => a.Id)
             .ToListAsync();
         await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.Alerts.Where(a => a.AgentId != null && agentIds.Contains(a.AgentId.Value)).ExecuteDeleteAsync();
         await db.AgentSupervisionStates.Where(s => agentIds.Contains(s.AgentId)).ExecuteDeleteAsync();
         await db.Agents.Where(a => agentIds.Contains(a.Id))
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));

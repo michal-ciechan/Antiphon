@@ -30,6 +30,7 @@ public sealed class AgentSupervisorService
     private readonly AgentControlService _control;
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
+    private readonly IAlertService _alerts;
     private readonly SupervisionSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSupervisorService> _logger;
@@ -39,6 +40,7 @@ public sealed class AgentSupervisorService
         AgentControlService control,
         ISessionRunnerClient runnerClient,
         IEventBus eventBus,
+        IAlertService alerts,
         IOptions<SupervisionSettings> settings,
         TimeProvider timeProvider,
         ILogger<AgentSupervisorService> logger)
@@ -47,6 +49,7 @@ public sealed class AgentSupervisorService
         _control = control;
         _runnerClient = runnerClient;
         _eventBus = eventBus;
+        _alerts = alerts;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -288,7 +291,19 @@ public sealed class AgentSupervisorService
             FailureReason = failureReason,
             CreatedAt = UtcNow(),
         });
-        await Task.CompletedTask;
+
+        // Incidents ARE the supervisor's alerts (1:1): same severity, deduped per agent+kind so
+        // the routing throttle can group repeats.
+        await _alerts.RaiseAsync(
+            new AlertRaise(
+                severity,
+                Source: "supervisor",
+                Title: $"{kind}: agent supervision",
+                Detail: message,
+                DedupKey: $"supervisor:{kind}:{agentId}",
+                AgentId: agentId,
+                SessionId: sessionId),
+            ct);
     }
 
     /// <summary>Nightly-ish hygiene: incidents past retention or beyond the per-agent cap.</summary>

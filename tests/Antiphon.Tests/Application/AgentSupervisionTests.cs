@@ -293,6 +293,35 @@ public class AgentSupervisionTests
     }
 
     [Test]
+    public async Task Supervisor_incidents_raise_matching_alerts()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, []);
+            var agent = await CreateAlwaysOnAgentAsync(harness, tempRoot);
+
+            // Tick schedules a restart (RestartScheduled incident) => a Warning alert row +
+            // an AlertRaised SignalR event must exist with the supervisor dedup key.
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var alert = await verify.Alerts
+                .Where(a => a.AgentId == agent.Id && a.Source == "supervisor")
+                .OrderBy(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+            alert.ShouldNotBeNull();
+            alert.Severity.ShouldBe(AlertSeverity.Warning);
+            alert.DedupKey.ShouldContain("RestartScheduled");
+            harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AlertRaised");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Non_always_on_and_healthy_agents_are_untouched()
     {
         var tempRoot = NewTempRoot();
@@ -397,6 +426,8 @@ public class AgentSupervisionTests
         services.AddScoped<AgentService>();
         services.AddScoped<AgentControlService>();
         services.AddScoped<AgentSupervisorService>();
+        services.AddScoped<IAlertService, AlertService>();
+        services.AddScoped<IAlertRouter, NullAlertRouter>();
         services.AddSingleton<ISessionRunnerClient>(new StubRunnerClient());
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(
@@ -429,6 +460,7 @@ public class AgentSupervisionTests
             .Select(a => a.Id)
             .ToListAsync();
         await db.AgentIncidents.Where(i => agentIds.Contains(i.AgentId)).ExecuteDeleteAsync();
+        await db.Alerts.Where(a => a.AgentId != null && agentIds.Contains(a.AgentId.Value)).ExecuteDeleteAsync();
         await db.AgentSupervisionStates.Where(s => agentIds.Contains(s.AgentId)).ExecuteDeleteAsync();
         await db.Agents.Where(a => agentIds.Contains(a.Id))
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.PersistentSessionId, (string?)null));

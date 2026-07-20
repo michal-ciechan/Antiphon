@@ -153,6 +153,9 @@ try
     builder.Services.AddSingleton<Antiphon.Server.Application.Interfaces.IRcBridgeProbe,
         Antiphon.Server.Infrastructure.Supervision.WindowsRcBridgeProbe>();
     builder.Services.AddSingleton<SessionHealthStateStore>();
+    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.IAlertService, AlertService>();
+    builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.IAlertRouter, NullAlertRouter>();
+    builder.Services.AddSingleton<RunnerReachabilityState>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();

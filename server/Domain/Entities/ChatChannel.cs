@@ -29,6 +29,12 @@ public class ChatChannel
     /// <summary>Routing on/off without losing the agent binding.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// When set, this channel is an ALERT SINK: operational alerts with severity ≥ this value are
+    /// delivered here (throttled/grouped). Null = not an alert sink.
+    /// </summary>
+    public AlertSeverity? AlertMinSeverity { get; set; }
+
     /// <summary>Latest opaque reply-routing token from the provider (addresses outbound sends).</summary>
     public string? ReplyHandle { get; set; }
 

@@ -41,6 +41,7 @@ public class AppDbContext : DbContext
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
+    public DbSet<Alert> Alerts => Set<Alert>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -56,6 +57,20 @@ public class AppDbContext : DbContext
                 .WithOne()
                 .HasForeignKey<AgentSupervisionState>(s => s.AgentId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Alert>(entity =>
+        {
+            entity.ToTable("Alerts");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.Source).IsRequired().HasMaxLength(50);
+            entity.Property(a => a.Title).IsRequired().HasMaxLength(500);
+            entity.Property(a => a.Detail).HasMaxLength(4000);
+            entity.Property(a => a.DedupKey).IsRequired().HasMaxLength(500);
+            entity.Property(a => a.CreatedAt).IsRequired();
+
+            entity.HasIndex(a => a.CreatedAt).HasDatabaseName("IX_Alerts_CreatedAt");
+            entity.HasIndex(a => new { a.DedupKey, a.CreatedAt }).HasDatabaseName("IX_Alerts_DedupKey_CreatedAt");
         });
 
         modelBuilder.Entity<AgentIncident>(entity =>

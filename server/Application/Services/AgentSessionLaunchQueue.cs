@@ -54,11 +54,37 @@ public sealed class AgentSessionLaunchQueue
                     _launches.Remove(task);
 
                 if (task.Exception is not null)
+                {
                     _logger.LogWarning(task.Exception, "Queued interactive session launch failed for session {SessionId}", sessionId);
+                    _ = RaiseLaunchAlertAsync(
+                        $"Interactive launch failed for agent session {sessionId}",
+                        task.Exception.GetBaseException().Message,
+                        $"launch:interactive:{agentId}",
+                        agentId,
+                        sessionId);
+                }
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    // Fire-and-forget by design: alerting must never affect the launch pipeline.
+    private async Task RaiseLaunchAlertAsync(
+        string title, string detail, string dedupKey, Guid? agentId, Guid? sessionId)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<IAlertService>().RaiseAsync(
+                new AlertRaise(
+                    Domain.Enums.AlertSeverity.Error, "launch", title, detail, dedupKey, agentId, sessionId),
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Launch alert failed");
+        }
     }
 
     private async Task LaunchInteractiveSessionAsync(
@@ -85,7 +111,15 @@ public sealed class AgentSessionLaunchQueue
                     _launches.Remove(task);
 
                 if (task.Exception is not null)
+                {
                     _logger.LogWarning(task.Exception, "Queued agent session launch failed for card {CardId}", request.CardId);
+                    _ = RaiseLaunchAlertAsync(
+                        $"Card launch failed for card {request.CardId}",
+                        task.Exception.GetBaseException().Message,
+                        $"launch:card:{request.CardId}",
+                        agentId: null,
+                        sessionId: null);
+                }
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
