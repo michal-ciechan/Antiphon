@@ -1,7 +1,7 @@
 # Spec: Always-On Agents (Supervision) + Alert Routing to Channels
 
 Date: 2026-07-20
-Status: **Draft — awaiting review** (answer the Q-IDs in [Decisions](#decisions-for-review))
+Status: **Approved** — all Q-IDs resolved (see [Decisions](#decisions--resolved-2026-07-20-review)); implementation pending
 Builds on: [2026-07-19-pty-host-split.md](2026-07-19-pty-host-split.md) (sessions survive runner
 restarts and are re-adopted — the discovery half of "find all possible running ptys" is done).
 
@@ -54,13 +54,14 @@ in 40s (attempt 3)", "gave up on agent Y — circuit open").
 `Agents` row / its concurrency semantics):
 - `AgentId` (PK, FK), `Suspended` (bool) — the **user-intent latch** (see below),
 - `ConsecutiveFailures` (int), `NextRestartAt?`, `LastAttemptAt?`,
-- `CircuitOpenedAt?` — non-null = gave up (probed on a slow cadence),
+- `LastEscalationTier` (int) — highest backoff tier already alerted on (so tier-crossing alerts
+  fire exactly once per escalation, not per attempt),
 - `LastHealthyAt?` — for backoff reset, `UpdatedAt`.
 
 **New `AgentIncidents`** — the "records the issue" requirement; append-only audit feeding both the
 UI and the alert pipeline:
 - `Id`, `AgentId`, `SessionId?`, `Kind` (enum: `Crash`, `StartFailure`, `RestartScheduled`,
-  `Recovered`, `CircuitOpened`, `CircuitProbe`, `SuspendedByUser`, `ResumedByUser`),
+  `Recovered`, `BackoffEscalated`, `SuspendedByUser`, `ResumedByUser`),
 - `Severity` (`Info|Warning|Error|Critical`), `Message`, `ExitCode?`, `FailureReason?`, `CreatedAt`.
 - Retention: pruned by a nightly pass (default keep 30 days, cap 500/agent).
 
@@ -73,27 +74,41 @@ Each tick, for every `AlwaysOn` agent:
 1. **Skip if `Suspended`** (user pressed Stop — supervision must never fight the human).
 2. **Healthy?** Agent has a live session (`Starting/Running/Stopping`): if
    `ConsecutiveFailures > 0` and the session has been `Running` longer than
-   `HealthyUptimeResetMinutes` (default 10), reset failures to 0, clear circuit, record a
+   `HealthyUptimeResetMinutes` (default 10), reset failures and escalation tier to 0 and record a
    `Recovered` incident (Info).
-3. **Circuit open?** If `CircuitOpenedAt` is set: only act when `now - CircuitOpenedAt ≥`
-   `CircuitProbeMinutes` (default 60) — then treat as one probe attempt (`CircuitProbe` incident)
-   and fall through to (5). A successful probe run that reaches healthy-uptime closes the circuit
-   via (2).
-4. **Crashed / not running:** if `NextRestartAt` is null, schedule it:
-   `now + Backoff(ConsecutiveFailures)` where `Backoff(n) = min(BaseSeconds · 2ⁿ, MaxSeconds)`
-   (defaults 5s → 10s → 20s … capped at 900s), record `RestartScheduled` (Warning) with the
-   captured `ExitCode`/`FailureReason` from the dead session (that's the **Crash** incident when
-   the exit was non-zero, recorded once per death, not per tick).
-5. **Due?** `now ≥ NextRestartAt`: call `AgentControlService.StartAsync(agentId,
-   new StartAgentRequest(RemoteControl: agent.AlwaysOnRemoteControl, Fresh: fresh))` — idempotent
-   and row-locked, so races with the channel-bridge auto-start or a human are safe.
+3. **Crashed / not running:** if `NextRestartAt` is null, schedule it:
+   `now + Backoff(ConsecutiveFailures)`, record `RestartScheduled` (Warning) with the captured
+   `ExitCode`/`FailureReason` from the dead session (that's the **Crash** incident when the exit
+   was non-zero, recorded once per death, not per tick).
+4. **Due?** `now ≥ NextRestartAt`: call `AgentControlService.StartAsync(agentId,
+   new StartAgentRequest(Fresh: fresh))` (remote control comes from the agent's
+   `RemoteControlEnabled`) — idempotent and row-locked, so races with the channel-bridge
+   auto-start or a human are safe.
    - `fresh = ConsecutiveFailures ≥ FreshAfterResumeFailures` (default 2): resume the previous
      Claude conversation by default; if resume itself keeps failing (e.g.
      `ClaudeSessionNotFound`), fall back to a fresh conversation rather than crash-loop.
    - Success → clear `NextRestartAt`; failure (exception) → `ConsecutiveFailures++`,
      `StartFailure` incident (Error), reschedule.
-   - `ConsecutiveFailures ≥ MaxConsecutiveFailures` (default 8 ≈ 21 min of tries) → set
-     `CircuitOpenedAt`, record `CircuitOpened` (**Critical** — this is the page-the-human alert).
+
+**Backoff ladder — never gives up (Q2 decision).** There is no circuit breaker that stops trying;
+the retry interval simply keeps growing through minutes → hours → **daily** → multi-day, capped at
+**30 days**, and stays there:
+
+```
+Backoff(n) = min(BaseSeconds · 2ⁿ, 30 days)
+           = 5s, 10s, 20s, 40s, …, ~14 min (n=8), ~1.9 h (n=11),
+             ~15 h (n=14), ~2.5 d (n=16), ~10 d (n=18), 30 d (n≥20, cap)
+```
+
+**Logging is a first-class requirement here**: every scheduling decision logs and records — the
+attempt number, the delay chosen, and the absolute `NextRestartAt` ("attempt 12 failed
+(exit -1: …); next retry 2026-07-21 06:14:03Z, backing off 15h, tier: hours"). The agent DTO
+exposes `ConsecutiveFailures` / `NextRestartAt` so the UI shows a live countdown, and
+`GET /incidents` gives the full history. When the ladder crosses a tier boundary
+(≥ 1 hour, ≥ 1 day) a **`BackoffEscalated` incident** fires exactly once per escalation
+(tracked by `LastEscalationTier`) — Warning at hourly, **Critical at daily** ("agent X has been
+failing for a day; now retrying daily") — so a long-degraded agent pages once, not 20 times, and
+recovery still resets everything via step 2.
 
 **Boot auto-start** is not a special case: on server start the first tick sees "AlwaysOn, not
 suspended, no live session, no backoff state" and starts immediately. Sessions that **survived in
@@ -109,13 +124,35 @@ Today the only crash-vs-deliberate signal is exit code + who called `StopAsync`.
 the intent explicit:
 - `AgentControlService.StopAsync` on an `AlwaysOn` agent sets `Suspended = true` and records
   `SuspendedByUser` (Info). The agent stays down until a human presses Start.
-- `StartAsync` (any caller) clears `Suspended`, `ConsecutiveFailures`, `CircuitOpenedAt`, and
-  records `ResumedByUser`.
+- `StartAsync` (any caller) clears `Suspended`, `ConsecutiveFailures`, the escalation tier, and
+  records `ResumedByUser` — a human Start is always an immediate, backoff-free attempt.
 - Ops kills that bypass the server (runner `-KillSessions`, task #8-style maintenance) do **not**
   suspend — the supervisor restarting agents after maintenance is exactly the desired behaviour.
 - Card-owned work is untouched: supervision only ensures the *cardless interactive session*
   exists; `StartAsync` already resolves card-vs-interactive itself, and the orchestrator keeps
   owning card lifecycles (same boundary the reconciler respects).
+
+### Session liveness probe (stale-session detection, Q4)
+
+Distinct from RC health: a session can hold a perfectly healthy PTY and bridge yet be *stale* —
+the Claude process wedged, the TUI unresponsive, the API conversation dead. Supervision gains an
+explicit liveness probe with two tiers (both idle-gated, like everything else):
+
+1. **TUI echo probe (free, default).** Type a single character into the composer via the normal
+   input path, verify the rendered screen changes (the runner's `SnapshotScreen` already exposes
+   this), then backspace it. No LLM turn, no tokens, proves the whole chain
+   server → runner → pipe → pty-host → ConPTY → Claude TUI is alive. Default cadence: hourly
+   while idle.
+2. **Round-trip probe (token-costing, sparing).** Enqueue a tiny prompt via the existing
+   `SessionMessageQueueService` (`WhenIdle` mode) — "healthcheck: reply with exactly `pong`" —
+   and await the turn-end reply (the `SessionFinished`/turn-end machinery already detects
+   completion). Verifies the full loop including the model API. Default cadence: every 6 h while
+   idle (configurable; also exposed as an on-demand "Probe now" action on the agent card).
+
+Probe failure ⇒ treated exactly like a crash: `LivenessProbeFailed` incident (Error) + supervised
+restart-when-idle (resume first, ladder applies). Existing pieces reused: message queue WhenIdle
+mode, turn-end detection, screen snapshots — no new transport. (Nothing equivalent exists today —
+the Watchdog matches *patterns in output* but never initiates a check.)
 
 ### Remote-control health watch (re-arm, then restart-when-idle)
 
@@ -134,9 +171,19 @@ always-on agents with `RemoteControlEnabled`, the supervisor also watches RC hea
    (via `GetExtendedTcpTable` P/Invoke, same signal the PowerShell probe uses).
 
 A session is **RC-degraded** when: `RemoteControlEnabled`, armed (or never armed despite the
-setting), no bridge connection, and the session is **idle** — no new output sequence for
-`RcIdleQuietMinutes` (default 5) and no queued messages. Idleness gates *everything*: a working
-agent is never disturbed, and busy sessions legitimately churn connections.
+setting), no bridge connection across `ConsecutiveFailedProbes` (see below), and the session is
+**idle** — no new output sequence for the idle window and no queued messages. Idleness gates
+*everything*: a working agent is never disturbed, and busy sessions legitimately churn
+connections.
+
+**Thresholds are calibrated, not guessed (Q7 decision).** Slice 3 starts with a measurement
+task: instrument an idle RC-armed session and record (a) how often Claude refreshes
+`.claude/sessions/<pid>.json` (`updatedAt` cadence) and (b) bridge TCP connection stability /
+reconnect churn over several hours of true idleness. The dead-verdict threshold is then set as
+**5–10 missed normal heartbeats** at the *measured* cadence — i.e.
+`ConsecutiveFailedProbes × ProbeInterval ≥ 5–10 × observed-heartbeat-interval` — so transient
+blips (a single reconnect, a slow heartbeat) can never trigger repair. The numbers below are
+placeholders until that evidence lands; the config shape is final.
 
 **Repair escalation** (each step is an incident + alert):
 1. **Re-arm in place** — send `/remote-control` into the live PTY (the existing
@@ -170,20 +217,27 @@ ReArmAttemptsBeforeRestart: 2 }`.
   "Enabled": true,
   "TickSeconds": 10,
   "BackoffBaseSeconds": 5,
-  "BackoffMaxSeconds": 900,
+  "BackoffMaxSeconds": 2592000,
   "HealthyUptimeResetMinutes": 10,
-  "MaxConsecutiveFailures": 8,
-  "CircuitProbeMinutes": 60,
   "FreshAfterResumeFailures": 2,
   "IncidentRetentionDays": 30,
   "RcWatch": {
     "Enabled": true,
     "ProbeIntervalSeconds": 60,
     "IdleQuietMinutes": 5,
+    "ConsecutiveFailedProbesBeforeAction": 5,   // pending calibration: 5-10 missed heartbeats
     "ReArmAttemptsBeforeRestart": 2
+  },
+  "LivenessProbe": {
+    "Enabled": true,
+    "TuiEchoIntervalMinutes": 60,
+    "RoundTripIntervalHours": 6
   }
 }
 ```
+
+(`BackoffMaxSeconds` = 2,592,000 — the 30-day cap; `MaxConsecutiveFailures`/circuit settings are
+gone, replaced by the unbounded ladder + tier-escalation alerts.)
 
 ## Part B — Alert routing through Antiphon messaging
 
@@ -203,7 +257,9 @@ ReArmAttemptsBeforeRestart: 2 }`.
 | supervisor | Crash observed (non-zero exit) | Warning |
 | supervisor | Restart succeeded after failures (`Recovered`) | Info |
 | supervisor | Start attempt failed | Error |
-| supervisor | **Circuit opened** (gave up) | **Critical** |
+| supervisor | Backoff escalated to hourly tier | Warning |
+| supervisor | **Backoff escalated to daily tier** (failing ≥ a day) | **Critical** |
+| supervisor | Liveness probe failed / RC degraded | Error |
 | reconciler | Session/agent corrected (phantom closed) | Warning |
 | launch queue | Interactive/orchestrated launch failed | Error |
 | bridge | Inbound message dropped (agent never became ready) | Warning |
@@ -213,20 +269,26 @@ ReArmAttemptsBeforeRestart: 2 }`.
 
 - **Sink selection lives in the channel catalog**: `ChatChannel` gains `AlertMinSeverity?`
   (nullable enum; null = not an alert sink). The Channels UI gets a per-channel "Alerts: off /
-  Warning+ / Error+ / Critical" select. Ops flow: create a Telegram group with the bot (or DM the
-  bot), it appears in the catalog on first message, flip its alert setting — no config files, no
-  restarts, works for N sinks with different thresholds.
+  Warning+ / Error+ / Critical" select. Ops flow (Q10 decision — a **new dedicated admin/dev
+  Telegram group**): create the group, add the existing bot, send one message so it appears in
+  the catalog, set its alerts to Warning+ — no config files, no restarts, works for N sinks with
+  different thresholds.
 - `AlertRoutingService`: for each alert, find sink channels with `AlertMinSeverity ≤ severity`,
   format (`🔴/🟠/🔵 [severity] title — agent, detail, time`), and send via the **existing**
   `IAntiphonMessagingProducer.SendAsync(new ChannelReply(Channel: sink.Provider,
   ConversationId: sink.ExternalId, Text: …))` → `channels.outbound` → gateway →
   `TelegramChannelAdapter`. No new transport, and future providers (WhatsApp/Discord) get alert
   support automatically when their adapter lands.
-- **Noise control (non-negotiable before enabling the log tap):**
-  - Dedup: same `DedupKey` within `DedupWindowMinutes` (default 5) increments `SuppressedCount`
-    instead of re-sending; on window expiry a single digest line flushes ("… repeated ×17").
-  - Per-sink rate limit: `MaxPerMinute` (default 6); overflow rolls into the digest.
-  - Pattern: `WatchdogCooldownStore` generalised into an `AlertThrottle`.
+- **Noise control (Q6 decision — hard send-window, non-negotiable before the log tap):**
+  - **At most one Telegram message per sink per `MinMinutesBetweenSends` (default 5).** Every
+    alert raised inside the window accumulates; when the window closes, ONE grouped message
+    flushes: alerts grouped by `DedupKey` with counts, worst severity first
+    ("🔴 agent X circuit… · 🟠 reconciler corrected session ×3 · 🟠 launch failed ×2").
+  - Dedup inside the group: same `DedupKey` never repeats, only its `×N` counter grows.
+  - `CriticalBypassWindow` (default **false**, per the hard 1-per-5-min rule) exists in config if
+    paging-style immediacy is ever wanted for Critical.
+  - Pattern: `WatchdogCooldownStore` generalised into an `AlertThrottle`; all counters
+    `TimeProvider`-driven for deterministic tests.
 - Delivery-degraded mode: producer/broker down → alerts still persist to DB + SignalR; router
   retries on its own cadence. Telegram down → gateway's existing bounded retry; alerting must
   never crash-loop the server (all sinks best-effort).
@@ -269,17 +331,24 @@ stand-in that acts as a test tool:
 - Layering: `FakeAntiphonMessagingClient` (in-memory, no Kafka) stays the unit-test seam; the
   fake gateway is the *integration/E2E* seam — real producer, real Redpanda, real consumer group
   semantics, fake egress.
+- **Packaged + documented (Q9 decision):** the fake gateway joins the existing messaging NuGet
+  set (`src/Messaging.Pack.props` versioning, published by the `publish-nuget` workflow to the
+  GitHub Packages feed — the same pipeline `Antiphon.Messaging`/`.Client`/`.Client.Testing`
+  already ship through, which downstream repos like school-revision consume). Downstream
+  consumers get the identical Kafka test tool for their own local dev. Documented in
+  `docs/messaging-standalone.md` (run it, assert against it, inject through it). **Deployed
+  environments depend purely on the deployed real gateway** — the fake never ships to prod.
 
 ## Slices (reviewable increments)
 
 | # | Slice | Contents | Size |
 |---|---|---|---|
-| 1 | Supervision core | Migration (`AlwaysOn`, `RemoteControlEnabled`, `AgentSupervisionStates`, `AgentIncidents`), supervisor service with backoff/circuit/suspend latch, `StopAsync`/`StartAsync` latch wiring, `RemoteControlEnabled` honored by all start paths, settings; integration tests: crash→backoff→restart, suspend honored, boot start, adopted-session no-op, circuit opens + probes, runner-unreachable guard | L |
-| 2 | Supervision surface | Agent DTO fields, PATCH flags, incidents endpoint, `AgentSettingsModal` toggles (Always on, Remote control), card badge + countdown + incidents drawer | M |
-| 3 | RC health watch | Server-side bridge probe (`.claude/sessions/<pid>.json` + TCP table), idle detection, re-arm → restart-when-idle escalation, `RcDegraded/RcReArmed/RcRestart` incidents; tests with a fake probe | M |
+| 1 | Supervision core | Migration (`AlwaysOn`, `RemoteControlEnabled`, `AgentSupervisionStates`, `AgentIncidents`), supervisor with the 30-day backoff ladder + tier-escalation incidents + rich scheduling logs (attempt #, delay, NextRestartAt), suspend latch wiring, `RemoteControlEnabled` honored by all start paths, settings; integration tests: crash→ladder→restart, suspend honored, boot start, adopted-session no-op, tier escalation fires once, runner-unreachable guard | L |
+| 2 | Supervision surface | Agent DTO fields (incl. `NextRestartAt`/failure count for countdowns), PATCH flags, incidents endpoint, `AgentSettingsModal` toggles (Always on, Remote control), card badge + countdown + incidents drawer | M |
+| 3 | Session health: RC watch + liveness probes | **Calibration first**: measure idle-session heartbeat cadence (`.claude/sessions` updatedAt + bridge TCP churn) and set thresholds at 5–10 missed heartbeats. Then: server-side bridge probe, re-arm → restart-when-idle escalation, TUI echo probe + round-trip "pong" probe (`SessionMessageQueueService` WhenIdle), `RcDegraded/RcReArmed/RcRestart/LivenessProbeFailed` incidents, "Probe now" action; tests with a fake probe | M–L |
 | 4 | Alert core | `Alerts` table, `IAlertService`, SignalR `AlertRaised` + toast, producers wired (supervisor incl. RC watch, reconciler, launch, bridge, runner edge) | M |
 | 5 | Routing + Telegram sink | `ChatChannel.AlertMinSeverity` + Channels UI select, `AlertRoutingService` + `AlertThrottle` (dedup/rate/digest), delivery via producer; E2E with `FakeAntiphonMessagingClient` + a real end-to-end smoke to the designated Telegram channel | M–L |
-| 6 | Fake gateway + log tap + docs | `Antiphon.Messaging.FakeGateway` (outbound recorder + HTTP assert/inject API + failure injection) wired into the AppHost dev stack; alert E2E rewritten against it; `AlertingLogSink` (off by default, loop-guarded); retention/pruning pass; spec/CLAUDE.md/AGENTS.md updates | M–L |
+| 6 | Fake gateway + log tap + docs | `Antiphon.Messaging.FakeGateway` (outbound recorder + HTTP assert/inject API + failure injection) wired into the AppHost dev stack **and packed into the messaging NuGet set** (`Messaging.Pack.props` + publish-nuget workflow); alert E2E rewritten against it; docs in `docs/messaging-standalone.md`; `AlertingLogSink` (off by default, loop-guarded); retention/pruning pass; spec/CLAUDE.md/AGENTS.md updates | M–L |
 
 Rough total: another multi-day epic; slices 1–2 deliver the user-visible "always on" promise on
 their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is hardening.
@@ -310,19 +379,19 @@ their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is harde
   records would-be deliveries (JSONL + HTTP assertions), injects inbound messages, simulates
   failures. Real gateway deployment stays out of scope.
 
-## Decisions for review
+## Decisions — RESOLVED (2026-07-20 review)
 
-Reply by Q-ID ("use defaults" accepts all recommendations).
+| ID | Decision |
+|---|---|
+| Q1 | Defaults accepted: 5s base ×2, reset after 10 min healthy — tail extended per Q2. |
+| Q2 | **No give-up circuit.** Backoff ladder keeps growing through hourly → daily → multi-day, capped at **30 days**, retrying forever at the cap. First-class logging: every attempt records attempt #, chosen delay, absolute next-retry time; tier-crossing alerts (Warning at hourly, Critical at daily) fire once per escalation. |
+| Q3 | Yes (default): Stop suspends supervision until a manual Start. |
+| Q4 | Yes: resume, fresh after 2 failed resumes. **Plus** a separate session **liveness probe**: TUI echo probe (free, hourly) and round-trip "reply with pong" probe (every 6h idle / on demand) — probe failure ⇒ supervised restart-when-idle. |
+| Q5 | Default accepted: sink selection via `ChatChannel.AlertMinSeverity` + Channels UI. |
+| Q6 | Warning+ **with a hard send window: max 1 Telegram message per sink per ~5 min**; everything inside the window groups into one deduped digest (`×N` counters). Critical-bypass exists in config but defaults off. |
+| Q7 | 5-min idle gate stays, but dead-verdict thresholds are **calibrated**: slice 3 first measures idle-session heartbeat cadence (`.claude/sessions` updatedAt + bridge TCP churn) and sets the threshold at **5–10 missed normal heartbeats**. |
+| Q8 | Default accepted: log tap ships disabled until domain alerts prove quiet. |
+| Q9 | Fake gateway is the first-class Kafka test tool for local dev; deployed environments depend purely on the deployed real gateway. **Documented + published as a NuGet package** alongside the existing messaging packages (school-revision-style consumption). |
+| Q10 | New dedicated Telegram **admin/dev group** with the existing bot as the first sink. |
 
-| ID | Question | Recommended default |
-|---|---|---|
-| Q1 | Backoff curve: 5s base, ×2, cap 900s, reset after 10 min healthy? | As stated |
-| Q2 | Circuit breaker: open after 8 consecutive failures, auto-probe hourly (vs stay-down-until-human)? | Open @8, hourly probe |
-| Q3 | Stop = suspend until manual Start (supervision never restarts a human-stopped agent)? | Yes |
-| Q4 | Restart conversation mode: resume, switch to fresh after 2 failed resume attempts? | Yes |
-| Q5 | Alert sink selection via `ChatChannel.AlertMinSeverity` + Channels UI (vs appsettings routes)? | DB + UI |
-| Q6 | Default alert threshold for the first Telegram sink: Warning+ or Error+? | **Warning+** with dedup/digest on |
-| Q7 | RC health watch: probe every 60s, act only after 5 idle minutes, 2 re-arm attempts before a restart-when-idle? | As stated |
-| Q8 | Log tap ships in slice 5 but **disabled** by default until the domain alerts prove quiet? | Yes |
-| Q9 | Fake gateway surface: JSONL delivery log + HTTP assert/inject/failure-injection API — enough, or also a minimal web page listing deliveries? | API + logs first; page only if it earns its keep |
-| Q10 | Which Telegram destination: new dedicated "Antiphon Alerts" group with the existing bot? | New dedicated group |
+Status: **Approved — ready to implement** (slices 1→6).
