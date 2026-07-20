@@ -19,4 +19,13 @@ public sealed class AlertsSettings
     public bool CriticalBypassWindow { get; set; }
 
     public int AlertRetentionDays { get; set; } = 30;
+
+    public LogTapSettings LogTap { get; set; } = new();
+}
+
+/// <summary>Serilog Warning+ tap into the alert pipeline. Ships DISABLED (Q8) until domain alerts prove quiet.</summary>
+public sealed class LogTapSettings
+{
+    public bool Enabled { get; set; }
+    public string MinLevel { get; set; } = "Warning";
 }

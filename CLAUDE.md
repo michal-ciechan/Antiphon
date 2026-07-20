@@ -14,6 +14,7 @@ See [AGENTS.md](AGENTS.md) for all project conventions and context.
 | 17205   | Aspire dashboard UI       |
 | 17206   | OTLP telemetry endpoint   |
 | 17207   | Control API               |
+| 17208   | Fake messaging gateway (dev/test Kafka tool — real gateway is NOT run locally) |
 
 Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antiphon.AppHost/Properties/launchSettings.json`. `dev-aspire.ps1` discovers it and saves to `logs/apphost-dashboard-url.txt`.
 

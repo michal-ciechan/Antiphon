@@ -30,6 +30,19 @@ builder.AddDaemonProcess("session-runner", new DaemonProcessConfig(
     HealthPath:       "/health",
     BuildProjectDir:  sessionRunnerDir));
 
+// ── FAKE messaging gateway (dev/test only — records would-be deliveries, injects inbound) ──
+// The REAL Antiphon.Messaging.Service (actual Telegram egress) is deliberately NOT part of the
+// dev stack (spec Q9); deployed environments run only the real gateway. Built-exe pattern for
+// the same reason as the session-runner (no `dotnet run` kill-on-close job).
+var fakeGatewayDir = Path.Combine(repoRoot, "src", "Antiphon.Messaging.FakeGateway");
+builder.AddDaemonProcess("fake-gateway", new DaemonProcessConfig(
+    Executable:       Path.Combine(fakeGatewayDir, "bin", "Debug", "net9.0", "Antiphon.Messaging.FakeGateway.exe"),
+    Args:             ["--urls", "http://localhost:17208"],
+    WorkingDirectory: fakeGatewayDir,
+    Port:             17208,
+    HealthPath:       "/health",
+    BuildProjectDir:  fakeGatewayDir));
+
 // ── .NET API server ───────────────────────────────────────────────────────────
 var server = builder
     .AddProject<Projects.Antiphon_Server>("server", options => options.ExcludeLaunchProfile = true)

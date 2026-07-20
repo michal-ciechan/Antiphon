@@ -1,7 +1,7 @@
 # Spec: Always-On Agents (Supervision) + Alert Routing to Channels
 
 Date: 2026-07-20
-Status: **Approved** — all Q-IDs resolved (see [Decisions](#decisions--resolved-2026-07-20-review)); implementation pending
+Status: **Implemented** (2026-07-20, slices 1–6: supervision core `d782b64`, UI/API `f375b58`, session health `613746c`, alert core `7b00e20`, routing+sink `176b6b8`, fake gateway+log tap — see git log). All Q-IDs resolved below; RC-watch thresholds calibrated from live evidence.
 Builds on: [2026-07-19-pty-host-split.md](2026-07-19-pty-host-split.md) (sessions survive runner
 restarts and are re-adopted — the discovery half of "find all possible running ptys" is done).
 

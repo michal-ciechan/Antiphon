@@ -11,6 +11,7 @@ on:
       - "src/Antiphon.Messaging/**"
       - "src/Antiphon.Messaging.Client/**"
       - "src/Antiphon.Messaging.Client.Testing/**"
+      - "src/Antiphon.Messaging.FakeGateway/**"
       - "src/Messaging.Pack.props"
       - ".github/workflows/publish-nuget.yml"
   workflow_dispatch:
@@ -32,6 +33,7 @@ jobs:
           dotnet pack src/Antiphon.Messaging/Antiphon.Messaging.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Client/Antiphon.Messaging.Client.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Client.Testing/Antiphon.Messaging.Client.Testing.csproj -c Release -o out
+          dotnet pack src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj -c Release -o out
       - name: Push to GitHub Packages
         run: >
           dotnet nuget push "out/*.nupkg"

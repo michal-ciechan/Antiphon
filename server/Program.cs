@@ -54,7 +54,9 @@ try
                 retainedFileCountLimit: 14,
                 outputTemplate:
                     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
-            );
+            )
+            // Alert log tap (armed after build via AlertingLogSink.Attach; disabled by default).
+            .WriteTo.Sink(Antiphon.Server.Infrastructure.Supervision.AlertingLogSink.Instance);
     });
 
     // Database
@@ -244,6 +246,14 @@ try
             .AddConsoleExporter());
 
     var app = builder.Build();
+
+    // Arm the alert log tap (no-op unless Alerts:LogTap:Enabled).
+    {
+        var logTap = app.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<AlertsSettings>>().Value.LogTap;
+        Antiphon.Server.Infrastructure.Supervision.AlertingLogSink.Instance.Attach(
+            app.Services, logTap.Enabled, logTap.MinLevel);
+    }
 
     // Fail-fast on agent DI graph (E02): resolves AgentRegistry + IAgentProtocolAdapterFactory
     // and runs ValidateOnStart for AgentRegistrySettings. Throws here rather than at first use.

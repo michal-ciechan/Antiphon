@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <Import Project="..\Messaging.Pack.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.Messaging.FakeGateway</RootNamespace>
+    <AssemblyName>Antiphon.Messaging.FakeGateway</AssemblyName>
+    <Description>Kafka-connected FAKE messaging gateway for local dev and integration tests: records would-be channel deliveries (JSONL + HTTP assertions), injects synthetic inbound messages, and simulates outages. Real Kafka semantics, no real Telegram. Never deploy to production.</Description>
+    <!-- Ships as a dotnet tool alongside the other messaging packages (spec Q9). -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>antiphon-fake-gateway</ToolCommandName>
+    <PackageId>Antiphon.Messaging.FakeGateway</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
+  </ItemGroup>
+
+</Project>
