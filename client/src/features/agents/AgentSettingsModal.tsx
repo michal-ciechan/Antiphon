@@ -1,4 +1,4 @@
-import { Button, Divider, Group, Modal, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
+import { Button, Divider, Group, Modal, Select, Stack, Switch, Text, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
@@ -31,6 +31,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
   const [boardId, setBoardId] = useState<string | null>(null)
+  const [alwaysOn, setAlwaysOn] = useState(false)
+  const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Reload the form whenever a different agent is opened.
@@ -41,6 +43,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setDetails(agent.details)
     setAssignmentPolicy(agent.assignmentPolicy)
     setBoardId(agent.boardId)
+    setAlwaysOn(agent.alwaysOn)
+    setRemoteControlEnabled(agent.remoteControlEnabled)
     setConfirmingDelete(false)
   }, [agent, opened])
 
@@ -60,6 +64,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         defaultWorkflowTemplateId: agent.defaultWorkflowTemplateId,
         assignmentPolicy,
         boardId,
+        alwaysOn,
+        remoteControlEnabled,
       },
       {
         onSuccess: () => {
@@ -124,6 +130,19 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           value={assignmentPolicy}
           onChange={(value) => setAssignmentPolicy((value as AgentAssignmentPolicy | null) ?? 'AutoPick')}
           allowDeselect={false}
+        />
+
+        <Switch
+          label="Always on"
+          description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."
+          checked={alwaysOn}
+          onChange={(event) => setAlwaysOn(event.currentTarget.checked)}
+        />
+        <Switch
+          label="Remote control"
+          description="Every start arms /remote-control so the session can be driven from claude.ai."
+          checked={remoteControlEnabled}
+          onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
         />
 
         <Group justify="flex-end">

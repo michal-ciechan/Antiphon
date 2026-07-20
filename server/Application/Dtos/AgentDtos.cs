@@ -30,7 +30,11 @@ public sealed record AgentSummaryDto(
     DateTime UpdatedAt,
     // The agent's persistent session when it is currently live (Starting/Running/Stopping),
     // otherwise null. Lets the UI open the running terminal without a separate lookup.
-    AgentSessionSummaryDto? LiveSession = null);
+    AgentSessionSummaryDto? LiveSession = null,
+    bool AlwaysOn = false,
+    bool RemoteControlEnabled = false,
+    // Present only for AlwaysOn agents with supervision history (countdowns, suspend badge).
+    AgentSupervisionDto? Supervision = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -50,7 +54,28 @@ public sealed record AgentDetailDto(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     // See AgentSummaryDto.LiveSession.
-    AgentSessionSummaryDto? LiveSession = null);
+    AgentSessionSummaryDto? LiveSession = null,
+    bool AlwaysOn = false,
+    bool RemoteControlEnabled = false,
+    AgentSupervisionDto? Supervision = null);
+
+/// <summary>Supervision snapshot for an always-on agent (see AgentSupervisionState).</summary>
+public sealed record AgentSupervisionDto(
+    bool Suspended,
+    int ConsecutiveFailures,
+    DateTime? NextRestartAt,
+    int LastEscalationTier);
+
+public sealed record AgentIncidentDto(
+    Guid Id,
+    Guid AgentId,
+    Guid? SessionId,
+    AgentIncidentKind Kind,
+    AlertSeverity Severity,
+    string Message,
+    int? ExitCode,
+    string? FailureReason,
+    DateTime CreatedAt);
 
 public sealed record AgentQueueCardDto(
     Guid CardId,
@@ -87,7 +112,10 @@ public sealed record UpdateAgentRequest(
     string? Details,
     Guid? DefaultWorkflowTemplateId,
     AgentAssignmentPolicy AssignmentPolicy,
-    Guid? BoardId = null);
+    Guid? BoardId = null,
+    // Null = leave unchanged (keeps older callers working).
+    bool? AlwaysOn = null,
+    bool? RemoteControlEnabled = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

@@ -81,6 +81,15 @@ public static class AgentEndpoints
             return Results.NoContent();
         });
 
+        agents.MapGet("/{id:guid}/incidents", async (
+            Guid id,
+            int? take,
+            AgentService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetIncidentsAsync(id, take ?? 50, cancellationToken));
+        });
+
         agents.MapPost("/{id:guid}/start", async (
             Guid id,
             StartAgentRequest request,

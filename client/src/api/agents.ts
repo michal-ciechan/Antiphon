@@ -36,6 +36,46 @@ export interface AgentSummaryDto {
   updatedAt: string
   /** The agent's persistent session when currently live (Starting/Running/Stopping), else null. */
   liveSession: AgentSessionSummaryDto | null
+  /** Supervised: auto-started at boot, auto-restarted on crash (never-give-up backoff ladder). */
+  alwaysOn: boolean
+  /** Remote control is part of the agent's setup: every start path arms /remote-control. */
+  remoteControlEnabled: boolean
+  /** Present for always-on agents with supervision history. */
+  supervision: AgentSupervisionDto | null
+}
+
+export interface AgentSupervisionDto {
+  suspended: boolean
+  consecutiveFailures: number
+  nextRestartAt: string | null
+  lastEscalationTier: number
+}
+
+export type AgentIncidentKind =
+  | 'Crash'
+  | 'StartFailure'
+  | 'RestartScheduled'
+  | 'Recovered'
+  | 'BackoffEscalated'
+  | 'SuspendedByUser'
+  | 'ResumedByUser'
+  | 'RcDegraded'
+  | 'RcReArmed'
+  | 'RcRestart'
+  | 'LivenessProbeFailed'
+
+export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
+
+export interface AgentIncidentDto {
+  id: string
+  agentId: string
+  sessionId: string | null
+  kind: AgentIncidentKind
+  severity: AlertSeverity
+  message: string
+  exitCode: number | null
+  failureReason: string | null
+  createdAt: string
 }
 
 export interface AgentQueueCardDto {
@@ -71,6 +111,9 @@ export interface UpdateAgentRequest {
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy: AgentAssignmentPolicy
   boardId?: string | null
+  /** Omit/null = leave unchanged. */
+  alwaysOn?: boolean | null
+  remoteControlEnabled?: boolean | null
 }
 
 export interface DraftAgentRequest {
@@ -90,7 +133,8 @@ export interface AssignAgentCardRequest {
 }
 
 export interface StartAgentRequest {
-  remoteControl?: boolean
+  /** Omit = use the agent's persisted remoteControlEnabled setting. */
+  remoteControl?: boolean | null
   /** Force a brand-new conversation. By default an interactive start resumes the agent's previous Claude session. */
   fresh?: boolean
 }
@@ -100,6 +144,20 @@ export const agentKeys = {
   all: ['agents', 'list'] as const,
   detail: (id: string) => ['agents', 'detail', id] as const,
   queue: (id: string) => ['agents', 'queue', id] as const,
+  incidents: (id: string) => ['agents', 'incidents', id] as const,
+}
+
+export function useAgentIncidents(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: id ? agentKeys.incidents(id) : ['agents', 'incidents', 'missing'],
+    queryFn: () => {
+      if (!id) {
+        throw new Error('Agent id is required')
+      }
+      return apiGet<AgentIncidentDto[]>(`/agents/${id}/incidents?take=50`)
+    },
+    enabled: enabled && !!id,
+  })
 }
 
 export function useAgentDefinitions() {
