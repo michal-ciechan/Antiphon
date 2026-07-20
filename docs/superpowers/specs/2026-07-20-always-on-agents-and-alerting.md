@@ -42,9 +42,13 @@ in 40s (attempt 3)", "gave up on agent Y — circuit open").
 ### Data model (one migration)
 
 **`Agent` gains** (additive):
-- `AlwaysOn` (bool, default false) — supervision opt-in.
-- `AlwaysOnRemoteControl` (bool, default true) — supervised (re)starts pass
-  `StartAgentRequest(RemoteControl: …)` so relaunched sessions re-arm `/remote-control`.
+- `AlwaysOn` (bool, default false) — supervision opt-in. Always on means always on — no sub-modes.
+- `RemoteControlEnabled` (bool, default true) — a **general agent setting, deliberately NOT a
+  supervision flag** (user decision, 2026-07-20): remote control is part of an agent's normal
+  setup, applied by *every* start path — manual UI start, channel-bridge auto-start, supervised
+  restart. The per-start "Remote control" checkbox on `AgentsPage` becomes this persisted agent
+  setting; `StartAgentRequest.RemoteControl` becomes nullable (null = use the agent's setting)
+  so existing callers keep working.
 
 **New `AgentSupervisionStates`** (1:1 with Agent; separated so supervisor churn never touches the
 `Agents` row / its concurrency semantics):
@@ -113,9 +117,46 @@ the intent explicit:
   exists; `StartAsync` already resolves card-vs-interactive itself, and the orchestrator keeps
   owning card lifecycles (same boundary the reconciler respects).
 
+### Remote-control health watch (re-arm, then restart-when-idle)
+
+Remote control silently dying is a known failure mode (upstream Claude Code bugs: idle-TTL kills
+after ~20 min, websocket drops ~25 min, broken auto-reconnect — see claude-code issues #32982,
+#31853, #34255). A session can look perfectly healthy while its claude.ai bridge is long dead. For
+always-on agents with `RemoteControlEnabled`, the supervisor also watches RC health and repairs it
+— **never while the agent is mid-work**.
+
+**Detection** (server-side port of the proven `rc-status.ps1` probe): for each supervised
+`Running` ClaudeCode session, take the child pid (`RunnerSessionDto.Pid`) and check
+1. `%USERPROFILE%\.claude\sessions\<pid>.json` — Claude's own per-process state file;
+   `bridgeSessionId` present = RC was armed;
+2. live bridge connection — the process holds established TCP connections to Anthropic
+   (`160.79.0.0/16:443`) even when idle; armed-but-zero-connections while idle = bridge dropped
+   (via `GetExtendedTcpTable` P/Invoke, same signal the PowerShell probe uses).
+
+A session is **RC-degraded** when: `RemoteControlEnabled`, armed (or never armed despite the
+setting), no bridge connection, and the session is **idle** — no new output sequence for
+`RcIdleQuietMinutes` (default 5) and no queued messages. Idleness gates *everything*: a working
+agent is never disturbed, and busy sessions legitimately churn connections.
+
+**Repair escalation** (each step is an incident + alert):
+1. **Re-arm in place** — send `/remote-control` into the live PTY (the existing
+   `SendRemoteControlCommandsAsync` path), then re-probe after a settle period. Cheap,
+   non-destructive, fixes the common dropped-websocket case without losing terminal state.
+2. **Restart when idle** — after `RcReArmAttemptsBeforeRestart` (default 2) failed re-arms:
+   kill + resume the session via the normal supervised restart (conversation continuity via
+   `--resume`; a fresh Claude process reliably re-establishes the bridge). Counts toward the
+   supervision backoff so an RC-flapping environment can't cause a restart storm.
+3. Still degraded after a restart cycle → `RcDegraded` incident (Error) + alert, stop escalating
+   until the next probe interval — a broken claude.ai backend shouldn't burn sessions.
+
+New incident kinds: `RcDegraded`, `RcReArmed`, `RcRestart`. Settings:
+`Supervision:RcWatch { Enabled: true, ProbeIntervalSeconds: 60, IdleQuietMinutes: 5,
+ReArmAttemptsBeforeRestart: 2 }`.
+
 ### UI & API
 
-- `AgentSettingsModal`: "Always on" toggle + "re-arm remote control" sub-toggle.
+- `AgentSettingsModal`: "Always on" toggle; "Remote control" moves here as a persistent agent
+  setting (the per-start checkbox on the card goes away).
 - Agent card (`AgentsPage.tsx`): supervision badge — shield (supervised & healthy), countdown
   ("restarting in 38s · attempt 3"), open circuit (red, "gave up — click Start to reset").
   Driven by existing `AgentChanged` invalidations plus supervision fields on the agent DTO.
@@ -134,7 +175,13 @@ the intent explicit:
   "MaxConsecutiveFailures": 8,
   "CircuitProbeMinutes": 60,
   "FreshAfterResumeFailures": 2,
-  "IncidentRetentionDays": 30
+  "IncidentRetentionDays": 30,
+  "RcWatch": {
+    "Enabled": true,
+    "ProbeIntervalSeconds": 60,
+    "IdleQuietMinutes": 5,
+    "ReArmAttemptsBeforeRestart": 2
+  }
 }
 ```
 
@@ -208,14 +255,15 @@ anyway, so AppHost-managed is sufficient unless the server itself later moves to
 
 | # | Slice | Contents | Size |
 |---|---|---|---|
-| 1 | Supervision core | Migration (flags + `AgentSupervisionStates` + `AgentIncidents`), supervisor service with backoff/circuit/suspend latch, `StopAsync`/`StartAsync` latch wiring, settings; integration tests: crash→backoff→restart, suspend honored, boot start, adopted-session no-op, circuit opens + probes, runner-unreachable guard | L |
-| 2 | Supervision surface | Agent DTO fields, PATCH flags, incidents endpoint, `AgentSettingsModal` toggles, card badge + countdown + incidents drawer | M |
-| 3 | Alert core | `Alerts` table, `IAlertService`, SignalR `AlertRaised` + toast, producers wired (supervisor, reconciler, launch, bridge, runner edge) | M |
-| 4 | Routing + Telegram sink | `ChatChannel.AlertMinSeverity` + Channels UI select, `AlertRoutingService` + `AlertThrottle` (dedup/rate/digest), delivery via producer; E2E with `FakeAntiphonMessagingClient` + a real end-to-end smoke to the designated Telegram channel | M–L |
-| 5 | Gateway always-on + log tap + docs | Messaging.Service into AppHost daemon set (built-exe pattern), `AlertingLogSink` (off by default, loop-guarded), retention/pruning pass, spec/CLAUDE.md/AGENTS.md updates | M |
+| 1 | Supervision core | Migration (`AlwaysOn`, `RemoteControlEnabled`, `AgentSupervisionStates`, `AgentIncidents`), supervisor service with backoff/circuit/suspend latch, `StopAsync`/`StartAsync` latch wiring, `RemoteControlEnabled` honored by all start paths, settings; integration tests: crash→backoff→restart, suspend honored, boot start, adopted-session no-op, circuit opens + probes, runner-unreachable guard | L |
+| 2 | Supervision surface | Agent DTO fields, PATCH flags, incidents endpoint, `AgentSettingsModal` toggles (Always on, Remote control), card badge + countdown + incidents drawer | M |
+| 3 | RC health watch | Server-side bridge probe (`.claude/sessions/<pid>.json` + TCP table), idle detection, re-arm → restart-when-idle escalation, `RcDegraded/RcReArmed/RcRestart` incidents; tests with a fake probe | M |
+| 4 | Alert core | `Alerts` table, `IAlertService`, SignalR `AlertRaised` + toast, producers wired (supervisor incl. RC watch, reconciler, launch, bridge, runner edge) | M |
+| 5 | Routing + Telegram sink | `ChatChannel.AlertMinSeverity` + Channels UI select, `AlertRoutingService` + `AlertThrottle` (dedup/rate/digest), delivery via producer; E2E with `FakeAntiphonMessagingClient` + a real end-to-end smoke to the designated Telegram channel | M–L |
+| 6 | Gateway always-on + log tap + docs | Messaging.Service into AppHost daemon set (built-exe pattern), `AlertingLogSink` (off by default, loop-guarded), retention/pruning pass, spec/CLAUDE.md/AGENTS.md updates | M |
 
 Rough total: another multi-day epic; slices 1–2 deliver the user-visible "always on" promise on
-their own, 3–4 deliver Telegram alerts, 5 is hardening.
+their own, 3 delivers RC self-healing, 4–5 deliver Telegram alerts, 6 is hardening.
 
 ## Testing strategy
 
@@ -227,6 +275,15 @@ their own, 3–4 deliver Telegram alerts, 5 is hardening.
   a real Telegram test channel (skipped unless env var set, per repo convention).
 - Guard tests: supervisor never acts on `Suspended` or card-owned agents; alert pipeline exception
   never propagates to a caller.
+
+## User decision updates (2026-07-20)
+
+- Remote control is **not** a supervision sub-flag: `RemoteControlEnabled` is a general agent
+  setting applied by every start path ("remote control is just naturally part of the setup").
+  `AlwaysOn` stays a single unqualified switch.
+- Added instead: the **RC health watch** — when a supervised idle session's remote-control bridge
+  looks old/disconnected, re-arm `/remote-control` in place, and if that keeps failing, restart
+  the session while idle to restore remote access.
 
 ## Decisions for review
 
@@ -240,7 +297,7 @@ Reply by Q-ID ("use defaults" accepts all recommendations).
 | Q4 | Restart conversation mode: resume, switch to fresh after 2 failed resume attempts? | Yes |
 | Q5 | Alert sink selection via `ChatChannel.AlertMinSeverity` + Channels UI (vs appsettings routes)? | DB + UI |
 | Q6 | Default alert threshold for the first Telegram sink: Warning+ or Error+? | **Warning+** with dedup/digest on |
-| Q7 | Supervised restarts re-arm remote control by default (`AlwaysOnRemoteControl` default true)? | Yes |
+| Q7 | RC health watch: probe every 60s, act only after 5 idle minutes, 2 re-arm attempts before a restart-when-idle? | As stated |
 | Q8 | Log tap ships in slice 5 but **disabled** by default until the domain alerts prove quiet? | Yes |
 | Q9 | Messaging gateway: AppHost daemon only, or also login-autostart (like the session-runner)? | AppHost daemon only for now |
 | Q10 | Which Telegram destination: new dedicated "Antiphon Alerts" group with the existing bot? | New dedicated group |
