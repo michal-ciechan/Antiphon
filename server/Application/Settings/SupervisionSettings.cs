@@ -27,6 +27,7 @@ public sealed class SupervisionSettings
 
     public RcWatchSettings RcWatch { get; set; } = new();
     public LivenessProbeSettings LivenessProbe { get; set; } = new();
+    public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
 }
 
 /// <summary>
@@ -54,18 +55,45 @@ public sealed class LivenessProbeSettings
 {
     public bool Enabled { get; set; } = true;
 
-    /// <summary>
-    /// TUI echo probe (type + verify screen delta + backspace; free, no tokens). 0 = DISABLED —
-    /// the current default: on 2026-07-20 the probe false-positive-killed healthy idle sessions
-    /// (typed char produced no rendered-screen delta within the settle window on real Claude
-    /// TUIs), each kill costing a session generation. Re-enable only after the screen-delta
-    /// detection is fixed and proven against a live idle session.
-    /// </summary>
-    public int TuiEchoIntervalMinutes { get; set; }
-
     /// <summary>Round-trip probe (queued healthcheck prompt; costs a model turn).</summary>
     public int RoundTripIntervalHours { get; set; } = 6;
 
     /// <summary>Round-trip verdict window: output must advance within this after the enqueue.</summary>
     public int RoundTripTimeoutMinutes { get; set; } = 10;
+}
+
+/// <summary>
+/// Delivery-time composer verification (the replacement for the removed periodic TUI echo probe,
+/// which false-positive-killed healthy idle sessions on 2026-07-20). When a message is delivered
+/// to a Claude session the body is typed, then the rendered screen must show evidence of it
+/// (<c>ComposerDeliveryEvidence</c> — tail/head fragment or a new paste placeholder, per the
+/// ClaudeComposerRenderCanaryTests contract) BEFORE the submitting Enter is sent; after Enter the
+/// output sequence must advance. On failure the message reverts to Pending, an incident is
+/// recorded, and always-on agents get a session restart (the composer dies with the process, so
+/// redelivery cannot double-type).
+/// </summary>
+public sealed class DeliveryVerificationSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// How long typed text may take to show up on the rendered screen. Generous on purpose:
+    /// the echo probe's 750ms settle window is what false-positived on real TUIs.
+    /// </summary>
+    public int EvidenceTimeoutSeconds { get; set; } = 15;
+
+    public int PollIntervalMs { get; set; } = 500;
+
+    /// <summary>
+    /// After the submitting Enter, the output sequence must advance within this window
+    /// (a real submit redraws the screen immediately; this is wedge detection, not
+    /// reply detection).
+    /// </summary>
+    public int PostSubmitAdvanceTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Stranded-queue watchdog: pending messages older than this on an IDLE always-on session are
+    /// re-flushed (covers redelivery after a verification-failure restart and missed turn-ends).
+    /// </summary>
+    public int StrandedAgeSeconds { get; set; } = 60;
 }

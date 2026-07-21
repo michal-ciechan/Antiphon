@@ -20,6 +20,10 @@ namespace Antiphon.FakeClaude;
 ///  * <b>Turn-end signal</b> our detectors key on — a <c>" for Ns"</c> token (matching
 ///    <c>RunnerClaudeAdapter.DonePattern</c>). We also emit the idle OSC title, but ConPTY consumes
 ///    window-title sequences, so the done pattern is the signal that actually survives to our capture.
+///  * <b>Composer echo</b> — typed/pasted text is echoed to the screen like the real composer renders
+///    it. Delivery verification (<c>ComposerDeliveryEvidence</c>) reads the rendered screen for the
+///    typed body before submitting; a fake that swallowed input silently would make every verified
+///    delivery look wedged.
 ///  * <b>Readiness</b> — print a banner then go quiet, so the quiet-period ready detector settles.
 ///
 /// <para><b>Why timing, not read boundaries.</b> ConPTY does not preserve write boundaries as read
@@ -129,7 +133,15 @@ internal static class Program
 
             // Text — optionally with a trailing CR if this was a paste. Accumulate into the composer and
             // do NOT submit; the CR collapses to a literal newline. THIS is the paste trap that bit us.
-            composer.Append(chunk.Replace("\r\n", "\n").Replace('\r', '\n'));
+            var composerText = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
+            composer.Append(composerText);
+
+            // Composer echo — the real TUI renders typed/pasted text in the composer (raw-mode consoles
+            // don't echo, so we must). Delivery verification (ComposerDeliveryEvidence) reads the
+            // rendered screen for exactly this; without the echo every verified delivery would look
+            // like a wedged terminal. (We can't clear it on submit like the real composer — the fake's
+            // screen is append-only — but verification only needs presence, not clearing.)
+            Write(composerText.Replace("\n", "\r\n"));
         }
 
         return 0;

@@ -138,11 +138,12 @@ Distinct from RC health: a session can hold a perfectly healthy PTY and bridge y
 the Claude process wedged, the TUI unresponsive, the API conversation dead. Supervision gains an
 explicit liveness probe with two tiers (both idle-gated, like everything else):
 
-1. **TUI echo probe (free, default).** Type a single character into the composer via the normal
-   input path, verify the rendered screen changes (the runner's `SnapshotScreen` already exposes
-   this), then backspace it. No LLM turn, no tokens, proves the whole chain
-   server → runner → pipe → pty-host → ConPTY → Claude TUI is alive. Default cadence: hourly
-   while idle.
+1. ~~**TUI echo probe (free, default).**~~ **REMOVED 2026-07-21** — the any-delta check
+   ("type a char, did the screen change within 750ms?") false-positive-killed healthy idle
+   sessions on 2026-07-20, each kill costing a session generation. Replaced by **delivery-time
+   composer verification** (see below): the wedge check now runs exactly when a message is
+   delivered, against the *specific expected content*, instead of periodically against "any
+   change".
 2. **Round-trip probe (token-costing, sparing).** Enqueue a tiny prompt via the existing
    `SessionMessageQueueService` (`WhenIdle` mode) — "healthcheck: reply with exactly `pong`" —
    and await the turn-end reply (the `SessionFinished`/turn-end machinery already detects
@@ -153,6 +154,35 @@ Probe failure ⇒ treated exactly like a crash: `LivenessProbeFailed` incident (
 restart-when-idle (resume first, ladder applies). Existing pieces reused: message queue WhenIdle
 mode, turn-end detection, screen snapshots — no new transport. (Nothing equivalent exists today —
 the Watchdog matches *patterns in output* but never initiates a check.)
+
+### Delivery-time composer verification (added 2026-07-21, replaces the TUI echo probe)
+
+Every delivery to a Claude session (`SessionMessageQueueService.DeliverAsync`) is now verified:
+
+1. Type the body (one write, no CR — unchanged two-write shape), then require the rendered screen
+   to show **evidence of the body** before sending the submitting Enter. Evidence per
+   `ComposerDeliveryEvidence` (in `Antiphon.Agents.Pty`, shared with the headed tests): a
+   sliding-window match of the body's whitespace/chrome-stripped tail or head fragment, or a NEW
+   `[Pasted text]` placeholder (an increase vs the pre-typing screen — history placeholders don't
+   count). The rendering contract is pinned by `ClaudeComposerRenderCanaryTests`: short bodies
+   render verbatim; huge single lines show only the SUFFIX near the cursor (sometimes as little as
+   ~14 chars — hence single-window matching); multi-line bodies non-deterministically show either
+   prefix + placeholder or tail only.
+2. After the Enter, the output sequence must advance within 30 s (submit redraws immediately —
+   wedge detection, not reply detection).
+3. On failure at either stage: the Enter is withheld (stage 1) so the message is never lost into a
+   dead composer; the message reverts to **Pending**; a `DeliveryVerificationFailed` incident
+   (Error) is recorded (which also raises an alert); and for **always-on agents only** the session
+   is killed — the supervisor ladder resumes the SAME session row, the kill guarantees a fresh
+   composer (no double-typing), and the **stranded-queue watchdog** (session-health cadence)
+   redelivers pending messages older than 60 s to idle always-on sessions. A fresh-conversation
+   fallback start migrates pending queued messages to the new session id so nothing strands.
+
+Test layers: `ComposerDeliveryEvidenceTests` (pure, CI), `SessionMessageQueueDeliveryVerificationTests`
+(server integration, fake adapter simulating both wedge modes), `SessionMessageQueuePtyIntegrationTests`
+(real ConPTY + fakeclaude with composer echo), `ClaudeVerifiedDeliveryTests` (headed: real Claude,
+short/huge/multi-line bodies through the real predicate), `ClaudeComposerRenderCanaryTests` (headed
+rendering-contract canary).
 
 ### Remote-control health watch (re-arm, then restart-when-idle)
 

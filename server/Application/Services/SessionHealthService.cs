@@ -25,7 +25,6 @@ public sealed class SessionHealthStateStore
         public int ReArmAttempts;
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
-        public DateTime? LastTuiProbeUtc;
         public DateTime? LastRoundTripUtc;
         public long? RoundTripBaselineSequence;
         public DateTime? RoundTripDeadlineUtc;
@@ -36,8 +35,9 @@ public sealed class SessionHealthStateStore
 
 /// <summary>
 /// Session health for always-on agents (spec slice 3): the RC bridge watch (re-arm in place,
-/// then restart-when-idle) and the liveness probes (TUI echo hourly; round-trip healthcheck
-/// 6-hourly). Everything is idle-gated: a session showing fresh output is never touched.
+/// then restart-when-idle) and the round-trip liveness probe (6-hourly healthcheck prompt).
+/// Everything is idle-gated: a session showing fresh output is never touched. Wedge detection
+/// moved to delivery time (SessionMessageQueueService + ComposerDeliveryEvidence).
 /// </summary>
 public sealed class SessionHealthService
 {
@@ -247,27 +247,11 @@ public sealed class SessionHealthService
             return false;
         }
 
-        // TUI echo probe: type one char, verify the rendered screen changed, erase it.
-        // Interval <= 0 disables the individual probe.
-        if (_settings.LivenessProbe.TuiEchoIntervalMinutes > 0
-            && Due(entry.LastTuiProbeUtc, TimeSpan.FromMinutes(_settings.LivenessProbe.TuiEchoIntervalMinutes), now))
-        {
-            entry.LastTuiProbeUtc = now;
-            var before = await _actions.SnapshotScreenAsync(session.Id, ct);
-            await _actions.SendRawInputAsync(session.Id, "x", ct);
-            await Task.Delay(TimeSpan.FromMilliseconds(750), ct);
-            var after = await _actions.SnapshotScreenAsync(session.Id, ct);
-            await _actions.SendRawInputAsync(session.Id, "\x7f", ct); // backspace, leave no trace
-
-            if (string.Equals(before, after, StringComparison.Ordinal))
-            {
-                await FailLivenessAsync(agent, session,
-                    "TUI echo probe: typed input produced no screen change (terminal wedged).", ct);
-                return true;
-            }
-
-            return false;
-        }
+        // NOTE: there is deliberately no synthetic "type a char and watch the screen" probe here.
+        // The old TUI echo probe false-positive-killed healthy idle sessions (2026-07-20); wedge
+        // detection now happens at DELIVERY time via composer content verification in
+        // SessionMessageQueueService (ComposerDeliveryEvidence), where there is real expected
+        // content to check for instead of "any delta".
 
         // Round-trip probe: queue a tiny prompt; the reply must move the output sequence.
         if (_settings.LivenessProbe.RoundTripIntervalHours > 0

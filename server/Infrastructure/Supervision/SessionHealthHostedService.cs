@@ -4,19 +4,25 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Supervision;
 
-/// <summary>Drives <see cref="SessionHealthService"/> (RC watch + liveness probes) on its own cadence.</summary>
+/// <summary>
+/// Drives <see cref="SessionHealthService"/> (RC watch + liveness probes) and the stranded-queue
+/// watchdog (<see cref="SessionMessageQueueService.FlushStrandedQueuesAsync"/>) on its own cadence.
+/// </summary>
 public sealed class SessionHealthHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SessionMessageQueueService _queue;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<SessionHealthHostedService> _logger;
 
     public SessionHealthHostedService(
         IServiceScopeFactory scopeFactory,
+        SessionMessageQueueService queue,
         IOptions<SupervisionSettings> settings,
         ILogger<SessionHealthHostedService> logger)
     {
         _scopeFactory = scopeFactory;
+        _queue = queue;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -47,6 +53,19 @@ public sealed class SessionHealthHostedService : BackgroundService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Session health tick failed");
+                }
+
+                try
+                {
+                    await _queue.FlushStrandedQueuesAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Stranded-queue watchdog pass failed");
                 }
             }
         }

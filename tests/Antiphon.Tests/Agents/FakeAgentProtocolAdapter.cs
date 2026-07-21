@@ -19,6 +19,15 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public string NoiseDuringSendPrompt { get; set; } = string.Empty;
     public string PromptOutput { get; set; } = string.Empty;
     public string? RenderedScreenOverride { get; set; }
+
+    // Composer simulation for delivery verification (ComposerDeliveryEvidence): typed input is
+    // echoed into the rendered screen like a real TUI composer, and a lone "\r" clears it and
+    // emits SubmitAck (advancing the output sequence, like a real submit redraw). Turn either off
+    // to simulate a WEDGED terminal: EchoTypedInputToScreen=false → typed text never appears;
+    // SubmitAck="" → the submitting Enter produces no output.
+    public bool EchoTypedInputToScreen { get; set; } = true;
+    public string SubmitAck { get; set; } = "\n";
+    private readonly StringBuilder _composer = new();
     public int PromptOutputDelayMs { get; set; } = 10;
     public bool ReadyResult { get; set; } = true;
     public bool TurnCompleted { get; set; } = true;
@@ -110,6 +119,16 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     {
         SentInput += input;
         _inputs.Add(input);
+        if (input == "\r")
+        {
+            _composer.Clear();
+            if (SubmitAck.Length > 0)
+                Emit(SubmitAck);
+        }
+        else if (EchoTypedInputToScreen)
+        {
+            _composer.Append(input);
+        }
         return Task.CompletedTask;
     }
 
@@ -137,7 +156,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         if (ThrowOnRenderedSnapshot)
             throw new InvalidOperationException("Rendered snapshot is not available.");
 
-        return RenderedScreenOverride ?? _rawOutput.ToString();
+        var screen = RenderedScreenOverride ?? _rawOutput.ToString();
+        return _composer.Length > 0 ? screen + "\n> " + _composer : screen;
     }
 
     public void Emit(string text)

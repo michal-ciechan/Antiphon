@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -28,6 +29,7 @@ public sealed class AgentControlService
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<AgentControlService> _logger;
 
     public AgentControlService(
         AppDbContext db,
@@ -37,7 +39,8 @@ public sealed class AgentControlService
         AgentRegistry agentRegistry,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ILogger<AgentControlService> logger)
     {
         _db = db;
         _agentService = agentService;
@@ -47,6 +50,7 @@ public sealed class AgentControlService
         _launchQueue = launchQueue;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     /// <summary>
@@ -163,6 +167,21 @@ public sealed class AgentControlService
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);
+
+        // A NEW session id strands any messages still queued on the previous conversation's session
+        // (fresh fallback after repeated failures, or a non-resumable previous session). Carry the
+        // pending ones over so they deliver into the new conversation instead of vanishing.
+        if (Guid.TryParse(agent.PersistentSessionId, out var previousSessionId)
+            && previousSessionId != session.Id)
+        {
+            var moved = await _db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == previousSessionId && m.Status == QueuedMessageStatus.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.AgentSessionId, session.Id), ct);
+            if (moved > 0)
+                _logger.LogInformation(
+                    "Agent {AgentName}: moved {Count} pending queued message(s) from session {Previous} to new session {New}",
+                    agent.Name, moved, previousSessionId, session.Id);
+        }
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName);
         return session.Id;

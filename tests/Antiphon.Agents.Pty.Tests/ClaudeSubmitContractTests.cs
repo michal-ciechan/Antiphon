@@ -53,11 +53,15 @@ public class ClaudeSubmitContractTests
         await CleanupAsync(runner, backend);
     }
 
-    // Text and the CR in a SINGLE write is a paste — it must NOT complete a turn on EITHER backend.
-    // This is the exact behaviour that stranded queued messages; the canary keeps real Claude honest about it.
+    // Text and the CR in a SINGLE write is a paste — it must NOT complete a turn. This is the exact
+    // behaviour that stranded queued messages. FAKE BACKEND ONLY (2026-07-21): ConPTY does not
+    // preserve write boundaries, so on the real CLI one write can surface to Claude as two reads
+    // with a typed-Enter-sized gap and legitimately submit — observed failing 2 of 3 runs. The
+    // no-submit direction is therefore untestable through this transport against real Claude; the
+    // fake pins the modelled contract deterministically (12ms burst gap), and the direction our
+    // stack actually RELIES on — two writes DO submit — stays real-Claude-canaried above.
     [Test]
     [Arguments("fakeclaude")]
-    [Arguments("claude")]
     public async Task Text_and_CR_in_one_write_does_not_submit(string backend)
     {
         await using var runner = await LaunchReadyAsync(backend);

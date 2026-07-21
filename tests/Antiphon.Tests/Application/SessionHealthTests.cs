@@ -109,30 +109,9 @@ public class SessionHealthTests
         }
     }
 
-    [Test]
-    public async Task Tui_echo_probe_failure_restarts_the_session()
-    {
-        var tempRoot = NewTempRoot();
-        try
-        {
-            await using var harness = BuildHarness(tempRoot, rcWatchEnabled: false, tuiEchoIntervalMinutes: 1);
-            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
-            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
-            harness.Actions.ScreenText = "frozen-screen"; // identical before/after: wedged TUI
-
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-
-            harness.Actions.RawInputs.ShouldContain(x => x.SessionId == sessionId && x.Input == "x");
-            harness.Actions.KilledSessions.ShouldContain(sessionId);
-            await using var verify = CreateContext();
-            (await verify.AgentIncidents.AnyAsync(
-                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.LivenessProbeFailed)).ShouldBeTrue();
-        }
-        finally
-        {
-            await CleanupAsync(tempRoot);
-        }
-    }
+    // NOTE: the TUI echo probe (and its test) was removed on 2026-07-21 — it false-positive-killed
+    // healthy idle sessions. Wedge detection now happens at delivery time; see
+    // SessionMessageQueueDeliveryVerificationTests.
 
     [Test]
     public async Task Round_trip_probe_times_out_and_restarts_but_passes_when_output_moves()
@@ -140,8 +119,7 @@ public class SessionHealthTests
         var tempRoot = NewTempRoot();
         try
         {
-            await using var harness = BuildHarness(
-                tempRoot, rcWatchEnabled: false, tuiEchoIntervalMinutes: 0); // 0 = echo probe disabled
+            await using var harness = BuildHarness(tempRoot, rcWatchEnabled: false);
             var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
             harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
 
@@ -216,8 +194,7 @@ public class SessionHealthTests
     private static Harness BuildHarness(
         string tempRoot,
         bool rcWatchEnabled = true,
-        int idleQuietMinutes = 0,
-        int tuiEchoIntervalMinutes = 0)
+        int idleQuietMinutes = 0)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var runner = new ControllableRunnerClient();
@@ -248,7 +225,6 @@ public class SessionHealthTests
             LivenessProbe = new LivenessProbeSettings
             {
                 Enabled = !rcWatchEnabled, // isolate: rc tests run rc only, liveness tests liveness only
-                TuiEchoIntervalMinutes = tuiEchoIntervalMinutes,
                 RoundTripIntervalHours = 6,
                 RoundTripTimeoutMinutes = 10,
             },

@@ -33,6 +33,12 @@ public enum AgentIncidentKind
     /// <summary>Session restarted while idle to restore remote control (slice 3).</summary>
     RcRestart = 9,
 
-    /// <summary>A liveness probe (TUI echo / round-trip) failed (slice 3).</summary>
+    /// <summary>A liveness probe (round-trip healthcheck) failed (slice 3).</summary>
     LivenessProbeFailed = 10,
+
+    /// <summary>
+    /// A delivered message could not be verified in the Claude composer (or the submit produced
+    /// no output) — the terminal is treated as wedged. Replaces the removed TUI echo probe.
+    /// </summary>
+    DeliveryVerificationFailed = 11,
 }
