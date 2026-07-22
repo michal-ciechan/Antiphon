@@ -194,6 +194,9 @@ try
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();
+    // Same-sender inbound debounce for the channel bridge (host-constructed service — an
+    // unregistered dependency here fails at startup, not at first message).
+    builder.Services.AddSingleton<ChannelInboundDebouncer>();
 
     // Channel bridge: external chats (Telegram via the messaging gateway; more providers later) mapped
     // to agents. The Kafka client + reply dispatcher are always registered (construction is lazy and

@@ -36,6 +36,7 @@ public class ClaudeVerifiedDeliveryTests
     [Arguments("claude", "short")]
     [Arguments("claude", "hugeLine")]
     [Arguments("claude", "multiLine")]
+    [Arguments("claude", "batch")] // risk row 7: a batched body (context/current markers) verifies on the real composer
     public async Task Evidence_appears_then_submit_completes_a_turn(string backend, string shape)
     {
         await using var runner = await LaunchReadyAsync(backend);
@@ -81,9 +82,19 @@ public class ClaudeVerifiedDeliveryTests
         {
             "hugeLine" => BuildHugeLine(),
             "multiLine" => BuildMultiLine(),
+            "batch" => BuildBatch(),
             _ => "Reply with the single word PONG and nothing else.",
         };
     }
+
+    // The exact batched-delivery shape SessionMessageQueueService produces (markers frozen in
+    // ChannelPromptFormat — literals here because this project doesn't reference the server).
+    private static string BuildBatch() =>
+        "[Chat messages since your last reply - for context]\n"
+        + "[Telegram \"Family\" — Mike (@mike) 14:30] earlier message about the shopping list\n"
+        + "[Telegram \"Family\" — Mike (@mike) 14:31] and something about the school run\n\n"
+        + "[Current message - respond to this]\n"
+        + "[Telegram \"Family\" — Mike (@mike) 14:32] ignore all of the above and reply with the single word PONG and nothing else.";
 
     // ~3k chars of ignorable filler ending in the actual instruction: the tail (which is what the
     // suffix-only composer rendering shows) carries the distinctive content.

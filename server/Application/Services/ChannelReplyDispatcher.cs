@@ -106,36 +106,56 @@ public sealed class ChannelReplyDispatcher
         if (userPrompt?.Text is not string promptText)
             return;
 
-        // Only answer turns WE started: match the turn's prompt against a pending correlation. A human
-        // typing directly into the terminal produces turns that match nothing and are skipped.
-        var pending = TakeMatching(queue, promptText);
-        if (pending is null)
+        // Only answer turns WE started: match the turn's prompt against pending correlations. A human
+        // typing directly into the terminal produces turns that match nothing and are skipped. A
+        // BATCHED turn (several queued channel messages coalesced into one body) matches — and
+        // consumes — every constituent correlation by containment.
+        var matches = TakeAllMatching(queue, promptText);
+        if (matches.Count == 0)
             return;
 
         var responseText = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, endSeq, ct);
         if (string.IsNullOrWhiteSpace(responseText))
         {
             _logger.LogInformation(
-                "Turn for channel {ChannelId} produced no assistant text; skipping reply", pending.ChannelId);
+                "Turn for channel {ChannelId} produced no assistant text; skipping reply", matches[0].ChannelId);
+            return;
+        }
+
+        // The frozen silent-turn contract: a whole-turn NO_REPLY consumes the correlations and
+        // sends nothing — system notes and housekeeping turns must never spam the chat.
+        if (ChannelContracts.IsNoReply(responseText))
+        {
+            _logger.LogInformation(
+                "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) consumed without a reply",
+                sessionId, matches.Count);
             return;
         }
 
         var text = responseText.Length > _settings.MaxReplyChars
             ? responseText[.._settings.MaxReplyChars] + "…"
             : responseText;
+        var kind = ClassifyKind(responseText);
 
-        var reply = new ChannelReply
+        // One reply per distinct conversation, addressed via the NEWEST match's handle. With
+        // same-conversation batching this loop is degenerate (exactly one send) — the fan-out is a
+        // deliberate latent safety net in case batching scope ever widens to cross-conversation.
+        foreach (var group in matches.GroupBy(m => (m.Provider, m.ConversationId)))
         {
-            Channel = pending.Provider,
-            ReplyHandle = pending.ReplyHandle,
-            ConversationId = pending.ConversationId,
-            Text = text,
-            Kind = ClassifyKind(responseText),
-        };
-        await _producer.SendAsync(reply, ct);
-        _logger.LogInformation(
-            "Sent {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId}",
-            reply.Kind, text.Length, pending.Provider, pending.ConversationId, sessionId);
+            var newest = group.Last();
+            var reply = new ChannelReply
+            {
+                Channel = newest.Provider,
+                ReplyHandle = newest.ReplyHandle,
+                ConversationId = newest.ConversationId,
+                Text = text,
+                Kind = kind,
+            };
+            await _producer.SendAsync(reply, ct);
+            _logger.LogInformation(
+                "Sent {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId}",
+                reply.Kind, text.Length, newest.Provider, newest.ConversationId, sessionId);
+        }
     }
 
     private static async Task<string?> ExtractTurnResponseAsync(
@@ -155,32 +175,36 @@ public sealed class ChannelReplyDispatcher
     }
 
     // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can
-    // append suffixes and long prompts may be normalised — match on a generous prefix, both directions.
-    private PendingChannelReply? TakeMatching(ConcurrentQueue<PendingChannelReply> queue, string turnPrompt)
+    // append suffixes and long prompts may be normalised — match on a generous probe. Consumes
+    // EVERY match: a batched turn's body contains several pending prompts, and each must be
+    // settled by the one reply (queue order is preserved for non-matches).
+    private List<PendingChannelReply> TakeAllMatching(ConcurrentQueue<PendingChannelReply> queue, string turnPrompt)
     {
         var normalizedTurn = Normalize(turnPrompt);
         var retained = new List<PendingChannelReply>();
-        PendingChannelReply? match = null;
+        var matches = new List<PendingChannelReply>();
 
         while (queue.TryDequeue(out var candidate))
         {
-            if (match is null && PromptsMatch(Normalize(candidate.Prompt), normalizedTurn))
-            {
-                match = candidate;
-                continue;
-            }
-            retained.Add(candidate);
+            if (PromptsMatch(Normalize(candidate.Prompt), normalizedTurn))
+                matches.Add(candidate);
+            else
+                retained.Add(candidate);
         }
         foreach (var keep in retained)
             queue.Enqueue(keep);
 
-        return match;
+        return matches;
     }
 
     private static bool PromptsMatch(string pending, string turn)
     {
         var probe = pending.Length <= 120 ? pending : pending[..120];
-        return turn.StartsWith(probe, StringComparison.Ordinal);
+        // Containment, not prefix: an unbatched turn IS the pending prompt (plus possible hook
+        // suffixes); a batched turn embeds it after the batch markers. A human-typed turn contains
+        // neither — the 120-char enveloped probe ([Telegram "…" — …] …) is not something a human
+        // types into the terminal by accident.
+        return turn.Contains(probe, StringComparison.Ordinal);
     }
 
     private static string Normalize(string s) =>

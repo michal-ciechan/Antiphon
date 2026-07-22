@@ -124,6 +124,120 @@ public class SessionMessageQueuePtyIntegrationTests
         }
     }
 
+    // PR 9 at the PTY tier: a batched multi-line body must pass composer delivery verification and
+    // submit as ONE turn through the real runtime -> runner -> ConPTY path.
+    [Test]
+    public async Task Batched_multiline_body_passes_composer_delivery_verification_and_submits_once()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+
+        var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
+        var client = new DirectSessionRunnerClient(sessionLogPath);
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }));
+        var eventBus = new MockEventBus();
+        services.AddSingleton(eventBus);
+        services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton(Options.Create(
+            new Antiphon.Server.Application.Settings.ChannelBridgeSettings { BatchingEnabled = true }));
+        services.AddSingleton<ISessionRunnerClient>(client);
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddLogging();
+        await using var provider = services.BuildServiceProvider();
+
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+
+        var spec = new AgentLaunchSpec(
+            DefinitionName: "fakeclaude",
+            Kind: AgentKind.ClaudeCode,
+            Exe: FakeClaudeExe,
+            Args: Array.Empty<string>(),
+            Env: new Dictionary<string, string>(),
+            Cwd: cwd,
+            Cols: 120,
+            Rows: 30);
+
+        try
+        {
+            await client.StartAsync(sessionId, spec, CancellationToken.None);
+            (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
+                .ShouldBeTrue();
+
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
+                    AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                // Working state so both messages stay pending until the turn-end flush batches them.
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.AssistantText,
+                    Text = "working", CreatedAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var queue = provider.GetRequiredService<SessionMessageQueueService>();
+            await queue.EnqueueAsync(sessionId, "[T] batched alpha", MessageSendMode.WhenIdle,
+                CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
+            await queue.EnqueueAsync(sessionId, "[T] batched omega", MessageSendMode.WhenIdle,
+                CancellationToken.None, QueuedMessageOrigin.Channel, "telegram:batch");
+
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 2,
+                    Kind = Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd,
+                    StopReason = "end_turn", CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+            await queue.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+            // ONE submit whose escaped marker carries both batch markers and both messages.
+            var submitted = await WaitForRawAsync(
+                client, sessionId,
+                s => s.Contains("SUBMITTED:" + ChannelPromptFormat.BatchContextMarker)
+                     && s.Contains("[T] batched alpha")
+                     && s.Contains("[T] batched omega"),
+                TimeSpan.FromSeconds(10));
+            submitted.ShouldBeTrue("the batched body must pass verification and submit as one turn");
+        }
+        finally
+        {
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // Risk row 4 at the PTY tier (PR 5): a multi-line --append-system-prompt value must survive the
     // runner → pty-host → CreateProcess quoting chain byte-for-byte. fakeclaude --echo-args prints
     // the argv it actually received (newline-escaped, ␟-joined) in its banner.

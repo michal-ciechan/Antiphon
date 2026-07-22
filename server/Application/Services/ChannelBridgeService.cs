@@ -31,6 +31,7 @@ public sealed class ChannelBridgeService : BackgroundService
     private readonly IAntiphonMessagingConsumer _consumer;
     private readonly ChannelReplyDispatcher _dispatcher;
     private readonly SessionMessageQueueService _queue;
+    private readonly ChannelInboundDebouncer _debouncer;
     private readonly IEventBus _eventBus;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Settings.ChannelBridgeSettings _settings;
@@ -41,6 +42,7 @@ public sealed class ChannelBridgeService : BackgroundService
         IAntiphonMessagingConsumer consumer,
         ChannelReplyDispatcher dispatcher,
         SessionMessageQueueService queue,
+        ChannelInboundDebouncer debouncer,
         IEventBus eventBus,
         IServiceScopeFactory scopeFactory,
         IOptions<Settings.ChannelBridgeSettings> settings,
@@ -50,6 +52,7 @@ public sealed class ChannelBridgeService : BackgroundService
         _consumer = consumer;
         _dispatcher = dispatcher;
         _queue = queue;
+        _debouncer = debouncer;
         _eventBus = eventBus;
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
@@ -81,6 +84,13 @@ public sealed class ChannelBridgeService : BackgroundService
                 catch (OperationCanceledException) { return; }
             }
         }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+        // Drain buffered (debounced) messages so a shutdown never eats a half-window of chat.
+        await _debouncer.FlushAllAsync();
     }
 
     /// <summary>One inbound message: catalog it, then route it if its channel is bound. Internal for tests.</summary>
@@ -127,30 +137,63 @@ public sealed class ChannelBridgeService : BackgroundService
             return;
         }
 
-        var prompt = ChannelPromptFormat.Format(
-            channel,
-            message.Author.DisplayName ?? message.Author.Username ?? message.Author.Id,
-            message.Author.Username,
-            message.Timestamp,
-            message.Text!,
-            TimeZoneInfo.Local);
-        // Register the reply correlation BEFORE enqueuing: an idle agent gets the message delivered
-        // synchronously inside EnqueueAsync, and its turn could complete before a later Track() ran.
-        _dispatcher.Track(liveSessionId, new ChannelReplyDispatcher.PendingChannelReply(
-            channel.Id,
-            channel.Provider,
-            message.ReplyHandle,
-            message.Conversation.Id,
-            prompt,
-            _timeProvider.GetUtcNow().UtcDateTime));
+        // Hand off to the same-sender debouncer: rapid-fire messages merge into one prompt after a
+        // quiet window (0 = flush synchronously right here). The flush callback runs OUTSIDE this
+        // awaited consume loop, so it owns its own failure alerting — degradation on a broken flush
+        // is dropped-with-alert, never a silent unobserved-task fault.
+        await _debouncer.AddAsync(
+            message,
+            batch => FlushLaneAsync(channel, agentId, liveSessionId, batch),
+            ct);
+        _logger.LogDebug(
+            "Buffered {Provider} message {MessageId} on channel {ChannelId} for session {SessionId}",
+            channel.Provider, message.ChannelMessageId, channel.Id, liveSessionId);
+    }
 
-        await _queue.EnqueueAsync(
-            liveSessionId, prompt, MessageSendMode.WhenIdle, ct,
-            origin: QueuedMessageOrigin.Channel,
-            conversationKey: $"{channel.Provider}:{message.Conversation.Id}");
-        _logger.LogInformation(
-            "Routed {Provider} message {MessageId} on channel {ChannelId} to agent {AgentId} session {SessionId}",
-            channel.Provider, message.ChannelMessageId, channel.Id, agentId, liveSessionId);
+    // Routes one debounced batch (1..n same-sender messages) into the session: single truthful
+    // envelope header (first message's metadata), one line per message text.
+    private async Task FlushLaneAsync(
+        ChatChannel channel, Guid agentId, Guid sessionId, IReadOnlyList<ChannelInboundDebouncer.Buffered> batch)
+    {
+        try
+        {
+            var first = batch[0].Message;
+            var newest = batch[^1].Message;
+            var text = string.Join("\n", batch.Select(b => b.Message.Text!.Trim()));
+            var prompt = ChannelPromptFormat.Format(
+                channel,
+                first.Author.DisplayName ?? first.Author.Username ?? first.Author.Id,
+                first.Author.Username,
+                first.Timestamp,
+                text,
+                TimeZoneInfo.Local);
+
+            // Register the reply correlation BEFORE enqueuing: an idle agent gets the message
+            // delivered synchronously inside EnqueueAsync, and its turn could complete before a
+            // later Track() ran.
+            _dispatcher.Track(sessionId, new ChannelReplyDispatcher.PendingChannelReply(
+                channel.Id,
+                channel.Provider,
+                newest.ReplyHandle,
+                newest.Conversation.Id,
+                prompt,
+                _timeProvider.GetUtcNow().UtcDateTime));
+
+            await _queue.EnqueueAsync(
+                sessionId, prompt, MessageSendMode.WhenIdle, CancellationToken.None,
+                origin: QueuedMessageOrigin.Channel,
+                conversationKey: $"{channel.Provider}:{newest.Conversation.Id}");
+            _logger.LogInformation(
+                "Routed {Count} {Provider} message(s) on channel {ChannelId} to agent {AgentId} session {SessionId}",
+                batch.Count, channel.Provider, channel.Id, agentId, sessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Debounced flush failed to route {Count} message(s) on channel {ChannelId}",
+                batch.Count, channel.Id);
+            await RaiseBridgeDropAlertAsync(channel, agentId, CancellationToken.None);
+        }
     }
 
     private async Task RaiseBridgeDropAlertAsync(ChatChannel channel, Guid agentId, CancellationToken ct)

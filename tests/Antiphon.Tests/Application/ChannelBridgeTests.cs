@@ -144,6 +144,30 @@ public class ChannelBridgeTests
         (await h.Channels().GetAllAsync(CancellationToken.None)).ShouldBeEmpty();
     }
 
+    // PR 9: rapid-fire same-sender messages debounce into ONE routed prompt — single truthful
+    // envelope header, one line per message, one reply correlation for the whole flush.
+    [Test]
+    public async Task Rapid_fire_same_sender_inbound_merges_within_window()
+    {
+        await using var h = await HarnessAsync(debounceWindowMs: 150);
+        await h.BindChannelAsync();
+
+        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line one", title: "Family", author: "Mike"), CancellationToken.None);
+        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line two", title: "Family", author: "Mike"), CancellationToken.None);
+        await h.Bridge.HandleInboundAsync(TelegramText(h.ChatId, "line three", title: "Family", author: "Mike"), CancellationToken.None);
+
+        // Real-clock debounce (150ms window): wait for the flush to land.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && h.Adapter.SubmittedBodies.Count == 0)
+            await Task.Delay(25);
+
+        var body = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        body.ShouldContain("[Telegram \"Family\" — Mike ");
+        body.ShouldContain("] line one\nline two\nline three");
+        body.Split("[Telegram").Length.ShouldBe(2, "exactly ONE envelope header for the merged flush");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "one correlation per flush, not per message");
+    }
+
     // PR 8: channel-routed messages carry the batching metadata (origin + conversation key) and
     // the frozen ChannelPromptFormat envelope; UI enqueues stay Ui-origin with no key.
     [Test]
@@ -207,7 +231,7 @@ public class ChannelBridgeTests
         Raw = System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    private static async Task<Harness> HarnessAsync()
+    private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -222,7 +246,10 @@ public class ChannelBridgeTests
         services.AddSingleton<IEventBus>(eventBus);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
-        services.AddSingleton(Options.Create(new ChannelBridgeSettings { Enabled = true }));
+        // DebounceWindowMs 0 = passthrough: these tests assert synchronous routing; the debounce
+        // behaviour has its own suites (ChannelInboundDebouncerTests + the rapid-fire bridge tests).
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = debounceWindowMs }));
+        services.AddSingleton<ChannelInboundDebouncer>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<ChatChannelService>();
@@ -280,6 +307,7 @@ public class ChannelBridgeTests
             messaging,
             dispatcher,
             provider.GetRequiredService<SessionMessageQueueService>(),
+            provider.GetRequiredService<ChannelInboundDebouncer>(),
             eventBus,
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<IOptions<ChannelBridgeSettings>>(),

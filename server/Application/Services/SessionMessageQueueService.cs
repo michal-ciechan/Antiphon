@@ -32,6 +32,7 @@ public sealed class SessionMessageQueueService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly DeliveryVerificationSettings _verification;
+    private readonly Settings.ChannelBridgeSettings _bridgeSettings;
     private readonly ILogger<SessionMessageQueueService> _logger;
 
     public SessionMessageQueueService(
@@ -40,13 +41,15 @@ public sealed class SessionMessageQueueService
         IEventBus eventBus,
         TimeProvider timeProvider,
         ILogger<SessionMessageQueueService> logger,
-        IOptions<SupervisionSettings>? supervisionSettings = null)
+        IOptions<SupervisionSettings>? supervisionSettings = null,
+        IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null)
     {
         _scopeFactory = scopeFactory;
         _runtime = runtime;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
+        _bridgeSettings = bridgeSettings?.Value ?? new Settings.ChannelBridgeSettings();
         _logger = logger;
     }
 
@@ -180,7 +183,7 @@ public sealed class SessionMessageQueueService
             var verdict = await DeliverAsync(sessionId, message.Body, ct);
             if (verdict != DeliveryVerdict.Delivered)
             {
-                await HandleDeliveryFailureAsync(sessionId, message.Id, verdict, ct);
+                await HandleDeliveryFailureAsync(sessionId, [message.Id], verdict, ct);
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
                     + $"({Describe(verdict)}). The message has been returned to the queue.");
@@ -302,24 +305,52 @@ public sealed class SessionMessageQueueService
 
     private enum FlushResult { Nothing, Delivered, Failed }
 
-    // Claims and delivers the oldest pending message (caller holds the per-session lock).
+    // Claims and delivers the oldest pending message (caller holds the per-session lock). With
+    // batching enabled, a CONTIGUOUS head run of Channel-origin messages from the SAME conversation
+    // coalesces into one delivery under the batch markers (OpenClaw's 'collect' model): a run of 1
+    // is literally today's behaviour; UI/System messages and conversation changes break the run, so
+    // cross-origin FIFO order is preserved and operator messages keep 1:1 turns.
     private async Task<FlushResult> DeliverNextLockedAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var next = await db.SessionQueuedMessages
+        var pending = await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
             .OrderBy(m => m.Sequence)
-            .FirstOrDefaultAsync(ct);
-        if (next is null)
+            .ToListAsync(ct);
+        if (pending.Count == 0)
             return FlushResult.Nothing;
 
-        next.Status = QueuedMessageStatus.Sent;
-        next.SentAt = UtcNow();
+        var head = pending[0];
+        var run = new List<SessionQueuedMessage> { head };
+        if (_bridgeSettings.BatchingEnabled
+            && head.Origin == QueuedMessageOrigin.Channel
+            && head.ConversationKey is not null)
+        {
+            foreach (var m in pending.Skip(1))
+            {
+                if (m.Origin != QueuedMessageOrigin.Channel || m.ConversationKey != head.ConversationKey)
+                    break;
+                run.Add(m);
+            }
+        }
+
+        var body = run.Count == 1
+            ? head.Body
+            : ChannelPromptFormat.FormatBatch(
+                run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
+
+        var now = UtcNow();
+        foreach (var m in run)
+        {
+            m.Status = QueuedMessageStatus.Sent;
+            m.SentAt = now;
+        }
         await db.SaveChangesAsync(ct);
-        var verdict = await DeliverAsync(sessionId, next.Body, ct);
+
+        var verdict = await DeliverAsync(sessionId, body, ct);
         if (verdict == DeliveryVerdict.Delivered)
             return FlushResult.Delivered;
 
-        await HandleDeliveryFailureAsync(sessionId, next.Id, verdict, ct);
+        await HandleDeliveryFailureAsync(sessionId, run.Select(m => m.Id).ToList(), verdict, ct);
         return FlushResult.Failed;
     }
 
@@ -440,7 +471,7 @@ public sealed class SessionMessageQueueService
     // the reverted message redelivers via the stranded-queue watchdog), and the kill guarantees a
     // fresh composer so redelivery cannot double-type.
     private async Task HandleDeliveryFailureAsync(
-        Guid sessionId, Guid? messageId, DeliveryVerdict verdict, CancellationToken ct)
+        Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
     {
         try
         {
@@ -450,11 +481,13 @@ public sealed class SessionMessageQueueService
             var agent = await db.Agents.FirstOrDefaultAsync(
                 a => a.PersistentSessionId == sessionId.ToString("D"), ct);
 
-            if (messageId is { } id)
+            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert).
+            if (messageIds is { Count: > 0 })
             {
-                var message = await db.SessionQueuedMessages
-                    .FirstOrDefaultAsync(m => m.Id == id && m.AgentSessionId == sessionId, ct);
-                if (message is not null && message.Status == QueuedMessageStatus.Sent)
+                var messages = await db.SessionQueuedMessages
+                    .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
+                    .ToListAsync(ct);
+                foreach (var message in messages.Where(m => m.Status == QueuedMessageStatus.Sent))
                 {
                     message.Status = QueuedMessageStatus.Pending;
                     message.SentAt = null;
