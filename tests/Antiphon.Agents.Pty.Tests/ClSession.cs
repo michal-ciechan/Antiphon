@@ -52,6 +52,26 @@ internal static class ClSession
         return null;
     }
 
+    /// <summary>
+    /// Env overrides that neutralize nested-Claude markers. Headed tests often run from INSIDE a
+    /// Claude Code session (an agent driving `dotnet run`), and the child claude inherits
+    /// CLAUDE_CODE_CHILD_SESSION=1 / CLAUDE_CODE_SESSION_ID — an interactive claude that sees them
+    /// behaves as a child session and does NOT persist its transcript to ~/.claude/projects
+    /// (observed 2026-07-22: turns + /compact worked, no JSONL ever written). Production launches
+    /// come from the session-runner daemon (clean env), so this is a test-environment fix only.
+    /// Empty string = present-but-falsy, which the merge-style pty env application can express.
+    /// </summary>
+    // Deliberately MINIMAL: only the child-session markers are neutralized. CLAUDECODE /
+    // CLAUDE_PID / ENTRYPOINT stay — user-level hooks (e.g. memsearch's SessionStart) use them as
+    // recursion guards, and scrubbing them made a SessionStart hook hang for minutes on the
+    // post-compact restart (observed 2026-07-22).
+    public static Dictionary<string, string> HeadedSafeEnv() => new()
+    {
+        ["CLAUDE_CODE_CHILD_SESSION"] = "",
+        ["CLAUDE_CODE_SESSION_ID"] = "",
+        ["CLAUDE_CODE_BRIDGE_SESSION_ID"] = "",
+    };
+
     public static (string app, string[] args) BuildLaunch(string cl, params string[] extraArgs)
     {
         if (cl.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))

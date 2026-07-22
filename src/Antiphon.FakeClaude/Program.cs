@@ -71,12 +71,20 @@ internal static class Program
 
         // Startup banner, then quiet — lets the quiet-period readiness detector settle.
         Write(banner + "\r\n");
+        // --echo-args: print the argv verbatim (newline-escaped) so tests can assert that args —
+        // notably a multi-line --append-system-prompt value — survived process-spawn quoting intact.
+        if (Array.IndexOf(args, "--echo-args") >= 0)
+            Write("ARGS:" + string.Join("␟", args).Replace("\r", "\\r").Replace("\n", "\\n") + "\r\n");
         Write(IdleTitle);
 
-        // Background reader: accumulate raw stdin bytes and stamp the arrival time of the latest byte.
+        // Background reader: accumulate raw stdin CHUNKS, each stamped with its arrival time. The
+        // per-chunk stamps matter: if the main loop stalls (first-call JIT/serializer warm-up in
+        // SubmitTurn), two keystrokes that arrived 20ms apart would otherwise merge into one burst
+        // and read as a paste — the reader thread's timestamps preserve the true gaps regardless
+        // of how late the drain runs.
         var stdin = Console.OpenStandardInput();
         var gate = new object();
-        var pending = new List<byte>();
+        var pending = new List<(long AtMs, byte[] Bytes)>();
         var clock = Stopwatch.StartNew();
         long lastByteMs = 0;
         var eof = false;
@@ -92,8 +100,8 @@ internal static class Program
                 if (n <= 0) { lock (gate) eof = true; break; }
                 lock (gate)
                 {
-                    for (var i = 0; i < n; i++) pending.Add(buf[i]);
                     lastByteMs = clock.ElapsedMilliseconds;
+                    pending.Add((lastByteMs, buf[..n]));
                 }
             }
         })
@@ -107,21 +115,49 @@ internal static class Program
         {
             Thread.Sleep(3);
 
-            byte[]? burst = null;
+            List<(long AtMs, byte[] Bytes)>? drained = null;
             lock (gate)
             {
                 if (eof && pending.Count == 0) break;
                 if (pending.Count > 0 && clock.ElapsedMilliseconds - lastByteMs >= burstGapMs)
                 {
-                    burst = pending.ToArray();
+                    drained = new List<(long, byte[])>(pending);
                     pending.Clear();
                 }
             }
-            if (burst is null) continue;
+            if (drained is null) continue;
 
+            // Re-split the drained chunks into bursts by their ARRIVAL-time gaps (a late drain
+            // must not glue a typed Enter onto the body it follows).
+            var bursts = new List<byte[]>();
+            var current = new List<byte>();
+            for (var c = 0; c < drained.Count; c++)
+            {
+                if (c > 0 && drained[c].AtMs - drained[c - 1].AtMs >= burstGapMs && current.Count > 0)
+                {
+                    bursts.Add(current.ToArray());
+                    current.Clear();
+                }
+                current.AddRange(drained[c].Bytes);
+            }
+            if (current.Count > 0)
+                bursts.Add(current.ToArray());
+
+            foreach (var burst in bursts)
+            {
+                if (!ProcessBurst(burst))
+                    return 0;
+            }
+        }
+
+        return 0;
+
+        // One burst = one logical input event. Returns false on Ctrl-C/Ctrl-D (exit).
+        bool ProcessBurst(byte[] burst)
+        {
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
-                break;
+                return false;
 
             var chunk = Encoding.UTF8.GetString(burst);
 
@@ -140,7 +176,7 @@ internal static class Program
             {
                 var text = composer.ToString().Trim();
                 composer.Clear();
-                if (text.Length == 0) continue; // bare Enter on an empty composer — nothing to submit.
+                if (text.Length == 0) return true; // bare Enter on an empty composer — nothing to submit.
 
                 if (text == "/compact")
                 {
@@ -148,14 +184,14 @@ internal static class Program
                     Write("\r\n");
                     Write("SUBMITTED:/compact\r\n");
                     EmitCompaction(Write, transcriptPath);
-                    continue;
+                    return true;
                 }
 
                 SubmitTurn(Write, text, transcriptPath);
                 turnCount++;
                 if (compactAfterTurns > 0 && turnCount == compactAfterTurns)
                     EmitCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
-                continue;
+                return true;
             }
 
             // Text — optionally with a trailing CR if this was a paste. Accumulate into the composer and
@@ -169,9 +205,8 @@ internal static class Program
             // like a wedged terminal. (We can't clear it on submit like the real composer — the fake's
             // screen is append-only — but verification only needs presence, not clearing.)
             Write(composerText.Replace("\n", "\r\n"));
+            return true;
         }
-
-        return 0;
     }
 
     private static void SubmitTurn(Action<string> write, string text, string? transcriptPath)
@@ -183,20 +218,25 @@ internal static class Program
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
-        AppendTranscript(transcriptPath, JsonUserLine(text));
+        // Guarded, not passed eagerly: first-call JSON serializer warm-up takes long enough to
+        // stall the drain loop past the burst gap (glueing a following body+CR into one paste).
+        if (transcriptPath is not null)
+            AppendTranscript(transcriptPath, JsonUserLine(text));
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
         // Turn-end signals: the " for Ns" done pattern (survives ConPTY) AND the idle title (usually consumed).
         write("Crunched for 1s\r\n");
         write(IdleTitle);
-        AppendTranscript(transcriptPath, JsonAssistantLine(echo));
+        if (transcriptPath is not null)
+            AppendTranscript(transcriptPath, JsonAssistantLine(echo));
     }
 
     private static void EmitCompaction(Action<string> write, string? transcriptPath)
     {
         write(CompactedScreenLine + "\r\n");
         write(IdleTitle);
-        AppendTranscript(transcriptPath, JsonCompactBoundaryLine());
+        if (transcriptPath is not null)
+            AppendTranscript(transcriptPath, JsonCompactBoundaryLine());
     }
 
     // JSONL lines in the shapes TranscriptNormalizer parses. The boundary shape must stay in sync with
@@ -222,13 +262,27 @@ internal static class Program
         },
     });
 
+    // Key set mirrors the pinned fixture (tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl,
+    // captured from claude 2.1.217 on 2026-07-22). PINNED-BY: ClaudeCompactionCanaryTests.
     private static string JsonCompactBoundaryLine() => JsonSerializer.Serialize(new
     {
+        parentUuid = (string?)null,
+        logicalParentUuid = Guid.NewGuid().ToString(),
+        isSidechain = false,
         type = "system",
         subtype = "compact_boundary",
+        content = "Conversation compacted",
+        level = "info",
+        compactMetadata = new { trigger = "manual", preTokens = 1000, postTokens = 100 },
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
-        compactMetadata = new { trigger = "manual", preTokens = 0 },
+        userType = "external",
+        entrypoint = "cli",
+        cwd = Environment.CurrentDirectory,
+        sessionId = Guid.NewGuid().ToString(),
+        version = "fake",
+        gitBranch = "",
+        slug = "fake-claude",
     });
 
     private static void AppendTranscript(string? path, string jsonLine)
@@ -253,6 +307,11 @@ internal static class Program
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
         try
         {
+            // We write UTF-8 bytes; without a UTF-8 console codepage ConPTY decodes them per the
+            // legacy OEM codepage and non-ASCII (␟, em-dashes) reaches captures as mojibake.
+            SetConsoleOutputCP(65001);
+            SetConsoleCP(65001);
+
             var stdIn = GetStdHandle(STD_INPUT_HANDLE);
             if (GetConsoleMode(stdIn, out var inMode))
             {
@@ -284,6 +343,12 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleOutputCP(uint wCodePageID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleCP(uint wCodePageID);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
