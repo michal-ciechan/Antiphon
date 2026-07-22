@@ -167,6 +167,48 @@ public class AgentRegistryTests
         spec.Env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"].ShouldBe("0");
     }
 
+    // A spawned Claude agent must not inherit the launcher's nesting markers, or Claude treats it
+    // as a child session: it ignores --session-id (forks to a self-chosen id) and the transcript
+    // tailer — which follows <session-id>.jsonl — loses turn-end detection and reply routing.
+    [Test]
+    public void Resolve_scrubs_claude_nesting_markers_to_empty()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions());
+
+        foreach (var marker in new[]
+        {
+            "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT",
+        })
+        {
+            spec.Env.ContainsKey(marker).ShouldBeTrue($"{marker} must be present (as an empty override)");
+            spec.Env[marker].ShouldBe(string.Empty);
+        }
+    }
+
+    [Test]
+    public void Resolve_does_not_scrub_nesting_markers_for_non_claude_kinds()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("raw", new AgentLaunchOptions());
+
+        spec.Env.ContainsKey("CLAUDE_CODE_SESSION_ID").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Resolve_lets_config_override_a_nesting_marker()
+    {
+        var registry = BuildRegistry(WithClaudeAndRaw());
+
+        var spec = registry.Resolve("claude", new AgentLaunchOptions(
+            ExtraEnv: new Dictionary<string, string> { ["CLAUDE_CODE_ENTRYPOINT"] = "cli" }));
+
+        spec.Env["CLAUDE_CODE_ENTRYPOINT"].ShouldBe("cli");
+    }
+
     [Test]
     public void Resolve_rejects_non_positive_dimensions()
     {

@@ -48,6 +48,10 @@ var server = builder
     .AddProject<Projects.Antiphon_Server>("server", options => options.ExcludeLaunchProfile = true)
     .WithReference(postgres)
     .WithEnvironment("SessionRunner__BaseUrl", "http://localhost:17204")
+    // Pin Development: with ASPNETCORE_ENVIRONMENT unset, ASP.NET Core defaults to Production and
+    // would load appsettings.Production.json — whose AntiphonMessaging points at server2:19092,
+    // the deployed broker. The dev stack must use the LOCAL broker (localhost:19092, appsettings.json).
+    .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
     // Dev stack consumes the LOCAL broker the fake gateway produces to — the whole
     // telegram-bridge path (inbound -> agent -> reply -> outbound) is exercisable offline.
     .WithEnvironment("ChannelBridge__Enabled", "true")

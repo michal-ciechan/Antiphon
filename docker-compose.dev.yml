@@ -32,5 +32,40 @@ services:
       retries: 12
       start_period: 10s
 
+  # Local Kafka-compatible broker for the channel bridge dev loop: the fake gateway (17208)
+  # produces channels.inbound here and consumes channels.outbound; the dev server's bridge
+  # consumes/produces the same topics (AntiphonMessaging: localhost:19092). The REAL Telegram
+  # gateway is never run locally — this broker exists purely so the whole bridge path is
+  # exercisable offline.
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: antiphon-redpanda
+    restart: unless-stopped
+    # Single listener advertised as localhost:19092 — every client (fake gateway, dev server)
+    # connects from the HOST. A second in-container listener once broke consumer-group
+    # coordinator discovery (producers worked, consumers never joined), so: one listener only.
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:19092
+    ports:
+      - "19092:19092"
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy --brokers localhost:19092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
 volumes:
   pgdata:
+  redpanda:

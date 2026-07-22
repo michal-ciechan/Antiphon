@@ -14,6 +14,18 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class AgentRegistry
 {
+    // Claude Code sets these on its own process; if a spawned agent inherits them it behaves as a
+    // NESTED/child session (ignores --session-id, may skip transcript persistence). Overridden to
+    // empty for spawned ClaudeCode agents so each is a clean top-level session the tailer can follow.
+    private static readonly string[] ClaudeNestingMarkers =
+    [
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+    ];
+
     private readonly IOptionsMonitor<AgentRegistrySettings> _options;
 
     public AgentRegistry(IOptionsMonitor<AgentRegistrySettings> options)
@@ -71,6 +83,20 @@ public sealed class AgentRegistry
         // keeping the captured stream cleaner. Config/options can still override.
         if (kind == AgentKind.ClaudeCode && !env.ContainsKey("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"))
             env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1";
+
+        // Neutralize Claude "nested/child session" markers so a spawned agent is a fresh top-level
+        // session, not a child of whatever Claude launched the server. When these are inherited,
+        // Claude IGNORES --session-id (forks to a self-chosen id) and may skip transcript
+        // persistence — which silently breaks the transcript tailer (it follows <session-id>.jsonl),
+        // and with it turn-end detection and channel reply routing. Empty string overrides the
+        // inherited value through the pty env merge (it reads as unset). Verified 2026-07-22: without
+        // this, dev-launched agents wrote to a self-chosen <uuid>.jsonl and never routed replies.
+        if (kind == AgentKind.ClaudeCode)
+        {
+            foreach (var marker in ClaudeNestingMarkers)
+                if (!env.ContainsKey(marker))
+                    env[marker] = string.Empty;
+        }
 
         var cwd = string.IsNullOrWhiteSpace(options.Cwd)
             ? Environment.CurrentDirectory
