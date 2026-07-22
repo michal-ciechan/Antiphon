@@ -191,6 +191,9 @@ try
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
+    // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
+    // on CompactBoundary transcript entries.
+    builder.Services.AddSingleton<CompactionRecoveryService>();
 
     // Channel bridge: external chats (Telegram via the messaging gateway; more providers later) mapped
     // to agents. The Kafka client + reply dispatcher are always registered (construction is lazy and

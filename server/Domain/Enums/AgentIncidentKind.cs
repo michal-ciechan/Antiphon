@@ -41,4 +41,11 @@ public enum AgentIncidentKind
     /// no output) — the terminal is treated as wedged. Replaces the removed TUI echo probe.
     /// </summary>
     DeliveryVerificationFailed = 11,
+
+    /// <summary>
+    /// The session's context was compacted (compact-boundary transcript record). Info-level,
+    /// recorded WITHOUT an alert — compaction is normal operation; the timeline row exists so
+    /// operators can correlate behaviour changes with compactions.
+    /// </summary>
+    ContextCompacted = 12,
 }

@@ -157,6 +157,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Cols")
                         .HasColumnType("integer");
 
+                    b.Property<long?>("CompactionRecoveryWatermark")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 

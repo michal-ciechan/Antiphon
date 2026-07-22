@@ -198,6 +198,27 @@ public sealed class AgentSessionRuntime
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
         if (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
             await FlushQueueOnIdleAsync(entry.SessionId, ct);
+
+        // A compaction boundary triggers recovery (incident + workspace re-read note). Resolved
+        // lazily like the queue service below: CompactionRecoveryService ctor-injects the queue,
+        // which ctor-injects this runtime — direct injection here would close a constructor cycle.
+        if (entry.Kind == TranscriptKinds.CompactBoundary)
+            await DispatchCompactionRecoveryAsync(entry.SessionId, entry.Sequence, ct);
+    }
+
+    private async Task DispatchCompactionRecoveryAsync(Guid sessionId, long sequence, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var recovery = scope.ServiceProvider.GetService<CompactionRecoveryService>();
+            if (recovery is not null)
+                await recovery.OnCompactBoundaryAsync(sessionId, sequence, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Compaction recovery dispatch failed for session {SessionId}", sessionId);
+        }
     }
 
     // Resolve the (singleton) queue service lazily from a scope to avoid a constructor cycle with this

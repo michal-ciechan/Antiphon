@@ -23,6 +23,14 @@ public class AgentSession
     public int? ExitCode { get; set; }
     public string? FailureReason { get; set; }
 
+    /// <summary>
+    /// Highest transcript sequence for which compaction recovery has already run. The durable
+    /// dedupe anchor: TranscriptTailer restarts at offset 0 on every runner restart/adoption and
+    /// republishes ALL historical events — an incident-row check would be defeated by incident
+    /// pruning, but this per-session high-water mark survives both.
+    /// </summary>
+    public long? CompactionRecoveryWatermark { get; set; }
+
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
     public ICollection<RunAttempt> RunAttempts { get; set; } = new List<RunAttempt>();
