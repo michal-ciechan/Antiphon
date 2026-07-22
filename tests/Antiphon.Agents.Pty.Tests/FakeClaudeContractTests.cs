@@ -159,6 +159,23 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
+    // The fallback screen detector must trip on the fake's (pinned) Compacted line — keeps the
+    // fake, the detector regex, and the canary-pinned real line locked together.
+    [Test]
+    public async Task Compacted_screen_line_from_fakeclaude_trips_the_detector()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        await runner.SendLineAsync("/compact");
+
+        var detected = await new ClaudeCompactedDetector { MaxWait = TimeSpan.FromSeconds(5) }
+            .WaitAsync(runner);
+        detected.ShouldBeTrue("ClaudeCompactedDetector must trip on the pinned Compacted line");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     [Test]
     public async Task Compact_after_turns_env_emits_compacted_after_nth_turn()
     {

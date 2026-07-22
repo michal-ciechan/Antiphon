@@ -12,6 +12,40 @@ namespace Antiphon.Tests.Agents;
 /// </summary>
 public class TranscriptNormalizerTests
 {
+    // The compact-boundary fixture is the single source of truth for the record shape (captured
+    // from real claude by ClaudeCompactionCanaryTests; fakeclaude mirrors it).
+    private static string CompactBoundaryFixtureLine() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "compact-boundary.jsonl"))
+            .First(l => !string.IsNullOrWhiteSpace(l));
+
+    [Test]
+    public void Compact_boundary_line_normalizes_to_CompactBoundary_kind()
+    {
+        var parts = TranscriptNormalizer.Normalize(CompactBoundaryFixtureLine());
+
+        var part = parts.ShouldHaveSingleItem();
+        part.Kind.ShouldBe(TranscriptKinds.CompactBoundary);
+        part.Text.ShouldBe("Context compacted (manual)");
+        part.Uuid.ShouldNotBeNull();
+        part.Timestamp.ShouldNotBeNull();
+    }
+
+    [Test]
+    public void Compact_boundary_is_not_a_turn_end()
+    {
+        var parts = TranscriptNormalizer.Normalize(CompactBoundaryFixtureLine());
+
+        parts.ShouldNotContain(p => p.Kind == TranscriptKinds.TurnEnd);
+        parts.Single().StopReason.ShouldBeNull();
+    }
+
+    [Test]
+    public void Other_system_records_are_still_skipped()
+    {
+        const string line = """{"type":"system","subtype":"info","content":"something else","uuid":"u9"}""";
+        TranscriptNormalizer.Normalize(line).ShouldBeEmpty();
+    }
+
     [Test]
     public void Assistant_text_plus_tool_use_with_tool_use_stop_reason_yields_no_turn_end()
     {

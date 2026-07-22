@@ -20,4 +20,12 @@
     <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The pinned compact-boundary shape lives beside its primary consumer (Antiphon.Tests);
+         linked here so the tailer test drives the SAME line through the real tail loop. -->
+    <Content Include="..\Antiphon.Tests\Agents\Fixtures\compact-boundary.jsonl"
+             Link="Fixtures\compact-boundary.jsonl"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

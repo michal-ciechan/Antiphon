@@ -501,7 +501,11 @@ public sealed class SessionMessageQueueService
         var lastActivity = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind != TranscriptKinds.TurnEnd
-                && t.Kind != TranscriptKinds.TurnTitle)
+                && t.Kind != TranscriptKinds.TurnTitle
+                // Compaction is idle-time housekeeping, not work: counting the boundary as
+                // activity would flip an idle session to permanently "working" (no TurnEnd ever
+                // follows), stranding every WhenIdle message — including the recovery note.
+                && t.Kind != TranscriptKinds.CompactBoundary)
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
         return lastActivity > lastEnd;
     }

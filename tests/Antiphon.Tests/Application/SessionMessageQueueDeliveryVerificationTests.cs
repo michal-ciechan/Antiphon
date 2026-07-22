@@ -180,6 +180,25 @@ public class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.Inputs.ShouldBeEmpty();
     }
 
+    // PR 6's inseparable pair: the CompactBoundary transcript kind ships WITH this exclusion — a
+    // boundary row after the last TurnEnd would otherwise read as "working" forever, stranding
+    // every WhenIdle message (including the compaction recovery note itself).
+    [Test]
+    public async Task Session_with_compact_boundary_after_last_turn_end_reads_idle()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+
+        await h.InsertTurnAsync("earlier question", "earlier answer");
+        await h.InsertTranscriptEntryAsync(
+            Antiphon.SessionRunner.Contracts.TranscriptKinds.CompactBoundary, "Context compacted (auto)");
+
+        var dto = await h.Queue.EnqueueAsync(
+            h.SessionId, "after the compaction", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        dto.Messages.ShouldBeEmpty("a compacted-but-idle session must take the idle fast-path");
+        h.Adapter.SubmittedBodies.ShouldBe(["after the compaction"]);
+    }
+
     [Test]
     public async Task Fresh_start_migrates_pending_messages_to_the_new_session()
     {

@@ -105,6 +105,14 @@ public static class TranscriptKinds
     public const string ToolResult = "ToolResult";
     public const string TurnTitle = "TurnTitle";
     public const string TurnEnd = "TurnEnd";
+
+    /// <summary>
+    /// A context compaction boundary (Claude Code JSONL: type=system, subtype=compact_boundary —
+    /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). NOT a turn
+    /// end, and excluded from working/idle activity checks — compaction is normal idle-time
+    /// housekeeping, not agent work.
+    /// </summary>
+    public const string CompactBoundary = "CompactBoundary";
 }
 
 public static class SessionRunnerEventNames

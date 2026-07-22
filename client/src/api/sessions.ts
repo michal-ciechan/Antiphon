@@ -16,6 +16,7 @@ export type TranscriptKind =
   | 'ToolResult'
   | 'TurnTitle'
   | 'TurnEnd'
+  | 'CompactBoundary'
 
 export interface TranscriptEntryDto {
   sequence: number

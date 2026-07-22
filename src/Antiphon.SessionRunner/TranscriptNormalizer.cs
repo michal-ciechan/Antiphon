@@ -56,6 +56,7 @@ public static class TranscriptNormalizer
                 "assistant" => FromAssistant(root),
                 "user" => FromUser(root),
                 "ai-title" => FromTitle(root),
+                "system" => FromSystem(root),
                 _ => [],
             };
         }
@@ -155,6 +156,31 @@ public static class TranscriptNormalizer
         }
 
         return parts;
+    }
+
+    // System records are pure metadata EXCEPT the compact boundary — the signal compaction
+    // recovery keys on. Shape pinned by ClaudeCompactionCanaryTests (Fixtures/compact-boundary.jsonl):
+    // type=system, subtype=compact_boundary, compactMetadata{trigger,preTokens,...}. Deliberately
+    // NOT a turn end (no StopReason): compaction happens between turns, not as one.
+    private static List<TranscriptPart> FromSystem(JsonElement root)
+    {
+        if (GetString(root, "subtype") != "compact_boundary")
+            return [];
+
+        var trigger = root.TryGetProperty("compactMetadata", out var meta)
+            ? GetString(meta, "trigger")
+            : null;
+        return
+        [
+            new TranscriptPart(
+                TranscriptKinds.CompactBoundary,
+                GetString(root, "uuid"),
+                GetString(root, "parentUuid"),
+                GetTimestamp(root),
+                null,
+                trigger is null ? "Context compacted" : $"Context compacted ({trigger})",
+                null, null, null, null, null),
+        ];
     }
 
     private static List<TranscriptPart> FromTitle(JsonElement root)

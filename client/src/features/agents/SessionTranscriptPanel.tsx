@@ -5,6 +5,7 @@ import {
   Box,
   Code,
   Collapse,
+  Divider,
   Group,
   Loader,
   Paper,
@@ -73,12 +74,16 @@ function buildTurns(entries: TranscriptEntryDto[]): Turn[] {
 }
 
 // Idle once the latest meaningful entry is a TurnEnd; working while activity outranks the last end.
-function isWorking(entries: TranscriptEntryDto[]): boolean {
+// CompactBoundary is idle-time housekeeping, not activity (mirror of the server's IsWorkingAsync —
+// counting it would show a phantom "working" agent after every compaction).
+// Exported for tests: the exclusion list must stay in lockstep with the server.
+export function isWorking(entries: TranscriptEntryDto[]): boolean {
   let lastActivity = 0
   let lastEnd = 0
   for (const e of entries) {
     if (e.kind === 'TurnEnd') lastEnd = Math.max(lastEnd, e.sequence)
-    else if (e.kind !== 'TurnTitle') lastActivity = Math.max(lastActivity, e.sequence)
+    else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary')
+      lastActivity = Math.max(lastActivity, e.sequence)
   }
   return lastActivity > lastEnd
 }
@@ -318,6 +323,15 @@ export function SessionTranscriptPanel({ sessionId }: { sessionId: string }) {
                         <Text key={item.sequence} size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                           {item.text}
                         </Text>
+                      )
+                    if (item.kind === 'CompactBoundary')
+                      return (
+                        <Divider
+                          key={item.sequence}
+                          label={item.text ?? 'Context compacted'}
+                          labelPosition="center"
+                          color="grape"
+                        />
                       )
                     return null
                   })}

@@ -73,4 +73,23 @@ public class ClaudeDetectorsTests
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
+
+    // PINNED-BY: ClaudeCompactionCanaryTests — the exact line real Claude rendered on 2026-07-22.
+    [Test]
+    public async Task CompactedDetector_matches_pinned_screen_line()
+    {
+        ClaudeCompactedDetector.Matches("  ⎿  Compacted (ctrl+o to see full summary)").ShouldBeTrue();
+        ClaudeCompactedDetector.Matches("Compacted (ctrl+o to see full summary)").ShouldBeTrue();
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CompactedDetector_ignores_ordinary_output()
+    {
+        ClaudeCompactedDetector.Matches("❯ /compact").ShouldBeFalse("the typed command itself is not the signal");
+        ClaudeCompactedDetector.Matches("compact conversation history").ShouldBeFalse();
+        ClaudeCompactedDetector.Matches("Context left until auto-compact: 8%").ShouldBeFalse();
+        ClaudeCompactedDetector.Matches(null).ShouldBeFalse();
+        await Task.CompletedTask;
+    }
 }

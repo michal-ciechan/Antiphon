@@ -90,6 +90,30 @@ public sealed class ClaudeCrunchedDetector
 }
 
 /// <summary>
+/// Detects a completed context compaction from the rendered/raw screen. The primary compaction
+/// signal is the transcript JSONL boundary record (<c>TranscriptNormalizer</c> →
+/// <c>TranscriptKinds.CompactBoundary</c>); this detector is the FALLBACK/canary surface —
+/// deliberately not wired into product code, available to session health if the transcript path
+/// ever goes quiet.
+/// </summary>
+public sealed class ClaudeCompactedDetector
+{
+    // PINNED-BY: ClaudeCompactionCanaryTests — real Claude renders
+    // "⎿  Compacted (ctrl+o to see full summary)" after a compaction; the stable core is matched
+    // so prefix chrome (⎿, indentation) and suffix changes don't break detection.
+    private static readonly System.Text.RegularExpressions.Regex CompactedPattern =
+        new(@"Compacted \(ctrl\+o", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    public TimeSpan MaxWait { get; init; } = TimeSpan.FromMinutes(4);
+
+    public static bool Matches(string? text) =>
+        text is not null && CompactedPattern.IsMatch(text);
+
+    public Task<bool> WaitAsync(PtyAgentRunner runner, CancellationToken ct = default)
+        => runner.WaitForOutputAsync(Matches, MaxWait, ct);
+}
+
+/// <summary>
 /// Analyses a raw PTY snapshot to characterise what Claude just said.
 /// All methods accept the raw (un-stripped) snapshot from
 /// <see cref="PtyAgentRunner.SnapshotText"/> and strip ANSI internally.
