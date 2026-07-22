@@ -93,7 +93,7 @@ public class AgentSystemPromptLaunchTests
     }
 
     [Test]
-    public async Task Agent_without_preamble_launches_with_unchanged_args_and_no_notes()
+    public async Task Agent_without_preamble_launches_without_preamble_or_notes_but_is_still_named()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         await EndSessionAsync(h, SessionStatus.Failed);
@@ -102,11 +102,33 @@ public class AgentSystemPromptLaunchTests
 
         var adapter = Factory(h).Created.ShouldHaveSingleItem();
         adapter.StartedArgs.ShouldNotContain("--append-system-prompt");
+        // Every ClaudeCode session is still named by the agent, preamble or not.
+        AssertNamed(adapter.StartedArgs, "BridgeQueue");
         adapter.SubmittedBodies.ShouldBeEmpty();
         await using var db = CreateContext();
         (await db.SessionQueuedMessages
                 .AnyAsync(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!)))
             .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Interactive_launch_names_the_session_by_agent_name()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        AssertNamed(adapter.StartedArgs, "BridgeQueue");
+    }
+
+    private static void AssertNamed(IReadOnlyList<string> args, string expectedName)
+    {
+        var i = args.ToList().IndexOf("--name");
+        i.ShouldBeGreaterThanOrEqualTo(0, $"launch args must carry --name; args were [{string.Join(", ", args)}]");
+        args[i + 1].ShouldBe(expectedName);
     }
 
     [Test]

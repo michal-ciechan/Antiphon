@@ -129,22 +129,35 @@ public sealed class AgentControlService
         var isClaudeCode = Enum.TryParse<AgentKind>(
                 _agentRegistry.LookupByName(definitionName).Kind, ignoreCase: true, out var defKind)
             && defKind == AgentKind.ClaudeCode;
-        string[]? extraArgs = null;
-        if (isClaudeCode && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
+        var extraArgs = new List<string>();
+        if (isClaudeCode)
         {
-            var boundChannels = await _db.ChatChannels
-                .Where(c => c.AgentId == agent.Id && c.Enabled)
-                .Select(c => new { c.Provider, c.Title, c.ExternalId })
-                .ToListAsync(ct);
-            var rendered = ChannelPreamble.Render(
-                agent.SystemPromptAppend,
-                agent.Name,
-                boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
-            extraArgs = ["--append-system-prompt", rendered];
+            // Name the session at launch (shown in /resume + Recents + terminal title) so it reads
+            // as e.g. "Family", not the first message's text. A launch flag is robust where the
+            // post-launch /rename slash command is not — interactive Claude forks --session-id, and
+            // --name carries to the forked session; it also covers agents without remote control
+            // (which never send /rename at all).
+            var sessionName = agent.Name.Trim();
+            if (sessionName.Length > 0)
+                extraArgs.AddRange(["--name", sessionName]);
+
+            if (!string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
+            {
+                var boundChannels = await _db.ChatChannels
+                    .Where(c => c.AgentId == agent.Id && c.Enabled)
+                    .Select(c => new { c.Provider, c.Title, c.ExternalId })
+                    .ToListAsync(ct);
+                var rendered = ChannelPreamble.Render(
+                    agent.SystemPromptAppend,
+                    agent.Name,
+                    boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
+                extraArgs.AddRange(["--append-system-prompt", rendered]);
+            }
         }
 
         var spec = _agentRegistry.Resolve(
-            definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30, ExtraArgs: extraArgs));
+            definitionName,
+            new AgentLaunchOptions(Cols: 120, Rows: 30, ExtraArgs: extraArgs.Count > 0 ? extraArgs : null));
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
         // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
