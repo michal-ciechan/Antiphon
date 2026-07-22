@@ -76,9 +76,10 @@ was observed writing its conversation to a **different, self-chosen** `<uuid>.js
 no reply was produced (channels.outbound stayed empty).
 
 What is confirmed:
+- The spawned agent's command line **is correct** — `…--append-system-prompt "<preamble>" --session-id <id>` (read live off the running `claude.exe`; the id and quoting survive intact). So this is not an Antiphon arg-construction or quoting bug — interactive Claude simply chose a different session id.
 - Print mode (`claude -p --session-id <id>`) **honors** the id (writes `<id>.jsonl`), with or without `--append-system-prompt`.
 - The headed canary's interactive launch honors it too — but only with the nesting-marker env scrub (`ClSession.HeadedSafeEnv`).
-- `AgentRegistry.Resolve` now scrubs those markers (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE`, …) for spawned ClaudeCode agents, but the dev runner-spawned agent still forked — so a second factor (runner env propagation, or a Claude 2.1.x interactive behavior) remains.
+- `AgentRegistry.Resolve` now scrubs those markers (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE`, …) for spawned ClaudeCode agents, but the dev runner-spawned agent still forked — so the remaining factor is either the empty-string env override not surviving the server → runner (HTTP) → pty-host → Porta.Pty chain, or a Claude 2.1.x interactive-mode behavior. Reading the live process's PEB env to confirm was inconclusive (offset-fragile).
 
 Impact: **inbound delivery is unaffected** (it uses the raw PTY output stream, not the tailer) — messages reach the agent and it responds in its terminal (verified: PONG / NO_REPLY). Only the automatic **reply back to the chat** is blocked when the session-id forks. The reply-routing code itself is covered by CI (`ChannelBridgeTests.Turn_end_sends_the_agents_answer_down_the_channel`, `ChannelBatchingTests`).
 
