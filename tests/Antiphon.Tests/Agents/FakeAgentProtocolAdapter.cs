@@ -115,12 +115,19 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         return completed == _firstPromptOutput.Task && _firstPromptOutput.Task.IsCompletedSuccessfully;
     }
 
+    // Every body actually SUBMITTED (composer content at the moment a lone "\r" landed), in order.
+    // Batching tests assert the delivered body's shape here — Inputs can't, because a batched
+    // delivery is one multi-line write whose composer content is what matters.
+    private readonly List<string> _submittedBodies = [];
+    public IReadOnlyList<string> SubmittedBodies => _submittedBodies;
+
     public Task SendInputAsync(string input, CancellationToken ct)
     {
         SentInput += input;
         _inputs.Add(input);
         if (input == "\r")
         {
+            _submittedBodies.Add(_composer.ToString());
             _composer.Clear();
             if (SubmitAck.Length > 0)
                 Emit(SubmitAck);
