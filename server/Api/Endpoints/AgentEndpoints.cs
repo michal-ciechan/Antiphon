@@ -38,6 +38,18 @@ public static class AgentEndpoints
             return Results.Ok(new AgentRegistryDto(settings.DefaultDefinition, definitions));
         });
 
+        // The channel preamble preset for the given provider — the template the UI's "Use preset"
+        // button drops into the SystemPromptAppend textarea ({agentName}/{channels} placeholders
+        // render at launch time).
+        agents.MapGet("/preamble-preset", (string? provider) =>
+        {
+            return provider?.ToLowerInvariant() switch
+            {
+                null or "telegram" => Results.Ok(new PreamblePresetDto(ChannelPreamble.TelegramPresetTemplate)),
+                _ => Results.NotFound(new { error = $"No preamble preset for provider '{provider}'." }),
+            };
+        });
+
         agents.MapGet("/{id:guid}", async (
             Guid id,
             AgentService service,

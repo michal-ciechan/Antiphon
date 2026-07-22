@@ -199,6 +199,8 @@ public sealed class AgentService
             agent.AlwaysOn = alwaysOn;
         if (request.RemoteControlEnabled is { } remoteControlEnabled)
             agent.RemoteControlEnabled = remoteControlEnabled;
+        if (request.SystemPromptAppend is { } systemPromptAppend)
+            agent.SystemPromptAppend = string.IsNullOrWhiteSpace(systemPromptAppend) ? null : systemPromptAppend;
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -571,7 +573,8 @@ public sealed class AgentService
             liveSession,
             agent.AlwaysOn,
             agent.RemoteControlEnabled,
-            supervision);
+            supervision,
+            agent.SystemPromptAppend);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -614,7 +617,8 @@ public sealed class AgentService
             liveSession,
             agent.AlwaysOn,
             agent.RemoteControlEnabled,
-            supervision);
+            supervision,
+            agent.SystemPromptAppend);
     }
 
     private async Task<string> UniqueSlugAsync(string baseSlug, Guid? excludeAgentId, CancellationToken ct)

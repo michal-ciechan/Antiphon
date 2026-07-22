@@ -34,7 +34,8 @@ public sealed record AgentSummaryDto(
     bool AlwaysOn = false,
     bool RemoteControlEnabled = false,
     // Present only for AlwaysOn agents with supervision history (countdowns, suspend badge).
-    AgentSupervisionDto? Supervision = null);
+    AgentSupervisionDto? Supervision = null,
+    string? SystemPromptAppend = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -57,7 +58,8 @@ public sealed record AgentDetailDto(
     AgentSessionSummaryDto? LiveSession = null,
     bool AlwaysOn = false,
     bool RemoteControlEnabled = false,
-    AgentSupervisionDto? Supervision = null);
+    AgentSupervisionDto? Supervision = null,
+    string? SystemPromptAppend = null);
 
 /// <summary>Supervision snapshot for an always-on agent (see AgentSupervisionState).</summary>
 public sealed record AgentSupervisionDto(
@@ -115,7 +117,9 @@ public sealed record UpdateAgentRequest(
     Guid? BoardId = null,
     // Null = leave unchanged (keeps older callers working).
     bool? AlwaysOn = null,
-    bool? RemoteControlEnabled = null);
+    bool? RemoteControlEnabled = null,
+    // Null = leave unchanged; empty/whitespace = clear.
+    string? SystemPromptAppend = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.
@@ -128,6 +132,8 @@ public sealed record AssignAgentCardRequest(Guid CardId);
 public sealed record ReorderAgentQueueRequest(IReadOnlyList<Guid> CardIds);
 
 public sealed record AgentChangedEventDto(Guid AgentId);
+
+public sealed record PreamblePresetDto(string Template);
 
 public sealed record AgentQueueChangedEventDto(
     Guid AgentId,

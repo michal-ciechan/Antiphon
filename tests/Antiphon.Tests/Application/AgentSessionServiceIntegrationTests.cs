@@ -1111,10 +1111,20 @@ public class AgentSessionServiceIntegrationTests
             adapterFactory,
             runtime,
             eventBus,
+            BuildMessageQueue(provider, runtime, eventBus),
             sessionSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);
     }
+
+    private static SessionMessageQueueService BuildMessageQueue(
+        ServiceProvider provider, AgentSessionRuntime runtime, MockEventBus eventBus) =>
+        new(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            runtime,
+            eventBus,
+            TimeProvider.System,
+            NullLogger<SessionMessageQueueService>.Instance);
 
     private static (AgentSessionService Service, AgentSessionRuntime Runtime) BuildServiceWithFakes(
         AppDbContext db,
@@ -1141,6 +1151,7 @@ public class AgentSessionServiceIntegrationTests
             new FakeAdapterFactory(adapter, runtime),
             runtime,
             eventBus,
+            BuildMessageQueue(provider, runtime, eventBus),
             sessionSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);

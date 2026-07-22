@@ -124,6 +124,59 @@ public class SessionMessageQueuePtyIntegrationTests
         }
     }
 
+    // Risk row 4 at the PTY tier (PR 5): a multi-line --append-system-prompt value must survive the
+    // runner → pty-host → CreateProcess quoting chain byte-for-byte. fakeclaude --echo-args prints
+    // the argv it actually received (newline-escaped, ␟-joined) in its banner.
+    [Test]
+    public async Task Launch_args_reach_the_child_process()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+
+        var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
+        var client = new DirectSessionRunnerClient(sessionLogPath);
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+
+        var appendText = "line one of the preamble\nline two with \"quotes\" and {braces}\nline three — final.";
+        var spec = new AgentLaunchSpec(
+            DefinitionName: "fakeclaude",
+            Kind: AgentKind.ClaudeCode,
+            Exe: FakeClaudeExe,
+            Args: new[] { "--echo-args", "--append-system-prompt", appendText },
+            Env: new Dictionary<string, string>(),
+            Cwd: cwd,
+            Cols: 120,
+            Rows: 30);
+
+        try
+        {
+            await client.StartAsync(sessionId, spec, CancellationToken.None);
+
+            var expected = "--echo-args␟--append-system-prompt␟" + appendText.Replace("\n", "\\n");
+            var echoed = await WaitForRawAsync(
+                client, sessionId, s => s.Contains("ARGS:"), TimeSpan.FromSeconds(15));
+            echoed.ShouldBeTrue("fakeclaude must print its ARGS banner line");
+
+            // ConPTY may soft-wrap the long banner line at the terminal width; stripping CR/LF
+            // rejoins it before the exact-match check.
+            var snapshot = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            var unwrapped = (snapshot.RawOutput ?? string.Empty).Replace("\r", "").Replace("\n", "");
+            unwrapped.ShouldContain(
+                "ARGS:" + expected,
+                customMessage: "the multi-line append-system-prompt value must survive runner→pty quoting intact. Raw:\n"
+                    + snapshot.RawOutput);
+        }
+        finally
+        {
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     private static async Task<bool> WaitForRawAsync(
         DirectSessionRunnerClient client, Guid sessionId, Func<string, bool> predicate, TimeSpan timeout)
     {

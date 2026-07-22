@@ -41,9 +41,10 @@ public sealed class AgentSessionLaunchQueue
     /// With <paramref name="resume"/> the agent's previous Claude conversation is resumed.
     /// </summary>
     public void EnqueueInteractiveSession(
-        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume = false)
+        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName,
+        bool resume = false, LaunchNotes? notes = null)
     {
-        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName, resume));
+        var launch = Task.Run(() => LaunchInteractiveSessionAsync(sessionId, agentId, spec, remoteControlName, resume, notes));
         lock (_gate)
             _launches.Add(launch);
 
@@ -88,11 +89,11 @@ public sealed class AgentSessionLaunchQueue
     }
 
     private async Task LaunchInteractiveSessionAsync(
-        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume)
+        Guid sessionId, Guid agentId, AgentLaunchSpec spec, string? remoteControlName, bool resume, LaunchNotes? notes)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
-        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, resume, CancellationToken.None);
+        await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None);
     }
 
     private void Enqueue(

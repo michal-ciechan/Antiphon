@@ -3,7 +3,7 @@ import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentSummaryDto } from '../../api/agents'
-import { useDeleteAgent, useUpdateAgent } from '../../api/agents'
+import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -33,6 +33,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [boardId, setBoardId] = useState<string | null>(null)
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
+  const [systemPromptAppend, setSystemPromptAppend] = useState('')
+  const [loadingPreset, setLoadingPreset] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Reload the form whenever a different agent is opened.
@@ -45,8 +47,21 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setBoardId(agent.boardId)
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
+    setSystemPromptAppend(agent.systemPromptAppend ?? '')
     setConfirmingDelete(false)
   }, [agent, opened])
+
+  const handleUsePreset = async () => {
+    setLoadingPreset(true)
+    try {
+      const preset = await fetchPreamblePreset('telegram')
+      setSystemPromptAppend(preset.template)
+    } catch (error) {
+      notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Failed to load preset') })
+    } finally {
+      setLoadingPreset(false)
+    }
+  }
 
   const boardOptions = useMemo(
     () => (boards.data ?? []).map((board) => ({ value: board.id, label: `${board.projectName} / ${board.name}` })),
@@ -66,6 +81,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         boardId,
         alwaysOn,
         remoteControlEnabled,
+        // Empty string clears the preamble server-side; null would mean "leave unchanged".
+        systemPromptAppend: systemPromptAppend.trim(),
       },
       {
         onSuccess: () => {
@@ -144,6 +161,21 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           checked={remoteControlEnabled}
           onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
         />
+
+        <Textarea
+          label="System prompt (appended)"
+          description="Channel preamble appended to the system prompt on every launch (--append-system-prompt). {agentName} and {channels} render at launch time. Empty = none; also disables bootstrap/restart/compaction notes."
+          autosize
+          minRows={3}
+          maxRows={12}
+          value={systemPromptAppend}
+          onChange={(event) => setSystemPromptAppend(event.currentTarget.value)}
+        />
+        <Group justify="flex-start">
+          <Button variant="light" size="xs" onClick={handleUsePreset} loading={loadingPreset}>
+            Use Telegram preset
+          </Button>
+        </Group>
 
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>

@@ -26,6 +26,7 @@ public sealed class AgentSessionService
     private readonly IAgentProtocolAdapterFactory _adapterFactory;
     private readonly AgentSessionRuntime _runtime;
     private readonly IEventBus _eventBus;
+    private readonly SessionMessageQueueService _messageQueue;
     private readonly AgentSessionSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
@@ -37,6 +38,7 @@ public sealed class AgentSessionService
         IAgentProtocolAdapterFactory adapterFactory,
         AgentSessionRuntime runtime,
         IEventBus eventBus,
+        SessionMessageQueueService messageQueue,
         IOptions<AgentSessionSettings> settings,
         TimeProvider timeProvider,
         ILogger<AgentSessionService> logger)
@@ -47,6 +49,7 @@ public sealed class AgentSessionService
         _adapterFactory = adapterFactory;
         _runtime = runtime;
         _eventBus = eventBus;
+        _messageQueue = messageQueue;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -249,6 +252,7 @@ public sealed class AgentSessionService
         AgentLaunchSpec launchSpec,
         string? remoteControlName,
         bool resume,
+        LaunchNotes? notes,
         CancellationToken ct)
     {
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
@@ -260,15 +264,18 @@ public sealed class AgentSessionService
             {
                 await LaunchInteractiveProcessAsync(
                     session, agentId, launchSpec, remoteControlName,
-                    resume ? AgentSessionResumeMode.Resume : null, ct);
+                    resume ? AgentSessionResumeMode.Resume : null, notes, ct);
             }
             catch (ClaudeSessionNotFoundException)
             {
                 _logger.LogInformation(
                     "Claude conversation for session {SessionId} was not found; starting fresh with the same id",
                     sessionId);
+                // Effective fresh: same session row, brand-new conversation — it must BOOTSTRAP,
+                // not get the restart note, so the fallback keeps the full notes and the process
+                // launcher's resumeMode=null branch selects FreshBody.
                 await LaunchInteractiveProcessAsync(
-                    session, agentId, launchSpec, remoteControlName, resumeMode: null, ct);
+                    session, agentId, launchSpec, remoteControlName, resumeMode: null, notes, ct);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -306,6 +313,7 @@ public sealed class AgentSessionService
         AgentLaunchSpec launchSpec,
         string? remoteControlName,
         AgentSessionResumeMode? resumeMode,
+        LaunchNotes? notes,
         CancellationToken ct)
     {
         IAgentProtocolAdapter? adapter = null;
@@ -331,6 +339,12 @@ public sealed class AgentSessionService
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
             await SendRemoteControlCommandsAsync(adapter, remoteControlName, ct);
+
+            // Channel-facing agents get a launch note: bootstrap on a fresh conversation (including
+            // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
+            // restart note on a successful resume. This branch point is where the truth lives —
+            // AgentControlService cannot know whether a resume will fall back.
+            await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -723,6 +737,42 @@ public sealed class AgentSessionService
         await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
         await adapter.SendPromptAsync("/remote-control", ct);
         await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+    }
+
+    // Delivers the launch note (bootstrap on fresh/effective-fresh, restart note on resume) through
+    // the queue's verified path. Now-mode, NOT WhenIdle: the session just reached Running and is
+    // idle by construction, but on the resume/fallback paths the reused session row can carry a
+    // stale mid-turn transcript that makes IsWorkingAsync read true — a WhenIdle enqueue would skip
+    // the idle fast-path, no turn-end is coming, and the stranded watchdog only covers always-on
+    // agents. Failure falls back to a WhenIdle enqueue (watchdog / next turn-end recovery) and must
+    // never fail the launch. No reply correlation is tracked — notes never route to a chat.
+    private async Task DeliverLaunchNoteAsync(
+        Guid sessionId, AgentSessionResumeMode? resumeMode, LaunchNotes? notes, CancellationToken ct)
+    {
+        if (notes is null)
+            return;
+        var body = resumeMode is null ? notes.FreshBody : notes.ResumeBody;
+        if (string.IsNullOrWhiteSpace(body))
+            return;
+
+        try
+        {
+            await _messageQueue.EnqueueAsync(sessionId, body, MessageSendMode.Now, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Launch note delivery failed for session {SessionId}; queueing for idle instead", sessionId);
+            try
+            {
+                await _messageQueue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct);
+            }
+            catch (Exception fallbackEx) when (fallbackEx is not OperationCanceledException)
+            {
+                _logger.LogWarning(fallbackEx,
+                    "Launch note fallback enqueue failed for session {SessionId}; giving up (note lost)", sessionId);
+            }
+        }
     }
 
     private static bool IsClaudeSessionNotFound(IAgentProtocolAdapter? adapter, Exception ex)

@@ -1,11 +1,17 @@
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Tests.Agents;
 
 internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 {
+    // When set, StartAsync registers this adapter in the runtime under spec.SessionId — launch-path
+    // tests need the adapter reachable (queue delivery, snapshots) BEFORE the launch code delivers
+    // launch notes, which happens inside the launch itself.
+    public AgentSessionRuntime? RegisterOnStart { get; set; }
+
     private readonly TaskCompletionSource<int> _exit = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly StringBuilder _rawOutput = new();
     private TaskCompletionSource _firstPromptOutput = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,6 +73,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         Cols = spec.Cols;
         Rows = spec.Rows;
         MemoryLimitMb = spec.MemoryLimitMb;
+        if (RegisterOnStart is not null && spec.SessionId is Guid sessionId)
+            RegisterOnStart.Register(sessionId, this);
         Emit(StartupOutput);
         return Task.CompletedTask;
     }

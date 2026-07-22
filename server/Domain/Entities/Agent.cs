@@ -22,6 +22,14 @@ public class Agent
     /// </summary>
     public bool RemoteControlEnabled { get; set; }
 
+    /// <summary>
+    /// Channel preamble template rendered into <c>--append-system-prompt</c> on every interactive
+    /// ClaudeCode launch (fresh AND resume — args are per-invocation, so the contract survives
+    /// compaction and re-arms on resume). Null = launch args unchanged; also gates the bootstrap /
+    /// restart / compaction-recovery notes (agents without a preamble get none of them).
+    /// </summary>
+    public string? SystemPromptAppend { get; set; }
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The board automatically created for this agent when it was added.</summary>

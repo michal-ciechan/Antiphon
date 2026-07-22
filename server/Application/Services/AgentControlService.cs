@@ -121,7 +121,36 @@ public sealed class AgentControlService
             throw new ConflictException($"Agent '{agent.Name}' working directory does not exist: {cwd}");
 
         var definitionName = _agentRegistry.Settings.DefaultDefinition;
-        var spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30));
+
+        // Channel preamble: rendered into --append-system-prompt for ClaudeCode launches when the
+        // agent has one configured. The kind gate reads the DEFINITION (Resolve is what produces
+        // spec.Kind, so gating on the spec would be circular). Rendered at launch time — channel
+        // bindings added later flow in as of the NEXT launch, not live.
+        var isClaudeCode = Enum.TryParse<AgentKind>(
+                _agentRegistry.LookupByName(definitionName).Kind, ignoreCase: true, out var defKind)
+            && defKind == AgentKind.ClaudeCode;
+        string[]? extraArgs = null;
+        if (isClaudeCode && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
+        {
+            var boundChannels = await _db.ChatChannels
+                .Where(c => c.AgentId == agent.Id && c.Enabled)
+                .Select(c => new { c.Provider, c.Title, c.ExternalId })
+                .ToListAsync(ct);
+            var rendered = ChannelPreamble.Render(
+                agent.SystemPromptAppend,
+                agent.Name,
+                boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
+            extraArgs = ["--append-system-prompt", rendered];
+        }
+
+        var spec = _agentRegistry.Resolve(
+            definitionName, new AgentLaunchOptions(Cols: 120, Rows: 30, ExtraArgs: extraArgs));
+
+        // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
+        // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
+        var notes = isClaudeCode && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend)
+            ? new LaunchNotes(ChannelPreamble.BootstrapBody, ChannelPreamble.RestartResumeBody)
+            : null;
 
         // Reject an unspawnable executable NOW, before the agent is flipped to Working or any
         // session row exists — otherwise the launch fails in the background and the UI shows a
@@ -144,7 +173,7 @@ public sealed class AgentControlService
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(
-                    previous.Id, agent.Id, spec, remoteControlName, resume: true);
+                    previous.Id, agent.Id, spec, remoteControlName, resume: true, notes: notes);
                 return previous.Id;
             }
         }
@@ -183,7 +212,7 @@ public sealed class AgentControlService
                     agent.Name, moved, previousSessionId, session.Id);
         }
 
-        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName);
+        _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);
         return session.Id;
     }
 

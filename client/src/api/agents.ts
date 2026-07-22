@@ -42,6 +42,11 @@ export interface AgentSummaryDto {
   remoteControlEnabled: boolean
   /** Present for always-on agents with supervision history. */
   supervision: AgentSupervisionDto | null
+  /**
+   * Channel preamble template appended to the system prompt on every interactive launch
+   * (--append-system-prompt). Null = none; also disables bootstrap/restart/recovery notes.
+   */
+  systemPromptAppend: string | null
 }
 
 export interface AgentSupervisionDto {
@@ -114,6 +119,8 @@ export interface UpdateAgentRequest {
   /** Omit/null = leave unchanged. */
   alwaysOn?: boolean | null
   remoteControlEnabled?: boolean | null
+  /** Omit/null = leave unchanged; empty string = clear. */
+  systemPromptAppend?: string | null
 }
 
 export interface DraftAgentRequest {
@@ -158,6 +165,15 @@ export function useAgentIncidents(id: string | null, enabled = true) {
     },
     enabled: enabled && !!id,
   })
+}
+
+export interface PreamblePresetDto {
+  template: string
+}
+
+/** The channel-preamble preset template for a provider (default: telegram). */
+export function fetchPreamblePreset(provider = 'telegram') {
+  return apiGet<PreamblePresetDto>(`/agents/preamble-preset?provider=${encodeURIComponent(provider)}`)
 }
 
 export function useAgentDefinitions() {
