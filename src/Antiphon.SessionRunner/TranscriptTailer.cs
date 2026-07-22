@@ -21,9 +21,7 @@ namespace Antiphon.SessionRunner;
 internal sealed class TranscriptTailer : IAsyncDisposable
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
-    private static readonly TimeSpan LocatePollInterval = TimeSpan.FromSeconds(1);
-    // How long to wait for the exact <session-id>.jsonl before falling back to cwd-based discovery.
-    private static readonly TimeSpan ExactIdGrace = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
     private const int MaxReadChunkBytes = 1 << 20; // 1 MiB per poll
     private const int CwdProbeLines = 25; // how many leading lines to scan for the "cwd" field
 
@@ -31,6 +29,15 @@ internal sealed class TranscriptTailer : IAsyncDisposable
     private readonly string _cwd;
     private readonly SessionRunnerEventHub _events;
     private readonly ILogger _logger;
+    // How long to wait for the exact <session-id>.jsonl before falling back to cwd-based discovery.
+    private readonly TimeSpan _exactIdGrace;
+    // How long to insist on a transcript that APPEARED since we started (a fresh fork) before also
+    // accepting an already-existing, still-actively-written one (a re-adopted live session). Keeps a
+    // fresh launch from ever adopting a previous session's stale transcript in the same cwd.
+    private readonly TimeSpan _readoptionGrace;
+    // A pre-existing transcript is only adopted (re-adoption path) if it was written this recently —
+    // an actively-running session touches its file constantly; a stale one does not.
+    private readonly TimeSpan _activeWriteWindow;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
@@ -38,12 +45,22 @@ internal sealed class TranscriptTailer : IAsyncDisposable
     private Task? _loop;
     private long _seq;
 
-    public TranscriptTailer(Guid sessionId, string cwd, SessionRunnerEventHub events, ILogger logger)
+    public TranscriptTailer(
+        Guid sessionId,
+        string cwd,
+        SessionRunnerEventHub events,
+        ILogger logger,
+        TimeSpan? exactIdGrace = null,
+        TimeSpan? readoptionGrace = null,
+        TimeSpan? activeWriteWindow = null)
     {
         _sessionId = sessionId;
         _cwd = cwd;
         _events = events;
         _logger = logger;
+        _exactIdGrace = exactIdGrace ?? TimeSpan.FromSeconds(10);
+        _readoptionGrace = readoptionGrace ?? TimeSpan.FromSeconds(30);
+        _activeWriteWindow = activeWriteWindow ?? TimeSpan.FromSeconds(20);
     }
 
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
@@ -186,15 +203,21 @@ internal sealed class TranscriptTailer : IAsyncDisposable
                     }
 
                     // Fallback: Claude forked to a self-chosen id. Discover by cwd once the exact
-                    // file has had a fair chance to appear.
-                    if (DateTime.UtcNow - _startedAtUtc >= ExactIdGrace
-                        && DiscoverByCwd(projectsRoot, preexisting) is { } discovered)
+                    // file has had a fair chance to appear. Only files that appeared SINCE we started
+                    // are eligible at first (a fresh fork) — never a previous session's transcript in
+                    // the same cwd. After a longer grace, an already-existing but still-actively-written
+                    // file also qualifies (a re-adopted live session whose fork predates this tailer).
+                    if (DateTime.UtcNow - _startedAtUtc >= _exactIdGrace)
                     {
-                        _logger.LogWarning(
-                            "Session {SessionId}: <session-id>.jsonl never appeared (Claude forked the id); "
-                            + "adopting discovered transcript {Path} by cwd match ({Cwd})",
-                            _sessionId, discovered, _cwd);
-                        return discovered;
+                        var allowActive = DateTime.UtcNow - _startedAtUtc >= _readoptionGrace;
+                        if (DiscoverByCwd(projectsRoot, preexisting, allowActive) is { } discovered)
+                        {
+                            _logger.LogWarning(
+                                "Session {SessionId}: <session-id>.jsonl never appeared (Claude forked the id); "
+                                + "adopting discovered transcript {Path} by cwd match ({Cwd})",
+                                _sessionId, discovered, _cwd);
+                            return discovered;
+                        }
                     }
                 }
             }
@@ -222,33 +245,33 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         return set;
     }
 
-    // The transcript whose recorded cwd matches this session's, newest first, preferring one that
-    // appeared after the tailer started (a fresh fork). If none is new (re-adoption of a session
-    // whose forked file already existed), the newest cwd match overall is used.
-    private string? DiscoverByCwd(string projectsRoot, HashSet<string> preexisting)
+    // The transcript whose recorded cwd matches this session's. A file that APPEARED since we started
+    // (a fresh fork) is always eligible. A pre-existing file is eligible only when re-adoption is
+    // allowed AND it is still being actively written (a live session across a runner restart) — never
+    // a stale transcript of an earlier session in the same cwd. Newest match wins.
+    private string? DiscoverByCwd(string projectsRoot, HashSet<string> preexisting, bool allowActivePreexisting)
     {
-        var matches = new List<(string Path, DateTime Mtime, bool IsNew)>();
+        var eligible = new List<(string Path, DateTime Mtime)>();
+        var activeCutoff = DateTime.UtcNow - _activeWriteWindow;
         foreach (var file in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
         {
             if (Path.GetFileNameWithoutExtension(file).Equals(_sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
                 continue; // the exact file is handled by the fast path
-            if (!TranscriptCwdMatches(file))
-                continue;
             DateTime mtime;
             try { mtime = File.GetLastWriteTimeUtc(file); }
             catch (IOException) { continue; }
             catch (UnauthorizedAccessException) { continue; }
-            matches.Add((file, mtime, !preexisting.Contains(file)));
+
+            var isNew = !preexisting.Contains(file);
+            var isActive = allowActivePreexisting && mtime >= activeCutoff;
+            if (!isNew && !isActive)
+                continue; // a stale pre-existing transcript — never adopt it
+            if (!TranscriptCwdMatches(file))
+                continue;
+            eligible.Add((file, mtime));
         }
 
-        if (matches.Count == 0)
-            return null;
-
-        // Prefer files that appeared since we started (fresh fork); within each group, newest wins.
-        return matches
-            .OrderByDescending(m => m.IsNew)
-            .ThenByDescending(m => m.Mtime)
-            .First().Path;
+        return eligible.Count == 0 ? null : eligible.OrderByDescending(m => m.Mtime).First().Path;
     }
 
     private bool TranscriptCwdMatches(string file)

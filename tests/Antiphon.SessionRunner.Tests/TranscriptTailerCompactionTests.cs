@@ -86,22 +86,123 @@ public class TranscriptTailerCompactionTests
         {
             var antiphonSessionId = Guid.NewGuid(); // the id we PASSED; Claude will ignore it
             var hub = new SessionRunnerEventHub();
-            var tailer = new TranscriptTailer(antiphonSessionId, cwd, hub, NullLogger.Instance);
+            // Short graces so the test is fast (production defaults are 10s/30s).
+            var tailer = new TranscriptTailer(
+                antiphonSessionId, cwd, hub, NullLogger.Instance,
+                exactIdGrace: TimeSpan.FromMilliseconds(300),
+                readoptionGrace: TimeSpan.FromSeconds(30));
             tailer.Start();
             try
             {
-                // Claude forks: writes to a NEW <uuid>.jsonl (not the antiphon id) after start.
-                await Task.Delay(500);
+                // Claude forks AFTER the exact-id grace: writes to a NEW <uuid>.jsonl.
+                await Task.Delay(600);
                 var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
                 await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "hello") + "\n");
                 await File.AppendAllTextAsync(forked, FixtureLine() + "\n"); // + a compact boundary
 
-                // The tailer must adopt the forked file (grace is 10s) and emit its entries.
-                var entries = await PollForEntriesAsync(tailer, want: 2, TimeSpan.FromSeconds(20));
+                var entries = await PollForEntriesAsync(tailer, want: 2, TimeSpan.FromSeconds(10));
 
                 entries.Select(e => e.Kind).ShouldBe(
                     [TranscriptKinds.UserPrompt, TranscriptKinds.CompactBoundary]);
                 entries[0].Text.ShouldBe("hello", "must adopt the forked file, not the stale/other-cwd ones");
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    // The real-world bug (2026-07-22): a RECENT transcript from a previous session in the same cwd
+    // exists, and the fresh fork appears LATE (after the exact-id grace). The tailer must keep
+    // waiting for the fork — never adopt the recent-but-stale previous transcript.
+    [Test]
+    public async Task Tailer_does_not_adopt_a_recent_but_stale_transcript_while_waiting_for_the_fork()
+    {
+        var configDir = Path.Combine(Path.GetTempPath(), $"antiphon-tailer-stale-{Guid.NewGuid():N}");
+        var projectDir = Path.Combine(configDir, "projects", "C--src-ClaudeBot-agents-family");
+        Directory.CreateDirectory(projectDir);
+        var cwd = Path.Combine(Path.GetTempPath(), $"agent-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+
+        // A previous session's transcript in the SAME cwd, written JUST NOW (recent mtime) — this is
+        // the file the buggy fallback wrongly grabbed.
+        var recentStale = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+        await File.WriteAllTextAsync(recentStale, UserLine("prev", cwd, "previous session") + "\n");
+
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
+        try
+        {
+            var antiphonSessionId = Guid.NewGuid();
+            var hub = new SessionRunnerEventHub();
+            // exact-id grace short; readoption grace long enough that the active-preexisting path
+            // never opens during the test — so only a genuinely NEW file may be adopted.
+            var tailer = new TranscriptTailer(
+                antiphonSessionId, cwd, hub, NullLogger.Instance,
+                exactIdGrace: TimeSpan.FromMilliseconds(300),
+                readoptionGrace: TimeSpan.FromSeconds(60));
+            tailer.Start();
+            try
+            {
+                // Grace elapses with only the recent-stale file present — the tailer must NOT adopt it.
+                await Task.Delay(1500);
+                tailer.Snapshot().Entries.ShouldBeEmpty("the recent-but-stale previous transcript must not be adopted");
+
+                // The real fork finally appears — now it must be adopted.
+                var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+                await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "the real one") + "\n");
+
+                var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+                entries.ShouldHaveSingleItem().Text.ShouldBe("the real one");
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    // Re-adoption: the forked file already existed when the tailer (re)started, but the session is
+    // still live (file actively written). After the readoption grace, that active file is adopted.
+    [Test]
+    public async Task Tailer_readopts_an_active_preexisting_forked_transcript_after_the_grace()
+    {
+        var configDir = Path.Combine(Path.GetTempPath(), $"antiphon-tailer-readopt-{Guid.NewGuid():N}");
+        var projectDir = Path.Combine(configDir, "projects", "C--src-ClaudeBot-agents-family");
+        Directory.CreateDirectory(projectDir);
+        var cwd = Path.Combine(Path.GetTempPath(), $"agent-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+
+        // The live session's forked transcript already exists at (re)start.
+        var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+        await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "live across restart") + "\n");
+
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
+        try
+        {
+            var hub = new SessionRunnerEventHub();
+            var tailer = new TranscriptTailer(
+                Guid.NewGuid(), cwd, hub, NullLogger.Instance,
+                exactIdGrace: TimeSpan.FromMilliseconds(200),
+                readoptionGrace: TimeSpan.FromMilliseconds(600),
+                activeWriteWindow: TimeSpan.FromSeconds(30));
+            tailer.Start();
+            try
+            {
+                var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+                entries.ShouldHaveSingleItem().Text.ShouldBe("live across restart");
             }
             finally
             {
