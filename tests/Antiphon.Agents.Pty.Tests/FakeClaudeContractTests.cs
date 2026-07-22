@@ -34,10 +34,11 @@ public class FakeClaudeContractTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
     }
 
-    private static async Task<PtyAgentRunner> LaunchReadyFakeAsync()
+    private static async Task<PtyAgentRunner> LaunchReadyFakeAsync(
+        IDictionary<string, string>? env = null)
     {
         var runner = new PtyAgentRunner();
-        await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30);
+        await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
         var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15));
         ready.ShouldBeTrue("fake Claude should print its readiness banner");
         runner.ClearLiveBuffer();
@@ -98,10 +99,118 @@ public class FakeClaudeContractTests
         // The turn-end signal RunnerClaudeAdapter keys on must reach our capture so higher layers see
         // "idle". We assert the " for Ns" done pattern specifically — the idle OSC title is also emitted
         // but ConPTY consumes window-title sequences, so the done pattern is the one that survives.
-        var raw = runner.SnapshotText();
-        raw.ShouldContain(" for 1s", customMessage: "done pattern (\" for Ns\") must be emitted at turn end");
+        // (Waited-for, not snapshotted: the SUBMITTED match above can win the race against the
+        // trailing turn-end bytes.)
+        var done = await runner.WaitForOutputAsync(s => s.Contains(" for 1s"), TimeSpan.FromSeconds(3));
+        done.ShouldBeTrue("done pattern (\" for Ns\") must be emitted at turn end");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // A batched delivery is ONE multi-line paste burst followed by a lone CR. The whole body must
+    // submit as one turn, and the SUBMITTED marker must escape newlines so it stays one assertable line.
+    [Test]
+    public async Task Multi_line_paste_then_lone_cr_submits_whole_body_with_escaped_marker()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var body = "[context]\nfirst message\nsecond message\n\n[current]\nthird message respond now";
+        await runner.WriteAsync(body);
+        await Task.Delay(40);
+        await runner.WriteAsync("\r");
+
+        var escaped = body.Replace("\n", "\\n");
+        var submitted = await runner.WaitForOutputAsync(
+            s => s.Contains("SUBMITTED:" + escaped),
+            TimeSpan.FromSeconds(5));
+        submitted.ShouldBeTrue(
+            "the whole multi-line body must submit as one turn with an escaped marker. Raw output:\n"
+            + runner.SnapshotText());
+
+        // Wall-of-text bodies must not flood the screen: the response echo truncates at 60 chars
+        // of the escaped form (single assertable line).
+        var echoed = await runner.WaitForOutputAsync(
+            s => s.Contains("FAKE response to: " + escaped[..60]), TimeSpan.FromSeconds(3));
+        echoed.ShouldBeTrue("response echo must be the escaped body truncated to 60 chars");
+        runner.SnapshotText().ShouldNotContain("FAKE response to: " + escaped[..61]);
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // Compaction is not a turn: /compact renders the pinned "Compacted (...)" screen line and NO
+    // " for Ns" done pattern — the detectors must never read a compaction as a completed turn.
+    [Test]
+    public async Task Slash_compact_emits_compacted_screen_line_and_no_turn_end()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        await runner.SendLineAsync("/compact");
+
+        var compacted = await runner.WaitForOutputAsync(
+            s => s.Contains("Compacted (ctrl+o to see full summary)"), TimeSpan.FromSeconds(5));
+        compacted.ShouldBeTrue("/compact must render the pinned Compacted screen line");
+
+        await Task.Delay(300); // give any (wrong) turn-end output time to arrive
+        runner.SnapshotText().ShouldNotContain(" for 1s",
+            customMessage: "compaction must not emit the turn-end done pattern");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task Compact_after_turns_env_emits_compacted_after_nth_turn()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync(
+            new Dictionary<string, string> { ["ANTIPHON_FAKE_COMPACT_AFTER_TURNS"] = "2" });
+
+        await runner.SendLineAsync("first");
+        (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:first"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue();
+        runner.SnapshotText().ShouldNotContain("Compacted (",
+            customMessage: "auto-compaction must not fire before the configured turn count");
+
+        await runner.SendLineAsync("second");
+        var compacted = await runner.WaitForOutputAsync(
+            s => s.Contains("Compacted (ctrl+o to see full summary)"), TimeSpan.FromSeconds(5));
+        compacted.ShouldBeTrue("auto-compaction must fire after the Nth turn");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task Transcript_path_env_appends_user_assistant_and_boundary_lines()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-transcript-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
+
+            await runner.SendLineAsync("hello transcript");
+            (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:hello transcript"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            await runner.SendLineAsync("/compact");
+            (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            var lines = (await File.ReadAllLinesAsync(path)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+            lines.Length.ShouldBe(3);
+            lines[0].ShouldContain("\"type\":\"user\"");
+            lines[0].ShouldContain("hello transcript");
+            lines[1].ShouldContain("\"type\":\"assistant\"");
+            lines[1].ShouldContain("\"stop_reason\":\"end_turn\"");
+            lines[2].ShouldContain("\"subtype\":\"compact_boundary\"");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
     }
 
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,

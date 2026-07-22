@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 namespace Antiphon.FakeClaude;
 
@@ -25,6 +26,13 @@ namespace Antiphon.FakeClaude;
 ///    typed body before submitting; a fake that swallowed input silently would make every verified
 ///    delivery look wedged.
 ///  * <b>Readiness</b> — print a banner then go quiet, so the quiet-period ready detector settles.
+///  * <b>Compaction</b> — a submitted <c>/compact</c> (or <c>ANTIPHON_FAKE_COMPACT_AFTER_TURNS=N</c>
+///    after the Nth turn) renders the pinned <c>Compacted (ctrl+o to see full summary)</c> screen line
+///    with NO turn-end signal — compaction is not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set,
+///    a compact-boundary JSONL line is appended too (shape mirrors the canary fixture).
+///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
+///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>) line on turn end, in the shapes
+///    <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
 ///
 /// <para><b>Why timing, not read boundaries.</b> ConPTY does not preserve write boundaries as read
 /// boundaries — a single <c>WriteFile("body\r")</c> can surface to the child as one read or several, and
@@ -42,10 +50,15 @@ internal static class Program
     // OSC 0 ; U+2733 BEL — idle title, like Claude at turn end. (ConPTY usually consumes this; emitted anyway.)
     private const string IdleTitle = "\x1b]0;✳\x07";
 
+    // PINNED-BY: ClaudeCompactionCanaryTests — the screen line real Claude renders after a compaction.
+    private const string CompactedScreenLine = "Compacted (ctrl+o to see full summary)";
+
     private static int Main(string[] args)
     {
         var banner = GetArg(args, "--banner") ?? "Fake Claude ready";
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
+        var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
+        var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -88,6 +101,7 @@ internal static class Program
         reader.Start();
 
         var composer = new StringBuilder();
+        var turnCount = 0;
 
         while (true)
         {
@@ -127,7 +141,20 @@ internal static class Program
                 var text = composer.ToString().Trim();
                 composer.Clear();
                 if (text.Length == 0) continue; // bare Enter on an empty composer — nothing to submit.
-                SubmitTurn(Write, text);
+
+                if (text == "/compact")
+                {
+                    // Compaction is NOT a turn: no response echo, no " for Ns" done pattern.
+                    Write("\r\n");
+                    Write("SUBMITTED:/compact\r\n");
+                    EmitCompaction(Write, transcriptPath);
+                    continue;
+                }
+
+                SubmitTurn(Write, text, transcriptPath);
+                turnCount++;
+                if (compactAfterTurns > 0 && turnCount == compactAfterTurns)
+                    EmitCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
                 continue;
             }
 
@@ -147,16 +174,68 @@ internal static class Program
         return 0;
     }
 
-    private static void SubmitTurn(Action<string> write, string text)
+    private static void SubmitTurn(Action<string> write, string text, string? transcriptPath)
     {
         // Deterministic, assertable echo. Slash-commands echo their name so slash routing/dispatch tests
-        // can assert behaviour without depending on Claude's real (variable) output.
+        // can assert behaviour without depending on Claude's real (variable) output. Newlines in the
+        // submitted body are escaped so the marker stays a single assertable line (batched bodies are
+        // multi-line); the response echo is truncated so wall-of-text bodies don't flood the screen.
         write("\r\n");
-        write($"SUBMITTED:{text}\r\n");
-        write($"FAKE response to: {text}\r\n");
+        var escaped = text.Replace("\n", "\\n");
+        write($"SUBMITTED:{escaped}\r\n");
+        AppendTranscript(transcriptPath, JsonUserLine(text));
+        var echo = escaped.Length > 60 ? escaped[..60] : escaped;
+        write($"FAKE response to: {echo}\r\n");
         // Turn-end signals: the " for Ns" done pattern (survives ConPTY) AND the idle title (usually consumed).
         write("Crunched for 1s\r\n");
         write(IdleTitle);
+        AppendTranscript(transcriptPath, JsonAssistantLine(echo));
+    }
+
+    private static void EmitCompaction(Action<string> write, string? transcriptPath)
+    {
+        write(CompactedScreenLine + "\r\n");
+        write(IdleTitle);
+        AppendTranscript(transcriptPath, JsonCompactBoundaryLine());
+    }
+
+    // JSONL lines in the shapes TranscriptNormalizer parses. The boundary shape must stay in sync with
+    // tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl (PINNED-BY: ClaudeCompactionCanaryTests).
+    private static string JsonUserLine(string text) => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        message = new { role = "user", content = text },
+    });
+
+    private static string JsonAssistantLine(string text) => JsonSerializer.Serialize(new
+    {
+        type = "assistant",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        message = new
+        {
+            role = "assistant",
+            stop_reason = "end_turn",
+            content = new object[] { new { type = "text", text } },
+        },
+    });
+
+    private static string JsonCompactBoundaryLine() => JsonSerializer.Serialize(new
+    {
+        type = "system",
+        subtype = "compact_boundary",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        compactMetadata = new { trigger = "manual", preTokens = 0 },
+    });
+
+    private static void AppendTranscript(string? path, string jsonLine)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        try { File.AppendAllText(path, jsonLine + "\n"); }
+        catch { /* transcript emission is best-effort test plumbing */ }
     }
 
     private static string? GetArg(string[] args, string name)
