@@ -66,24 +66,26 @@ agent; re-run after changes touching the bridge/queue/dispatcher:
    note turn sends nothing to the chat, and the launch args carry `--append-system-prompt`
    (visible in the session's pty-host manifest / audit).
 
-## Known issue — outbound reply routing depends on the transcript tailer (2026-07-22)
+## Transcript tailer discovers Claude's forked session id (2026-07-22, RESOLVED)
 
-The channel reply path (agent's turn → `ChannelReplyDispatcher` → `channels.outbound` → gateway)
-is driven by the **transcript tailer**, which follows `~/.claude/projects/<enc-cwd>/<session-id>.jsonl`
-using the session id Antiphon assigned. During live dev verification the agent's Claude process
-was observed writing its conversation to a **different, self-chosen** `<uuid>.jsonl` instead of the
-`--session-id` Antiphon passed — so the tailer followed a stale file, never saw the turn-end, and
-no reply was produced (channels.outbound stayed empty).
+Reply routing (agent's turn → `ChannelReplyDispatcher` → `channels.outbound` → gateway) is driven
+by the **transcript tailer**. Interactive Claude does **not** reliably honour `--session-id`: the
+runner-spawned agent writes its conversation to a self-chosen `<uuid>.jsonl` instead of the id
+Antiphon passed. Investigation (2026-07-22): the launch command line is correct (`--session-id`
+present, read live off `claude.exe`); it is not `--append-system-prompt` (a headed diagnostic
+honoured the id with the flag); and the live process env has **no** `CLAUDE_CODE_SESSION_ID` /
+`CLAUDE_CODE_CHILD_SESSION` (read via PEB) — so it is neither an arg nor a nesting-marker bug, but a
+Claude interactive-mode behaviour we don't control.
 
-What is confirmed:
-- The spawned agent's command line **is correct** — `…--append-system-prompt "<preamble>" --session-id <id>` (read live off the running `claude.exe`; the id and quoting survive intact). So this is not an Antiphon arg-construction or quoting bug — interactive Claude simply chose a different session id.
-- Print mode (`claude -p --session-id <id>`) **honors** the id (writes `<id>.jsonl`), with or without `--append-system-prompt`.
-- The headed canary's interactive launch honors it too — but only with the nesting-marker env scrub (`ClSession.HeadedSafeEnv`).
-- `AgentRegistry.Resolve` now scrubs those markers (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE`, …) for spawned ClaudeCode agents, but the dev runner-spawned agent still forked — so the remaining factor is either the empty-string env override not surviving the server → runner (HTTP) → pty-host → Porta.Pty chain, or a Claude 2.1.x interactive-mode behavior. Reading the live process's PEB env to confirm was inconclusive (offset-fragile).
+**Fix:** `TranscriptTailer.LocateAsync` now prefers `<session-id>.jsonl` but, after a 10 s grace,
+falls back to discovering the real transcript by its `cwd` field — the newest transcript whose
+recorded cwd matches this session's, preferring one that appeared after the tailer started (a fresh
+fork) and, on re-adoption, the newest cwd match overall. **Verified live end-to-end** the same day:
+inbound → agent → **PONG reply delivered to `channels.outbound` and recorded by the gateway**.
 
-Impact: **inbound delivery is unaffected** (it uses the raw PTY output stream, not the tailer) — messages reach the agent and it responds in its terminal (verified: PONG / NO_REPLY). Only the automatic **reply back to the chat** is blocked when the session-id forks. The reply-routing code itself is covered by CI (`ChannelBridgeTests.Turn_end_sends_the_agents_answer_down_the_channel`, `ChannelBatchingTests`).
-
-Follow-up: confirm the spawned agent's actual environment (read the live process env / add an env dump to the pty audit), and if markers still leak, fix the runner/pty-host env propagation so `AgentRegistry`'s empty-string overrides reach Claude; alternatively teach the tailer to resolve the newest session file for the cwd when `<session-id>.jsonl` never appears.
+Limitation: two agents sharing one working directory could be ambiguous under the fallback (the
+exact-id fast path is unaffected). The workspace model gives each agent its own cwd, so this is not
+a concern in practice. `AgentRegistry` still scrubs the nesting markers (harmless/defensive).
 
 ## Migrations note (2026-07-22)
 

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -61,6 +62,68 @@ public class TranscriptTailerCompactionTests
             try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
         }
     }
+
+    // Interactive Claude forks --session-id: the transcript lands in a self-chosen <uuid>.jsonl.
+    // The tailer must discover it by matching the session cwd, or reply routing silently breaks.
+    [Test]
+    public async Task Tailer_discovers_forked_transcript_by_cwd_when_session_id_is_not_honored()
+    {
+        var configDir = Path.Combine(Path.GetTempPath(), $"antiphon-tailer-fork-{Guid.NewGuid():N}");
+        var projectDir = Path.Combine(configDir, "projects", "C--src-ClaudeBot-agents-family");
+        Directory.CreateDirectory(projectDir);
+        var cwd = Path.Combine(Path.GetTempPath(), $"agent-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+
+        // A stale transcript from an EARLIER session in the SAME cwd (must not be adopted).
+        var stale = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+        await File.WriteAllTextAsync(stale, UserLine("old", cwd, "stale") + "\n");
+        // A transcript for a DIFFERENT cwd (must not be adopted).
+        var otherCwd = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+        await File.WriteAllTextAsync(otherCwd, UserLine("other", Path.GetTempPath(), "other") + "\n");
+
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
+        try
+        {
+            var antiphonSessionId = Guid.NewGuid(); // the id we PASSED; Claude will ignore it
+            var hub = new SessionRunnerEventHub();
+            var tailer = new TranscriptTailer(antiphonSessionId, cwd, hub, NullLogger.Instance);
+            tailer.Start();
+            try
+            {
+                // Claude forks: writes to a NEW <uuid>.jsonl (not the antiphon id) after start.
+                await Task.Delay(500);
+                var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+                await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "hello") + "\n");
+                await File.AppendAllTextAsync(forked, FixtureLine() + "\n"); // + a compact boundary
+
+                // The tailer must adopt the forked file (grace is 10s) and emit its entries.
+                var entries = await PollForEntriesAsync(tailer, want: 2, TimeSpan.FromSeconds(20));
+
+                entries.Select(e => e.Kind).ShouldBe(
+                    [TranscriptKinds.UserPrompt, TranscriptKinds.CompactBoundary]);
+                entries[0].Text.ShouldBe("hello", "must adopt the forked file, not the stale/other-cwd ones");
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    // A minimal Claude "user" JSONL line carrying a cwd field (what the tailer discovers by).
+    private static string UserLine(string uuid, string cwd, string text) => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid,
+        cwd,
+        message = new { role = "user", content = text },
+    });
 
     private static async Task<IReadOnlyList<RunnerTranscriptEvent>> PollForEntriesAsync(
         TranscriptTailer tailer, int want, TimeSpan timeout)

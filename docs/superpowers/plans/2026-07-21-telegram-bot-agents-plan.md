@@ -1,6 +1,6 @@
 # Telegram bot agents - implementation plan
 
-Status: Implemented (2026-07-22) — PRs 0–11 landed; one live gap tracked (see below)
+Status: Implemented (2026-07-22) — PRs 0–12 landed; full round-trip verified live
 Date: 2026-07-21
 Spec: [2026-07-21-telegram-bot-agents.md](../specs/2026-07-21-telegram-bot-agents.md)
 Ops + known issues: [telegram-bot-ops.md](../../telegram-bot-ops.md)
@@ -12,16 +12,18 @@ All 11 PRs landed, CI-green, with headed real-Claude canaries proving the risky 
 batched-marker body verifies on the real composer). PR 11 (Claude nesting-marker env scrub) was
 added from live verification.
 
-**Live-verified this session:** migrations applied at boot; bridge consumes inbound from the local
-broker (stable consumer group); same-sender debounce merges rapid messages; verified delivery into
-the real Claude composer (PONG + NO_REPLY); bootstrap note end-to-end (agent ran its CLAUDE.md
-ritual, deleted BOOTSTRAP.md, wrote its memory log); restart-resume note end-to-end.
+**Full round-trip verified live this session:** migrations applied at boot; bridge consumes inbound
+from the local broker (stable consumer group); same-sender debounce merges rapid messages; verified
+delivery into the real Claude composer; bootstrap note end-to-end (agent ran its CLAUDE.md ritual,
+deleted BOOTSTRAP.md, wrote its memory log); restart-resume note end-to-end; and — after PR 12 —
+**the agent's PONG reply routed all the way back to `channels.outbound` and was recorded by the
+gateway** (inbound → agent → reply → outbound).
 
-**One live gap (tracked, not a defect in this epic's code):** outbound reply routing depends on the
-transcript tailer following `<session-id>.jsonl`, but interactive Claude forks to a self-chosen
-session id (command line confirmed correct — Claude ignores `--session-id` in this context). The
-reply-routing code is CI-proven (`ChannelBridgeTests`, `ChannelBatchingTests`); the fork is a
-Claude-interactive/transcript-tailer infra issue documented with a follow-up in the ops doc.
+**PR 12 (transcript tailer resilience):** interactive Claude does not reliably honour `--session-id`
+— it forks the conversation to a self-chosen `<uuid>.jsonl`. Ruled out as arg/quoting (command line
+confirmed correct), `--append-system-prompt` (headed diagnostic honoured it), and nesting-marker env
+(live PEB read: no `CLAUDE_CODE_SESSION_ID`). `TranscriptTailer` now discovers the real transcript by
+its `cwd` field when `<session-id>.jsonl` never appears. See the ops doc for details.
 
 Verified against the working tree at `8687e20`. Corrections to the spec's "what exists" table, confirmed in code:
 
