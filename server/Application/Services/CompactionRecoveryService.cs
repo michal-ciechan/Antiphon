@@ -95,7 +95,8 @@ public sealed class CompactionRecoveryService
             // WhenIdle is safe here BECAUSE the boundary kind is excluded from IsWorkingAsync
             // (PR 6's inseparable pair): an idle-but-just-compacted session takes the idle
             // fast-path immediately; a mid-work compaction waits for the next turn end.
-            await _queue.EnqueueAsync(sessionId, recoveryBody, MessageSendMode.WhenIdle, ct);
+            await _queue.EnqueueAsync(
+                sessionId, recoveryBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
             _logger.LogInformation("Compaction recovery note queued for session {SessionId} (seq {Sequence})",
                 sessionId, sequence);
         }

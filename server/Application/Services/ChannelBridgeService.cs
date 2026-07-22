@@ -127,7 +127,13 @@ public sealed class ChannelBridgeService : BackgroundService
             return;
         }
 
-        var prompt = BuildPrompt(channel, message);
+        var prompt = ChannelPromptFormat.Format(
+            channel,
+            message.Author.DisplayName ?? message.Author.Username ?? message.Author.Id,
+            message.Author.Username,
+            message.Timestamp,
+            message.Text!,
+            TimeZoneInfo.Local);
         // Register the reply correlation BEFORE enqueuing: an idle agent gets the message delivered
         // synchronously inside EnqueueAsync, and its turn could complete before a later Track() ran.
         _dispatcher.Track(liveSessionId, new ChannelReplyDispatcher.PendingChannelReply(
@@ -138,7 +144,10 @@ public sealed class ChannelBridgeService : BackgroundService
             prompt,
             _timeProvider.GetUtcNow().UtcDateTime));
 
-        await _queue.EnqueueAsync(liveSessionId, prompt, MessageSendMode.WhenIdle, ct);
+        await _queue.EnqueueAsync(
+            liveSessionId, prompt, MessageSendMode.WhenIdle, ct,
+            origin: QueuedMessageOrigin.Channel,
+            conversationKey: $"{channel.Provider}:{message.Conversation.Id}");
         _logger.LogInformation(
             "Routed {Provider} message {MessageId} on channel {ChannelId} to agent {AgentId} session {SessionId}",
             channel.Provider, message.ChannelMessageId, channel.Id, agentId, liveSessionId);
@@ -165,20 +174,6 @@ public sealed class ChannelBridgeService : BackgroundService
             _logger.LogDebug(ex, "Bridge drop alert failed");
         }
     }
-
-    // The channel context header keeps the agent oriented (which chat, who's talking) without any
-    // channel-specific machinery leaking into the session.
-    private static string BuildPrompt(ChatChannel channel, ChannelMessage message)
-    {
-        var author = message.Author.DisplayName ?? message.Author.Username ?? message.Author.Id;
-        var where = channel.Kind == ChatChannelKind.Direct
-            ? "direct message"
-            : $"\"{channel.Title ?? channel.ExternalId}\"";
-        return $"[{Capitalize(channel.Provider)} {where} — from {author}] {message.Text!.Trim()}";
-    }
-
-    private static string Capitalize(string s) =>
-        s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
     /// <summary>
     /// The bound agent's live Running session id, starting the agent when it has none. Waits out

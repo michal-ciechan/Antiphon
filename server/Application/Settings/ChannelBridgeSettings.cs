@@ -23,4 +23,20 @@ public sealed class ChannelBridgeSettings
 
     /// <summary>Drop a pending reply correlation if no matching turn completes within this window.</summary>
     public int PendingReplyTtlMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Inbound debounce: sliding quiet window per (conversation, sender) before routing buffered
+    /// messages, merged newline-joined into one prompt. 0 = passthrough (route each message inline,
+    /// exactly the pre-debounce behaviour).
+    /// </summary>
+    public int DebounceWindowMs { get; set; } = 500;
+
+    /// <summary>Hard cap from the FIRST buffered message — continuous typing can't defer forever.</summary>
+    public int DebounceMaxMs { get; set; } = 2000;
+
+    /// <summary>
+    /// Coalesce a contiguous run of same-conversation Channel messages into ONE batched delivery
+    /// per turn (context + current markers). Off = one message per turn (pre-epic behaviour).
+    /// </summary>
+    public bool BatchingEnabled { get; set; } = true;
 }

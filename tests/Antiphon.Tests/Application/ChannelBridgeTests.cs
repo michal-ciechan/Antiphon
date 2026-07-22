@@ -144,6 +144,42 @@ public class ChannelBridgeTests
         (await h.Channels().GetAllAsync(CancellationToken.None)).ShouldBeEmpty();
     }
 
+    // PR 8: channel-routed messages carry the batching metadata (origin + conversation key) and
+    // the frozen ChannelPromptFormat envelope; UI enqueues stay Ui-origin with no key.
+    [Test]
+    public async Task Bridge_enqueues_with_channel_origin_and_conversation_key()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+        // Park the session as working so the message stays queued (rows are inspectable).
+        await h.MarkSessionWorkingAsync();
+
+        var msg = TelegramText(h.ChatId, "check the origin", title: "Family", author: "Mike");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        row.Origin.ShouldBe(QueuedMessageOrigin.Channel);
+        row.ConversationKey.ShouldBe($"telegram:{h.ChatId}");
+        row.Body.ShouldContain("[Telegram \"Family\" — Mike ");
+        row.Body.ShouldContain("] check the origin");
+    }
+
+    [Test]
+    public async Task Ui_enqueue_keeps_ui_origin()
+    {
+        await using var h = await HarnessAsync();
+        await h.MarkSessionWorkingAsync();
+
+        var queue = h.Provider.GetRequiredService<SessionMessageQueueService>();
+        await queue.EnqueueAsync(h.SessionId, "typed in the web ui", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        row.Origin.ShouldBe(QueuedMessageOrigin.Ui);
+        row.ConversationKey.ShouldBeNull();
+    }
+
     [Test]
     [Arguments("Done. The bill is paid.", ChannelReplyKind.Answer)]
     [Arguments("Which day suits you?", ChannelReplyKind.Question)]
@@ -294,6 +330,21 @@ public class ChannelBridgeTests
                 .Single(c => c.ExternalId == ChatId);
             await channels.UpdateAsync(
                 channel.Id, new UpdateChatChannelRequest(AgentId: AgentId), CancellationToken.None);
+        }
+
+        public async Task MarkSessionWorkingAsync()
+        {
+            await using var scope = Provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var baseSeq = (await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == SessionId)
+                .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
+                Kind = TranscriptKinds.AssistantText, Text = "working", CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
         }
 
         public async Task InsertTurnAsync(string prompt, string response)

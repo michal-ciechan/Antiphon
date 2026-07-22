@@ -68,6 +68,8 @@ export type AgentIncidentKind =
   | 'RcReArmed'
   | 'RcRestart'
   | 'LivenessProbeFailed'
+  | 'DeliveryVerificationFailed'
+  | 'ContextCompacted'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 

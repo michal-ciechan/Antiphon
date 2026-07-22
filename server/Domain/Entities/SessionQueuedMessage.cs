@@ -21,6 +21,15 @@ public class SessionQueuedMessage
     /// <summary>FIFO ordering key — monotonic per session in enqueue order.</summary>
     public long Sequence { get; set; }
 
+    /// <summary>Who enqueued it (drives batching: only Channel messages coalesce).</summary>
+    public QueuedMessageOrigin Origin { get; set; } = QueuedMessageOrigin.Ui;
+
+    /// <summary>
+    /// For Channel-origin messages: <c>"{provider}:{conversationId}"</c> — the batching key
+    /// (only a contiguous run of the SAME conversation coalesces into one delivery).
+    /// </summary>
+    public string? ConversationKey { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? SentAt { get; set; }
     public DateTime? CanceledAt { get; set; }

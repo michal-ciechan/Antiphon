@@ -765,7 +765,8 @@ public sealed class AgentSessionService
                 "Launch note delivery failed for session {SessionId}; queueing for idle instead", sessionId);
             try
             {
-                await _messageQueue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct);
+                await _messageQueue.EnqueueAsync(
+                    sessionId, body, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
             }
             catch (Exception fallbackEx) when (fallbackEx is not OperationCanceledException)
             {
