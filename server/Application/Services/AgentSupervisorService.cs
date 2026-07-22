@@ -164,13 +164,13 @@ public sealed class AgentSupervisorService
                 await RecordIncidentAsync(
                     agent.Id, dead.Id, AgentIncidentKind.Crash, AlertSeverity.Warning,
                     $"Session died (exit {dead.ExitCode?.ToString() ?? "unknown"}: {dead.FailureReason ?? "no reason recorded"}).",
-                    dead.ExitCode, dead.FailureReason, ct);
+                    dead.ExitCode, dead.FailureReason, ct: ct);
             }
 
             await RecordIncidentAsync(
                 agent.Id, dead?.Id, AgentIncidentKind.RestartScheduled, AlertSeverity.Warning,
                 $"Restart attempt {attempt} scheduled for {state.NextRestartAt:u} (backing off {Describe(delay)}).",
-                dead?.ExitCode, dead?.FailureReason, ct);
+                dead?.ExitCode, dead?.FailureReason, ct: ct);
             await EscalateIfTierCrossedAsync(agent, state, delay, ct);
 
             _logger.LogWarning(
@@ -277,6 +277,7 @@ public sealed class AgentSupervisorService
         string message,
         int? exitCode = null,
         string? failureReason = null,
+        bool raiseAlert = true,
         CancellationToken ct = default)
     {
         _db.AgentIncidents.Add(new AgentIncident
@@ -292,8 +293,12 @@ public sealed class AgentSupervisorService
             CreatedAt = UtcNow(),
         });
 
-        // Incidents ARE the supervisor's alerts (1:1): same severity, deduped per agent+kind so
-        // the routing throttle can group repeats.
+        // Incidents ARE the supervisor's alerts (1:1 by default): same severity, deduped per
+        // agent+kind so the routing throttle can group repeats. raiseAlert=false is for incidents
+        // that record normal operation (e.g. a context compaction) — timeline row, no alert.
+        if (!raiseAlert)
+            return;
+
         await _alerts.RaiseAsync(
             new AlertRaise(
                 severity,
