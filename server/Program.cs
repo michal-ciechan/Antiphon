@@ -98,7 +98,17 @@ try
         .ValidateOnStart();
     builder.Services.AddSingleton<AgentRegistry>();
     builder.Services.AddSingleton<IAgentProtocolAdapterFactory, AgentProtocolAdapterFactory>();
-    builder.Services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>();
+    builder.Services.AddHttpClient<ISessionRunnerClient, SessionRunnerHttpClient>((sp, client) =>
+    {
+        var runnerSettings = sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value;
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, runnerSettings.RequestTimeoutSeconds));
+    });
+    // The /events SSE stream must never hit HttpClient.Timeout (a long-lived response is not a
+    // slow request) — liveness is handled by runner keepalives + the client-side idle watchdog.
+    builder.Services.AddHttpClient(SessionRunnerHttpClient.EventStreamClientName, client =>
+    {
+        client.Timeout = Timeout.InfiniteTimeSpan;
+    });
 
     // JSON serialization — serialize enums as strings for API responses
     builder.Services.ConfigureHttpJsonOptions(options =>

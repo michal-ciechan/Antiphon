@@ -118,18 +118,44 @@ app.MapPost("/sessions/{id:guid}/kill", async (
     return Results.Ok(session);
 });
 
-app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime) =>
+app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, IConfiguration config) =>
 {
     context.Response.Headers.CacheControl = "no-cache";
     context.Response.Headers.Connection = "keep-alive";
     context.Response.ContentType = "text/event-stream";
 
-    var reader = runtime.Subscribe(context.RequestAborted);
-    await foreach (var evt in reader.ReadAllAsync(context.RequestAborted))
+    var ct = context.RequestAborted;
+
+    // Flush headers immediately: without this a client that connects during a quiet spell can't
+    // tell "connected, nothing happening" from "not responding" and its timeout kills the stream
+    // before the first event. Periodic SSE comments then keep watchdogs and proxies from reaping
+    // an idle-but-healthy connection (clients must ignore lines starting with ':').
+    await context.Response.WriteAsync(": connected\n\n", ct);
+    await context.Response.Body.FlushAsync(ct);
+    var keepAlive = TimeSpan.FromSeconds(
+        Math.Clamp(config.GetValue("Events:KeepAliveSeconds", 15), 1, 3600));
+
+    var reader = runtime.Subscribe(ct);
+    while (!ct.IsCancellationRequested)
     {
-        await context.Response.WriteAsync($"event: {evt.EventName}\n", context.RequestAborted);
-        await context.Response.WriteAsync($"data: {evt.Json}\n\n", context.RequestAborted);
-        await context.Response.Body.FlushAsync(context.RequestAborted);
+        var waitForEvent = reader.WaitToReadAsync(ct).AsTask();
+        var winner = await Task.WhenAny(waitForEvent, Task.Delay(keepAlive, ct));
+        if (winner != waitForEvent)
+        {
+            await context.Response.WriteAsync(": keepalive\n\n", ct);
+            await context.Response.Body.FlushAsync(ct);
+            continue;
+        }
+
+        if (!await waitForEvent)
+            break; // channel completed — runtime shutting down
+
+        while (reader.TryRead(out var evt))
+        {
+            await context.Response.WriteAsync($"event: {evt.EventName}\n", ct);
+            await context.Response.WriteAsync($"data: {evt.Json}\n\n", ct);
+        }
+        await context.Response.Body.FlushAsync(ct);
     }
 });
 

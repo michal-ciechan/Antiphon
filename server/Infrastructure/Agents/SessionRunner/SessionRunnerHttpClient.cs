@@ -12,16 +12,29 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 {
+    /// <summary>
+    /// Named client for the /events SSE stream: registered with an INFINITE timeout, because
+    /// HttpClient.Timeout covers the whole response body and the default 100 s tore the stream
+    /// down every 100 s (events in the reconnect gaps were lost). Liveness comes from the runner's
+    /// keepalive comments plus the idle watchdog in <see cref="StreamEventsAsync"/> instead.
+    /// </summary>
+    public const string EventStreamClientName = "session-runner-events";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly SessionRunnerSettings _settings;
 
     public SessionRunnerHttpClient(
         HttpClient httpClient,
+        IHttpClientFactory httpClientFactory,
         IOptions<SessionRunnerSettings> settings)
     {
         _httpClient = httpClient;
-        _httpClient.BaseAddress = new Uri(settings.Value.BaseUrl.TrimEnd('/') + "/");
+        _httpClientFactory = httpClientFactory;
+        _settings = settings.Value;
+        _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
@@ -120,20 +133,33 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // Idle watchdog: the timer resets on every received line (keepalives count), so it only
+        // fires when the runner has gone genuinely silent — half-open TCP, hung process — and the
+        // pump should reconnect. This replaces HttpClient.Timeout for the stream.
+        var idle = TimeSpan.FromSeconds(Math.Max(5, _settings.EventStreamIdleTimeoutSeconds));
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idleCts.CancelAfter(idle);
+
+        var client = _httpClientFactory.CreateClient(EventStreamClientName);
+        client.BaseAddress = _httpClient.BaseAddress;
         using var request = new HttpRequestMessage(HttpMethod.Get, "events");
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, idleCts.Token);
         response.EnsureSuccessStatusCode();
 
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        await using var stream = await response.Content.ReadAsStreamAsync(idleCts.Token);
         using var reader = new StreamReader(stream);
         string? eventName = null;
         var data = new System.Text.StringBuilder();
 
-        while (!reader.EndOfStream && !ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
-            var line = await reader.ReadLineAsync(ct);
+            var line = await reader.ReadLineAsync(idleCts.Token);
             if (line is null)
                 break;
+            idleCts.CancelAfter(idle);
+
+            if (line.StartsWith(':'))
+                continue; // SSE comment — the runner's keepalive; only resets the watchdog
 
             if (line.Length == 0)
             {
