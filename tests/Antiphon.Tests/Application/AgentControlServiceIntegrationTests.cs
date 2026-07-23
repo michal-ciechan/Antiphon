@@ -33,7 +33,10 @@ public class AgentControlServiceIntegrationTests
             db.Projects.Add(project);
             db.WorkflowTemplates.Add(template);
             await db.SaveChangesAsync();
-            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "BOOTED" };
+            // The fake echoes this after every prompt, so the /remote-control command "arms" the
+            // bridge the way the real TUI reports it — the boot sequence waits for this marker
+            // before renaming.
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "/remote-control is active · BOOTED" };
             await using var harness = BuildHarness(tempRoot, [adapter]);
 
             var board = await harness.BoardService.CreateAsync(
@@ -328,7 +331,8 @@ public class AgentControlServiceIntegrationTests
             KillGraceMs = 100,
             SignalRMaxChunkChars = 16 * 1024,
             ReplayBufferMaxChars = 128 * 1024,
-            SessionLogPath = Path.Combine(tempRoot, "session-logs")
+            SessionLogPath = Path.Combine(tempRoot, "session-logs"),
+            RemoteControlArmTimeoutMs = 500, // fakes without the armed marker must not stall boots
         }));
         services.AddSingleton<IOptions<OrchestratorSettings>>(Options.Create(new OrchestratorSettings
         {

@@ -721,14 +721,19 @@ public sealed class AgentSessionService
     // Cap on how long we wait for each remote-control slash command to echo output before moving on.
     private static readonly TimeSpan RemoteControlCommandTimeout = TimeSpan.FromSeconds(3);
 
+    // What the TUI prints once the remote-control bridge is genuinely connected.
+    private const string RemoteControlArmedMarker = "remote-control is active";
+
     // When an agent is booted for remote monitoring, flip it into remote-control mode and THEN
     // rename it, before the work prompt lands. The order matters: claude.ai's session list only
     // picks up titles from /rename events that fire while the bridge is armed — titles set before
     // arming (--name at launch, or a pre-arm /rename) never sync, and the entry falls back to the
     // first message's text (verified live 2026-07-23: a post-arm /rename updated the claude.ai
-    // entry immediately). Each command waits for the agent to echo output (or times out) before
-    // the next is sent, so the commands don't get jammed together over the PTY.
-    private static async Task SendRemoteControlCommandsAsync(
+    // entry immediately). The rename waits for the TUI's "remote-control is active" line, not
+    // just for prompt echo: a 3s echo wait proved too short live — the rename fired before the
+    // bridge finished connecting (title lost) and typing into the still-busy resume composer
+    // jammed "/remote-control /rename <name>" into one submission that armed the bridge twice.
+    private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
         CancellationToken ct)
@@ -736,10 +741,37 @@ public sealed class AgentSessionService
         if (string.IsNullOrWhiteSpace(remoteControlName))
             return;
 
+        // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
+        // active" line, which must not satisfy the wait.
+        var baseline = adapter.SnapshotRawOutput().Length;
         await adapter.SendPromptAsync("/remote-control", ct);
         await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+        await WaitForRemoteControlArmedAsync(adapter, baseline, ct);
         await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
         await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+    }
+
+    // Polls the raw output (append-only — the rendered screen can scroll the line away) for the
+    // armed marker appearing AFTER the baseline. On timeout the boot proceeds anyway: the local
+    // rename is still worth sending, and holding the launch hostage to a claude.ai outage isn't.
+    private async Task WaitForRemoteControlArmedAsync(
+        IAgentProtocolAdapter adapter, int baseline, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(_settings.RemoteControlArmTimeoutMs);
+        var searchFrom = Math.Max(0, baseline - RemoteControlArmedMarker.Length);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var raw = adapter.SnapshotRawOutput();
+            if (raw.IndexOf(RemoteControlArmedMarker, Math.Min(searchFrom, raw.Length), StringComparison.OrdinalIgnoreCase) >= 0)
+                return;
+
+            await Task.Delay(250, ct);
+        }
+
+        _logger.LogWarning(
+            "Remote-control armed marker did not appear within {TimeoutMs}ms; sending /rename anyway "
+            + "(the claude.ai entry may keep its first-message title)", _settings.RemoteControlArmTimeoutMs);
     }
 
     // Delivers the launch note (bootstrap on fresh/effective-fresh, restart note on resume) through
