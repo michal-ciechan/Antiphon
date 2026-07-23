@@ -3,6 +3,8 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
@@ -162,6 +164,80 @@ public class AgentSessionRuntimeTests
             DeleteDirectoryBestEffort(tempRoot);
         }
     }
+
+    // The 2026-07-23 relaunch bug: the runner tailer numbers entries per tailer LIFETIME, so after
+    // a session relaunch (same session id, fresh tailer, forked transcript) the new generation
+    // re-issues low sequences. Sequence-keyed dedup dropped every new entry — reply routing went
+    // silent. Dedup must key on the transcript line uuid, and stored sequences must be rebased to
+    // stay session-monotonic so "latest turn" queries keep working.
+    [Test]
+    public async Task Transcript_entries_from_a_new_tailer_generation_survive_a_sequence_restart()
+    {
+        var sessionId = Guid.NewGuid();
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            db.AgentSessions.Add(new Antiphon.Server.Domain.Entities.AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "claude",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-tests-{Guid.NewGuid():N}");
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+        {
+            npgsql.MigrationsAssembly("Antiphon.Server");
+            npgsql.SetPostgresVersion(16, 0);
+        }));
+        await using var provider = services.BuildServiceProvider();
+        var runtime = new AgentSessionRuntime(
+            new MockEventBus(),
+            Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<AgentSessionRuntime>.Instance);
+
+        try
+        {
+            // Generation 1 (original tailer).
+            await runtime.ObserveTranscriptAsync(TranscriptEvent(sessionId, 1, "UserPrompt", "uuid-g1-a", "hello"), CancellationToken.None);
+            await runtime.ObserveTranscriptAsync(TranscriptEvent(sessionId, 2, "AssistantText", "uuid-g1-b", "hi"), CancellationToken.None);
+
+            // Generation 2 (relaunch): numbering restarts at 1, but the line is genuinely new.
+            await runtime.ObserveTranscriptAsync(TranscriptEvent(sessionId, 1, "UserPrompt", "uuid-g2-a", "after relaunch"), CancellationToken.None);
+
+            // Replayed history (same uuid, re-numbered) must dedup, not duplicate.
+            await runtime.ObserveTranscriptAsync(TranscriptEvent(sessionId, 7, "UserPrompt", "uuid-g1-a", "hello"), CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var rows = await verify.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .OrderBy(t => t.Sequence)
+                .ToListAsync();
+
+            rows.Select(r => r.Text).ShouldBe(["hello", "hi", "after relaunch"]);
+            rows.Select(r => r.Sequence).ShouldBe([1L, 2L, 3L], "the new generation's entry must be rebased past the session max");
+        }
+        finally
+        {
+            await using var cleanup = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await cleanup.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+            await cleanup.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    private static SessionRunnerTranscriptEvent TranscriptEvent(
+        Guid sessionId, long sequence, string kind, string uuid, string text) =>
+        new(sessionId, sequence, kind, uuid, null, DateTimeOffset.UtcNow, "user", text, null, null, null, null, null);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {

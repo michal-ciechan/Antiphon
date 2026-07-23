@@ -192,7 +192,7 @@ public sealed class AgentSessionRuntime
             "SessionTranscript",
             ToTranscriptPayload(entry),
             ct);
-        await PersistTranscriptAsync(entry.SessionId, new[] { entry });
+        var storedSeq = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
 
         // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
@@ -202,8 +202,11 @@ public sealed class AgentSessionRuntime
         // A compaction boundary triggers recovery (incident + workspace re-read note). Resolved
         // lazily like the queue service below: CompactionRecoveryService ctor-injects the queue,
         // which ctor-injects this runtime — direct injection here would close a constructor cycle.
-        if (entry.Kind == TranscriptKinds.CompactBoundary)
-            await DispatchCompactionRecoveryAsync(entry.SessionId, entry.Sequence, ct);
+        // Uses the STORED (session-monotonic) sequence, not the raw tailer one: the persisted
+        // recovery watermark must stay comparable across tailer generations, and a boundary that
+        // deduped away (replay) was already handled.
+        if (entry.Kind == TranscriptKinds.CompactBoundary && storedSeq is long boundarySeq)
+            await DispatchCompactionRecoveryAsync(entry.SessionId, boundarySeq, ct);
     }
 
     private async Task DispatchCompactionRecoveryAsync(Guid sessionId, long sequence, CancellationToken ct)
@@ -265,10 +268,12 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    private async Task PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    // Returns the stored (session-monotonic) sequence of the last NEWLY persisted entry, or null
+    // when everything deduped away or persistence failed.
+    private async Task<long?> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
     {
         if (entries.Count == 0)
-            return;
+            return null;
 
         try
         {
@@ -277,27 +282,61 @@ public sealed class AgentSessionRuntime
 
             // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
             if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId))
-                return;
+                return null;
 
-            var incoming = entries.Select(e => e.Sequence).ToHashSet();
-            var seen = (await db.TranscriptEntries
-                    .Where(t => t.AgentSessionId == sessionId && incoming.Contains(t.Sequence))
-                    .Select(t => t.Sequence)
+            // Dedup by transcript line uuid, NOT by sequence: the runner tailer numbers entries per
+            // tailer LIFETIME, restarting from 1 after a session relaunch or fork re-discovery. A
+            // resumed session (same id, fresh tailer) therefore re-issues low sequences that collide
+            // with last generation's rows — sequence-dedup silently dropped every new entry, which
+            // killed reply routing after a relaunch (2026-07-23). Uuids come from the transcript
+            // lines themselves, so they survive re-numbering, and history re-emitted on adoption
+            // dedups cleanly. Entries without a uuid keep the old sequence-dedup.
+            var incomingUuids = entries.Where(e => e.Uuid is not null).Select(e => e.Uuid!).ToHashSet();
+            var seenUuids = (await db.TranscriptEntries
+                    .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && incomingUuids.Contains(t.Uuid!))
+                    .Select(t => new { t.Uuid, t.Kind })
                     .ToListAsync())
+                .Select(x => (x.Uuid!, x.Kind))
                 .ToHashSet();
+            var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
+            var seenSeqs = incomingSeqs.Count == 0
+                ? []
+                : (await db.TranscriptEntries
+                        .Where(t => t.AgentSessionId == sessionId && incomingSeqs.Contains(t.Sequence))
+                        .Select(t => t.Sequence)
+                        .ToListAsync())
+                    .ToHashSet();
+
+            // Stored sequences stay strictly monotonic per SESSION: a new tailer generation's
+            // restarted numbering is rebased past the session's current max, so "latest turn"
+            // queries (reply dispatcher, queue idle checks, UI ordering) keep working across
+            // relaunches without schema changes.
+            var maxSeq = await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0;
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var added = false;
             foreach (var e in entries)
             {
-                if (!seen.Add(e.Sequence))
-                    continue; // already persisted, or a duplicate within this batch
+                if (e.Uuid is not null)
+                {
+                    if (!seenUuids.Add((e.Uuid, e.Kind)))
+                        continue; // already persisted, or a duplicate within this batch
+                }
+                else if (!seenSeqs.Add(e.Sequence))
+                {
+                    continue;
+                }
+
+                var storedSeq = e.Sequence > maxSeq ? e.Sequence : maxSeq + 1;
+                maxSeq = storedSeq;
 
                 db.TranscriptEntries.Add(new TranscriptEntry
                 {
                     Id = Guid.NewGuid(),
                     AgentSessionId = sessionId,
-                    Sequence = e.Sequence,
+                    Sequence = storedSeq,
                     Kind = e.Kind,
                     Uuid = e.Uuid,
                     ParentUuid = e.ParentUuid,
@@ -316,10 +355,13 @@ public sealed class AgentSessionRuntime
 
             if (added)
                 await db.SaveChangesAsync();
+
+            return added ? maxSeq : null;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
+            return null;
         }
     }
 
