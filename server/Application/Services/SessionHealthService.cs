@@ -113,15 +113,22 @@ public sealed class SessionHealthService
             {
                 LastSequence = live.LastSequence,
                 LastSequenceChangeUtc = now,
+                // Seed the round-trip clock at first sight: the store is in-memory, so without
+                // this every server restart made the 6-hourly probe "due" immediately and idle
+                // agents got pinged after each deploy (observed 2026-07-23 as pong-spam).
+                LastRoundTripUtc = now,
             });
 
             // Idle tracking: any output-sequence movement stamps activity and resets streaks —
-            // busy sessions are never probed or repaired.
+            // busy sessions are never probed or repaired. Real output is also liveness evidence,
+            // so it re-arms the round-trip clock: only a session that has been COMPLETELY silent
+            // for the whole interval earns a synthetic healthcheck turn.
             if (live.LastSequence != entry.LastSequence)
             {
                 entry.LastSequence = live.LastSequence;
                 entry.LastSequenceChangeUtc = now;
                 entry.ConsecutiveZeroConnProbes = 0;
+                entry.LastRoundTripUtc = now;
             }
 
             var idleFor = now - entry.LastSequenceChangeUtc;

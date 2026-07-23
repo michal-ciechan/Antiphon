@@ -123,17 +123,28 @@ public class SessionHealthTests
             var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
             harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
 
-            // Probe enqueued.
+            // First sight SEEDS the clock (in-memory store): no probe right after a server
+            // restart / session start — that was the 2026-07-23 pong-spam.
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+
+            // A full interval of total silence -> probe enqueued.
+            harness.Clock.Advance(TimeSpan.FromHours(7));
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
             harness.Actions.EnqueuedWhenIdle.ShouldContain(x => x.SessionId == sessionId && x.Text.Contains("pong"));
 
-            // Output moves -> verdict alive, no incident.
+            // Output moves -> verdict alive, no incident. Real output is liveness evidence, so it
+            // also re-arms the round-trip clock.
             harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 11)];
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
             harness.Actions.KilledSessions.ShouldBeEmpty();
 
-            // Next round-trip (interval elapsed), but this time nothing moves and time passes the deadline.
-            harness.Clock.Advance(TimeSpan.FromHours(7));
+            // 5h after that activity: not due yet (the activity counted, no synthetic turn wasted).
+            harness.Clock.Advance(TimeSpan.FromHours(5));
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+
+            // 7h of silence since the activity: due again; nothing moves and the deadline passes.
+            harness.Clock.Advance(TimeSpan.FromHours(2));
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1); // enqueued again
             harness.Clock.Advance(TimeSpan.FromMinutes(11));
             (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1); // timeout verdict
@@ -257,6 +268,7 @@ public class SessionHealthTests
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
             new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
             {
