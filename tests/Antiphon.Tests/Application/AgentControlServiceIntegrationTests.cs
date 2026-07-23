@@ -54,10 +54,11 @@ public class AgentControlServiceIntegrationTests
             detail.CurrentCardId.ShouldBe(card.Id);
             detail.PersistentSessionId.ShouldNotBeNull();
 
-            // The rename + remote-control commands must arrive before the work prompt.
+            // The remote-control + rename commands must arrive before the work prompt — and in
+            // that order: claude.ai only syncs titles from /rename events fired while armed.
             adapter.Prompts.Count.ShouldBe(3);
-            adapter.Prompts[0].ShouldBe("/rename Remote Claude");
-            adapter.Prompts[1].ShouldBe("/remote-control");
+            adapter.Prompts[0].ShouldBe("/remote-control");
+            adapter.Prompts[1].ShouldBe("/rename Remote Claude");
             adapter.Prompts[2].ShouldNotBeNullOrWhiteSpace();
             adapter.Prompts[2].ShouldNotStartWith("/remote-control");
 
@@ -344,6 +345,7 @@ public class AgentControlServiceIntegrationTests
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();

@@ -721,10 +721,13 @@ public sealed class AgentSessionService
     // Cap on how long we wait for each remote-control slash command to echo output before moving on.
     private static readonly TimeSpan RemoteControlCommandTimeout = TimeSpan.FromSeconds(3);
 
-    // When an agent is booted for remote monitoring, rename its session and flip it into
-    // remote-control mode before the work prompt lands, so the user can watch from elsewhere.
-    // Each command waits for the agent to echo output (or times out) before the next is sent,
-    // so the commands don't get jammed together over the PTY.
+    // When an agent is booted for remote monitoring, flip it into remote-control mode and THEN
+    // rename it, before the work prompt lands. The order matters: claude.ai's session list only
+    // picks up titles from /rename events that fire while the bridge is armed — titles set before
+    // arming (--name at launch, or a pre-arm /rename) never sync, and the entry falls back to the
+    // first message's text (verified live 2026-07-23: a post-arm /rename updated the claude.ai
+    // entry immediately). Each command waits for the agent to echo output (or times out) before
+    // the next is sent, so the commands don't get jammed together over the PTY.
     private static async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
@@ -733,9 +736,9 @@ public sealed class AgentSessionService
         if (string.IsNullOrWhiteSpace(remoteControlName))
             return;
 
-        await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
-        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
         await adapter.SendPromptAsync("/remote-control", ct);
+        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+        await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
         await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
     }
 
