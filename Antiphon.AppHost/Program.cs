@@ -49,12 +49,15 @@ var server = builder
     .WithReference(postgres)
     .WithEnvironment("SessionRunner__BaseUrl", "http://localhost:17204")
     // Pin Development: with ASPNETCORE_ENVIRONMENT unset, ASP.NET Core defaults to Production and
-    // would load appsettings.Production.json — whose AntiphonMessaging points at server2:19092,
-    // the deployed broker. The dev stack must use the LOCAL broker (localhost:19092, appsettings.json).
+    // would load appsettings.Production.json.
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
-    // Dev stack consumes the LOCAL broker the fake gateway produces to — the whole
-    // telegram-bridge path (inbound -> agent -> reply -> outbound) is exercisable offline.
     .WithEnvironment("ChannelBridge__Enabled", "true")
+    // LIVE Telegram bridge (2026-07-23): consume the deployed am-redpanda on server2 (Tailscale)
+    // that the @antiphon_assistant_bot gateway (am-service) produces to — the Family agent talks
+    // to the real "Antiphon-Family" group. Comment this line out to fall back to the LOCAL broker
+    // (localhost:19092) + fake gateway for offline smoke tests; it's one broker or the other, so
+    // while live, POST :17208/inbound no longer reaches the server.
+    .WithEnvironment("AntiphonMessaging__BootstrapServers", "server2:19092")
     .WithHttpEndpoint(port: 17202, env: "ASPNETCORE_HTTP_PORTS");
 
 // ── React / Vite client ───────────────────────────────────────────────────────
