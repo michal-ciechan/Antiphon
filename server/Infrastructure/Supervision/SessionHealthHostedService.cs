@@ -29,7 +29,7 @@ public sealed class SessionHealthHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_settings.Enabled || (!_settings.RcWatch.Enabled && !_settings.LivenessProbe.Enabled))
+        if (!_settings.Enabled || !_settings.RcWatch.Enabled)
         {
             _logger.LogInformation("Session health watch disabled by configuration");
             return;

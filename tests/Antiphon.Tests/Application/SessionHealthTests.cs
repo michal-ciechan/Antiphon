@@ -109,50 +109,31 @@ public class SessionHealthTests
         }
     }
 
-    // NOTE: the TUI echo probe (and its test) was removed on 2026-07-21 — it false-positive-killed
-    // healthy idle sessions. Wedge detection now happens at delivery time; see
+    // NOTE: there are deliberately NO periodic liveness probes here. The TUI echo probe was
+    // removed 2026-07-21 (false-positive-killed healthy idle sessions) and the round-trip "pong"
+    // probe was removed 2026-07-23 (spent model turns on healthy idle sessions). Deadness is only
+    // checked when a real message delivery misbehaves; see
     // SessionMessageQueueDeliveryVerificationTests.
 
     [Test]
-    public async Task Round_trip_probe_times_out_and_restarts_but_passes_when_output_moves()
+    public async Task No_probe_prompts_are_ever_sent_to_an_idle_session()
     {
         var tempRoot = NewTempRoot();
         try
         {
-            await using var harness = BuildHarness(tempRoot, rcWatchEnabled: false);
+            await using var harness = BuildHarness(tempRoot);
             var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
             harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
 
-            // First sight SEEDS the clock (in-memory store): no probe right after a server
-            // restart / session start — that was the 2026-07-23 pong-spam.
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            // Days of idle silence with a healthy bridge: no synthetic prompts, no restarts.
+            for (var i = 0; i < 5; i++)
+            {
+                harness.Clock.Advance(TimeSpan.FromHours(12));
+                (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            }
+
             harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
-
-            // A full interval of total silence -> probe enqueued.
-            harness.Clock.Advance(TimeSpan.FromHours(7));
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1);
-            harness.Actions.EnqueuedWhenIdle.ShouldContain(x => x.SessionId == sessionId && x.Text.Contains("pong"));
-
-            // Output moves -> verdict alive, no incident. Real output is liveness evidence, so it
-            // also re-arms the round-trip clock.
-            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 11)];
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
             harness.Actions.KilledSessions.ShouldBeEmpty();
-
-            // 5h after that activity: not due yet (the activity counted, no synthetic turn wasted).
-            harness.Clock.Advance(TimeSpan.FromHours(5));
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
-
-            // 7h of silence since the activity: due again; nothing moves and the deadline passes.
-            harness.Clock.Advance(TimeSpan.FromHours(2));
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1); // enqueued again
-            harness.Clock.Advance(TimeSpan.FromMinutes(11));
-            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(1); // timeout verdict
-
-            harness.Actions.KilledSessions.ShouldContain(sessionId);
-            await using var verify = CreateContext();
-            (await verify.AgentIncidents.AnyAsync(
-                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.LivenessProbeFailed)).ShouldBeTrue();
         }
         finally
         {
@@ -204,7 +185,6 @@ public class SessionHealthTests
 
     private static Harness BuildHarness(
         string tempRoot,
-        bool rcWatchEnabled = true,
         int idleQuietMinutes = 0)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
@@ -227,17 +207,11 @@ public class SessionHealthTests
         {
             RcWatch = new RcWatchSettings
             {
-                Enabled = rcWatchEnabled,
+                Enabled = true,
                 IdleQuietMinutes = idleQuietMinutes,
                 ConsecutiveFailedProbesBeforeAction = 2,
                 ReArmAttemptsBeforeRestart = 1,
                 ReArmSettleMinutes = 0,
-            },
-            LivenessProbe = new LivenessProbeSettings
-            {
-                Enabled = !rcWatchEnabled, // isolate: rc tests run rc only, liveness tests liveness only
-                RoundTripIntervalHours = 6,
-                RoundTripTimeoutMinutes = 10,
             },
         }));
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings

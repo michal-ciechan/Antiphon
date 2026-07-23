@@ -26,7 +26,6 @@ public sealed class SupervisionSettings
     public int IncidentCapPerAgent { get; set; } = 500;
 
     public RcWatchSettings RcWatch { get; set; } = new();
-    public LivenessProbeSettings LivenessProbe { get; set; } = new();
     public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
 }
 
@@ -51,20 +50,11 @@ public sealed class RcWatchSettings
     public int ReArmSettleMinutes { get; set; } = 3;
 }
 
-public sealed class LivenessProbeSettings
-{
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>Round-trip probe (queued healthcheck prompt; costs a model turn).</summary>
-    public int RoundTripIntervalHours { get; set; } = 6;
-
-    /// <summary>Round-trip verdict window: output must advance within this after the enqueue.</summary>
-    public int RoundTripTimeoutMinutes { get; set; } = 10;
-}
-
 /// <summary>
-/// Delivery-time composer verification (the replacement for the removed periodic TUI echo probe,
-/// which false-positive-killed healthy idle sessions on 2026-07-20). When a message is delivered
+/// Delivery-time composer verification — the ONLY wedge/deadness detection (the periodic TUI echo
+/// probe false-positive-killed healthy idle sessions on 2026-07-20, and the periodic round-trip
+/// "pong" probe was removed 2026-07-23: sessions are only checked when a message we actually sent
+/// misbehaves, never speculatively). When a message is delivered
 /// to a Claude session the body is typed, then the rendered screen must show evidence of it
 /// (<c>ComposerDeliveryEvidence</c> — tail/head fragment or a new paste placeholder, per the
 /// ClaudeComposerRenderCanaryTests contract) BEFORE the submitting Enter is sent; after Enter the

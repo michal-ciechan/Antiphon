@@ -25,9 +25,6 @@ public sealed class SessionHealthStateStore
         public int ReArmAttempts;
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
-        public DateTime? LastRoundTripUtc;
-        public long? RoundTripBaselineSequence;
-        public DateTime? RoundTripDeadlineUtc;
     }
 
     public ConcurrentDictionary<Guid, Entry> Sessions { get; } = new();
@@ -35,9 +32,11 @@ public sealed class SessionHealthStateStore
 
 /// <summary>
 /// Session health for always-on agents (spec slice 3): the RC bridge watch (re-arm in place,
-/// then restart-when-idle) and the round-trip liveness probe (6-hourly healthcheck prompt).
-/// Everything is idle-gated: a session showing fresh output is never touched. Wedge detection
-/// moved to delivery time (SessionMessageQueueService + ComposerDeliveryEvidence).
+/// then restart-when-idle). Everything is idle-gated: a session showing fresh output is never
+/// touched. Wedge/deadness detection is DELIVERY-TIME ONLY (SessionMessageQueueService +
+/// ComposerDeliveryEvidence): a session is only probed when a real message we sent doesn't
+/// behave as expected. The periodic round-trip "pong" probe was removed 2026-07-23 — it spent
+/// model turns on healthy idle sessions and its restart-reset in-memory clock made it spammy.
 /// </summary>
 public sealed class SessionHealthService
 {
@@ -81,7 +80,7 @@ public sealed class SessionHealthService
 
     public async Task<int> TickAsync(CancellationToken ct)
     {
-        if (!_settings.RcWatch.Enabled && !_settings.LivenessProbe.Enabled)
+        if (!_settings.RcWatch.Enabled)
             return 0;
 
         IReadOnlyList<SessionRunnerSessionDto> runnerSessions;
@@ -113,22 +112,15 @@ public sealed class SessionHealthService
             {
                 LastSequence = live.LastSequence,
                 LastSequenceChangeUtc = now,
-                // Seed the round-trip clock at first sight: the store is in-memory, so without
-                // this every server restart made the 6-hourly probe "due" immediately and idle
-                // agents got pinged after each deploy (observed 2026-07-23 as pong-spam).
-                LastRoundTripUtc = now,
             });
 
             // Idle tracking: any output-sequence movement stamps activity and resets streaks —
-            // busy sessions are never probed or repaired. Real output is also liveness evidence,
-            // so it re-arms the round-trip clock: only a session that has been COMPLETELY silent
-            // for the whole interval earns a synthetic healthcheck turn.
+            // busy sessions are never probed or repaired.
             if (live.LastSequence != entry.LastSequence)
             {
                 entry.LastSequence = live.LastSequence;
                 entry.LastSequenceChangeUtc = now;
                 entry.ConsecutiveZeroConnProbes = 0;
-                entry.LastRoundTripUtc = now;
             }
 
             var idleFor = now - entry.LastSequenceChangeUtc;
@@ -138,9 +130,6 @@ public sealed class SessionHealthService
             {
                 if (_settings.RcWatch.Enabled && agent.RemoteControlEnabled && isIdle)
                     actions += await WatchRcAsync(agent, session, childPid, entry, now, ct) ? 1 : 0;
-
-                if (_settings.LivenessProbe.Enabled && isIdle)
-                    actions += await RunLivenessProbesAsync(agent, session, live, entry, now, ct) ? 1 : 0;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -227,66 +216,6 @@ public sealed class SessionHealthService
         return true;
     }
 
-    private async Task<bool> RunLivenessProbesAsync(
-        Agent agent, AgentSession session, SessionRunnerSessionDto live,
-        SessionHealthStateStore.Entry entry, DateTime now, CancellationToken ct)
-    {
-        // Round-trip verdict pending?
-        if (entry.RoundTripDeadlineUtc is { } deadline)
-        {
-            if (live.LastSequence > entry.RoundTripBaselineSequence)
-            {
-                entry.RoundTripDeadlineUtc = null;
-                entry.RoundTripBaselineSequence = null;
-                return false; // output moved: alive
-            }
-
-            if (now >= deadline)
-            {
-                entry.RoundTripDeadlineUtc = null;
-                entry.RoundTripBaselineSequence = null;
-                await FailLivenessAsync(agent, session,
-                    $"Round-trip healthcheck produced no output within {_settings.LivenessProbe.RoundTripTimeoutMinutes} min.",
-                    ct);
-                return true;
-            }
-
-            return false;
-        }
-
-        // NOTE: there is deliberately no synthetic "type a char and watch the screen" probe here.
-        // The old TUI echo probe false-positive-killed healthy idle sessions (2026-07-20); wedge
-        // detection now happens at DELIVERY time via composer content verification in
-        // SessionMessageQueueService (ComposerDeliveryEvidence), where there is real expected
-        // content to check for instead of "any delta".
-
-        // Round-trip probe: queue a tiny prompt; the reply must move the output sequence.
-        if (_settings.LivenessProbe.RoundTripIntervalHours > 0
-            && Due(entry.LastRoundTripUtc, TimeSpan.FromHours(_settings.LivenessProbe.RoundTripIntervalHours), now))
-        {
-            entry.LastRoundTripUtc = now;
-            entry.RoundTripBaselineSequence = live.LastSequence;
-            entry.RoundTripDeadlineUtc = now.AddMinutes(_settings.LivenessProbe.RoundTripTimeoutMinutes);
-            await _actions.EnqueueWhenIdleAsync(
-                session.Id, "healthcheck: reply with exactly `pong` and nothing else", ct);
-            _logger.LogInformation("Agent {AgentName}: round-trip liveness probe enqueued", agent.Name);
-            return true;
-        }
-
-        return false;
-    }
-
-    private async Task FailLivenessAsync(Agent agent, AgentSession session, string reason, CancellationToken ct)
-    {
-        await RecordAsync(agent.Id, session.Id, AgentIncidentKind.LivenessProbeFailed, AlertSeverity.Error,
-            $"{reason} Restarting the session while idle.", ct);
-        _logger.LogWarning(
-            "Agent {AgentName}: liveness probe failed ({Reason}); restarting session {SessionId}",
-            agent.Name, reason, session.Id);
-        await _actions.KillSessionAsync(session.Id, ct);
-        _store.Sessions.TryRemove(session.Id, out _);
-    }
-
     private async Task RecordAsync(
         Guid agentId, Guid? sessionId, AgentIncidentKind kind, AlertSeverity severity,
         string message, CancellationToken ct)
@@ -319,9 +248,6 @@ public sealed class SessionHealthService
 
         return result;
     }
-
-    private static bool Due(DateTime? last, TimeSpan interval, DateTime now) =>
-        last is null || now - last >= interval;
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
