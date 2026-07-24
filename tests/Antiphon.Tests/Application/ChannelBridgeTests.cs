@@ -84,6 +84,36 @@ public class ChannelBridgeTests
         h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
     }
 
+    // Live failure 2026-07-24 (Antiphon-Family, Ola's Apple Music question): Claude wrote the
+    // turn as UserPrompt, TurnEnd, AssistantText, TurnEnd — the stop marker BEFORE the text. The
+    // dispatch on the first (text-less) TurnEnd consumed the correlations, so when the text
+    // arrived there was nothing left to match and the reply never reached the chat.
+    [Test]
+    public async Task A_turn_whose_stop_marker_precedes_the_text_still_replies()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "How do I stop Apple Music autoplaying?", title: "Family");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertEntryAsync(TranscriptKinds.UserPrompt, h.Adapter.Inputs[0]);
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        h.Dispatcher.PendingCount(h.SessionId)
+            .ShouldBe(1, "a text-less TurnEnd must leave the correlation pending, not consume it");
+
+        // The reply text lands after the stop marker; its arrival re-triggers dispatch.
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Turn off the car's Bluetooth autoplay setting.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text
+            .ShouldBe("Turn off the car's Bluetooth autoplay setting.");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+    }
+
     [Test]
     public async Task A_response_ending_in_a_question_is_typed_as_question()
     {
@@ -371,6 +401,21 @@ public class ChannelBridgeTests
             {
                 Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
                 Kind = TranscriptKinds.AssistantText, Text = "working", CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task InsertEntryAsync(string kind, string? text, string? stopReason = null)
+        {
+            await using var scope = Provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var baseSeq = (await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == SessionId)
+                .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
+                Kind = kind, Text = text, StopReason = stopReason, CreatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();
         }

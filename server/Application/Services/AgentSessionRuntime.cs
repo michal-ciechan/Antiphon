@@ -199,6 +199,12 @@ public sealed class AgentSessionRuntime
         if (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
             await FlushQueueOnIdleAsync(entry.SessionId, ct);
 
+        // Claude sometimes writes the turn's stop marker BEFORE its reply text — the TurnEnd-time
+        // dispatch then sees no text and leaves the correlations pending, so the text's own arrival
+        // must re-trigger the channel reply dispatch (cheap no-op when nothing is pending).
+        if (entry.Kind == TranscriptKinds.AssistantText)
+            await DispatchChannelRepliesAsync(entry.SessionId, ct);
+
         // A compaction boundary triggers recovery (incident + workspace re-read note). Resolved
         // lazily like the queue service below: CompactionRecoveryService ctor-injects the queue,
         // which ctor-injects this runtime — direct injection here would close a constructor cycle.
@@ -221,6 +227,21 @@ public sealed class AgentSessionRuntime
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Compaction recovery dispatch failed for session {SessionId}", sessionId);
+        }
+    }
+
+    private async Task DispatchChannelRepliesAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
+            if (channelReplies is not null)
+                await channelReplies.OnTurnEndAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Channel reply dispatch failed for session {SessionId}", sessionId);
         }
     }
 

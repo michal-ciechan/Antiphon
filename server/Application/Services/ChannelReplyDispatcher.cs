@@ -106,6 +106,20 @@ public sealed class ChannelReplyDispatcher
         if (userPrompt?.Text is not string promptText)
             return;
 
+        // Extract the response BEFORE consuming any correlations: Claude sometimes writes the
+        // turn's stop marker before its reply text (observed live 2026-07-24: TurnEnd seq N,
+        // AssistantText seq N+1) — consuming on a text-less TurnEnd loses the reply forever.
+        // With no text yet the correlations stay pending; the AssistantText that follows (or a
+        // later TurnEnd) re-triggers dispatch, and genuinely silent turns' correlations age out
+        // via the TTL.
+        var responseText = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+        if (string.IsNullOrWhiteSpace(responseText))
+        {
+            _logger.LogDebug(
+                "Turn on session {SessionId} has no assistant text yet; correlations stay pending", sessionId);
+            return;
+        }
+
         // Only answer turns WE started: match the turn's prompt against pending correlations. A human
         // typing directly into the terminal produces turns that match nothing and are skipped. A
         // BATCHED turn (several queued channel messages coalesced into one body) matches — and
@@ -113,14 +127,6 @@ public sealed class ChannelReplyDispatcher
         var matches = TakeAllMatching(queue, promptText);
         if (matches.Count == 0)
             return;
-
-        var responseText = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, endSeq, ct);
-        if (string.IsNullOrWhiteSpace(responseText))
-        {
-            _logger.LogInformation(
-                "Turn for channel {ChannelId} produced no assistant text; skipping reply", matches[0].ChannelId);
-            return;
-        }
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY consumes the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
@@ -158,14 +164,27 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
+    // The turn's response = all assistant text after its prompt up to the NEXT prompt — NOT capped
+    // at the TurnEnd sequence, because the stop marker can precede the reply text in Claude's
+    // transcript ordering. At dispatch time the next turn hasn't produced entries yet, so an open
+    // upper bound is safe.
     private static async Task<string?> ExtractTurnResponseAsync(
-        AppDbContext db, Guid sessionId, long promptSeq, long endSeq, CancellationToken ct)
+        AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
-        var texts = await db.TranscriptEntries
+        var nextPromptSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > promptSeq)
+            .MinAsync(t => (long?)t.Sequence, ct);
+
+        var query = db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind == TranscriptKinds.AssistantText
-                && t.Sequence > promptSeq
-                && t.Sequence < endSeq)
+                && t.Sequence > promptSeq);
+        if (nextPromptSeq is long cap)
+            query = query.Where(t => t.Sequence < cap);
+
+        var texts = await query
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
             .ToListAsync(ct);
