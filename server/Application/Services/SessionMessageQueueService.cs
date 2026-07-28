@@ -605,9 +605,12 @@ public sealed class SessionMessageQueueService
             }
 
             var payload = new { sessionId, cardId, boardId, agentId, label };
-            // Session-scoped (for the open terminal's badge) and global (for the app-wide toast).
-            await _eventBus.PublishToGroupAsync(
-                AgentSessionGroups.Session(sessionId), "SessionFinished", payload, ct);
+            _logger.LogInformation(
+                "Broadcasting SessionFinished for session {SessionId} ({Label})", sessionId, label);
+            // Broadcast to all clients only — connections joined to the session group are part of
+            // Clients.All, so an additional group-scoped publish would deliver the event twice to
+            // anyone with that session's terminal open (duplicate toasts). Handlers that care about
+            // a specific session filter by payload.sessionId.
             await _eventBus.PublishToAllAsync("SessionFinished", payload, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

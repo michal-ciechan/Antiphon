@@ -16,6 +16,9 @@ export function useSessionFinishedToasts(connectionRef: RefObject<HubConnection 
     if (!connection) return
 
     const handler = (payload: SessionFinishedPayload) => {
+      // Visible in devtools (verbose level) — one line per received event, so duplicate
+      // deliveries from the server are diagnosable from the console.
+      console.debug('[SessionFinished]', payload)
       const label = payload.label || 'Agent'
       const message = `${label} finished and is waiting.`
 

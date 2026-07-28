@@ -135,10 +135,10 @@ public class SessionMessageQueueServiceTests
             await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
             var finished = h.EventBus.PublishedEvents.Where(e => e.EventName == "SessionFinished").ToList();
-            finished.ShouldNotBeEmpty();
-            // Both the session group (badge) and the global broadcast (toast) are emitted.
-            finished.ShouldContain(e => e.Group != null);
-            finished.ShouldContain(e => e.Group == null);
+            // Exactly one global broadcast — a second group-scoped publish would reach connections
+            // in the session group twice and duplicate the toast.
+            var single = finished.ShouldHaveSingleItem();
+            single.Group.ShouldBeNull();
             h.Adapter.SentInput.ShouldBeEmpty();
         }
         finally
