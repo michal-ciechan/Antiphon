@@ -5,6 +5,10 @@ shuttles messages **to/from Kafka** — inbound messages land on `channels.inbou
 Postgres inbox), replies are consumed from `channels.outbound` and delivered back to the
 channel. It also exposes a small REST API (`/api/channels/...`) for listing/replying.
 
+> **Telegram specifics** — outbound **Markdown → Telegram HTML formatting** (the full mapping,
+> parse modes, fallback behaviour), inbound normalization, and every `Telegram__*` setting are
+> documented in **[docs/telegram.md](../../docs/telegram.md)**.
+
 ## Run it standalone — one instance per bot
 
 The service is designed to run **as many independent instances as you have bots**. Each

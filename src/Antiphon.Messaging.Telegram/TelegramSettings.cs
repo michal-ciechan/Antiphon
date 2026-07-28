@@ -29,4 +29,13 @@ public sealed class TelegramSettings
     /// <summary>Extra attempts for an outbound sendMessage when the failure looks transient (429/5xx/network).
     /// The consumer auto-commits, so without this a transient blip silently drops the reply. 0 disables.</summary>
     public int SendRetryAttempts { get; set; } = 2;
+
+    /// <summary>
+    /// Outbound text formatting. <c>"Markdown"</c> (default) renders the reply's Markdown to
+    /// Telegram HTML (<see cref="TelegramMarkdownRenderer"/>, <c>parse_mode=HTML</c>) with an
+    /// automatic plain-text resend if Telegram rejects the entities; <c>"Plain"</c> sends the raw
+    /// text untouched (the pre-2026-07-28 behaviour). A reply whose <c>RawOverrides</c> carry
+    /// <c>parse_mode</c> or <c>text</c> is never converted. See docs/telegram.md.
+    /// </summary>
+    public string Formatting { get; set; } = "Markdown";
 }

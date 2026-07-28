@@ -41,7 +41,9 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         Reactions = true,
         Threads = false,
         TypingIndicator = true,
-        MarkdownFlavor = "MarkdownV2",
+        // Producers send standard Markdown; this adapter renders it to Telegram HTML itself
+        // (TelegramMarkdownRenderer) — see docs/telegram.md.
+        MarkdownFlavor = "Markdown",
         MaxTextLength = 4096,
         AttachmentKinds =
         [
@@ -316,7 +318,8 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         if (string.IsNullOrEmpty(target))
             return SendResult.Failed("Reply has no ConversationId or ReplyHandle.");
 
-        var payloadJson = BuildSendPayload(reply, target);
+        var formatted = ShouldFormat(reply);
+        var payloadJson = BuildSendPayload(reply, target, formatted);
         var maxAttempts = Math.Max(0, _settings.SendRetryAttempts) + 1;
 
         // The outbound consumer auto-commits, so a transient blip (429/5xx/network) would silently drop
@@ -325,13 +328,45 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         {
             var (result, retryDelay) = await TrySendOnceAsync(payloadJson, lastAttempt: attempt >= maxAttempts, cancellationToken);
             if (result is not null)
+            {
+                // Formatting must never cost a delivery: if Telegram rejects the rendered HTML
+                // entities, resend the original text plain (with a fresh retry budget).
+                if (!result.Ok && formatted && IsEntityParseError(result.Error))
+                {
+                    _logger.LogWarning(
+                        "[telegram] rendered HTML rejected; resending as plain text. {Error}", result.Error);
+                    formatted = false;
+                    payloadJson = BuildSendPayload(reply, target, htmlFormatting: false);
+                    attempt = 0;
+                    continue;
+                }
                 return result;
+            }
 
             _logger.LogWarning("[telegram] sendMessage transient failure; retry {Attempt}/{Max} after {Delay}s",
                 attempt, maxAttempts - 1, retryDelay.GetValueOrDefault().TotalSeconds);
             await Task.Delay(retryDelay.GetValueOrDefault(ErrorBackoff), cancellationToken);
         }
     }
+
+    private bool ShouldFormat(ChannelReply reply)
+    {
+        if (reply.Text is null || !string.Equals(_settings.Formatting, "Markdown", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // RawOverrides own the formatting when they set parse_mode or replace the text outright.
+        if (reply.RawOverrides is { ValueKind: JsonValueKind.Object } overrides
+            && (overrides.TryGetProperty("parse_mode", out _) || overrides.TryGetProperty("text", out _)))
+            return false;
+
+        return true;
+    }
+
+    // Telegram's description is "Bad Request: can't parse entities: ...". Match without the
+    // apostrophe: the raw body we surface may carry it JSON-escaped (') depending on the
+    // serializer, and "parse entities" alone uniquely identifies the error family.
+    private static bool IsEntityParseError(string? error) =>
+        error?.Contains("parse entities", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>One sendMessage attempt. Returns a terminal <see cref="SendResult"/>, or (null, delay) when the
     /// failure is transient and the caller should retry after <c>delay</c>.</summary>
@@ -381,22 +416,32 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         }
     }
 
-    private string BuildSendPayload(ChannelReply reply, string target)
+    private string BuildSendPayload(ChannelReply reply, string target, bool htmlFormatting)
     {
         var payload = new Dictionary<string, object?>
         {
             ["chat_id"] = long.TryParse(target, out var chatId) ? chatId : target,
         };
         if (reply.Text is not null)
-            payload["text"] = reply.Kind switch
+        {
+            // Render the reply kind visibly: interim progress notes and blocking questions read
+            // differently from a final answer. The markers are plain emoji, safe under both modes.
+            var text = reply.Kind switch
             {
-                // Render the reply kind visibly: interim progress notes and blocking questions read
-                // differently from a final answer. Plain text markers (not parse_mode) so RawOverrides
-                // stay free to set their own formatting.
                 ChannelReplyKind.Progress => $"⏳ {reply.Text}",
                 ChannelReplyKind.Question => $"❓ {reply.Text}",
                 _ => reply.Text,
             };
+            if (htmlFormatting)
+            {
+                payload["text"] = TelegramMarkdownRenderer.ToHtml(text);
+                payload["parse_mode"] = "HTML";
+            }
+            else
+            {
+                payload["text"] = text;
+            }
+        }
         if (!string.IsNullOrEmpty(reply.ReplyToMessageId))
             payload["reply_to_message_id"] = long.TryParse(reply.ReplyToMessageId, out var rid) ? rid : reply.ReplyToMessageId;
 
