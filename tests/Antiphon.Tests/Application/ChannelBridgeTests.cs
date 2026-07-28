@@ -114,6 +114,65 @@ public class ChannelBridgeTests
         h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
     }
 
+    // Live failure 2026-07-29 (AZ Care, first message to the freshly-bound agent): the turn had
+    // interim narration between tool calls, then TurnEnd, then the REAL answer one second later,
+    // then a second TurnEnd. Dispatch on the first TurnEnd found the narration (non-empty text),
+    // consumed the correlations and sent it — so when the answer arrived nothing was pending and it
+    // was dropped. Trailing text for an already-dispatched turn must go out as a follow-up reply.
+    [Test]
+    public async Task Text_arriving_after_an_interim_reply_was_sent_still_reaches_the_chat()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "answers Olas question", title: "AZ Care");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertEntryAsync(TranscriptKinds.UserPrompt, h.Adapter.Inputs[0]);
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "I don't see Ola's question — checking the message bus.");
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text
+            .ShouldBe("I don't see Ola's question — checking the message bus.");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0, "the interim dispatch consumed the correlation");
+
+        // The real answer lands after dispatch already consumed the correlation; its arrival
+        // re-triggers dispatch, which must deliver it as a follow-up to the same conversation.
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Ola's question: stop Apple Music autoplaying — delete the Music app.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2, "the trailing text must be sent, and only once");
+        h.Messaging.SentReplies[1].Text
+            .ShouldBe("Ola's question: stop Apple Music autoplaying — delete the Music app.");
+        h.Messaging.SentReplies[1].ConversationId.ShouldBe(h.ChatId);
+    }
+
+    // The follow-up path must not resurrect a finished turn: once a NEW prompt starts the next
+    // turn, trailing-text delivery for the old one is closed off (that text would be stale).
+    [Test]
+    public async Task Follow_up_stops_once_the_next_turn_starts()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "first question", title: "AZ Care");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertTurnAsync(h.Adapter.Inputs[0], "Answered.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+
+        // Next turn begins (human typed in the terminal); text after it belongs to that turn.
+        await h.InsertEntryAsync(TranscriptKinds.UserPrompt, "run the tests please");
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next prompt must not be sent as a follow-up");
+    }
+
     [Test]
     public async Task A_response_ending_in_a_question_is_typed_as_question()
     {

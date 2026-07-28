@@ -33,6 +33,19 @@ public sealed class ChannelReplyDispatcher
         string Prompt,
         DateTime EnqueuedAtUtc);
 
+    private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
+
+    // The last turn we replied for, per session. Claude can keep writing AssistantText AFTER the
+    // TurnEnd that triggered dispatch (observed live 2026-07-29, AZ Care: TurnEnd, AssistantText,
+    // TurnEnd — the first dispatch consumed the correlations with only the turn's interim narration
+    // extracted, and the real answer landed one second later with nothing left to match). Remembering
+    // the dispatched turn's watermark lets that trailing text go out as a follow-up reply. Record
+    // equality (value-compared watermark, reference-compared targets) makes TryUpdate an atomic
+    // claim, so racing triggers can't double-send.
+    private readonly ConcurrentDictionary<Guid, DispatchedTurn> _dispatched = new();
+
+    private sealed record DispatchedTurn(long PromptSeq, long MaxTextSeq, IReadOnlyList<ReplyTarget> Targets);
+
     private readonly ConcurrentDictionary<Guid, ConcurrentQueue<PendingChannelReply>> _pending = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IAntiphonMessagingProducer _producer;
@@ -67,16 +80,19 @@ public sealed class ChannelReplyDispatcher
     /// </summary>
     public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
-        if (!_pending.TryGetValue(sessionId, out var queue) || queue.IsEmpty)
-            return;
-
-        EvictStale(queue);
-        if (queue.IsEmpty)
-            return;
-
         try
         {
-            await DispatchAsync(sessionId, queue, ct);
+            if (_pending.TryGetValue(sessionId, out var queue) && !queue.IsEmpty)
+            {
+                EvictStale(queue);
+                if (!queue.IsEmpty)
+                    await DispatchAsync(sessionId, queue, ct);
+            }
+
+            // Trailing text for an already-answered turn (stop marker mid-stream) goes out as a
+            // follow-up. No-op unless this session's last dispatched turn is still the live one.
+            if (_dispatched.ContainsKey(sessionId))
+                await DispatchFollowUpAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -112,7 +128,7 @@ public sealed class ChannelReplyDispatcher
         // With no text yet the correlations stay pending; the AssistantText that follows (or a
         // later TurnEnd) re-triggers dispatch, and genuinely silent turns' correlations age out
         // via the TTL.
-        var responseText = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+        var (responseText, maxTextSeq) = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
         if (string.IsNullOrWhiteSpace(responseText))
         {
             _logger.LogDebug(
@@ -128,6 +144,15 @@ public sealed class ChannelReplyDispatcher
         if (matches.Count == 0)
             return;
 
+        // Consuming the correlations closes the turn — remember its watermark so text that lands
+        // AFTER this dispatch (stop marker mid-stream) can still be delivered as a follow-up.
+        var targets = matches
+            .GroupBy(m => (m.Provider, m.ConversationId))
+            .Select(g => g.Last())
+            .Select(m => new ReplyTarget(m.Provider, m.ReplyHandle, m.ConversationId))
+            .ToList();
+        _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
+
         // The frozen silent-turn contract: a whole-turn NO_REPLY consumes the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
         if (ChannelContracts.IsNoReply(responseText))
@@ -138,37 +163,103 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        var text = responseText.Length > _settings.MaxReplyChars
-            ? responseText[.._settings.MaxReplyChars] + "…"
-            : responseText;
+        var text = Truncate(responseText);
         var kind = ClassifyKind(responseText);
 
         // One reply per distinct conversation, addressed via the NEWEST match's handle. With
         // same-conversation batching this loop is degenerate (exactly one send) — the fan-out is a
         // deliberate latent safety net in case batching scope ever widens to cross-conversation.
-        foreach (var group in matches.GroupBy(m => (m.Provider, m.ConversationId)))
+        foreach (var target in targets)
         {
-            var newest = group.Last();
             var reply = new ChannelReply
             {
-                Channel = newest.Provider,
-                ReplyHandle = newest.ReplyHandle,
-                ConversationId = newest.ConversationId,
+                Channel = target.Provider,
+                ReplyHandle = target.ReplyHandle,
+                ConversationId = target.ConversationId,
                 Text = text,
                 Kind = kind,
             };
             await _producer.SendAsync(reply, ct);
             _logger.LogInformation(
                 "Sent {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId}",
-                reply.Kind, text.Length, newest.Provider, newest.ConversationId, sessionId);
+                reply.Kind, text.Length, target.Provider, target.ConversationId, sessionId);
         }
     }
+
+    // A turn we already replied for can gain more AssistantText: Claude sometimes writes a stop
+    // marker mid-stream, dispatch fires with only the text so far (e.g. interim narration between
+    // tool calls), and the real answer follows seconds later. The correlations are gone by then, so
+    // route the trailing text to the same targets. The watermark claim via TryUpdate keeps racing
+    // triggers (AssistantText arrival + the closing TurnEnd) from double-sending.
+    private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!_dispatched.TryGetValue(sessionId, out var turn))
+            return;
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // A newer prompt means the dispatched turn is over — anything after it belongs to the next
+        // turn's dispatch, so the record is done.
+        var latestPromptSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+        if (latestPromptSeq != turn.PromptSeq)
+        {
+            _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
+            return;
+        }
+
+        var late = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.AssistantText
+                && t.Sequence > turn.MaxTextSeq)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Text })
+            .ToListAsync(ct);
+        var texts = late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).ToList();
+        if (texts.Count == 0)
+            return;
+
+        // Claim the trailing entries before sending; the loser of a race sees the moved watermark.
+        var claimed = turn with { MaxTextSeq = late[^1].Sequence };
+        if (!_dispatched.TryUpdate(sessionId, claimed, turn))
+            return;
+
+        var joined = string.Join("\n\n", texts.Select(l => l.Text!)).Trim();
+        if (ChannelContracts.IsNoReply(joined))
+            return;
+
+        var text = Truncate(joined);
+        var kind = ClassifyKind(joined);
+        foreach (var target in turn.Targets)
+        {
+            var reply = new ChannelReply
+            {
+                Channel = target.Provider,
+                ReplyHandle = target.ReplyHandle,
+                ConversationId = target.ConversationId,
+                Text = text,
+                Kind = kind,
+            };
+            await _producer.SendAsync(reply, ct);
+            _logger.LogInformation(
+                "Sent follow-up {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
+                reply.Kind, text.Length, target.Provider, target.ConversationId, sessionId);
+        }
+    }
+
+    private string Truncate(string responseText) =>
+        responseText.Length > _settings.MaxReplyChars
+            ? responseText[.._settings.MaxReplyChars] + "…"
+            : responseText;
 
     // The turn's response = all assistant text after its prompt up to the NEXT prompt — NOT capped
     // at the TurnEnd sequence, because the stop marker can precede the reply text in Claude's
     // transcript ordering. At dispatch time the next turn hasn't produced entries yet, so an open
-    // upper bound is safe.
-    private static async Task<string?> ExtractTurnResponseAsync(
+    // upper bound is safe. Also returns the highest sequence included, so trailing text that lands
+    // after this dispatch can be told apart from what was already sent.
+    private static async Task<(string? Text, long MaxSeq)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
         var nextPromptSeq = await db.TranscriptEntries
@@ -184,13 +275,14 @@ public sealed class ChannelReplyDispatcher
         if (nextPromptSeq is long cap)
             query = query.Where(t => t.Sequence < cap);
 
-        var texts = await query
+        var entries = await query
             .OrderBy(t => t.Sequence)
-            .Select(t => t.Text)
+            .Select(t => new { t.Sequence, t.Text })
             .ToListAsync(ct);
 
-        var joined = string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t)));
-        return string.IsNullOrWhiteSpace(joined) ? null : joined.Trim();
+        var maxSeq = entries.Count > 0 ? entries[^1].Sequence : promptSeq;
+        var joined = string.Join("\n\n", entries.Select(t => t.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
+        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), maxSeq);
     }
 
     // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can
