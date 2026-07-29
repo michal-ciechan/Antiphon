@@ -416,6 +416,7 @@ public class AgentSupervisionTests
                 NullLogger<Antiphon.Server.Infrastructure.WorkspaceHooks.WorkspaceHookRunner>.Instance));
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();

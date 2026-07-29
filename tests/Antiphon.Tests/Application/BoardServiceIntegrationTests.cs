@@ -325,6 +325,7 @@ public class BoardServiceIntegrationTests
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<AgentSessionService>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();

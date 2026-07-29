@@ -1104,6 +1104,7 @@ public class OrchestratorServiceIntegrationTests
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
             new QueueAdapterFactory(adapters, sp.GetRequiredService<AgentSessionRuntime>()));
         services.AddScoped<AgentSessionService>();
