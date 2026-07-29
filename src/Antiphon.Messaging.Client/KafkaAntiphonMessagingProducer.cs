@@ -14,7 +14,13 @@ public sealed class KafkaAntiphonMessagingProducer : IAntiphonMessagingProducer,
     {
         _options = options.Value;
         _producer = new ProducerBuilder<string, string>(
-            new ProducerConfig { BootstrapServers = _options.BootstrapServers }).Build();
+            new ProducerConfig
+            {
+                BootstrapServers = _options.BootstrapServers,
+                // Attachment-bearing replies can approach the bus cap; the broker's topic config
+                // (max.message.bytes) enforces the same ceiling on its side.
+                MessageMaxBytes = _options.MaxMessageBytes,
+            }).Build();
     }
 
     public async Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)

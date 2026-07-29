@@ -318,6 +318,28 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         if (string.IsNullOrEmpty(target))
             return SendResult.Failed("Reply has no ConversationId or ReplyHandle.");
 
+        // Text first (its own bubble), then each attachment as a document. A reply may be either
+        // or both; failing the text fails the whole send (the attachments would lack context).
+        SendResult? last = null;
+        if (reply.Text is not null)
+        {
+            last = await SendTextAsync(reply, target, cancellationToken);
+            if (!last.Ok)
+                return last;
+        }
+
+        foreach (var attachment in reply.Attachments)
+        {
+            last = await SendDocumentAsync(attachment, target, cancellationToken);
+            if (!last.Ok)
+                return last;
+        }
+
+        return last ?? SendResult.Failed("Reply has neither text nor attachments.");
+    }
+
+    private async Task<SendResult> SendTextAsync(ChannelReply reply, string target, CancellationToken cancellationToken)
+    {
         var formatted = ShouldFormat(reply);
         var payloadJson = BuildSendPayload(reply, target, formatted);
         var maxAttempts = Math.Max(0, _settings.SendRetryAttempts) + 1;
@@ -347,6 +369,104 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 attempt, maxAttempts - 1, retryDelay.GetValueOrDefault().TotalSeconds);
             await Task.Delay(retryDelay.GetValueOrDefault(ErrorBackoff), cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// One attachment → one <c>sendDocument</c>. Inline bytes (<see cref="OutboundAttachment.Content"/>,
+    /// how files arrive over Kafka) go as multipart; a bare <see cref="OutboundAttachment.Source"/>
+    /// (URL or Telegram file_id) goes as the JSON string form Telegram fetches itself.
+    /// </summary>
+    private async Task<SendResult> SendDocumentAsync(OutboundAttachment attachment, string target, CancellationToken cancellationToken)
+    {
+        if (attachment.Content is null && string.IsNullOrEmpty(attachment.Source))
+            return SendResult.Failed("Attachment has neither Content nor Source.");
+
+        var maxAttempts = Math.Max(0, _settings.SendRetryAttempts) + 1;
+        for (var attempt = 1; ; attempt++)
+        {
+            var (result, retryDelay) = await TrySendDocumentOnceAsync(
+                attachment, target, lastAttempt: attempt >= maxAttempts, cancellationToken);
+            if (result is not null)
+                return result;
+
+            _logger.LogWarning("[telegram] sendDocument transient failure; retry {Attempt}/{Max} after {Delay}s",
+                attempt, maxAttempts - 1, retryDelay.GetValueOrDefault().TotalSeconds);
+            await Task.Delay(retryDelay.GetValueOrDefault(ErrorBackoff), cancellationToken);
+        }
+    }
+
+    private async Task<(SendResult? Result, TimeSpan? RetryDelay)> TrySendDocumentOnceAsync(
+        OutboundAttachment attachment, string target, bool lastAttempt, CancellationToken ct)
+    {
+        try
+        {
+            // HttpContent is single-use — build it fresh per attempt.
+            using var content = BuildDocumentContent(attachment, target);
+            using var resp = await _http.PostAsync(Url("sendDocument"), content, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(body); }
+            catch (JsonException)
+            {
+                return lastAttempt
+                    ? (SendResult.Failed($"Telegram sendDocument HTTP {(int)resp.StatusCode}: non-JSON body"), null)
+                    : (null, ErrorBackoff);
+            }
+
+            using (doc)
+            {
+                var root = doc.RootElement;
+                if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
+                {
+                    var sentId = root.TryGetProperty("result", out var result) && GetLong(result, "message_id") is { } sid
+                        ? sid.ToString(CultureInfo.InvariantCulture)
+                        : null;
+                    return (SendResult.Sent(sentId), null);
+                }
+
+                var (code, _, retryAfter) = ReadError(root);
+                if (lastAttempt || !IsTransient(code, retryAfter))
+                    return (SendResult.Failed($"Telegram sendDocument failed: {body}"), null);
+
+                return (null, retryAfter is { } ra ? CapRetryAfter(ra) : ErrorBackoff);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
+        }
+    }
+
+    private static HttpContent BuildDocumentContent(OutboundAttachment attachment, string target)
+    {
+        if (attachment.Content is { } bytes)
+        {
+            var form = new MultipartFormDataContent
+            {
+                { new StringContent(target), "chat_id" },
+            };
+            if (!string.IsNullOrEmpty(attachment.Caption))
+                form.Add(new StringContent(attachment.Caption), "caption");
+            var file = new ByteArrayContent(bytes);
+            file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                attachment.Mime ?? "application/octet-stream");
+            form.Add(file, "document", attachment.Name ?? "file");
+            return form;
+        }
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["chat_id"] = long.TryParse(target, out var chatId) ? chatId : target,
+            ["document"] = attachment.Source,
+        };
+        if (!string.IsNullOrEmpty(attachment.Caption))
+            payload["caption"] = attachment.Caption;
+        return new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
     }
 
     private bool ShouldFormat(ChannelReply reply)

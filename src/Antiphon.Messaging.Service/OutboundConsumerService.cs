@@ -26,6 +26,10 @@ public sealed class OutboundConsumerService(
             GroupId = $"{_kafka.ConsumerGroup}-outbound",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = true,
+            // Attachment-bearing replies can be up to the bus cap (20 MB); the per-partition
+            // fetch default (1 MB) would stall on them.
+            MaxPartitionFetchBytes = _kafka.MaxMessageBytes,
+            FetchMaxBytes = Math.Max(_kafka.MaxMessageBytes, 50 * 1024 * 1024),
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();

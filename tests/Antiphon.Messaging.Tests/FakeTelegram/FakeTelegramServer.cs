@@ -41,6 +41,13 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         get { lock (_gate) return _sent.ToList(); }
     }
 
+    private readonly List<SentDocument> _sentDocuments = [];
+
+    public IReadOnlyList<SentDocument> SentDocuments
+    {
+        get { lock (_gate) return _sentDocuments.ToList(); }
+    }
+
     public FakeTelegramServer(string botToken = "test-bot-token")
     {
         BotToken = botToken;
@@ -170,6 +177,75 @@ public sealed class FakeTelegramServer : IAsyncDisposable
             return Ok(result);
         });
 
+        // sendDocument accepts BOTH wire forms real Telegram does: multipart/form-data with the
+        // bytes in a "document" file part (how uploads work), and a JSON body whose "document" is
+        // a string (URL or file_id Telegram fetches itself). Shares the sendMessage fault queue —
+        // an enqueued send fault hits whichever send call comes next, like a real outage would.
+        app.MapPost("/{bot}/sendDocument", async (string bot, HttpContext ctx) =>
+        {
+            if (!TokenOk(bot)) return Unauthorized();
+
+            lock (_gate)
+            {
+                SendCalls++;
+                if (_sendFaults.Count > 0)
+                    return FaultResult(_sendFaults.Dequeue());
+            }
+
+            string? chatId = null, caption = null, fileName = null, mime = null, source = null;
+            byte[]? bytes = null;
+
+            if (ctx.Request.HasFormContentType)
+            {
+                var form = await ctx.Request.ReadFormAsync();
+                chatId = form["chat_id"].FirstOrDefault();
+                caption = form["caption"].FirstOrDefault();
+                var file = form.Files.GetFile("document");
+                if (file is not null)
+                {
+                    fileName = file.FileName;
+                    mime = file.ContentType;
+                    using var ms = new MemoryStream();
+                    await file.CopyToAsync(ms);
+                    bytes = ms.ToArray();
+                }
+            }
+            else
+            {
+                JsonObject? body;
+                try { body = (await JsonNode.ParseAsync(ctx.Request.Body)) as JsonObject; }
+                catch { body = null; }
+                chatId = body?["chat_id"]?.ToJsonString().Trim('"');
+                caption = body?["caption"]?.GetValue<string>();
+                source = body?["document"]?.GetValue<string>();
+            }
+
+            if (string.IsNullOrWhiteSpace(chatId) || chatId == "0")
+                return Error(400, "Bad Request: chat_id is empty");
+            if (bytes is null && string.IsNullOrEmpty(source))
+                return Error(400, "Bad Request: there is no document in the request");
+
+            var id = Next(ref _nextMessageId);
+            lock (_gate)
+                _sentDocuments.Add(new SentDocument(chatId, fileName, mime, bytes, source, caption));
+
+            var result = new JsonObject
+            {
+                ["message_id"] = id,
+                ["from"] = new JsonObject { ["id"] = 42, ["is_bot"] = true, ["username"] = "fake_bot" },
+                ["chat"] = new JsonObject { ["id"] = long.TryParse(chatId, out var cid) ? cid : chatId },
+                ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["document"] = new JsonObject
+                {
+                    ["file_id"] = $"fake-file-{id}",
+                    ["file_name"] = fileName,
+                    ["mime_type"] = mime,
+                    ["file_size"] = bytes?.Length,
+                },
+            };
+            return Ok(result);
+        });
+
         app.MapGet("/{bot}/deleteWebhook", (string bot) =>
         {
             if (!TokenOk(bot)) return Unauthorized();
@@ -233,3 +309,7 @@ public sealed class FakeTelegramServer : IAsyncDisposable
 
 /// <summary>A recorded outbound sendMessage call.</summary>
 public sealed record SentMessage(string ChatId, string? Text, JsonObject? RawBody);
+
+/// <summary>A recorded outbound sendDocument call. <see cref="Bytes"/> for multipart uploads;
+/// <see cref="Source"/> for the JSON string form (URL / file_id).</summary>
+public sealed record SentDocument(string ChatId, string? FileName, string? Mime, byte[]? Bytes, string? Source, string? Caption);

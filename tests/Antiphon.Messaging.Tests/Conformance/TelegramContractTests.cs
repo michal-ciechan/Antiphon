@@ -90,6 +90,35 @@ public sealed class TelegramContractTests
             r["description"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
         });
 
+    [Test]
+    public async Task sendDocument_to_empty_chat_returns_ok_false_with_error() =>
+        await ForFakeAndReal(async (baseUrl, token) =>
+        {
+            // Multipart with a real file part but chat_id 0 — both fake and real reject before
+            // touching the document. Pins the error envelope the adapter's retry logic parses.
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent("0"), "chat_id");
+            var file = new ByteArrayContent("test-bytes"u8.ToArray());
+            file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+            form.Add(file, "document", "conformance.pdf");
+
+            using var resp = await Http.PostAsync(Url(baseUrl, token, "sendDocument"), form);
+            var r = JsonNode.Parse(await resp.Content.ReadAsStringAsync())!;
+            r["ok"]!.GetValue<bool>().ShouldBeFalse();
+            r["error_code"]!.GetValue<int>().ShouldBeGreaterThanOrEqualTo(400);
+            r["description"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
+        });
+
+    [Test]
+    public async Task sendDocument_without_a_document_returns_ok_false() =>
+        await ForFakeAndReal(async (baseUrl, token) =>
+        {
+            // JSON form, valid-looking chat but no document field at all.
+            var r = await PostJson(Url(baseUrl, token, "sendDocument"), new JsonObject { ["chat_id"] = 0 });
+            r["ok"]!.GetValue<bool>().ShouldBeFalse();
+            r["error_code"]!.GetValue<int>().ShouldBeGreaterThanOrEqualTo(400);
+        });
+
     private static async Task<JsonNode> GetJson(string url)
     {
         using var resp = await Http.GetAsync(url);

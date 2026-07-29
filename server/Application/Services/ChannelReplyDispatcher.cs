@@ -163,8 +163,9 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        var text = Truncate(responseText);
-        var kind = ClassifyKind(responseText);
+        var (bodyText, attachments) = PrepareReplyBody(responseText, sessionId);
+        var text = Truncate(bodyText);
+        var kind = ClassifyKind(bodyText);
 
         // One reply per distinct conversation, addressed via the NEWEST match's handle. With
         // same-conversation batching this loop is degenerate (exactly one send) — the fan-out is a
@@ -176,15 +177,102 @@ public sealed class ChannelReplyDispatcher
                 Channel = target.Provider,
                 ReplyHandle = target.ReplyHandle,
                 ConversationId = target.ConversationId,
-                Text = text,
+                Text = text.Length == 0 ? null : text,
                 Kind = kind,
+                Attachments = attachments,
             };
             await _producer.SendAsync(reply, ct);
             _logger.LogInformation(
-                "Sent {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId}",
-                reply.Kind, text.Length, target.Provider, target.ConversationId, sessionId);
+                "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
+                reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
         }
     }
+
+    /// <summary>
+    /// Resolves the agent's <c>[[attach: path]]</c> markers into inline attachments: marker lines
+    /// come out of the text, files are read from THIS host's disk (agent and server share the
+    /// machine; the remote gateway cannot), and files that are missing or blow the raw budget are
+    /// skipped with a note appended to the text so the agent's mistake is visible in the chat.
+    /// </summary>
+    private (string Text, IReadOnlyList<OutboundAttachment> Attachments) PrepareReplyBody(
+        string responseText, Guid sessionId)
+    {
+        var (text, paths) = ChannelContracts.ExtractAttachments(responseText);
+        if (paths.Count == 0)
+            return (responseText, []);
+
+        var attachments = new List<OutboundAttachment>();
+        var notes = new List<string>();
+        var budget = _settings.MaxAttachmentBytes; // cumulative: all attachments share one Kafka message
+
+        foreach (var path in paths)
+        {
+            FileInfo file;
+            try { file = new FileInfo(path); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                notes.Add($"⚠️ attachment path invalid: {path}");
+                continue;
+            }
+
+            if (!file.Exists)
+            {
+                notes.Add($"⚠️ attachment not found: {path}");
+                _logger.LogWarning("Session {SessionId} attach marker points at a missing file: {Path}", sessionId, path);
+                continue;
+            }
+            if (file.Length > budget)
+            {
+                notes.Add($"⚠️ attachment skipped — {file.Name} is {file.Length / (1024 * 1024)} MB, over the {_settings.MaxAttachmentBytes / (1024 * 1024)} MB limit");
+                _logger.LogWarning(
+                    "Session {SessionId} attachment {Path} ({Bytes} bytes) exceeds the remaining budget {Budget}",
+                    sessionId, path, file.Length, budget);
+                continue;
+            }
+
+            attachments.Add(new OutboundAttachment
+            {
+                Kind = InferAttachmentKind(file.Extension),
+                Source = file.FullName,
+                Content = File.ReadAllBytes(file.FullName),
+                Name = file.Name,
+                Mime = InferMime(file.Extension),
+            });
+            budget -= file.Length;
+        }
+
+        if (notes.Count > 0)
+            text = text.Length == 0 ? string.Join("\n", notes) : $"{text}\n\n{string.Join("\n", notes)}";
+        return (text, attachments);
+    }
+
+    private static AttachmentKind InferAttachmentKind(string extension) => extension.ToLowerInvariant() switch
+    {
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" => AttachmentKind.Image,
+        ".mp4" or ".mov" or ".webm" => AttachmentKind.Video,
+        ".mp3" or ".m4a" or ".wav" or ".flac" => AttachmentKind.Audio,
+        ".ogg" or ".oga" => AttachmentKind.Voice,
+        _ => AttachmentKind.File,
+    };
+
+    private static string InferMime(string extension) => extension.ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        ".txt" or ".md" => "text/plain",
+        ".csv" => "text/csv",
+        ".json" => "application/json",
+        ".zip" => "application/zip",
+        ".mp4" => "video/mp4",
+        ".mp3" => "audio/mpeg",
+        ".ogg" or ".oga" => "audio/ogg",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream",
+    };
 
     // A turn we already replied for can gain more AssistantText: Claude sometimes writes a stop
     // marker mid-stream, dispatch fires with only the text so far (e.g. interim narration between
@@ -230,8 +318,9 @@ public sealed class ChannelReplyDispatcher
         if (ChannelContracts.IsNoReply(joined))
             return;
 
-        var text = Truncate(joined);
-        var kind = ClassifyKind(joined);
+        var (bodyText, attachments) = PrepareReplyBody(joined, sessionId);
+        var text = Truncate(bodyText);
+        var kind = ClassifyKind(bodyText);
         foreach (var target in turn.Targets)
         {
             var reply = new ChannelReply
@@ -239,13 +328,14 @@ public sealed class ChannelReplyDispatcher
                 Channel = target.Provider,
                 ReplyHandle = target.ReplyHandle,
                 ConversationId = target.ConversationId,
-                Text = text,
+                Text = text.Length == 0 ? null : text,
                 Kind = kind,
+                Attachments = attachments,
             };
             await _producer.SendAsync(reply, ct);
             _logger.LogInformation(
-                "Sent follow-up {Kind} reply ({Chars} chars) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
-                reply.Kind, text.Length, target.Provider, target.ConversationId, sessionId);
+                "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
+                reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
         }
     }
 

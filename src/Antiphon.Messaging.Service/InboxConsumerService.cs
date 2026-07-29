@@ -25,6 +25,9 @@ public sealed class InboxConsumerService(
             GroupId = $"{_kafka.ConsumerGroup}-inbox",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = true,
+            // Match the bus cap (20 MB) — inbound messages may carry attachment payloads too.
+            MaxPartitionFetchBytes = _kafka.MaxMessageBytes,
+            FetchMaxBytes = Math.Max(_kafka.MaxMessageBytes, 50 * 1024 * 1024),
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();

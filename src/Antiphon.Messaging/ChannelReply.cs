@@ -55,9 +55,20 @@ public sealed record OutboundAttachment
 {
     public required AttachmentKind Kind { get; init; }
 
-    /// <summary>A channel ref to re-send, a URL, or a path the adapter can read bytes from.</summary>
-    public required string Source { get; init; }
+    /// <summary>
+    /// A channel ref to re-send or a URL the channel can fetch itself. Optional when
+    /// <see cref="Content"/> carries the bytes (then this is provenance only, e.g. the origin path).
+    /// </summary>
+    public string? Source { get; init; }
+
+    /// <summary>
+    /// The attachment bytes, carried inline in the message (base64 in JSON). This is how files
+    /// travel over Kafka from the producing host to the gateway — the gateway cannot read producer
+    /// filesystem paths. Bounded by the bus's max message size (20 MB serialized).
+    /// </summary>
+    public byte[]? Content { get; init; }
 
     public string? Name { get; init; }
+    public string? Mime { get; init; }
     public string? Caption { get; init; }
 }

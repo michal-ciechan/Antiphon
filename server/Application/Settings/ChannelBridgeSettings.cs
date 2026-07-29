@@ -25,6 +25,13 @@ public sealed class ChannelBridgeSettings
     public int PendingReplyTtlMinutes { get; set; } = 30;
 
     /// <summary>
+    /// Max raw bytes for a single reply attachment. Attachments ride the Kafka message base64-encoded
+    /// under the bus-wide 20 MB message cap, so the raw ceiling is 3/4 of that minus envelope slack.
+    /// Larger files are skipped with a note in the reply text.
+    /// </summary>
+    public long MaxAttachmentBytes { get; set; } = 14 * 1024 * 1024;
+
+    /// <summary>
     /// Inbound debounce: sliding quiet window per (conversation, sender) before routing buffered
     /// messages, merged newline-joined into one prompt. 0 = passthrough (route each message inline,
     /// exactly the pre-debounce behaviour).

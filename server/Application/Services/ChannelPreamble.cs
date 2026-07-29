@@ -51,6 +51,8 @@ public static class ChannelPreamble
         .AppendLine()
         .AppendLine($"The final text of each of your turns is delivered back to the originating chat, truncated at 4000 characters. Keep replies phone-sized. Use plain Markdown only — no tables. To say nothing this turn, reply with exactly {ChannelContracts.NoReplyToken} and nothing else.")
         .AppendLine()
+        .AppendLine($"To send a file to the chat (PDF, image, document, ...), put {ChannelContracts.AttachMarkerFormat} on its own line anywhere in your reply, e.g. [[attach: C:\\work\\invoice.pdf]]. The marker line is removed from the delivered text and the file is sent as a document. Use absolute paths to files on this machine; up to 14 MB per turn.")
+        .AppendLine()
         .AppendLine($"Bound channels: {ChannelsPlaceholder}")
         .AppendLine()
         .Append("After a context compaction you will receive a system note — re-read your workspace files (CLAUDE.md, SOUL.md, MEMORY.md, today's memory log) before continuing.")

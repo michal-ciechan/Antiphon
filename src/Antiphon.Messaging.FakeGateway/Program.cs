@@ -84,7 +84,7 @@ app.MapPost("/inbound", async (InjectInboundRequest request, ILogger<Program> lo
         Raw = JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    var config = new ProducerConfig { BootstrapServers = bootstrap };
+    var config = new ProducerConfig { BootstrapServers = bootstrap, MessageMaxBytes = 20 * 1024 * 1024 };
     using var producer = new ProducerBuilder<string, string>(config).Build();
     await producer.ProduceAsync(inboundTopic, new Message<string, string>
     {
@@ -128,6 +128,9 @@ internal sealed class OutboundRecorderService(
             GroupId = "antiphon-fake-gateway",
             AutoOffsetReset = AutoOffsetReset.Latest,
             EnableAutoCommit = true,
+            // Match the bus-wide 20 MB cap so attachment-bearing replies are fetchable.
+            MaxPartitionFetchBytes = 20 * 1024 * 1024,
+            FetchMaxBytes = 50 * 1024 * 1024,
         };
 
         while (!ct.IsCancellationRequested)

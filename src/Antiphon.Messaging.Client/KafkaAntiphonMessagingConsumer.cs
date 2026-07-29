@@ -27,6 +27,10 @@ public sealed class KafkaAntiphonMessagingConsumer : IAntiphonMessagingConsumer
             GroupId = _options.ConsumerGroup,
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = true,
+            // librdkafka's per-partition fetch defaults to 1 MB — attachment-bearing messages up
+            // to the bus cap must still be fetchable in one piece.
+            MaxPartitionFetchBytes = _options.MaxMessageBytes,
+            FetchMaxBytes = Math.Max(_options.MaxMessageBytes, 50 * 1024 * 1024),
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();

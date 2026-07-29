@@ -37,7 +37,12 @@ builder.Services.AddSingleton<IChannelAdapter>(sp =>
 builder.Services.AddSingleton<IProducer<string, string>>(sp =>
 {
     var kafka = sp.GetRequiredService<IOptions<KafkaSettings>>().Value;
-    return new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = kafka.BootstrapServers }).Build();
+    return new ProducerBuilder<string, string>(new ProducerConfig
+    {
+        BootstrapServers = kafka.BootstrapServers,
+        // Bus-wide 20 MB cap so attachment payloads fit; topics carry the same max.message.bytes.
+        MessageMaxBytes = kafka.MaxMessageBytes,
+    }).Build();
 });
 
 builder.Services.AddHostedService<TelegramIngressService>();

@@ -148,6 +148,153 @@ public sealed class TelegramChannelAdapterTests
         result.Error.ShouldNotBeNullOrEmpty();
     }
 
+    // ---------- attachments (sendDocument) ----------
+
+    [Test]
+    public async Task Inline_content_attachment_uploads_as_multipart_document()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var bytes = "%PDF-1.4 tiny invoice"u8.ToArray();
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555", Text = "Here's the invoice",
+                Attachments =
+                [
+                    new OutboundAttachment
+                    {
+                        Kind = AttachmentKind.File, Content = bytes,
+                        Name = "invoice.pdf", Mime = "application/pdf",
+                    },
+                ],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue();
+        fake.SentMessages.ShouldHaveSingleItem().Text.ShouldBe("Here's the invoice");
+        var doc = fake.SentDocuments.ShouldHaveSingleItem();
+        doc.ChatId.ShouldBe("555");
+        doc.FileName.ShouldBe("invoice.pdf");
+        doc.Mime.ShouldBe("application/pdf");
+        doc.Bytes.ShouldBe(bytes);
+    }
+
+    [Test]
+    public async Task Attachment_only_reply_sends_no_text_message()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555",
+                Attachments =
+                [
+                    new OutboundAttachment { Kind = AttachmentKind.File, Content = [1, 2, 3], Name = "a.bin" },
+                ],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue();
+        fake.SentMessages.ShouldBeEmpty("no text → no sendMessage bubble");
+        fake.SentDocuments.ShouldHaveSingleItem().FileName.ShouldBe("a.bin");
+    }
+
+    [Test]
+    public async Task Source_attachment_without_content_goes_as_json_string_document()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555",
+                Attachments =
+                [
+                    new OutboundAttachment
+                    {
+                        Kind = AttachmentKind.File, Source = "https://example.com/report.pdf",
+                        Caption = "the report",
+                    },
+                ],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue();
+        var doc = fake.SentDocuments.ShouldHaveSingleItem();
+        doc.Source.ShouldBe("https://example.com/report.pdf");
+        doc.Caption.ShouldBe("the report");
+        doc.Bytes.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Multiple_attachments_send_one_document_each_in_order()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555", Text = "two files",
+                Attachments =
+                [
+                    new OutboundAttachment { Kind = AttachmentKind.File, Content = [1], Name = "one.txt" },
+                    new OutboundAttachment { Kind = AttachmentKind.File, Content = [2], Name = "two.txt" },
+                ],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue();
+        fake.SentDocuments.Select(d => d.FileName).ShouldBe(["one.txt", "two.txt"]);
+    }
+
+    [Test]
+    public async Task Document_send_retries_a_rate_limit_then_delivers()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        // No text on the reply, so the enqueued send fault hits the sendDocument call.
+        fake.EnqueueSendRateLimit(retryAfterSeconds: 0);
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555",
+                Attachments =
+                [
+                    new OutboundAttachment { Kind = AttachmentKind.File, Content = [9], Name = "retry.bin" },
+                ],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue("the 429 is transient — the retry must deliver");
+        fake.SentDocuments.ShouldHaveSingleItem().FileName.ShouldBe("retry.bin");
+    }
+
+    [Test]
+    public async Task Attachment_with_neither_content_nor_source_fails_cleanly()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+
+        var result = await NewAdapter(fake).SendAsync(
+            new ChannelReply
+            {
+                Channel = "telegram", ConversationId = "555",
+                Attachments = [new OutboundAttachment { Kind = AttachmentKind.File }],
+            },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldContain("neither Content nor Source");
+        fake.SentDocuments.ShouldBeEmpty();
+    }
+
     private static async Task<ChannelMessage?> FirstMessageAsync(TelegramChannelAdapter adapter)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));

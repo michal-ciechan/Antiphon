@@ -83,4 +83,65 @@ public sealed class AntiphonMessagingClientTests
         json.ShouldContain("\"conversationId\":\"777\"");
         json.ShouldContain("\"replyToMessageId\":\"42\"");
     }
+
+    [Test]
+    public void Attachment_bytes_round_trip_the_wire_as_base64()
+    {
+        var bytes = new byte[] { 0x25, 0x50, 0x44, 0x46, 0xFF, 0x00, 0x7F }; // %PDF + non-ASCII
+        var reply = new ChannelReply
+        {
+            Channel = "telegram",
+            ConversationId = "777",
+            Attachments =
+            [
+                new OutboundAttachment
+                {
+                    Kind = AttachmentKind.File, Content = bytes,
+                    Name = "invoice.pdf", Mime = "application/pdf", Source = @"C:\work\invoice.pdf",
+                },
+            ],
+        };
+
+        var json = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        json.ShouldContain("\"content\":\"" + Convert.ToBase64String(bytes) + "\"", Case.Sensitive);
+
+        var back = JsonSerializer.Deserialize<ChannelReply>(json, MessagingJson.Options)!;
+        var att = back.Attachments.ShouldHaveSingleItem();
+        att.Content.ShouldBe(bytes);
+        att.Kind.ShouldBe(AttachmentKind.File);
+        att.Name.ShouldBe("invoice.pdf");
+        att.Mime.ShouldBe("application/pdf");
+    }
+
+    [Test]
+    public void Old_payloads_without_attachment_fields_still_deserialize()
+    {
+        // A pre-attachment ChannelReply as older producers wrote it — the new fields must default.
+        const string json = """{"channel":"telegram","conversationId":"777","text":"hi"}""";
+
+        var back = JsonSerializer.Deserialize<ChannelReply>(json, MessagingJson.Options)!;
+        back.Attachments.ShouldBeEmpty();
+        back.Text.ShouldBe("hi");
+    }
+
+    [Test]
+    public void A_20mb_capped_attachment_message_fits_the_bus_limit()
+    {
+        // The contract behind MaxAttachmentBytes (14 MB raw): base64 + envelope must stay under the
+        // 20 MB bus cap the producer/consumer/topics are configured with.
+        var reply = new ChannelReply
+        {
+            Channel = "telegram",
+            ConversationId = "777",
+            Text = new string('x', 4000),
+            Attachments =
+            [
+                new OutboundAttachment { Kind = AttachmentKind.File, Content = new byte[14 * 1024 * 1024], Name = "max.bin" },
+            ],
+        };
+
+        var json = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        json.Length.ShouldBeLessThan(AntiphonMessagingOptions.MaxMessageBytesDefault,
+            "a max-size attachment must serialize under the 20 MB Kafka message cap");
+    }
 }

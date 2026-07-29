@@ -9,4 +9,10 @@ public sealed class KafkaSettings
     public string InboundTopic { get; set; } = "channels.inbound";
     public string OutboundTopic { get; set; } = "channels.outbound";
     public string ConsumerGroup { get; set; } = "antiphon-messaging-service";
+
+    /// <summary>
+    /// Maximum Kafka message size in bytes (producer and consumer side). 20 MB — the bus-wide cap
+    /// so attachment-bearing replies fit; must match the topics' <c>max.message.bytes</c>.
+    /// </summary>
+    public int MaxMessageBytes { get; set; } = 20 * 1024 * 1024;
 }

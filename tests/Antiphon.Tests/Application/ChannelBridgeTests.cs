@@ -304,6 +304,121 @@ public class ChannelBridgeTests
         await Task.CompletedTask;
     }
 
+    // ---------- attachments ([[attach: path]] markers → inline Kafka attachments) ----------
+
+    [Test]
+    public async Task An_attach_marker_sends_the_file_inline_and_strips_the_marker_line()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var pdf = Path.Combine(Path.GetTempPath(), $"bridge-test-{Guid.NewGuid():n}.pdf");
+        var bytes = "%PDF-1.4 fake invoice"u8.ToArray();
+        await File.WriteAllBytesAsync(pdf, bytes);
+        try
+        {
+            var msg = TelegramText(h.ChatId, "send me the invoice", title: "AZ Care");
+            await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+            await h.InsertTurnAsync(h.Adapter.Inputs[0], $"Here's the invoice 🩵\n[[attach: {pdf}]]");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+            var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+            reply.Text.ShouldBe("Here's the invoice 🩵");
+            var attachment = reply.Attachments.ShouldHaveSingleItem();
+            attachment.Kind.ShouldBe(AttachmentKind.File);
+            attachment.Name.ShouldBe(Path.GetFileName(pdf));
+            attachment.Mime.ShouldBe("application/pdf");
+            attachment.Content.ShouldBe(bytes);
+        }
+        finally
+        {
+            File.Delete(pdf);
+        }
+    }
+
+    [Test]
+    public async Task A_marker_only_reply_sends_the_document_with_no_text()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var png = Path.Combine(Path.GetTempPath(), $"bridge-test-{Guid.NewGuid():n}.png");
+        await File.WriteAllBytesAsync(png, [1, 2, 3]);
+        try
+        {
+            var msg = TelegramText(h.ChatId, "chart please", title: "AZ Care");
+            await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+            await h.InsertTurnAsync(h.Adapter.Inputs[0], $"[[attach: {png}]]");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+            var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+            reply.Text.ShouldBeNull("a marker-only reply has no text — the file IS the reply");
+            reply.Attachments.ShouldHaveSingleItem().Kind.ShouldBe(AttachmentKind.Image);
+        }
+        finally
+        {
+            File.Delete(png);
+        }
+    }
+
+    [Test]
+    public async Task A_missing_attachment_file_becomes_a_visible_note_not_a_lost_reply()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "send the report", title: "AZ Care");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertTurnAsync(h.Adapter.Inputs[0], "Here you go:\n[[attach: C:\\nope\\missing.pdf]]");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Attachments.ShouldBeEmpty();
+        reply.Text.ShouldNotBeNull();
+        reply.Text.ShouldContain("attachment not found");
+    }
+
+    [Test]
+    public async Task An_oversized_attachment_is_skipped_with_a_note()
+    {
+        await using var h = await HarnessAsync(maxAttachmentBytes: 16);
+        await h.BindChannelAsync();
+
+        var big = Path.Combine(Path.GetTempPath(), $"bridge-test-{Guid.NewGuid():n}.bin");
+        await File.WriteAllBytesAsync(big, new byte[64]);
+        try
+        {
+            var msg = TelegramText(h.ChatId, "send it", title: "AZ Care");
+            await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+            await h.InsertTurnAsync(h.Adapter.Inputs[0], $"Sending.\n[[attach: {big}]]");
+            await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+            var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+            reply.Attachments.ShouldBeEmpty();
+            reply.Text.ShouldNotBeNull();
+            reply.Text.ShouldContain("over the");
+        }
+        finally
+        {
+            File.Delete(big);
+        }
+    }
+
+    [Test]
+    [Arguments("no markers here", 0)]
+    [Arguments("[[attach: C:\\a.pdf]]", 1)]
+    [Arguments("text\n[[attach: C:\\a.pdf]]\nmore\n[[ATTACH: C:\\b with space.png ]]", 2)]
+    [Arguments("inline [[attach: C:\\a.pdf]] not on its own line", 0)]
+    public async Task ExtractAttachments_finds_only_whole_line_markers(string text, int expected)
+    {
+        ChannelContracts.ExtractAttachments(text).AttachmentPaths.Count.ShouldBe(expected);
+        await Task.CompletedTask;
+    }
+
     // ---------- harness ----------
 
     private static ChannelMessage TelegramText(
@@ -320,7 +435,7 @@ public class ChannelBridgeTests
         Raw = System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0)
+    private static async Task<Harness> HarnessAsync(int debounceWindowMs = 0, long maxAttachmentBytes = 14 * 1024 * 1024)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -337,7 +452,12 @@ public class ChannelBridgeTests
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
         // DebounceWindowMs 0 = passthrough: these tests assert synchronous routing; the debounce
         // behaviour has its own suites (ChannelInboundDebouncerTests + the rapid-fire bridge tests).
-        services.AddSingleton(Options.Create(new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = debounceWindowMs }));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings
+        {
+            Enabled = true,
+            DebounceWindowMs = debounceWindowMs,
+            MaxAttachmentBytes = maxAttachmentBytes,
+        }));
         services.AddSingleton<ChannelInboundDebouncer>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
