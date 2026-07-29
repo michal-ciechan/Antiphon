@@ -244,6 +244,9 @@ public sealed class AgentSessionRuntime
             var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
             if (channelReplies is not null)
                 await channelReplies.OnTurnEndAsync(sessionId, ct);
+            var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
+            if (reviewReplies is not null)
+                await reviewReplies.OnTurnEndAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -265,6 +268,12 @@ public sealed class AgentSessionRuntime
             var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
             if (channelReplies is not null)
                 await channelReplies.OnTurnEndAsync(sessionId, ct);
+
+            // Review-thread replies land the same way channel replies do — before the queue
+            // injects the next prompt, so extraction sees the finished turn intact.
+            var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
+            if (reviewReplies is not null)
+                await reviewReplies.OnTurnEndAsync(sessionId, ct);
 
             var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
             if (queue is not null)

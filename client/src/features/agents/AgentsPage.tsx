@@ -37,6 +37,7 @@ import type { AgentIncidentDto, AgentSummaryDto } from '../../api/agents'
 import { useAgent, useAgentIncidents, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
+import { FilesReviewPanel } from './FilesReviewPanel'
 import { AgentCliModal } from './AgentCliModal'
 import { AgentCreateModal } from './AgentCreateModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
@@ -301,6 +302,8 @@ export function AgentsPage() {
                 )}
               </Table.Tbody>
             </Table>
+
+            <FilesReviewPanel agentId={selected.data.id} />
           </Paper>
         )}
       </Stack>

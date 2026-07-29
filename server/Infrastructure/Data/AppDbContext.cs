@@ -41,11 +41,58 @@ public class AppDbContext : DbContext
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
+    public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
+    public DbSet<ReviewThread> ReviewThreads => Set<ReviewThread>();
+    public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
     public DbSet<Alert> Alerts => Set<Alert>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<FileReviewState>(entity =>
+        {
+            entity.ToTable("FileReviewStates");
+            entity.HasKey(f => f.Id);
+            entity.Property(f => f.Path).IsRequired().HasMaxLength(1024);
+            entity.Property(f => f.ContentHash).IsRequired().HasMaxLength(64);
+            entity.Property(f => f.UpdatedAt).IsRequired();
+            entity.HasIndex(f => new { f.AgentId, f.Path }).IsUnique()
+                .HasDatabaseName("IX_FileReviewStates_AgentId_Path");
+            entity.HasOne(f => f.Agent)
+                .WithMany()
+                .HasForeignKey(f => f.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReviewThread>(entity =>
+        {
+            entity.ToTable("ReviewThreads");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.Path).IsRequired().HasMaxLength(1024);
+            entity.Property(t => t.Snippet).HasMaxLength(2000);
+            entity.Property(t => t.CreatedAt).IsRequired();
+            entity.Property(t => t.UpdatedAt).IsRequired();
+            entity.HasIndex(t => new { t.AgentId, t.Status }).HasDatabaseName("IX_ReviewThreads_AgentId_Status");
+            entity.HasIndex(t => new { t.AgentId, t.Path }).HasDatabaseName("IX_ReviewThreads_AgentId_Path");
+            entity.HasOne(t => t.Agent)
+                .WithMany()
+                .HasForeignKey(t => t.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReviewComment>(entity =>
+        {
+            entity.ToTable("ReviewComments");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Body).IsRequired();
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.HasIndex(c => new { c.ThreadId, c.CreatedAt }).HasDatabaseName("IX_ReviewComments_ThreadId_CreatedAt");
+            entity.HasOne(c => c.Thread)
+                .WithMany(t => t.Comments)
+                .HasForeignKey(c => c.ThreadId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<AgentSupervisionState>(entity =>
         {

@@ -488,7 +488,8 @@ describe('AgentsPage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Start' }))
 
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
+    // Remote control comes from the persisted agent setting; the start call itself carries no flag.
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({}))
     // Once running, the control flips to Stop.
     expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
   })
@@ -509,6 +510,7 @@ describe('AgentsPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Terminal Frontend Claude' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Start agent' }))
 
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ remoteControl: true }))
+    // Remote control comes from the persisted agent setting; the CLI start passes fresh:false only.
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ fresh: false }))
   })
 })

@@ -963,6 +963,40 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("ExternalIssueRefs", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.FileReviewState", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgentId", "Path")
+                        .IsUnique()
+                        .HasDatabaseName("IX_FileReviewStates_AgentId_Path");
+
+                    b.ToTable("FileReviewStates", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.GateDecision", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1172,6 +1206,74 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_RetrySchedules_NextRetryAt");
 
                     b.ToTable("RetrySchedules", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Author")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId", "CreatedAt")
+                        .HasDatabaseName("IX_ReviewComments_ThreadId_CreatedAt");
+
+                    b.ToTable("ReviewComments", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewThread", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Line")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("Snippet")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgentId", "Path")
+                        .HasDatabaseName("IX_ReviewThreads_AgentId_Path");
+
+                    b.HasIndex("AgentId", "Status")
+                        .HasDatabaseName("IX_ReviewThreads_AgentId_Status");
+
+                    b.ToTable("ReviewThreads", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunAttempt", b =>
@@ -2042,6 +2144,17 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Card");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.FileReviewState", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Agent");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.GateDecision", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.User", "DecidedByUser")
@@ -2096,6 +2209,28 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Card");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewComment", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.ReviewThread", "Thread")
+                        .WithMany("Comments")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Thread");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewThread", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Agent");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.RunAttempt", b =>
@@ -2328,6 +2463,11 @@ namespace Antiphon.Server.Migrations
 
                     b.Navigation("RunAttempts");
                 });
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewThread", b =>
+                {
+                    b.Navigation("Comments");
+                });
+
 #pragma warning restore 612, 618
         }
     }

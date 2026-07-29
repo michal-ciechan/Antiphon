@@ -216,6 +216,10 @@ try
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
+    builder.Services.AddSingleton<GitWorkspaceService>();
+    builder.Services.AddScoped<AgentFilesService>();
+    builder.Services.AddScoped<ReviewThreadService>();
+    builder.Services.AddSingleton<ReviewReplyDispatcher>();
     if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
         builder.Services.AddHostedService<ChannelBridgeService>();
     builder.Services.AddScoped<AuditService>();
@@ -335,6 +339,7 @@ try
     app.MapSessionEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapFileSystemEndpoints();
+    app.MapReviewEndpoints();
 
     // SignalR hub
     app.MapHub<AntiphonHub>("/hubs/antiphon");
