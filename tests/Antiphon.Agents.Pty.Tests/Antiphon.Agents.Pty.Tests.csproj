@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
     <!-- Build the fake Claude alongside the tests but don't reference its assembly — tests exec the
          built exe through ConPTY, they don't call into it. The CopyFakeClaude target below stages its
          full output (exe + runtimeconfig + deps) into bin\...\fakeclaude\ so the exe runs standalone. -->

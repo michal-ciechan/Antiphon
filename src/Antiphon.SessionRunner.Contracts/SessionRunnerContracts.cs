@@ -113,6 +113,22 @@ public static class TranscriptKinds
     /// housekeeping, not agent work.
     /// </summary>
     public const string CompactBoundary = "CompactBoundary";
+
+    /// <summary>
+    /// The marker Claude Code writes into its JSONL as a USER message when a turn is aborted —
+    /// "[Request interrupted by user]" (Esc) or "[Request interrupted by user for tool use]"
+    /// (tool call rejected). An interrupted turn produces NO TurnEnd, so this marker IS the
+    /// turn's end for working/idle purposes: treating it as activity left sessions permanently
+    /// "working" and stranded every WhenIdle delivery (live miss 2026-07-29). Shape pinned
+    /// against real Claude by ClaudeInterruptCanaryTests.
+    /// </summary>
+    public const string InterruptedPromptPrefix = "[Request interrupted";
+
+    /// <summary>True when a transcript entry is an interrupt marker (see <see cref="InterruptedPromptPrefix"/>).</summary>
+    public static bool IsInterruptPrompt(string? kind, string? text) =>
+        kind == UserPrompt
+        && text is not null
+        && text.TrimStart().StartsWith(InterruptedPromptPrefix, StringComparison.Ordinal);
 }
 
 public static class SessionRunnerEventNames

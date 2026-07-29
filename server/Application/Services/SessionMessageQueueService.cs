@@ -538,9 +538,16 @@ public sealed class SessionMessageQueueService
 
     private static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        // Mirror the client's isWorking(): the agent is working while activity outranks the last turn-end.
+        // Mirror the client's isWorking(): the agent is working while activity outranks the last
+        // turn-end. An interrupt marker ("[Request interrupted...") counts as a turn END, not
+        // activity — an aborted turn writes NO TurnEnd, and counting the marker as activity left
+        // the session permanently "working" and stranded every WhenIdle delivery (2026-07-29).
         var lastEnd = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+            .Where(t => t.AgentSessionId == sessionId
+                && (t.Kind == TranscriptKinds.TurnEnd
+                    || (t.Kind == TranscriptKinds.UserPrompt
+                        && t.Text != null
+                        && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
         var lastActivity = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -549,7 +556,10 @@ public sealed class SessionMessageQueueService
                 // Compaction is idle-time housekeeping, not work: counting the boundary as
                 // activity would flip an idle session to permanently "working" (no TurnEnd ever
                 // follows), stranding every WhenIdle message — including the recovery note.
-                && t.Kind != TranscriptKinds.CompactBoundary)
+                && t.Kind != TranscriptKinds.CompactBoundary
+                && !(t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text != null
+                    && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
         return lastActivity > lastEnd;
     }

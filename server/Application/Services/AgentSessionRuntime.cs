@@ -199,6 +199,12 @@ public sealed class AgentSessionRuntime
         if (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
             await FlushQueueOnIdleAsync(entry.SessionId, ct);
 
+        // An interrupted turn (Esc / rejected tool call) ends with the "[Request interrupted..."
+        // user marker and NO TurnEnd — it is still a turn boundary, and the queue must flush or
+        // every WhenIdle delivery strands until some later turn completes (live miss 2026-07-29).
+        if (TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text))
+            await FlushQueueOnIdleAsync(entry.SessionId, ct);
+
         // Claude sometimes writes the turn's stop marker BEFORE its reply text — the TurnEnd-time
         // dispatch then sees no text and leaves the correlations pending, so the text's own arrival
         // must re-trigger the channel reply dispatch (cheap no-op when nothing is pending).

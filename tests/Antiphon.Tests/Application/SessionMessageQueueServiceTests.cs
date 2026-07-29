@@ -215,6 +215,76 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    // Live miss 2026-07-29: Mike rejected a tool call mid-turn; Claude wrote the
+    // "[Request interrupted by user for tool use]" USER marker and no TurnEnd, the session read
+    // as permanently "working", and the photo + multiline test messages stranded for 25 minutes.
+    // The interrupt marker is a turn END: the session must read idle and the flush must deliver.
+    [Test]
+    public async Task An_interrupt_marker_ends_the_turn_and_unblocks_when_idle_delivery()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            await h.Queue.EnqueueAsync(h.SessionId, "stranded hello", MessageSendMode.WhenIdle, CancellationToken.None);
+            h.Adapter.SentInput.ShouldBeEmpty("the session is mid-turn — nothing may deliver yet");
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("activity with no turn end reads as working");
+
+            // The interrupt lands (Esc / rejected tool call): a USER marker entry, no TurnEnd.
+            await InsertEntryAsync(h, TranscriptKinds.UserPrompt, "[Request interrupted by user for tool use]");
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeFalse("the interrupt marker IS the aborted turn's end");
+
+            // AgentSessionRuntime triggers the same flush on the marker as on a TurnEnd.
+            await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+            h.Adapter.SentInput.ShouldContain("stranded hello");
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages.ShouldBeEmpty();
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task A_real_user_message_mentioning_interruption_is_not_a_turn_end()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            // A genuine prompt whose text merely CONTAINS the phrase must still count as activity.
+            await InsertEntryAsync(h, TranscriptKinds.UserPrompt, "why was my [Request interrupted] earlier?");
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("only prompts STARTING with the marker end a turn");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    private static async Task InsertEntryAsync(Harness h, string kind, string? text)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var baseSeq = (await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == h.SessionId)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = h.SessionId,
+            Sequence = baseSeq + 1,
+            Kind = kind,
+            Text = text,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     // Insert an assistant-text transcript entry with no following turn-end so the session reads as "working".
     private static async Task MarkWorkingAsync(Harness h)
     {

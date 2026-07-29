@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { TranscriptEntryDto } from '../../api/sessions'
 import { isWorking } from './SessionTranscriptPanel'
 
-function entry(sequence: number, kind: string): TranscriptEntryDto {
+function entry(sequence: number, kind: string, text: string | null = null): TranscriptEntryDto {
   return {
     sequence,
     kind,
@@ -10,7 +10,7 @@ function entry(sequence: number, kind: string): TranscriptEntryDto {
     parentUuid: null,
     timestamp: null,
     role: null,
-    text: null,
+    text,
     toolName: null,
     toolInput: null,
     toolUseId: null,
@@ -40,5 +40,27 @@ describe('isWorking', () => {
 
   it('still ignores turn titles', () => {
     expect(isWorking([entry(1, 'AssistantText'), entry(2, 'TurnEnd'), entry(3, 'TurnTitle')])).toBe(false)
+  })
+
+  // Live miss 2026-07-29: an interrupted turn (Esc / rejected tool call) writes the
+  // "[Request interrupted..." USER marker and no TurnEnd — the marker is the turn's end. Counting
+  // it as activity showed a phantom permanently-working agent and stranded WhenIdle deliveries.
+  it('reads idle after an interrupt marker (aborted turns have no TurnEnd)', () => {
+    expect(
+      isWorking([
+        entry(1, 'UserPrompt', 'do the thing'),
+        entry(2, 'ToolCall'),
+        entry(3, 'UserPrompt', '[Request interrupted by user for tool use]'),
+      ]),
+    ).toBe(false)
+    expect(
+      isWorking([entry(1, 'UserPrompt', 'count to 100'), entry(2, 'UserPrompt', '[Request interrupted by user]')]),
+    ).toBe(false)
+  })
+
+  it('does not treat a real user message mentioning interruption as a turn end', () => {
+    expect(
+      isWorking([entry(1, 'TurnEnd'), entry(2, 'UserPrompt', 'why was my [Request interrupted] earlier?')]),
+    ).toBe(true)
   })
 })

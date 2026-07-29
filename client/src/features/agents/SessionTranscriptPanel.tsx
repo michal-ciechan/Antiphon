@@ -73,15 +73,24 @@ function buildTurns(entries: TranscriptEntryDto[]): Turn[] {
   return turns
 }
 
+// Claude writes this as a USER message when a turn is aborted (Esc / rejected tool call); such a
+// turn produces NO TurnEnd, so the marker IS its end (mirror of the server's IsWorkingAsync).
+const INTERRUPTED_PREFIX = '[Request interrupted'
+
+function isInterruptPrompt(e: TranscriptEntryDto): boolean {
+  return e.kind === 'UserPrompt' && (e.text ?? '').trimStart().startsWith(INTERRUPTED_PREFIX)
+}
+
 // Idle once the latest meaningful entry is a TurnEnd; working while activity outranks the last end.
 // CompactBoundary is idle-time housekeeping, not activity (mirror of the server's IsWorkingAsync —
-// counting it would show a phantom "working" agent after every compaction).
+// counting it would show a phantom "working" agent after every compaction). Interrupt markers are
+// turn ENDS — counting them as activity showed a phantom "working" agent forever after an interrupt.
 // Exported for tests: the exclusion list must stay in lockstep with the server.
 export function isWorking(entries: TranscriptEntryDto[]): boolean {
   let lastActivity = 0
   let lastEnd = 0
   for (const e of entries) {
-    if (e.kind === 'TurnEnd') lastEnd = Math.max(lastEnd, e.sequence)
+    if (e.kind === 'TurnEnd' || isInterruptPrompt(e)) lastEnd = Math.max(lastEnd, e.sequence)
     else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary')
       lastActivity = Math.max(lastActivity, e.sequence)
   }
