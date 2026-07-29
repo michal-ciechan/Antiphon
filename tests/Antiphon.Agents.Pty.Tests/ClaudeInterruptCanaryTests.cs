@@ -141,6 +141,145 @@ public class ClaudeInterruptCanaryTests
             .ShouldBeTrue("TranscriptKinds.IsInterruptPrompt must match what real Claude writes");
     }
 
+    // Gotcha canary #1: a plain Esc during a PURE TEXT stream does not write the interrupt marker —
+    // it UNWINDS the turn: streaming stops and the prompt is restored to the composer. Working/idle
+    // detection never sees an end marker for such a turn, so if this behaviour ever changes (marker
+    // starts appearing, or the unwind stops restoring the prompt) we want to know: the queue-flush
+    // fix keys on the marker existing exactly when a turn leaves persisted state behind.
+    [Test]
+    public async Task Esc_during_a_pure_text_stream_unwinds_the_turn_without_a_marker()
+    {
+        ClSession.SkipIfNotEligible();
+        var sessionId = Guid.NewGuid().ToString("D");
+
+        await using var runner = new PtyAgentRunner();
+        var (app, args) = ClSession.BuildLaunch(
+            ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
+        await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        var ready = await new ClaudeReadyDetector().WaitAsync(runner);
+        if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
+        runner.ClearLiveBuffer();
+
+        await runner.SendLineAsync(
+            "Count from 1 to 5000, one number per line, no commentary, then say FINISHED-COUNTING.");
+
+        // Mid-turn gate: the CLI renders the streamed response only on COMPLETION (collapsed while
+        // streaming — observed live), so there is no screen evidence of individual lines to key on.
+        // The working affordance appears in the raw feed; ride 10s into the ~40s turn, then confirm
+        // it has NOT completed (no done pattern) — that is a genuinely mid-stream interrupt point.
+        (await runner.WaitForOutputAsync(
+            s => s.Contains(EscToInterrupt, StringComparison.OrdinalIgnoreCase), TimeSpan.FromMinutes(2)))
+            .ShouldBeTrue("the turn must visibly start. Screen:\n" + runner.SnapshotScreen());
+        // Ride 6s into the turn, then interrupt. (No raw-buffer "not done yet" assertion: live
+        // spinner frames can transiently match the done pattern, which false-failed that gate while
+        // the rendered screen clearly showed "Working…". If the Esc ever lands after a completed
+        // turn, the composer-restore check below fails loudly anyway.)
+        await Task.Delay(TimeSpan.FromSeconds(6));
+
+        await runner.WriteAsync("\x1b");
+
+        // TERMINAL: work stops AND the prompt text is restored to the COMPOSER — the unwind. The
+        // submitted prompt's echo also contains the text, so look only at the composer region (the
+        // portion of the rendered screen after the LAST prompt chevron).
+        var unwound = false;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var screen = runner.SnapshotScreen();
+            var lastChevron = screen.LastIndexOf('❯');
+            var composerRegion = lastChevron >= 0 ? screen[lastChevron..] : "";
+            if (!screen.Contains(EscToInterrupt, StringComparison.OrdinalIgnoreCase)
+                && composerRegion.Contains("Count from 1 to 5000"))
+            {
+                unwound = true;
+                break;
+            }
+            await Task.Delay(500);
+        }
+        unwound.ShouldBeTrue(
+            "after Esc the stream must stop and the prompt must be RESTORED TO THE COMPOSER (the unwind). "
+            + "Screen:\n" + runner.SnapshotScreen());
+        Console.WriteLine("UNWOUND SCREEN (excerpt):\n" + Tail(runner.SnapshotScreen(), 600));
+
+        // Clear the restored composer text, then complete a real turn so the JSONL is flushed.
+        await Task.Delay(500);
+        await runner.WriteAsync("\x1b");
+        await Task.Delay(500);
+        runner.ClearLiveBuffer();
+        await runner.SendLineAsync("Reply with the single word PONG and nothing else.");
+        (await runner.WaitForOutputAsync(
+            s => System.Text.RegularExpressions.Regex.IsMatch(s, @" for \d+s"), TimeSpan.FromMinutes(2)))
+            .ShouldBeTrue("the follow-up turn must complete");
+
+        await runner.SendLineAsync("/exit");
+        await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(10)));
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+        // LOGS: the unwound turn leaves NO interrupt marker anywhere in the session JSONL.
+        string? jsonlPath = null;
+        for (var i = 0; i < 15 && jsonlPath is null; i++)
+        {
+            jsonlPath = FindSessionJsonl(sessionId);
+            if (jsonlPath is null) await Task.Delay(1000);
+        }
+        jsonlPath.ShouldNotBeNull($"session JSONL for {sessionId} must exist under ~/.claude/projects");
+        FindInterruptMarkerText(jsonlPath!).ShouldBeNull(
+            "an Esc during a pure text stream unwinds the turn — it must NOT write the interrupt marker "
+            + "(if this changed, revisit the queue-flush assumptions in IsWorkingAsync)");
+    }
+
+    // Gotcha canary #2: safe-listed commands (a bare `echo`) auto-approve — the permission dialog
+    // NEVER appears and the turn completes unaided. The marker canary above depends on choosing a
+    // command that DOES prompt; if the allowlist ever widens to cover its powershell probe (or the
+    // dialog text changes), these two tests fail together and point straight at the cause.
+    [Test]
+    public async Task Safe_listed_bash_command_auto_approves_without_a_permission_dialog()
+    {
+        ClSession.SkipIfNotEligible();
+        var sessionId = Guid.NewGuid().ToString("D");
+
+        await using var runner = new PtyAgentRunner();
+        // No permission bypass — approval semantics are exactly what's under test.
+        var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), "--session-id", sessionId);
+        await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        var ready = await new ClaudeReadyDetector().WaitAsync(runner);
+        if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
+        runner.ClearLiveBuffer();
+
+        await runner.SendLineAsync(
+            "Use the Bash tool to run exactly this command: echo canary-auto-approve");
+
+        // The turn must COMPLETE without the dialog ever showing. A dialog would block the turn
+        // forever, so reaching the done pattern is itself strong proof — the poll additionally
+        // catches a dialog that flashed and was somehow dismissed.
+        var dialogSeen = false;
+        var done = false;
+        var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            var screen = runner.SnapshotScreen();
+            if (screen.Contains("Do you want", StringComparison.OrdinalIgnoreCase))
+                dialogSeen = true;
+            if (System.Text.RegularExpressions.Regex.IsMatch(runner.SnapshotText(), @" for \d+s"))
+            {
+                done = true;
+                break;
+            }
+            await Task.Delay(250);
+        }
+
+        done.ShouldBeTrue(
+            "the echo turn must complete unaided (auto-approved). Screen:\n" + runner.SnapshotScreen());
+        dialogSeen.ShouldBeFalse(
+            "a safe-listed command must never show the permission dialog — if it does now, the "
+            + "allowlist semantics changed and the interrupt canary's probe command choice needs review");
+        Console.WriteLine("COMPLETED SCREEN (excerpt):\n" + Tail(runner.SnapshotScreen(), 600));
+
+        await runner.SendLineAsync("/exit");
+        await Task.WhenAny(runner.Exited, Task.Delay(TimeSpan.FromSeconds(10)));
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static string? FindSessionJsonl(string sessionId)
     {
         var projects = Path.Combine(
