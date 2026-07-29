@@ -37,3 +37,6 @@ tests/Antiphon.E2E/TestOutput/
 out/
 
 bin-ptyhost/
+# Alternate build output dirs used while daemons lock bin/ (see CLAUDE.md gotchas)
+bin-verify/
+bin-fix/
