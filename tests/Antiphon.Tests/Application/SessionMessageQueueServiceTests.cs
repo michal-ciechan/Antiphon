@@ -53,8 +53,33 @@ public class SessionMessageQueueServiceTests
             await h.Queue.EnqueueAsync(h.SessionId, "queued hello", MessageSendMode.Now, CancellationToken.None);
 
             h.Adapter.Inputs.Count.ShouldBe(2, "body and CR must be two separate writes, not one combined write");
-            h.Adapter.Inputs[0].ShouldBe("queued hello");
+            h.Adapter.Inputs[0].ShouldBe("queued hello", "a single-line body needs no paste wrap");
             h.Adapter.Inputs[1].ShouldBe("\r");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    // Regression lock for the 2026-07-29 fragmentation bug ("Add these to my calendar"): a multi-line
+    // body written raw is chunked by ConPTY and fragments at line breaks — the agent's prompt was only
+    // the final fragment. Multi-line bodies must be wrapped in bracketed paste (\e[200~..\e[201~) so
+    // the TUI treats the whole body as ONE literal paste regardless of how the transport chunks it.
+    // The companion FakeClaudeContractTests prove the fragment/intact behaviours against a real PTY;
+    // this pins that the queue produces the wrapped shape.
+    [Test]
+    public async Task Multiline_delivery_is_wrapped_in_bracketed_paste()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await h.Queue.EnqueueAsync(
+                h.SessionId, "line one\nline two\nline three", MessageSendMode.Now, CancellationToken.None);
+
+            h.Adapter.Inputs.Count.ShouldBe(2);
+            h.Adapter.Inputs[0].ShouldBe("\x1b[200~line one\nline two\nline three\x1b[201~");
+            h.Adapter.Inputs[1].ShouldBe("\r", "the submitting CR stays a separate unbracketed write");
         }
         finally
         {

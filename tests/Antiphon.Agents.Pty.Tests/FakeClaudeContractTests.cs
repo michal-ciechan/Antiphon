@@ -82,6 +82,61 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
+    // The 2026-07-29 live-miss model: a LARGE unbracketed multi-line write fragments — ConPTY chunking
+    // breaks the TUI's paste heuristic and line breaks act as typed Enters, so the body splinters into
+    // partial turns instead of arriving whole. This pins the fake's hazard model (>512 chars + newlines).
+    [Test]
+    public async Task Large_unbracketed_multiline_write_fragments_into_partial_turns()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var body = "HEAD first line of a big paste\n"
+            + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
+            + "\nTAIL last line";
+        body.Length.ShouldBeGreaterThan(512);
+        await runner.WriteAsync(body);
+        await Task.Delay(25);
+        await runner.WriteAsync("\r");
+
+        // The head submits as its OWN fragment turn — the very corruption the wrap must prevent.
+        var fragmented = await runner.WaitForOutputAsync(
+            s => s.Contains("SUBMITTED:HEAD first line of a big paste") && !s.Contains("TAIL last line\\n"),
+            TimeSpan.FromSeconds(5));
+        fragmented.ShouldBeTrue("a large unbracketed multi-line write must fragment (the hazard being modelled)");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The FIX contract: the same large body wrapped in bracketed paste (\e[200~..\e[201~) is immune to
+    // chunking — it lands whole, and the separate CR submits it as ONE turn.
+    [Test]
+    public async Task Bracket_wrapped_large_multiline_body_submits_as_one_intact_turn()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var body = "HEAD first line of a big paste\n"
+            + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
+            + "\nTAIL last line";
+        await runner.WriteAsync("\x1b[200~" + body + "\x1b[201~");
+        await Task.Delay(25);
+        await runner.WriteAsync("\r");
+
+        // One SUBMITTED marker carrying head AND tail (newlines escaped into the single marker line).
+        var intact = await runner.WaitForOutputAsync(
+            s =>
+            {
+                var flat = s.Replace("\r", "").Replace("\n", "");
+                return System.Text.RegularExpressions.Regex.IsMatch(
+                    flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD first line(?:(?!FAKE response).)*TAIL last line");
+            },
+            TimeSpan.FromSeconds(5));
+        intact.ShouldBeTrue("a bracket-wrapped multi-line body must submit whole, as one turn");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     // SendLineAsync is the runner primitive (body, 20ms, "\r") that the queue's two-write delivery mirrors;
     // pin that it submits against the same peer, so a regression in either layer is caught here.
     [Test]

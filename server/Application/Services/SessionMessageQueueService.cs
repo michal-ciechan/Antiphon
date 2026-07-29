@@ -391,7 +391,15 @@ public sealed class SessionMessageQueueService
             verify = false;
         }
 
-        await _runtime.SendInputAsync(sessionId, trimmed, ct);
+        // Multi-line bodies MUST travel as one bracketed paste (\e[200~..\e[201~): ConPTY chunks
+        // large writes at arbitrary boundaries, and without the markers the TUI's paste heuristic
+        // fragments the body at line breaks — live miss 2026-07-29, where a 2.4 KB calendar message
+        // reached the agent as only its final fragment. The markers delimit the paste regardless of
+        // read chunking; the submitting CR below stays a separate, unbracketed write.
+        var payload = trimmed.Contains('\n') || trimmed.Contains('\r')
+            ? "\x1b[200~" + trimmed + "\x1b[201~"
+            : trimmed;
+        await _runtime.SendInputAsync(sessionId, payload, ct);
 
         if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
         {

@@ -238,6 +238,104 @@ public class SessionMessageQueuePtyIntegrationTests
         }
     }
 
+    // Live miss 2026-07-29 ("Add these to my calendar", Antiphon-Family): a 2.4 KB multi-line body
+    // was delivered raw; ConPTY chunked it, the TUI's paste heuristic fragmented it at line breaks,
+    // and the agent's prompt was ONLY the final fragment (no envelope, no content). The body must
+    // reach the agent as ONE intact turn — DeliverAsync wraps multi-line bodies in bracketed paste.
+    [Test]
+    public async Task Large_multiline_channel_body_submits_as_one_intact_turn()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+
+        var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
+        var client = new DirectSessionRunnerClient(sessionLogPath);
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }));
+        var eventBus = new MockEventBus();
+        services.AddSingleton(eventBus);
+        services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<ISessionRunnerClient>(client);
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddLogging();
+        await using var provider = services.BuildServiceProvider();
+
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+
+        var spec = new AgentLaunchSpec(
+            DefinitionName: "fakeclaude", Kind: AgentKind.ClaudeCode, Exe: FakeClaudeExe,
+            Args: Array.Empty<string>(), Env: new Dictionary<string, string>(),
+            Cwd: cwd, Cols: 120, Rows: 30);
+
+        try
+        {
+            await client.StartAsync(sessionId, spec, CancellationToken.None);
+            (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
+                .ShouldBeTrue();
+
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
+                    AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            // The live-miss shape: envelope header, blank-line padding, content lines, long tail —
+            // comfortably past the paste-hazard threshold.
+            var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\n\n"
+                + string.Join("\n", Enumerable.Range(1, 12).Select(i => $"booking line {i} " + new string('x', 80)))
+                + "\nTAIL-MARKER also check my outlook calendar?";
+            body.Length.ShouldBeGreaterThan(512, "the body must exceed the paste-hazard threshold");
+
+            var queue = provider.GetRequiredService<SessionMessageQueueService>();
+            await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);
+
+            // ONE submit carrying the WHOLE body: head and tail inside the SAME SUBMITTED marker —
+            // i.e. no turn boundary ("FAKE response" echo) between them. ConPTY soft-wraps the long
+            // marker line, so unwrap CR/LF before matching.
+            var oneIntactTurn = new System.Text.RegularExpressions.Regex(
+                @"SUBMITTED:(?:(?!FAKE response).)*HEAD-MARKER(?:(?!FAKE response).)*TAIL-MARKER");
+            var submitted = await WaitForRawAsync(
+                client, sessionId,
+                s => oneIntactTurn.IsMatch(s.Replace("\r", "").Replace("\n", "")),
+                TimeSpan.FromSeconds(10));
+
+            var snapshot = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
+            submitted.ShouldBeTrue(
+                "the multi-line body must submit as ONE intact turn (head AND tail in one SUBMITTED marker). Raw:\n"
+                + snapshot.RawOutput);
+        }
+        finally
+        {
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // Risk row 4 at the PTY tier (PR 5): a multi-line --append-system-prompt value must survive the
     // runner → pty-host → CreateProcess quoting chain byte-for-byte. fakeclaude --echo-args prints
     // the argv it actually received (newline-escaped, ␟-joined) in its banner.

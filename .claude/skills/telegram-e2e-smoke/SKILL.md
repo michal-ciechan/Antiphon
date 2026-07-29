@@ -74,6 +74,15 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
 - Inbound photo: send a generated image containing a known number with NO caption, then:
   "Mikey, what number is in the photo I just sent?" — the reply must quote the number (proves
   inbox save + vision read).
+- Multi-line message (the 2026-07-29 fragmentation miss — big pasted bodies MUST reach the agent
+  as ONE prompt): send a message with real line breaks whose first line is "ALPHA ..." and last
+  line asks "reply with the exact first and last lines of THIS message". Verify the transcript
+  `UserPrompt` contains the envelope AND every line (ALPHA through the tail) in ONE entry, and the
+  reply quotes both. Sending multi-line via browser-harness: `press_key("Shift+Enter")` does NOT
+  work — insert the whole text into the composer instead:
+  `js("...ed.focus(); document.execCommand('insertText', false, lines.join(String.fromCharCode(10)))...")`
+  then `press_key("Enter")`. (Join JS strings with String.fromCharCode(10) — literal \n inside the
+  heredoc-nested JS breaks the evaluator.)
 
 ## Gotchas
 

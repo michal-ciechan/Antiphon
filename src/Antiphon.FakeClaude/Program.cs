@@ -194,6 +194,36 @@ internal static class Program
                 return true;
             }
 
+            // The LARGE unbracketed multi-line hazard (live miss 2026-07-29, the calendar paste):
+            // ConPTY chunks big writes at arbitrary boundaries, so the real TUI's paste heuristic
+            // falls apart — line breaks surface as typed Enters and the body fragments into partial
+            // turns (only the tail survived as the answered prompt). Model that deterministically:
+            // an unbracketed burst over the threshold with embedded line breaks submits at EVERY
+            // break. Bracketed paste is immune (the markers delimit the paste regardless of read
+            // chunking) — which is exactly why programmatic multi-line delivery must wrap.
+            const int unbracketedPasteHazardThreshold = 512;
+            if (!wasBracketedPaste && chunk.Length > unbracketedPasteHazardThreshold
+                && (chunk.Contains('\n') || chunk.Contains('\r')))
+            {
+                var segments = chunk.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+                for (var s = 0; s < segments.Length; s++)
+                {
+                    composer.Append(segments[s]);
+                    Write(segments[s]);
+                    if (s == segments.Length - 1)
+                        continue; // the tail stays in the composer awaiting the next Enter
+                    var fragment = composer.ToString().Trim();
+                    composer.Clear();
+                    Write("\r\n");
+                    if (fragment.Length > 0)
+                    {
+                        SubmitTurn(Write, fragment, transcriptPath);
+                        turnCount++;
+                    }
+                }
+                return true;
+            }
+
             // Text — optionally with a trailing CR if this was a paste. Accumulate into the composer and
             // do NOT submit; the CR collapses to a literal newline. THIS is the paste trap that bit us.
             var composerText = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
