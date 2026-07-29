@@ -86,6 +86,14 @@ public sealed record Attachment
 
     /// <summary>Direct URL to the content, when the channel exposes one.</summary>
     public string? Url { get; init; }
+
+    /// <summary>
+    /// The attachment bytes, inlined by the gateway (base64 in JSON) so consumers behind the bus can
+    /// read the file without channel credentials. Mirrors <see cref="OutboundAttachment.Content"/>;
+    /// null when the gateway couldn't (or wouldn't — size cap) download the file, in which case only
+    /// the metadata travels.
+    /// </summary>
+    public byte[]? Content { get; init; }
 }
 
 public enum AttachmentKind

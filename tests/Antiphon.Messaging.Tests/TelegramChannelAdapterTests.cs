@@ -295,6 +295,80 @@ public sealed class TelegramChannelAdapterTests
         fake.SentDocuments.ShouldBeEmpty();
     }
 
+    // ---------- inbound attachments (getFile + download hydration) ----------
+
+    [Test]
+    public async Task Inbound_photo_bytes_are_downloaded_and_inlined()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var bytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 }; // PNG magic
+        fake.RegisterFile("photo-1", bytes, "photos/utr.jpg");
+        fake.EnqueuePhotoMessage(chatId: 555, fromId: 999, fileId: "photo-1", fileSize: bytes.Length);
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull();
+        msg!.Text.ShouldBeNull("a bare photo has no text");
+        var att = msg.Attachments.ShouldHaveSingleItem();
+        att.Kind.ShouldBe(AttachmentKind.Image);
+        att.Content.ShouldBe(bytes);
+        att.Name.ShouldBe("utr.jpg", "the name falls back to the resolved file_path's file name");
+    }
+
+    [Test]
+    public async Task Inbound_document_with_caption_keeps_text_and_inlines_bytes()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var bytes = "%PDF-1.4 inbound"u8.ToArray();
+        fake.RegisterFile("doc-1", bytes);
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "doc-1", fileName: "utr-letter.pdf", fileSize: bytes.Length, caption: "here's my UTR");
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull();
+        msg!.Text.ShouldBe("here's my UTR");
+        var att = msg.Attachments.ShouldHaveSingleItem();
+        att.Kind.ShouldBe(AttachmentKind.File);
+        att.Name.ShouldBe("utr-letter.pdf");
+        att.Mime.ShouldBe("application/pdf");
+        att.Content.ShouldBe(bytes);
+    }
+
+    [Test]
+    public async Task Oversized_inbound_attachment_keeps_metadata_only()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        var settings = Settings(fake);
+        settings.MaxInlineAttachmentBytes = 2;   // tiny cap — the 3-byte file must not download
+        var adapter = new TelegramChannelAdapter(new HttpClient(), settings, NullLogger<TelegramChannelAdapter>.Instance);
+        fake.RegisterFile("big-1", [1, 2, 3]);
+        fake.EnqueueDocumentMessage(chatId: 555, fromId: 999, fileId: "big-1", fileName: "big.bin", fileSize: 3);
+
+        var msg = await FirstMessageAsync(adapter);
+
+        var att = msg!.Attachments.ShouldHaveSingleItem();
+        att.Content.ShouldBeNull("over-cap files must pass through metadata-only");
+        att.ChannelRef.ShouldBe("big-1");
+    }
+
+    [Test]
+    public async Task Failed_getFile_never_loses_the_message()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        // No RegisterFile — getFile returns Telegram's invalid-file_id 400.
+        fake.EnqueuePhotoMessage(chatId: 555, fromId: 999, fileId: "ghost", fileSize: 3, caption: "look at this");
+
+        var msg = await FirstMessageAsync(NewAdapter(fake));
+
+        msg.ShouldNotBeNull("a broken download must never drop the inbound message");
+        msg!.Text.ShouldBe("look at this");
+        msg.Attachments.ShouldHaveSingleItem().Content.ShouldBeNull();
+    }
+
     private static async Task<ChannelMessage?> FirstMessageAsync(TelegramChannelAdapter adapter)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));

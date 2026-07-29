@@ -419,6 +419,118 @@ public class ChannelBridgeTests
         await Task.CompletedTask;
     }
 
+    // ---------- inbound attachments (photo/file → saved to agent inbox, referenced by path) ----------
+
+    // Live failure 2026-07-29 (AZ Care): Ola sent her UTR as a bare photo — no caption. The bridge
+    // dropped attachment-only messages, so the agent asked her for the UTR she'd just sent.
+    [Test]
+    public async Task An_attachment_only_message_routes_with_the_saved_file_path()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var bytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }; // JPEG magic
+        var msg = TelegramText(h.ChatId, text: null!, title: "AZ Care", author: "Ola") with
+        {
+            Text = null,
+            Attachments =
+            [
+                new Attachment { Kind = AttachmentKind.Image, ChannelRef = "photo-1", Name = "utr.jpg", Content = bytes },
+            ],
+        };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        prompt.ShouldContain("[photo attached: ");
+        prompt.ShouldContain("utr.jpg");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "the photo message owes a reply like any other");
+
+        var path = prompt.Split("[photo attached: ")[1].Split(']')[0];
+        File.Exists(path).ShouldBeTrue("the bytes must be on disk for the agent to Read");
+        (await File.ReadAllBytesAsync(path)).ShouldBe(bytes);
+        path.ShouldContain(Path.Combine(".antiphon", "inbox"));
+        File.Delete(path);
+    }
+
+    [Test]
+    public async Task A_captioned_document_routes_with_text_and_file_path()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var bytes = "%PDF-1.4 UTR letter"u8.ToArray();
+        var msg = TelegramText(h.ChatId, "here's my UTR letter", title: "AZ Care", author: "Ola") with
+        {
+            Attachments =
+            [
+                new Attachment { Kind = AttachmentKind.File, ChannelRef = "doc-1", Name = "utr-letter.pdf", Mime = "application/pdf", Content = bytes },
+            ],
+        };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        prompt.ShouldContain("here's my UTR letter");
+        prompt.ShouldContain("[file attached: ");
+        var path = prompt.Split("[file attached: ")[1].Split(']')[0];
+        (await File.ReadAllBytesAsync(path)).ShouldBe(bytes);
+        File.Delete(path);
+    }
+
+    [Test]
+    public async Task A_metadata_only_attachment_becomes_a_visible_could_not_import_note()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        // The gateway couldn't download (over cap / getFile failure): Content is null.
+        var msg = TelegramText(h.ChatId, text: null!, title: "AZ Care", author: "Ola") with
+        {
+            Text = null,
+            Attachments = [new Attachment { Kind = AttachmentKind.Image, ChannelRef = "photo-x" }],
+        };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        prompt.ShouldContain("[photo attached — could not be imported");
+    }
+
+    [Test]
+    public async Task A_message_with_neither_text_nor_attachments_is_not_routed()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, text: null!, title: "AZ Care") with { Text = null };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Attachment_file_names_from_the_channel_are_sanitized()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, text: null!, title: "AZ Care", author: "Ola") with
+        {
+            Text = null,
+            Attachments =
+            [
+                new Attachment { Kind = AttachmentKind.File, ChannelRef = "evil-1", Name = @"..\..\evil<>.pdf", Content = [1, 2, 3] },
+            ],
+        };
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        var path = prompt.Split("[file attached: ")[1].Split(']')[0];
+        path.ShouldContain(Path.Combine(".antiphon", "inbox"), customMessage: "traversal in channel names must never escape the inbox");
+        Path.GetFileName(path).ShouldNotContain("..");
+        File.Exists(path).ShouldBeTrue();
+        File.Delete(path);
+    }
+
     // ---------- harness ----------
 
     private static ChannelMessage TelegramText(

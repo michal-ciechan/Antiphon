@@ -38,4 +38,12 @@ public sealed class TelegramSettings
     /// <c>parse_mode</c> or <c>text</c> is never converted. See docs/telegram.md.
     /// </summary>
     public string Formatting { get; set; } = "Markdown";
+
+    /// <summary>
+    /// Largest inbound attachment the adapter downloads (getFile) and inlines into the
+    /// <see cref="Antiphon.Messaging.Attachment.Content"/> bytes. Bounded by the 20 MB bus message
+    /// cap after base64 (hence 14 MB raw) — and the Bot API won't serve files over 20 MB anyway.
+    /// Bigger files keep metadata only. 0 disables inbound downloads entirely.
+    /// </summary>
+    public long MaxInlineAttachmentBytes { get; set; } = 14 * 1024 * 1024;
 }

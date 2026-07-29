@@ -84,6 +84,51 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         EnqueueUpdate(new JsonObject { ["message"] = msg });
     }
 
+    private readonly Dictionary<string, (byte[] Bytes, string FilePath)> _files = [];
+
+    /// <summary>Register downloadable content for a file_id, served via getFile + the file endpoint.</summary>
+    public void RegisterFile(string fileId, byte[] bytes, string? filePath = null)
+    {
+        lock (_gate) _files[fileId] = (bytes, filePath ?? $"documents/{fileId}.bin");
+    }
+
+    /// <summary>Enqueue a photo message (Telegram's photo-size array shape), optionally with a caption.</summary>
+    public void EnqueuePhotoMessage(long chatId, long fromId, string fileId, int fileSize = 3, string? caption = null, string? firstName = "Tester")
+    {
+        var msg = new JsonObject
+        {
+            ["message_id"] = Next(ref _nextMessageId),
+            ["from"] = new JsonObject { ["id"] = fromId, ["is_bot"] = false, ["first_name"] = firstName },
+            ["chat"] = new JsonObject { ["id"] = chatId, ["type"] = "private", ["first_name"] = firstName },
+            ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["photo"] = new JsonArray(
+                new JsonObject { ["file_id"] = fileId + "-small", ["file_size"] = 1 },
+                new JsonObject { ["file_id"] = fileId, ["file_size"] = fileSize }),
+        };
+        if (caption is not null)
+            msg["caption"] = caption;
+        EnqueueUpdate(new JsonObject { ["message"] = msg });
+    }
+
+    /// <summary>Enqueue a document message (file attachment), optionally with a caption.</summary>
+    public void EnqueueDocumentMessage(long chatId, long fromId, string fileId, string fileName, string mime = "application/pdf", int fileSize = 3, string? caption = null, string? firstName = "Tester")
+    {
+        var msg = new JsonObject
+        {
+            ["message_id"] = Next(ref _nextMessageId),
+            ["from"] = new JsonObject { ["id"] = fromId, ["is_bot"] = false, ["first_name"] = firstName },
+            ["chat"] = new JsonObject { ["id"] = chatId, ["type"] = "private", ["first_name"] = firstName },
+            ["date"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            ["document"] = new JsonObject
+            {
+                ["file_id"] = fileId, ["file_name"] = fileName, ["mime_type"] = mime, ["file_size"] = fileSize,
+            },
+        };
+        if (caption is not null)
+            msg["caption"] = caption;
+        EnqueueUpdate(new JsonObject { ["message"] = msg });
+    }
+
     /// <summary>Enqueue a raw update; <c>update_id</c> is assigned if absent. Use for mentions/attachments/replies.</summary>
     public void EnqueueUpdate(JsonObject update)
     {
@@ -244,6 +289,37 @@ public sealed class FakeTelegramServer : IAsyncDisposable
                 },
             };
             return Ok(result);
+        });
+
+        // getFile resolves a file_id to a file_path served by the separate /file/bot<token>/ tree —
+        // the two-step download real Telegram uses. Unknown ids get the real API's 400 shape.
+        app.MapGet("/{bot}/getFile", (string bot, string? file_id) =>
+        {
+            if (!TokenOk(bot)) return Unauthorized();
+            lock (_gate)
+            {
+                if (file_id is null || !_files.TryGetValue(file_id, out var f))
+                    return Error(400, "Bad Request: invalid file_id");
+                return Ok(new JsonObject
+                {
+                    ["file_id"] = file_id,
+                    ["file_unique_id"] = "u-" + file_id,
+                    ["file_size"] = f.Bytes.Length,
+                    ["file_path"] = f.FilePath,
+                });
+            }
+        });
+
+        app.MapGet("/file/{bot}/{**path}", (string bot, string path) =>
+        {
+            if (!TokenOk(bot)) return Results.NotFound();
+            lock (_gate)
+            {
+                var match = _files.Values.FirstOrDefault(f => f.FilePath == path);
+                return match.Bytes is null
+                    ? Results.NotFound()
+                    : Results.Bytes(match.Bytes, "application/octet-stream");
+            }
         });
 
         app.MapGet("/{bot}/deleteWebhook", (string bot) =>

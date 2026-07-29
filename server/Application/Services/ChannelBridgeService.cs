@@ -119,10 +119,13 @@ public sealed class ChannelBridgeService : BackgroundService
 
         if (!channel.Enabled || channel.AgentId is not Guid agentId)
             return;
-        if (string.IsNullOrWhiteSpace(message.Text))
+        // Attachment-only messages (a bare photo/document) are deliverable — the file IS the
+        // message (live miss 2026-07-29: Ola's UTR photo was dropped here and the agent asked her
+        // for what she'd just sent). Only a message with neither text nor attachments is noise.
+        if (string.IsNullOrWhiteSpace(message.Text) && message.Attachments.Count == 0)
         {
             _logger.LogInformation(
-                "Channel {ChannelId} message {MessageId} has no text (attachment only?); not routed",
+                "Channel {ChannelId} message {MessageId} has no text and no attachments; not routed",
                 channel.Id, message.ChannelMessageId);
             return;
         }
@@ -151,7 +154,8 @@ public sealed class ChannelBridgeService : BackgroundService
     }
 
     // Routes one debounced batch (1..n same-sender messages) into the session: single truthful
-    // envelope header (first message's metadata), one line per message text.
+    // envelope header (first message's metadata), one line per message text; attachments are saved
+    // to the agent's inbox and referenced by path so the (vision-capable) agent can Read them.
     private async Task FlushLaneAsync(
         ChatChannel channel, Guid agentId, Guid sessionId, IReadOnlyList<ChannelInboundDebouncer.Buffered> batch)
     {
@@ -159,7 +163,8 @@ public sealed class ChannelBridgeService : BackgroundService
         {
             var first = batch[0].Message;
             var newest = batch[^1].Message;
-            var text = string.Join("\n", batch.Select(b => b.Message.Text!.Trim()));
+            var inboxDir = await ResolveInboxDirAsync(agentId);
+            var text = string.Join("\n", batch.Select(b => RenderMessageBody(b.Message, inboxDir)));
             var prompt = ChannelPromptFormat.Format(
                 channel,
                 first.Author.DisplayName ?? first.Author.Username ?? first.Author.Id,
@@ -194,6 +199,94 @@ public sealed class ChannelBridgeService : BackgroundService
                 batch.Count, channel.Id);
             await RaiseBridgeDropAlertAsync(channel, agentId, CancellationToken.None);
         }
+    }
+
+    /// <summary>The agent's attachment inbox (<c>&lt;workingDirectory&gt;\.antiphon\inbox</c>); null when unresolvable.</summary>
+    private async Task<string?> ResolveInboxDirAsync(Guid agentId)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var workingDirectory = await db.Agents.AsNoTracking()
+                .Where(a => a.Id == agentId)
+                .Select(a => a.WorkingDirectory)
+                .FirstOrDefaultAsync();
+            return string.IsNullOrWhiteSpace(workingDirectory)
+                ? null
+                : Path.Combine(workingDirectory, ".antiphon", "inbox");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve inbox dir for agent {AgentId}", agentId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// One message's deliverable body: its text line(s) plus one bracketed line per attachment.
+    /// Inlined bytes are written into the agent's inbox and referenced by absolute path (the agent
+    /// Reads them — photos included, it has vision); metadata-only attachments (download failed or
+    /// over the inline cap) become a visible note so the sender's file is never silently ignored.
+    /// </summary>
+    private string RenderMessageBody(ChannelMessage message, string? inboxDir)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(message.Text))
+            parts.Add(message.Text.Trim());
+
+        for (var i = 0; i < message.Attachments.Count; i++)
+        {
+            var attachment = message.Attachments[i];
+            var word = AttachmentWord(attachment.Kind);
+            if (attachment.Content is not { Length: > 0 } bytes)
+            {
+                parts.Add($"[{word} attached — could not be imported (no content relayed)]");
+                continue;
+            }
+            if (inboxDir is null)
+            {
+                parts.Add($"[{word} attached — could not be saved (agent has no working directory)]");
+                continue;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(inboxDir);
+                var fileName = SafeFileName(message, attachment, i);
+                var path = Path.Combine(inboxDir, fileName);
+                File.WriteAllBytes(path, bytes);
+                parts.Add($"[{word} attached: {path}]");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to save inbound attachment {Ref} to {Dir}", attachment.ChannelRef, inboxDir);
+                parts.Add($"[{word} attached — could not be saved]");
+            }
+        }
+
+        return string.Join("\n", parts);
+    }
+
+    private static string AttachmentWord(AttachmentKind kind) => kind switch
+    {
+        AttachmentKind.Image => "photo",
+        AttachmentKind.Video => "video",
+        AttachmentKind.Audio or AttachmentKind.Voice => "audio",
+        _ => "file",
+    };
+
+    // <utc-stamp>-<msgid>-<n>-<original name> keeps inbox files unique, ordered, and traceable to
+    // their message. Original names are untrusted channel data — strip anything path-flavoured.
+    private string SafeFileName(ChannelMessage message, Attachment attachment, int index)
+    {
+        var original = Path.GetFileName(attachment.Name ?? "");
+        foreach (var c in Path.GetInvalidFileNameChars())
+            original = original.Replace(c, '_');
+        if (string.IsNullOrWhiteSpace(original))
+            original = "attachment" + (attachment.Kind == AttachmentKind.Image ? ".jpg" : ".bin");
+        var stamp = _timeProvider.GetUtcNow().UtcDateTime.ToString("yyyyMMdd-HHmmss");
+        return $"{stamp}-{message.ChannelMessageId}-{index}-{original}";
     }
 
     private async Task RaiseBridgeDropAlertAsync(ChatChannel channel, Guid agentId, CancellationToken ct)

@@ -110,6 +110,18 @@ public sealed class TelegramContractTests
         });
 
     [Test]
+    public async Task getFile_with_invalid_file_id_returns_ok_false_400() =>
+        await ForFakeAndReal(async (baseUrl, token) =>
+        {
+            // The inbound-attachment hydration path parses this error envelope to fall back to
+            // metadata-only — pin its shape against real Telegram.
+            var r = await GetJson(Url(baseUrl, token, "getFile") + "?file_id=definitely-not-a-file");
+            r["ok"]!.GetValue<bool>().ShouldBeFalse();
+            r["error_code"]!.GetValue<int>().ShouldBe(400);
+            r["description"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
+        });
+
+    [Test]
     public async Task sendDocument_without_a_document_returns_ok_false() =>
         await ForFakeAndReal(async (baseUrl, token) =>
         {

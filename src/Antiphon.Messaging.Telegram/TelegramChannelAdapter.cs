@@ -139,8 +139,93 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                     messages.Add(message);
             }
 
+            // Inline attachment bytes while we still hold channel credentials — consumers behind
+            // the bus can't call getFile. Best-effort: a failed download keeps the metadata.
+            for (var i = 0; i < messages.Count; i++)
+                if (messages[i].Attachments.Count > 0)
+                    messages[i] = messages[i] with { Attachments = await HydrateAttachmentsAsync(messages[i].Attachments, ct) };
+
             return new PollOutcome(messages, next, null);
         }
+    }
+
+    /// <summary>
+    /// Downloads each attachment's bytes via <c>getFile</c> + the file endpoint and inlines them as
+    /// <see cref="Attachment.Content"/>. Files over <see cref="TelegramSettings.MaxInlineAttachmentBytes"/>
+    /// (or any download failure) pass through metadata-only — an inbound message must never be lost
+    /// to a broken download.
+    /// </summary>
+    private async Task<IReadOnlyList<Attachment>> HydrateAttachmentsAsync(
+        IReadOnlyList<Attachment> attachments, CancellationToken ct)
+    {
+        if (_settings.MaxInlineAttachmentBytes <= 0)
+            return attachments;
+
+        var hydrated = new List<Attachment>(attachments.Count);
+        foreach (var attachment in attachments)
+        {
+            if (attachment.Size is { } declared && declared > _settings.MaxInlineAttachmentBytes)
+            {
+                _logger.LogInformation(
+                    "[telegram] attachment {Ref} is {Bytes} bytes — over the {Max} inline cap; keeping metadata only",
+                    attachment.ChannelRef, declared, _settings.MaxInlineAttachmentBytes);
+                hydrated.Add(attachment);
+                continue;
+            }
+
+            try
+            {
+                var downloaded = await TryDownloadAsync(attachment, ct);
+                hydrated.Add(downloaded ?? attachment);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[telegram] attachment download failed for {Ref}; keeping metadata only", attachment.ChannelRef);
+                hydrated.Add(attachment);
+            }
+        }
+        return hydrated;
+    }
+
+    private async Task<Attachment?> TryDownloadAsync(Attachment attachment, CancellationToken ct)
+    {
+        // getFile resolves the file_id to a short-lived file_path on Telegram's file endpoint.
+        using var resp = await _http.GetAsync($"{Url("getFile")}?file_id={Uri.EscapeDataString(attachment.ChannelRef)}", ct);
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (!(root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
+            || !root.TryGetProperty("result", out var result))
+        {
+            _logger.LogWarning("[telegram] getFile failed for {Ref}: {Body}", attachment.ChannelRef, json);
+            return null;
+        }
+
+        var filePath = GetString(result, "file_path");
+        if (string.IsNullOrEmpty(filePath))
+            return null;
+        if (GetLong(result, "file_size") is { } actual && actual > _settings.MaxInlineAttachmentBytes)
+        {
+            _logger.LogInformation(
+                "[telegram] attachment {Ref} resolved to {Bytes} bytes — over the inline cap; keeping metadata only",
+                attachment.ChannelRef, actual);
+            return null;
+        }
+
+        var bytes = await _http.GetByteArrayAsync($"{_settings.ApiBaseUrl}/file/bot{_settings.BotToken}/{filePath}", ct);
+        if (bytes.Length > _settings.MaxInlineAttachmentBytes)
+            return null;
+
+        return attachment with
+        {
+            Content = bytes,
+            Size = attachment.Size ?? bytes.Length,
+            Name = attachment.Name ?? Path.GetFileName(filePath),
+        };
     }
 
     /// <summary>Result of one getUpdates poll. <see cref="Backoff"/> is non-null when Telegram returned a
