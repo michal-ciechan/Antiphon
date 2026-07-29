@@ -1,0 +1,31 @@
+{
+  "agentId": "00000000-0000-0000-0000-000000000001",
+  "workspaceRoot": "\u003Cworkspace\u003E",
+  "isGitRepository": true,
+  "files": [
+    {
+      "path": "notes/report.md",
+      "gitStatus": "Untracked",
+      "external": false,
+      "agentEdits": 0,
+      "lastAgentEditAt": null,
+      "contentHash": "5e051e54f7b55641",
+      "reviewLevel": "Viewed",
+      "reviewStale": false,
+      "sizeBytes": 38,
+      "isMarkdown": true
+    },
+    {
+      "path": "README.md",
+      "gitStatus": "Modified",
+      "external": false,
+      "agentEdits": 1,
+      "lastAgentEditAt": "2026-01-01T00:00:00Z",
+      "contentHash": "cf8f0656ec60c6b7",
+      "reviewLevel": null,
+      "reviewStale": false,
+      "sizeBytes": 69,
+      "isMarkdown": true
+    }
+  ]
+}

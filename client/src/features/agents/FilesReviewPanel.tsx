@@ -90,11 +90,18 @@ const threadStatusColor: Record<ReviewThreadStatus, string> = {
   Resolved: 'green',
 }
 
-export function FilesReviewPanel({ agentId }: { agentId: string }) {
+export function FilesReviewPanel({
+  agentId,
+  initialSelectedPath = null,
+}: {
+  agentId: string
+  /** Storybook/screenshot hook: pre-open a file without a click. */
+  initialSelectedPath?: string | null
+}) {
   const files = useAgentFiles(agentId)
   const threads = useReviewThreads(agentId)
   const mark = useMarkFilesReview(agentId)
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selectedPath, setSelectedPath] = useState<string | null>(initialSelectedPath)
   const [onlyUnviewed, setOnlyUnviewed] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; prefix: string } | null>(null)
 

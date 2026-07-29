@@ -1,0 +1,26 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "agentId": "00000000-0000-0000-0000-000000000002",
+    "path": "README.md",
+    "line": 3,
+    "snippet": "Edited by the agent for the contract scenario.",
+    "status": "AwaitingHuman",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z",
+    "comments": [
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "author": "Human",
+        "body": "Is this edit intentional?",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000004",
+        "author": "Agent",
+        "body": "Yes \u2014 intentional; the wording matches the new invoice flow.",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ]
+  }
+]
