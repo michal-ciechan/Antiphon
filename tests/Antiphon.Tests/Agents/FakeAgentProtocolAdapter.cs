@@ -126,6 +126,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     // Every body actually SUBMITTED (composer content at the moment a lone "\r" landed), in order.
     // Batching tests assert the delivered body's shape here — Inputs can't, because a batched
     // delivery is one multi-line write whose composer content is what matters.
+    // Bracketed-paste markers (\e[200~..\e[201~) are stripped from the composer: real TUIs treat
+    // them as control sequences, not typed text. Inputs/SentInput still record the raw wire bytes
+    // so Multi-line delivery-wrap tests can pin the markers.
     private readonly List<string> _submittedBodies = [];
     public IReadOnlyList<string> SubmittedBodies => _submittedBodies;
 
@@ -142,10 +145,16 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
         }
         else if (EchoTypedInputToScreen)
         {
-            _composer.Append(input);
+            // DeliverAsync wraps multi-line bodies in bracketed paste; the markers never appear
+            // as composer text on a real TUI, so strip them before echoing.
+            _composer.Append(StripBracketedPasteMarkers(input));
         }
         return Task.CompletedTask;
     }
+
+    private static string StripBracketedPasteMarkers(string input) =>
+        input.Replace("\x1b[200~", string.Empty, StringComparison.Ordinal)
+             .Replace("\x1b[201~", string.Empty, StringComparison.Ordinal);
 
     public Task ResizeAsync(int cols, int rows, CancellationToken ct)
     {
