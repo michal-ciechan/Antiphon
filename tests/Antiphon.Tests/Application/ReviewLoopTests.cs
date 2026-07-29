@@ -97,6 +97,65 @@ public class ReviewLoopTests
         listing.Files.Single(f => f.Path == "top.md").ReviewLevel.ShouldBeNull();
     }
 
+    // Live miss 2026-07-29 (Family agent, workspace agents/family INSIDE the ClaudeBot repo):
+    // git reports paths relative to the REPO ROOT, so "sites/x.md" resolved against the workspace
+    // to a nonexistent file and every viewer rendered empty. Workspace-subdir repos must
+    // re-relativize paths and serve content correctly.
+    [Test]
+    public async Task A_workspace_that_is_a_subdirectory_of_the_repo_lists_and_serves_files_correctly()
+    {
+        await using var h = await HarnessAsync(withGitRepo: false);
+
+        // Build a repo ABOVE the workspace: repoRoot/{shared.md, ws/inside.md}; workspace = repoRoot/ws.
+        var repoRoot = Path.Combine(Path.GetTempPath(), $"antiphon-subdir-{Guid.NewGuid():N}");
+        var wsDir = Path.Combine(repoRoot, "ws");
+        Directory.CreateDirectory(wsDir);
+        try
+        {
+            if (!await TryGitAsync(repoRoot, "init"))
+                throw new SkipTestException("git CLI not available");
+            await TryGitAsync(repoRoot, "config", "user.email", "t@antiphon.local");
+            await TryGitAsync(repoRoot, "config", "user.name", "T");
+            await File.WriteAllTextAsync(Path.Combine(wsDir, "inside.md"), "committed inside");
+            await File.WriteAllTextAsync(Path.Combine(repoRoot, "shared.md"), "committed shared");
+            await TryGitAsync(repoRoot, "add", ".");
+            await TryGitAsync(repoRoot, "commit", "-m", "seed");
+            await File.WriteAllTextAsync(Path.Combine(wsDir, "inside.md"), "changed inside");
+            await File.WriteAllTextAsync(Path.Combine(repoRoot, "shared.md"), "changed shared");
+
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var agent = await db.Agents.FirstAsync(a => a.Id == h.AgentId);
+                agent.WorkingDirectory = wsDir;
+                await db.SaveChangesAsync();
+            }
+
+            var listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+            listing.ShouldNotBeNull();
+
+            // The workspace file: WORKSPACE-relative path, real content served, HEAD readable.
+            var inside = listing!.Files.Single(f => f.Path == "inside.md");
+            inside.GitStatus.ShouldBe("Modified");
+            inside.External.ShouldBeFalse();
+            var work = await h.Files.GetContentAsync(h.AgentId, "inside.md", "work", CancellationToken.None);
+            work!.Text.ShouldBe("changed inside", "the viewer rendered empty before the fix");
+            var head = await h.Files.GetContentAsync(h.AgentId, "inside.md", "head", CancellationToken.None);
+            head!.Text.ShouldNotBeNull();
+            head.Text!.TrimEnd().ShouldBe("committed inside");
+
+            // The repo change OUTSIDE the workspace: listed as external with an absolute path,
+            // and its content is servable.
+            var shared = listing.Files.Single(f => f.Path.EndsWith("/shared.md", StringComparison.Ordinal));
+            shared.External.ShouldBeTrue();
+            var sharedContent = await h.Files.GetContentAsync(h.AgentId, shared.Path, "work", CancellationToken.None);
+            sharedContent!.Text.ShouldBe("changed shared");
+        }
+        finally
+        {
+            try { Directory.Delete(repoRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // ---------- the thread loop ----------
 
     [Test]

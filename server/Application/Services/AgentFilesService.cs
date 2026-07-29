@@ -46,13 +46,15 @@ public sealed class AgentFilesService
             .Where(r => r.AgentId == agentId)
             .ToDictionaryAsync(r => r.Path, ct);
 
-        // Union: everything git says changed + everything the agent touched.
+        // Union: everything git says changed + everything the agent touched. A git change with a
+        // ROOTED path is a repo change outside a subdirectory workspace — listed as external.
         var byPath = new Dictionary<string, AgentFileDto>(StringComparer.OrdinalIgnoreCase);
         foreach (var change in gitChanges)
         {
             var rel = Normalize(change.Path);
+            var external = Path.IsPathRooted(rel);
             byPath[rel] = new AgentFileDto(
-                rel, change.Status.ToString(), External: false,
+                rel, change.Status.ToString(), External: external,
                 AgentEdits: 0, LastAgentEditAt: null,
                 ContentHash: null, ReviewLevel: null, ReviewStale: false,
                 SizeBytes: null, IsMarkdown: IsMarkdown(rel));
@@ -119,9 +121,13 @@ public sealed class AgentFilesService
         var external = Path.IsPathRooted(path);
         if (external)
         {
-            // Absolute paths are served ONLY when the agent itself touched them (external files).
-            var activity = await GetAgentActivityAsync(agent, root, ct);
-            if (!activity.TryGetValue(Normalize(path), out var info) || !info.External)
+            // Absolute paths are served ONLY when they appear in the agent's file listing —
+            // agent-touched files or repo changes outside a subdirectory workspace.
+            var listing = await GetFilesAsync(agentId, ct);
+            var normalized = Normalize(path);
+            var listed = listing?.Files.Any(f =>
+                f.External && string.Equals(f.Path, normalized, StringComparison.OrdinalIgnoreCase)) ?? false;
+            if (!listed)
                 return null;
         }
 

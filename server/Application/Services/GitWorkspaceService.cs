@@ -35,6 +35,15 @@ public sealed class GitWorkspaceService
             return [];
         }
 
+        // Git reports paths relative to the REPO ROOT; when the workspace is a SUBDIRECTORY of
+        // the repo (live miss 2026-07-29: agents/family inside the ClaudeBot repo — every file
+        // rendered empty because "sites/x.md" resolved against the workspace), re-relativize
+        // paths under the workspace and return paths elsewhere in the repo as absolute.
+        var (prefixCode, prefixOut, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--show-prefix");
+        var prefix = prefixCode == 0 ? prefixOut.Trim() : "";
+        var (topCode, topOut, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--show-toplevel");
+        var toplevel = topCode == 0 ? topOut.Trim() : workingDirectory.Replace('\\', '/');
+
         var changes = new List<GitChange>();
         var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < records.Length; i++)
@@ -53,15 +62,22 @@ public sealed class GitWorkspaceService
                 oldPath = records[++i];
             }
 
-            changes.Add(new GitChange(path, Classify(index, work), oldPath));
+            changes.Add(new GitChange(Rebase(path), Classify(index, work), oldPath is null ? null : Rebase(oldPath)));
         }
         return changes;
+
+        string Rebase(string repoRelative) =>
+            prefix.Length == 0 ? repoRelative
+            : repoRelative.StartsWith(prefix, StringComparison.Ordinal) ? repoRelative[prefix.Length..]
+            : $"{toplevel}/{repoRelative}";
     }
 
     /// <summary>The file's content at HEAD, or null when it doesn't exist there (new file / no repo).</summary>
     public async Task<string?> GetHeadContentAsync(string workingDirectory, string relativePath, CancellationToken ct)
     {
-        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "show", $"HEAD:{relativePath}");
+        // HEAD:./path is CWD-relative; a bare HEAD:path is repo-ROOT-relative and breaks for
+        // workspaces that are subdirectories of the repo.
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "show", $"HEAD:./{relativePath}");
         return code == 0 ? stdout : null;
     }
 
