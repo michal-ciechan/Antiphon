@@ -169,6 +169,37 @@ export function computeTurnMetrics(turns: Turn[]): TurnMetrics[] {
   })
 }
 
+/**
+ * Merge incoming transcript entries into the current list. Dedup is by LINE UUID (+kind), never by
+ * sequence, and live sequences are REBASED past the loaded max — the mirror of the server's
+ * persistence dedup, and for the same reason: live SignalR payloads carry the runner tailer's
+ * sequence, which restarts at 1 on every session relaunch / re-tail, while the HTTP backlog
+ * carries rebased stored sequences. Sequence-dedup silently dropped every live entry for a session
+ * with prior relaunches (live miss 2026-07-30: the full-screen files dock never showed new turns),
+ * and without the rebase a colliding live sequence sorts into the middle of history.
+ * Returns the new sorted list, or null when nothing was new. Exported for tests.
+ */
+export function mergeTranscriptEntries(
+  prev: TranscriptEntryDto[],
+  incoming: TranscriptEntryDto[],
+  seen: Set<string>,
+  counter: { maxSeq: number },
+  rebaseLive: boolean,
+): TranscriptEntryDto[] | null {
+  const keyOf = (e: TranscriptEntryDto) => (e.uuid ? `${e.uuid}:${e.kind}` : `seq:${e.sequence}`)
+  const fresh: TranscriptEntryDto[] = []
+  for (const e of incoming) {
+    const key = keyOf(e)
+    if (seen.has(key)) continue
+    seen.add(key)
+    const seq = rebaseLive && e.sequence <= counter.maxSeq ? counter.maxSeq + 1 : e.sequence
+    counter.maxSeq = Math.max(counter.maxSeq, seq)
+    fresh.push(seq === e.sequence ? e : { ...e, sequence: seq })
+  }
+  if (fresh.length === 0) return null
+  return [...prev, ...fresh].sort((a, b) => a.sequence - b.sequence)
+}
+
 /** "850ms" / "12.4s" / "1m 05s" / "1h 02m". Exported for tests. */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
@@ -294,26 +325,43 @@ export function SessionTranscriptPanel({
 }) {
   const [entries, setEntries] = useState<TranscriptEntryDto[]>(initialEntries ?? [])
   const [loading, setLoading] = useState(initialEntries == null)
-  const seqRef = useRef<Set<number>>(new Set())
+  // Merge bookkeeping lives in refs (NOT inside a setEntries updater — StrictMode double-invokes
+  // updaters, and a seen-set mutated twice drops every entry on the second pass).
+  const entriesRef = useRef<TranscriptEntryDto[]>(initialEntries ?? [])
+  const seenRef = useRef<Set<string>>(new Set())
+  const counterRef = useRef({ maxSeq: 0 })
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const didInitialScroll = useRef(false)
+  // Whether the user is (still) reading the live edge. Updated from SCROLL events, not measured
+  // when entries arrive — by then the new content has already grown scrollHeight and the "am I
+  // near the bottom?" answer is always no (live miss 2026-07-30: the view stopped following the
+  // stream the moment a turn taller than the threshold landed).
+  const stickToBottom = useRef(true)
 
   useEffect(() => {
     if (initialEntries != null) return
     let disposed = false
-    seqRef.current = new Set()
+    entriesRef.current = []
+    seenRef.current = new Set()
+    counterRef.current = { maxSeq: 0 }
+    didInitialScroll.current = false
+    stickToBottom.current = true
     setEntries([])
     setLoading(true)
 
-    const merge = (incoming: TranscriptEntryDto[]) => {
-      const fresh = incoming.filter((e) => !seqRef.current.has(e.sequence))
-      if (fresh.length === 0) return
-      fresh.forEach((e) => seqRef.current.add(e.sequence))
-      setEntries((prev) => [...prev, ...fresh].sort((a, b) => a.sequence - b.sequence))
+    const merge = (incoming: TranscriptEntryDto[], rebaseLive: boolean) => {
+      const next = mergeTranscriptEntries(
+        entriesRef.current, incoming, seenRef.current, counterRef.current, rebaseLive)
+      if (next) {
+        entriesRef.current = next
+        setEntries(next)
+      }
     }
 
     const load = async () => {
       try {
         const data = await getSessionTranscript(sessionId)
-        if (!disposed) merge(data.entries)
+        if (!disposed) merge(data.entries, false)
       } catch {
         /* keep whatever streamed live */
       } finally {
@@ -329,7 +377,7 @@ export function SessionTranscriptPanel({
       .build()
 
     const onEntry = (payload: SessionTranscriptPayload) => {
-      if (payload.sessionId === sessionId) merge([payload])
+      if (payload.sessionId === sessionId) merge([payload], true)
     }
     connection.on('SessionTranscript', onEntry)
     connection.onreconnected(() => {
@@ -356,6 +404,18 @@ export function SessionTranscriptPanel({
       }
     }
   }, [sessionId, initialEntries])
+
+  // The newest activity lives at the bottom: jump there once the backlog first renders, then keep
+  // following the stream while the user was reading the live edge (never fight a deliberate
+  // scroll back through history).
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport || loading || entries.length === 0) return
+    const firstLoad = !didInitialScroll.current
+    didInitialScroll.current = true
+    if (firstLoad || stickToBottom.current)
+      requestAnimationFrame(() => viewport.scrollTo({ top: viewport.scrollHeight }))
+  }, [loading, entries.length])
 
   const turns = useMemo(() => buildTurns(entries), [entries])
   const metrics = useMemo(() => computeTurnMetrics(turns), [turns])
@@ -400,9 +460,6 @@ export function SessionTranscriptPanel({
     <Stack gap="xs" style={fitHeight ? { minHeight: 0, height: '100%', flexGrow: 1 } : { minHeight: 0 }}>
       <Group justify="space-between">
         <Group gap="xs">
-          <Badge color={working ? 'yellow' : 'green'} variant="light">
-            {working ? 'Working…' : 'Idle'}
-          </Badge>
           <Text size="xs" c="dimmed">
             {turns.length} turn{turns.length === 1 ? '' : 's'}
           </Text>
@@ -426,6 +483,13 @@ export function SessionTranscriptPanel({
         h={fitHeight ? undefined : 460}
         type="auto"
         offsetScrollbars
+        viewportRef={viewportRef}
+        onScrollPositionChange={() => {
+          const viewport = viewportRef.current
+          if (viewport)
+            stickToBottom.current =
+              viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
+        }}
         style={fitHeight ? { flexGrow: 1, minHeight: 0 } : undefined}
       >
         {loading && entries.length === 0 ? (
@@ -490,6 +554,17 @@ export function SessionTranscriptPanel({
           </Stack>
         )}
       </ScrollArea>
+
+      {/* Status lives at the BOTTOM — right where the newest turn lands and the composer sits. */}
+      <Group gap="xs">
+        <Badge
+          color={working ? 'yellow' : 'green'}
+          variant="light"
+          leftSection={working ? <Loader size={10} color="yellow" type="dots" /> : undefined}
+        >
+          {working ? 'Working…' : 'Idle'}
+        </Badge>
+      </Group>
 
       {withComposer && <SmartComposer sessionId={sessionId} defaultMode="send-now" />}
     </Stack>

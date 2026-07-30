@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatTokens,
   isWorking,
+  mergeTranscriptEntries,
 } from './SessionTranscriptPanel'
 
 function entry(
@@ -157,6 +158,66 @@ describe('computeTurnMetrics', () => {
       entry(2, 'ToolCall', null, { timestamp: at(3) }),
     ])
     expect(computeTurnMetrics(turns)[0].durationMs).toBeNull()
+  })
+})
+
+describe('mergeTranscriptEntries', () => {
+  // The live-miss scenario (2026-07-30): a session with prior relaunches has stored sequences far
+  // ahead of the runner tailer's per-lifetime numbering, so live payload sequences COLLIDE with
+  // already-loaded ones. Dedup is by line uuid; colliding live sequences are rebased past the max.
+  it('accepts a live entry whose runner sequence collides with a loaded stored sequence', () => {
+    const seen = new Set<string>()
+    const counter = { maxSeq: 0 }
+    const backlog = mergeTranscriptEntries(
+      [],
+      [
+        entry(240, 'UserPrompt', 'old', { uuid: 'u-old-1' }),
+        entry(241, 'TurnEnd', null, { uuid: 'u-old-2' }),
+      ],
+      seen,
+      counter,
+      false,
+    )!
+    // Live push: the runner's current tailer generation numbers this line 180 — already "seen" as
+    // a sequence, but a brand-new line uuid. It must append AFTER the backlog, not vanish.
+    const next = mergeTranscriptEntries(
+      backlog,
+      [entry(180, 'UserPrompt', 'new prompt', { uuid: 'u-new-1' })],
+      seen,
+      counter,
+      true,
+    )
+    expect(next).not.toBeNull()
+    expect(next!.map((e) => e.text)).toEqual(['old', null, 'new prompt'])
+    expect(next![2].sequence).toBe(242)
+  })
+
+  it('drops entries whose uuid+kind was already merged and returns null when nothing is new', () => {
+    const seen = new Set<string>()
+    const counter = { maxSeq: 0 }
+    const first = mergeTranscriptEntries(
+      [],
+      [entry(1, 'AssistantText', 'hi', { uuid: 'u1' })],
+      seen,
+      counter,
+      false,
+    )!
+    expect(
+      mergeTranscriptEntries(first, [entry(7, 'AssistantText', 'hi', { uuid: 'u1' })], seen, counter, true),
+    ).toBeNull()
+  })
+
+  it('keeps distinct kinds from the same line uuid (text + turn end share a uuid)', () => {
+    const seen = new Set<string>()
+    const counter = { maxSeq: 0 }
+    const next = mergeTranscriptEntries(
+      [],
+      [entry(1, 'AssistantText', 'done', { uuid: 'u1' }), entry(2, 'TurnEnd', null, { uuid: 'u1' })],
+      seen,
+      counter,
+      false,
+    )
+    expect(next).toHaveLength(2)
   })
 })
 
