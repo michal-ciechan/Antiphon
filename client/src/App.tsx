@@ -19,6 +19,7 @@ import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
 import { OrchestratorPanel } from './features/orchestrator/OrchestratorPanel'
 import { AgentsPage } from './features/agents/AgentsPage'
+import { AgentFilesPage } from './features/agents/AgentFilesPage'
 import { ChannelsPage } from './features/channels/ChannelsPage'
 
 const queryClient = new QueryClient()
@@ -40,6 +41,17 @@ export default function App() {
         <SignalRProvider>
           <BrowserRouter>
             <Routes>
+              {/* Full-screen (no app chrome): the agent files review tab. */}
+              <Route
+                path="agents/:id/files"
+                element={
+                  <ErrorBoundary fallbackTitle="Files error">
+                    <SuspenseBoundary variant="page">
+                      <AgentFilesPage />
+                    </SuspenseBoundary>
+                  </ErrorBoundary>
+                }
+              />
               <Route element={<Layout />}>
                 <Route
                   index

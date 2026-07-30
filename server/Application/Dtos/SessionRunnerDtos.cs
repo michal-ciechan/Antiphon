@@ -51,7 +51,14 @@ public sealed record SessionRunnerTranscriptEvent(
     string? ToolInput,
     string? ToolUseId,
     bool? ToolIsError,
-    string? StopReason);
+    string? StopReason,
+    // API-call attribution (assistant records only) — see RunnerTranscriptEvent: lines of one API
+    // call share ApiCallId and repeat identical usage; group by ApiCallId, count usage once.
+    string? ApiCallId = null,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheReadTokens = null,
+    int? CacheCreationTokens = null);
 
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,

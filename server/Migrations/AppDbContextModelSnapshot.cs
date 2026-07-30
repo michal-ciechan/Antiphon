@@ -1592,13 +1592,29 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("AgentSessionId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ApiCallId")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<int?>("CacheCreationTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("CacheReadTokens")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("InputTokens")
+                        .HasColumnType("integer");
 
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<int?>("OutputTokens")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ParentUuid")
                         .HasMaxLength(64)

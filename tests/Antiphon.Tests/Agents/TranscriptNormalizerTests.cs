@@ -129,6 +129,51 @@ public class TranscriptNormalizerTests
     }
 
     [Test]
+    public void Assistant_usage_and_message_id_are_attached_to_every_part()
+    {
+        // Real shape (observed 2026-07-30): message.id + message.usage repeated on every JSONL line
+        // of the same API call; the extra usage sub-objects (cache_creation, server_tool_use) are ignored.
+        const string line = """{"type":"assistant","uuid":"u5","timestamp":"2026-07-30T10:00:05.000Z","message":{"id":"msg_011abc","role":"assistant","stop_reason":"end_turn","usage":{"input_tokens":2,"cache_creation_input_tokens":43688,"cache_read_input_tokens":12000,"output_tokens":372,"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":43688,"ephemeral_5m_input_tokens":0}},"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Done."}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(3); // thinking + text + turn end
+        foreach (var part in parts)
+        {
+            part.ApiCallId.ShouldBe("msg_011abc");
+            part.InputTokens.ShouldBe(2);
+            part.OutputTokens.ShouldBe(372);
+            part.CacheReadTokens.ShouldBe(12000);
+            part.CacheCreationTokens.ShouldBe(43688);
+        }
+    }
+
+    [Test]
+    public void Assistant_without_usage_yields_null_token_fields()
+    {
+        const string line = """{"type":"assistant","uuid":"u6","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(2);
+        parts[0].ApiCallId.ShouldBeNull();
+        parts[0].InputTokens.ShouldBeNull();
+        parts[0].OutputTokens.ShouldBeNull();
+        parts[0].CacheReadTokens.ShouldBeNull();
+        parts[0].CacheCreationTokens.ShouldBeNull();
+    }
+
+    [Test]
+    public void User_records_never_carry_usage()
+    {
+        const string line = """{"type":"user","message":{"role":"user","content":"run the app"}}""";
+
+        var part = TranscriptNormalizer.Normalize(line).ShouldHaveSingleItem();
+        part.ApiCallId.ShouldBeNull();
+        part.OutputTokens.ShouldBeNull();
+    }
+
+    [Test]
     public void Meta_user_records_are_skipped()
     {
         const string line = """{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<system>"}]}}""";

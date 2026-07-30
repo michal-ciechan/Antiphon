@@ -303,7 +303,7 @@ export function AgentsPage() {
               </Table.Tbody>
             </Table>
 
-            <FilesReviewPanel agentId={selected.data.id} />
+            <FilesReviewPanel agentId={selected.data.id} showExpand />
           </Paper>
         )}
       </Stack>

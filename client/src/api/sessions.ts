@@ -31,6 +31,15 @@ export interface TranscriptEntryDto {
   toolUseId: string | null
   toolIsError: boolean | null
   stopReason: string | null
+  /**
+   * API-call attribution (assistant entries only): entries of one API call share apiCallId and
+   * repeat IDENTICAL usage numbers — group by apiCallId and count usage once per call.
+   */
+  apiCallId?: string | null
+  inputTokens?: number | null
+  outputTokens?: number | null
+  cacheReadTokens?: number | null
+  cacheCreationTokens?: number | null
 }
 
 export interface SessionTranscriptDto {

@@ -31,6 +31,10 @@ const agentSummary: AgentSummaryDto = {
   createdAt: '2026-05-18T09:00:00Z',
   updatedAt: '2026-05-18T09:00:00Z',
   liveSession: null,
+  alwaysOn: false,
+  remoteControlEnabled: false,
+  supervision: null,
+  systemPromptAppend: null,
 }
 
 const agentDetail: AgentDetailDto = {
@@ -510,7 +514,8 @@ describe('AgentsPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Terminal Frontend Claude' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Start agent' }))
 
-    // Remote control comes from the persisted agent setting; the CLI start passes fresh:false only.
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ fresh: false }))
+    // Remote control mirrors the agent's persisted setting (false in this fixture) — explicitly
+    // passing the persisted value is equivalent to omitting it server-side.
+    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ fresh: false, remoteControl: false }))
   })
 })

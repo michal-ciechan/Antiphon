@@ -77,13 +77,51 @@ public class ContractSnapshotTests
                     Cwd = workspace, Cols = 120, Rows = 30,
                     CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
                 });
-                db.TranscriptEntries.Add(new TranscriptEntry
-                {
-                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
-                    Kind = TranscriptKinds.ToolCall, ToolName = "Edit",
-                    ToolInput = JsonSerializer.Serialize(new { file_path = Path.Combine(workspace, "README.md") }),
-                    CreatedAt = DateTime.UtcNow,
-                });
+                // A deterministic two-turn conversation with API-call usage + spaced timestamps —
+                // the transcript contract carries the token/wall-clock metrics the UI computes
+                // (fixed instants; this snapshot is captured with timestamp scrubbing OFF because
+                // the offsets ARE the data). Uuids/apiCallIds are non-GUID strings on purpose so
+                // the GUID scrubber leaves them alone.
+                var t0 = new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc);
+                var readmePath = Path.Combine(workspace, "README.md");
+                db.TranscriptEntries.AddRange(
+                    Entry(sessionId, 1, TranscriptKinds.UserPrompt, t0,
+                        e => { e.Role = "user"; e.Text = "Update the README for the new invoice flow."; }),
+                    Entry(sessionId, 2, TranscriptKinds.Thinking, t0.AddSeconds(2), e =>
+                    {
+                        e.Role = "assistant"; e.Text = "The wording needs to mention the invoice flow.";
+                        Usage(e, "msg_contract_1", 4, 210, 15000, 2000);
+                    }),
+                    Entry(sessionId, 3, TranscriptKinds.ToolCall, t0.AddSeconds(3), e =>
+                    {
+                        e.Role = "assistant"; e.ToolName = "Edit"; e.ToolUseId = "toolu_contract_1";
+                        e.ToolInput = JsonSerializer.Serialize(new { file_path = readmePath });
+                        Usage(e, "msg_contract_1", 4, 210, 15000, 2000);
+                    }),
+                    Entry(sessionId, 4, TranscriptKinds.ToolResult, t0.AddSeconds(6),
+                        e => { e.Role = "user"; e.ToolUseId = "toolu_contract_1"; e.Text = "OK"; e.ToolIsError = false; }),
+                    Entry(sessionId, 5, TranscriptKinds.AssistantText, t0.AddSeconds(8), e =>
+                    {
+                        e.Role = "assistant"; e.Text = "README updated for the invoice flow.";
+                        Usage(e, "msg_contract_2", 6, 180, 17000, 0);
+                    }),
+                    Entry(sessionId, 6, TranscriptKinds.TurnEnd, t0.AddSeconds(8), e =>
+                    {
+                        e.Role = "assistant"; e.StopReason = "end_turn";
+                        Usage(e, "msg_contract_2", 6, 180, 17000, 0);
+                    }),
+                    Entry(sessionId, 7, TranscriptKinds.UserPrompt, t0.AddSeconds(90),
+                        e => { e.Role = "user"; e.Text = "Great — anything else changed?"; }),
+                    Entry(sessionId, 8, TranscriptKinds.AssistantText, t0.AddSeconds(94), e =>
+                    {
+                        e.Role = "assistant"; e.Text = "No — only the README changed.";
+                        Usage(e, "msg_contract_3", 3, 45, 17200, 0);
+                    }),
+                    Entry(sessionId, 9, TranscriptKinds.TurnEnd, t0.AddSeconds(95), e =>
+                    {
+                        e.Role = "assistant"; e.StopReason = "end_turn";
+                        Usage(e, "msg_contract_3", 3, 45, 17200, 0);
+                    }));
                 await db.SaveChangesAsync();
             }
 
@@ -127,6 +165,11 @@ public class ContractSnapshotTests
                 app, $"/api/agents/{agentId}/files/content?path=README.md&rev=work", "file-content-work.json", workspace);
             await SnapshotAsync(
                 app, $"/api/agents/{agentId}/files/content?path=README.md&rev=head", "file-content-head.json", workspace);
+            // Timestamps NOT scrubbed here: the seeded instants are already fixed, and the offsets
+            // between them are what the transcript UI turns into duration/idle metrics.
+            await SnapshotAsync(
+                app, $"/api/sessions/{sessionId:D}/transcript", "session-transcript.json", workspace,
+                scrubTimestamps: false);
         }
         finally
         {
@@ -134,14 +177,43 @@ public class ContractSnapshotTests
         }
     }
 
+    // ---- scenario helpers ----
+
+    private static TranscriptEntry Entry(
+        Guid sessionId, long sequence, string kind, DateTime timestamp, Action<TranscriptEntry> configure)
+    {
+        var entry = new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = sequence,
+            Kind = kind,
+            Uuid = $"line-{sequence:D2}",
+            Timestamp = timestamp,
+            CreatedAt = timestamp,
+        };
+        configure(entry);
+        return entry;
+    }
+
+    private static void Usage(TranscriptEntry e, string apiCallId, int input, int output, int cacheRead, int cacheCreate)
+    {
+        e.ApiCallId = apiCallId;
+        e.InputTokens = input;
+        e.OutputTokens = output;
+        e.CacheReadTokens = cacheRead;
+        e.CacheCreationTokens = cacheCreate;
+    }
+
     // ---- snapshot machinery ----
 
-    private static async Task SnapshotAsync(AntiphonAppFixture app, string url, string fixtureName, string workspace)
+    private static async Task SnapshotAsync(
+        AntiphonAppFixture app, string url, string fixtureName, string workspace, bool scrubTimestamps = true)
     {
         var response = await app.HttpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
         var raw = await response.Content.ReadAsStringAsync();
-        var scrubbed = Scrub(raw, workspace);
+        var scrubbed = Scrub(raw, workspace, scrubTimestamps);
 
         var fixturePath = Path.Combine(FixturesDir(), fixtureName);
         if (!File.Exists(fixturePath))
@@ -164,7 +236,7 @@ public class ContractSnapshotTests
     /// first appearance), timestamps → a fixed instant, the temp workspace root → a token. File
     /// hashes/sizes stay REAL — the scenario content is deterministic, so they are too.
     /// </summary>
-    private static string Scrub(string json, string workspace)
+    private static string Scrub(string json, string workspace, bool scrubTimestamps = true)
     {
         var guidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var scrubbed = Regex.Replace(
@@ -179,12 +251,16 @@ public class ContractSnapshotTests
                 }
                 return placeholder;
             });
-        scrubbed = Regex.Replace(
-            scrubbed,
-            @"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?",
-            "2026-01-01T00:00:00Z");
+        if (scrubTimestamps)
+            scrubbed = Regex.Replace(
+                scrubbed,
+                @"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?",
+                "2026-01-01T00:00:00Z");
         var workspaceForward = workspace.Replace('\\', '/');
         scrubbed = scrubbed
+            // Double-encoded first: toolInput is a JSON string CONTAINING JSON, so paths inside it
+            // carry twice-escaped backslashes.
+            .Replace(JsonEncode(JsonEncode(workspace)), "<workspace>")
             .Replace(JsonEncode(workspace), "<workspace>")
             .Replace(workspaceForward, "<workspace>");
         // The agent name embeds a GUID fragment for uniqueness in the shared DB.

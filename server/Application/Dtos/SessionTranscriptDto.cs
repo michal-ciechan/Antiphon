@@ -18,4 +18,11 @@ public sealed record TranscriptEntryDto(
     string? ToolInput,
     string? ToolUseId,
     bool? ToolIsError,
-    string? StopReason);
+    string? StopReason,
+    // API-call attribution: entries of one API call share ApiCallId and repeat identical usage —
+    // group by ApiCallId and count usage once per call.
+    string? ApiCallId = null,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheReadTokens = null,
+    int? CacheCreationTokens = null);

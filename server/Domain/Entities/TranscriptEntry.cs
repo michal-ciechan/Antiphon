@@ -42,6 +42,17 @@ public class TranscriptEntry
     /// <summary>stop_reason for Kind == TurnEnd (end_turn / stop_sequence / max_tokens).</summary>
     public string? StopReason { get; set; }
 
+    /// <summary>
+    /// The Anthropic message id of the API call this entry belongs to (assistant records only).
+    /// All entries of one API call share the id and repeat IDENTICAL usage numbers — group by
+    /// ApiCallId and count usage once; summing per entry overcounts.
+    /// </summary>
+    public string? ApiCallId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public int? CacheReadTokens { get; set; }
+    public int? CacheCreationTokens { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public AgentSession AgentSession { get; set; } = null!;

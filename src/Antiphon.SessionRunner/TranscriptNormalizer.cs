@@ -21,7 +21,15 @@ public readonly record struct TranscriptPart(
     string? ToolInput,
     string? ToolUseId,
     bool? ToolIsError,
-    string? StopReason);
+    string? StopReason,
+    // API-call attribution (assistant records only): the Anthropic message id plus its usage
+    // numbers. All JSONL lines of one API call share the id and repeat identical usage, so
+    // consumers group by ApiCallId and count usage once.
+    string? ApiCallId = null,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheReadTokens = null,
+    int? CacheCreationTokens = null);
 
 /// <summary>
 /// Normalizes one line of a Claude Code session JSONL transcript into zero or more
@@ -73,6 +81,8 @@ public static class TranscriptNormalizer
         var ts = GetTimestamp(root);
         var role = GetString(msg, "role") ?? "assistant";
         var stopReason = GetString(msg, "stop_reason");
+        var apiCallId = GetString(msg, "id");
+        var (inTok, outTok, cacheRead, cacheCreate) = GetUsage(msg);
 
         if (msg.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
         {
@@ -83,12 +93,12 @@ public static class TranscriptNormalizer
                     case "text":
                         var text = GetString(block, "text");
                         if (!string.IsNullOrWhiteSpace(text))
-                            parts.Add(new TranscriptPart(TranscriptKinds.AssistantText, uuid, parent, ts, role, text, null, null, null, null, null));
+                            parts.Add(new TranscriptPart(TranscriptKinds.AssistantText, uuid, parent, ts, role, text, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate));
                         break;
                     case "thinking":
                         var thinking = GetString(block, "thinking");
                         if (!string.IsNullOrWhiteSpace(thinking))
-                            parts.Add(new TranscriptPart(TranscriptKinds.Thinking, uuid, parent, ts, role, thinking, null, null, null, null, null));
+                            parts.Add(new TranscriptPart(TranscriptKinds.Thinking, uuid, parent, ts, role, thinking, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate));
                         break;
                     case "tool_use":
                         var input = block.TryGetProperty("input", out var inp)
@@ -96,7 +106,8 @@ public static class TranscriptNormalizer
                             : null;
                         parts.Add(new TranscriptPart(
                             TranscriptKinds.ToolCall, uuid, parent, ts, role,
-                            null, GetString(block, "name"), input, GetString(block, "id"), null, null));
+                            null, GetString(block, "name"), input, GetString(block, "id"), null, null,
+                            apiCallId, inTok, outTok, cacheRead, cacheCreate));
                         break;
                 }
             }
@@ -105,7 +116,9 @@ public static class TranscriptNormalizer
         // A finished turn: stop_reason present and not "tool_use" (tool_use means the turn continues
         // after the tool runs). end_turn / stop_sequence / max_tokens all mean the agent is idle.
         if (!string.IsNullOrEmpty(stopReason) && stopReason != "tool_use")
-            parts.Add(new TranscriptPart(TranscriptKinds.TurnEnd, uuid, parent, ts, role, null, null, null, null, null, stopReason));
+            parts.Add(new TranscriptPart(
+                TranscriptKinds.TurnEnd, uuid, parent, ts, role, null, null, null, null, null, stopReason,
+                apiCallId, inTok, outTok, cacheRead, cacheCreate));
 
         return parts;
     }
@@ -209,6 +222,26 @@ public static class TranscriptNormalizer
         }
         return null;
     }
+
+    // message.usage on assistant records: {input_tokens, output_tokens, cache_read_input_tokens,
+    // cache_creation_input_tokens, ...}. Repeated verbatim on every JSONL line of the same API call.
+    private static (int? In, int? Out, int? CacheRead, int? CacheCreate) GetUsage(JsonElement msg)
+    {
+        if (msg.ValueKind != JsonValueKind.Object
+            || !msg.TryGetProperty("usage", out var usage)
+            || usage.ValueKind != JsonValueKind.Object)
+            return (null, null, null, null);
+        return (
+            GetInt(usage, "input_tokens"),
+            GetInt(usage, "output_tokens"),
+            GetInt(usage, "cache_read_input_tokens"),
+            GetInt(usage, "cache_creation_input_tokens"));
+    }
+
+    private static int? GetInt(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
+            ? i
+            : null;
 
     private static string? GetString(JsonElement el, string prop) =>
         el.ValueKind == JsonValueKind.Object

@@ -22,6 +22,7 @@ import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  TbArrowsMaximize,
   TbCheck,
   TbChecks,
   TbEye,
@@ -90,13 +91,27 @@ const threadStatusColor: Record<ReviewThreadStatus, string> = {
   Resolved: 'green',
 }
 
+/** Tree/viewer heights — CSS values; the defaults suit the embedded AgentsPage panel. */
+export interface FilesPanelHeights {
+  tree: number | string
+  viewer: number | string
+}
+
+const EMBEDDED_HEIGHTS: FilesPanelHeights = { tree: 480, viewer: 420 }
+
 export function FilesReviewPanel({
   agentId,
   initialSelectedPath = null,
+  heights = EMBEDDED_HEIGHTS,
+  showExpand = false,
 }: {
   agentId: string
   /** Storybook/screenshot hook: pre-open a file without a click. */
   initialSelectedPath?: string | null
+  /** Override tree/viewer heights (the full-screen page passes viewport-derived calc() values). */
+  heights?: FilesPanelHeights
+  /** Show the "open full-screen files view" button (embedded AgentsPage usage). */
+  showExpand?: boolean
 }) {
   const files = useAgentFiles(agentId)
   const threads = useReviewThreads(agentId)
@@ -157,12 +172,25 @@ export function FilesReviewPanel({
           <ActionIcon variant="subtle" aria-label="Refresh files" onClick={() => files.refetch()}>
             <TbRefresh size={16} />
           </ActionIcon>
+          {showExpand && (
+            <Tooltip label="Open full-screen files view (new tab)">
+              <ActionIcon
+                variant="subtle"
+                component="a"
+                href={`/agents/${agentId}/files`}
+                target="_blank"
+                aria-label="Open full-screen files view"
+              >
+                <TbArrowsMaximize size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
         </Group>
       </Group>
 
       <Group align="flex-start" gap="md" wrap="nowrap">
         <Paper withBorder p="xs" w={340} style={{ flexShrink: 0 }}>
-          <ScrollArea.Autosize mah={480}>
+          <ScrollArea.Autosize mah={heights.tree}>
             <TreeLevel
               node={tree}
               depth={0}
@@ -207,6 +235,7 @@ export function FilesReviewPanel({
               agentId={agentId}
               file={selectedFile}
               threads={threadsByPath.get(selectedFile.path) ?? []}
+              viewerHeight={heights.viewer}
               onMark={(level) => doMark({ paths: [selectedFile.path], level })}
             />
           ) : (
@@ -392,11 +421,13 @@ function FileViewer({
   agentId,
   file,
   threads,
+  viewerHeight,
   onMark,
 }: {
   agentId: string
   file: AgentFileDto
   threads: ReviewThreadDto[]
+  viewerHeight: number | string
   onMark: (level: 'Viewed' | 'Reviewed' | null) => void
 }) {
   const [mode, setMode] = useState<string>(file.gitStatus !== 'None' ? 'diff' : file.isMarkdown ? 'rendered' : 'raw')
@@ -479,7 +510,7 @@ function FileViewer({
           </Text>
         ) : mode === 'diff' ? (
           <DiffEditor
-            height="420px"
+            height={typeof viewerHeight === 'number' ? `${viewerHeight}px` : viewerHeight}
             original={head.data?.text ?? ''}
             modified={work.data?.text ?? ''}
             language={language}
@@ -487,12 +518,12 @@ function FileViewer({
             options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false } }}
           />
         ) : mode === 'rendered' ? (
-          <ScrollArea.Autosize mah={420} p="md">
+          <ScrollArea.Autosize mah={viewerHeight} p="md">
             <Markdown remarkPlugins={[remarkGfm]}>{work.data?.text ?? ''}</Markdown>
           </ScrollArea.Autosize>
         ) : (
           <Editor
-            height="420px"
+            height={typeof viewerHeight === 'number' ? `${viewerHeight}px` : viewerHeight}
             value={work.data?.text ?? ''}
             language={language}
             theme="vs-dark"

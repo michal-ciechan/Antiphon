@@ -384,6 +384,11 @@ public sealed class AgentSessionRuntime
                     ToolUseId = e.ToolUseId,
                     ToolIsError = e.ToolIsError,
                     StopReason = e.StopReason,
+                    ApiCallId = e.ApiCallId,
+                    InputTokens = e.InputTokens,
+                    OutputTokens = e.OutputTokens,
+                    CacheReadTokens = e.CacheReadTokens,
+                    CacheCreationTokens = e.CacheCreationTokens,
                     CreatedAt = now,
                 });
                 added = true;
@@ -416,6 +421,11 @@ public sealed class AgentSessionRuntime
         toolUseId = e.ToolUseId,
         toolIsError = e.ToolIsError,
         stopReason = e.StopReason,
+        apiCallId = e.ApiCallId,
+        inputTokens = e.InputTokens,
+        outputTokens = e.OutputTokens,
+        cacheReadTokens = e.CacheReadTokens,
+        cacheCreationTokens = e.CacheCreationTokens,
     };
 
     public async Task<bool> WaitForFirstDeltaAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)

@@ -22,6 +22,18 @@ here before anyone opens the app.
 
 ![agents-directoryautocomplete--existing-path-no-warning](./agents-directoryautocomplete--existing-path-no-warning.png)
 
+## Agents/FilesReviewPanel — Tree
+
+![agents-filesreviewpanel--tree](./agents-filesreviewpanel--tree.png)
+
+## Agents/FilesReviewPanel — Diff With Answered Thread
+
+![agents-filesreviewpanel--diff-with-answered-thread](./agents-filesreviewpanel--diff-with-answered-thread.png)
+
+## Agents/FilesReviewPanel — Diff No Threads
+
+![agents-filesreviewpanel--diff-no-threads](./agents-filesreviewpanel--diff-no-threads.png)
+
 ## Pages/Home (Workflows) — Desktop
 
 ![pages-home-workflows--desktop](./pages-home-workflows--desktop.png)
@@ -38,14 +50,10 @@ here before anyone opens the app.
 
 ![dashboard-newworkflowdialog-submitbutton--fixed](./dashboard-newworkflowdialog-submitbutton--fixed.png)
 
-## Agents/FilesReviewPanel — Tree
+## Agents/SessionTranscriptPanel — Conversation
 
-![agents-filesreviewpanel--tree](./agents-filesreviewpanel--tree.png)
+![agents-sessiontranscriptpanel--conversation](./agents-sessiontranscriptpanel--conversation.png)
 
-## Agents/FilesReviewPanel — Diff With Answered Thread
+## Agents/SessionTranscriptPanel — With Composer
 
-![agents-filesreviewpanel--diff-with-answered-thread](./agents-filesreviewpanel--diff-with-answered-thread.png)
-
-## Agents/FilesReviewPanel — Diff No Threads
-
-![agents-filesreviewpanel--diff-no-threads](./agents-filesreviewpanel--diff-no-threads.png)
+![agents-sessiontranscriptpanel--with-composer](./agents-sessiontranscriptpanel--with-composer.png)

@@ -167,7 +167,8 @@ internal sealed class TranscriptTailer : IAsyncDisposable
             {
                 evt = new RunnerTranscriptEvent(
                     _sessionId, ++_seq, p.Kind, p.Uuid, p.ParentUuid, p.Timestamp,
-                    p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason);
+                    p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason,
+                    p.ApiCallId, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens);
                 _entries.Add(evt);
             }
             _events.Publish(SessionRunnerEventNames.SessionTranscript, evt);

@@ -87,7 +87,15 @@ public sealed record RunnerTranscriptEvent(
     string? ToolInput,
     string? ToolUseId,
     bool? ToolIsError,
-    string? StopReason);
+    string? StopReason,
+    // API-call attribution (assistant records only). ApiCallId is the Anthropic message id; the
+    // several JSONL lines of one API call share it and repeat the SAME usage numbers, so consumers
+    // must group by ApiCallId and count usage once — summing per line overcounts.
+    string? ApiCallId = null,
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    int? CacheReadTokens = null,
+    int? CacheCreationTokens = null);
 
 /// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
 public sealed record RunnerTranscriptDto(

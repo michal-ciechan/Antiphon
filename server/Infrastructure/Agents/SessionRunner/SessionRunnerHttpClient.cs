@@ -262,7 +262,12 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.ToolInput,
             e.ToolUseId,
             e.ToolIsError,
-            e.StopReason);
+            e.StopReason,
+            e.ApiCallId,
+            e.InputTokens,
+            e.OutputTokens,
+            e.CacheReadTokens,
+            e.CacheCreationTokens);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(
