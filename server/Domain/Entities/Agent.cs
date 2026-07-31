@@ -13,6 +13,12 @@ public class Agent
     public AgentAssignmentPolicy AssignmentPolicy { get; set; } = AgentAssignmentPolicy.AutoPick;
     public AgentStatus Status { get; set; } = AgentStatus.Idle;
 
+    /// <summary>
+    /// Model family the agent's sessions launch with (<c>--model &lt;family&gt;</c> alias — never a
+    /// full versioned id). Defaults to Opus.
+    /// </summary>
+    public AgentModelFamily ModelFamily { get; set; } = AgentModelFamily.Opus;
+
     /// <summary>Supervised: auto-started at boot and auto-restarted on crash (never-give-up backoff ladder).</summary>
     public bool AlwaysOn { get; set; }
 

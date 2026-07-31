@@ -1,4 +1,5 @@
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Infrastructure.Data;
@@ -543,6 +544,7 @@ public class AppDbContext : DbContext
             entity.Property(a => a.Details).IsRequired().HasMaxLength(4000);
             entity.Property(a => a.AssignmentPolicy).IsRequired();
             entity.Property(a => a.Status).IsRequired();
+            entity.Property(a => a.ModelFamily).IsRequired().HasDefaultValue(AgentModelFamily.Opus);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();

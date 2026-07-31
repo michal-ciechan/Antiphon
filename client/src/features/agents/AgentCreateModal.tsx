@@ -2,8 +2,8 @@ import { Button, Divider, Group, Modal, Select, Stack, TextInput, Textarea } fro
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy } from '../../api/agents'
-import { useCreateAgent, useDraftAgent } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelFamily } from '../../api/agents'
+import { AGENT_MODEL_FAMILIES, useCreateAgent, useDraftAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 
@@ -28,6 +28,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [pathMissing, setPathMissing] = useState(false)
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
+  const [modelFamily, setModelFamily] = useState<AgentModelFamily>('Opus')
 
   const reset = () => {
     setDraftDescription('')
@@ -37,6 +38,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setPathMissing(false)
     setDetails('')
     setAssignmentPolicy('AutoPick')
+    setModelFamily('Opus')
     draftAgent.reset()
   }
 
@@ -57,6 +59,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         workingDirectory: workingDirectory.trim(),
         details: details.trim() || null,
         assignmentPolicy,
+        modelFamily,
         createWorkingDirectory: createDir,
       },
       {
@@ -144,6 +147,14 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           data={ASSIGNMENT_POLICIES}
           value={assignmentPolicy}
           onChange={(value) => setAssignmentPolicy((value as AgentAssignmentPolicy | null) ?? 'AutoPick')}
+          allowDeselect={false}
+        />
+        <Select
+          label="Model"
+          description="Model family for the agent's sessions (--model alias, always the family's current model). Opus unless picked otherwise."
+          data={AGENT_MODEL_FAMILIES}
+          value={modelFamily}
+          onChange={(value) => setModelFamily((value as AgentModelFamily | null) ?? 'Opus')}
           allowDeselect={false}
         />
         <Group justify="flex-end">

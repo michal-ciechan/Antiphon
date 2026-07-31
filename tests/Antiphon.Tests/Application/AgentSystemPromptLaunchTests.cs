@@ -131,6 +131,44 @@ public class AgentSystemPromptLaunchTests
         args[i + 1].ShouldBe(expectedName);
     }
 
+    // Model family rides every ClaudeCode launch as the FAMILY alias (--model opus/fable/...),
+    // never a full versioned model id — launches always pick up the family's current model.
+    [Test]
+    public async Task Interactive_launch_passes_the_agents_model_family_alias()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        AssertModel(adapter.StartedArgs, "opus");   // Opus is the default family
+    }
+
+    [Test]
+    public async Task Interactive_launch_passes_a_non_default_model_family_alias()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.ModelFamily, AgentModelFamily.Fable));
+        }
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        AssertModel(adapter.StartedArgs, "fable");
+    }
+
+    private static void AssertModel(IReadOnlyList<string> args, string expectedAlias)
+    {
+        var i = args.ToList().IndexOf("--model");
+        i.ShouldBeGreaterThanOrEqualTo(0, $"launch args must carry --model; args were [{string.Join(", ", args)}]");
+        args[i + 1].ShouldBe(expectedAlias);
+    }
+
     [Test]
     public async Task Resume_not_found_fallback_delivers_fresh_bootstrap()
     {

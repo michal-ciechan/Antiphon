@@ -14,6 +14,9 @@ export interface AgentDefinitionDto {
 }
 
 export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
+/** Model family the agent's sessions launch with (`--model <family>` alias, never a full model id). */
+export type AgentModelFamily = 'Opus' | 'Sonnet' | 'Fable' | 'Haiku'
+export const AGENT_MODEL_FAMILIES: AgentModelFamily[] = ['Opus', 'Sonnet', 'Fable', 'Haiku']
 export type AgentStatus = 'Idle' | 'Ready' | 'Working' | 'WaitingForHumanReview' | 'Stopped' | 'Disconnected' | 'Failed'
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 
@@ -47,6 +50,8 @@ export interface AgentSummaryDto {
    * (--append-system-prompt). Null = none; also disables bootstrap/restart/recovery notes.
    */
   systemPromptAppend: string | null
+  /** Model family for the agent's sessions. Opus is the default. */
+  modelFamily: AgentModelFamily
 }
 
 export interface AgentSupervisionDto {
@@ -109,6 +114,8 @@ export interface CreateAgentRequest {
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy?: AgentAssignmentPolicy
   createWorkingDirectory?: boolean
+  /** Omit/null = Opus (the default family unless picked otherwise). */
+  modelFamily?: AgentModelFamily | null
 }
 
 export interface UpdateAgentRequest {
@@ -124,6 +131,8 @@ export interface UpdateAgentRequest {
   remoteControlEnabled?: boolean | null
   /** Omit/null = leave unchanged; empty string = clear. */
   systemPromptAppend?: string | null
+  /** Omit/null = leave unchanged. */
+  modelFamily?: AgentModelFamily | null
 }
 
 export interface DraftAgentRequest {

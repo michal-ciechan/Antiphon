@@ -2,8 +2,8 @@ import { Button, Divider, Group, Modal, Select, Stack, Switch, Text, TextInput, 
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentSummaryDto } from '../../api/agents'
-import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelFamily, AgentSummaryDto } from '../../api/agents'
+import { AGENT_MODEL_FAMILIES, fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -30,6 +30,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
+  const [modelFamily, setModelFamily] = useState<AgentModelFamily>('Opus')
   const [boardId, setBoardId] = useState<string | null>(null)
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
@@ -44,6 +45,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setWorkingDirectory(agent.workingDirectory)
     setDetails(agent.details)
     setAssignmentPolicy(agent.assignmentPolicy)
+    setModelFamily(agent.modelFamily ?? 'Opus')
     setBoardId(agent.boardId)
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
@@ -78,6 +80,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         details: details.trim() || null,
         defaultWorkflowTemplateId: agent.defaultWorkflowTemplateId,
         assignmentPolicy,
+        modelFamily,
         boardId,
         alwaysOn,
         remoteControlEnabled,
@@ -140,6 +143,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           onChange={setBoardId}
           disabled={boards.isLoading}
           searchable
+        />
+        <Select
+          label="Model"
+          description="Model family for the agent's sessions — launched with the family alias (--model opus), so it always picks up the current model of that family."
+          data={AGENT_MODEL_FAMILIES}
+          value={modelFamily}
+          onChange={(v) => setModelFamily((v as AgentModelFamily) ?? 'Opus')}
         />
         <Select
           label="Assignment policy"
