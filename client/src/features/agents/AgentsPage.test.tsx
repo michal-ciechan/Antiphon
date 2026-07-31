@@ -35,7 +35,7 @@ const agentSummary: AgentSummaryDto = {
   remoteControlEnabled: false,
   supervision: null,
   systemPromptAppend: null,
-  modelFamily: 'Opus',
+  modelLevel: 'High',
 }
 
 const agentDetail: AgentDetailDto = {
@@ -310,7 +310,7 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/app',
         details: 'UI work',
         assignmentPolicy: 'AutoPick',
-        modelFamily: 'Opus',
+        modelLevel: 'High',
         createWorkingDirectory: false,
       }),
     )
@@ -373,7 +373,7 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/Antiphon/client',
         details: 'Owns React and Mantine UI work.',
         assignmentPolicy: 'ManualConfirm',
-        modelFamily: 'Opus',
+        modelLevel: 'High',
         createWorkingDirectory: false,
       }),
     )

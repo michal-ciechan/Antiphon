@@ -36,8 +36,8 @@ public sealed record AgentSummaryDto(
     // Present only for AlwaysOn agents with supervision history (countdowns, suspend badge).
     AgentSupervisionDto? Supervision = null,
     string? SystemPromptAppend = null,
-    // Model family the agent's sessions launch with (--model <family> alias). Default Opus.
-    AgentModelFamily ModelFamily = AgentModelFamily.Opus);
+    // Generic model capability level (mapped per agent kind to a family alias at launch). Default High.
+    AgentModelLevel ModelLevel = AgentModelLevel.High);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -62,7 +62,7 @@ public sealed record AgentDetailDto(
     bool RemoteControlEnabled = false,
     AgentSupervisionDto? Supervision = null,
     string? SystemPromptAppend = null,
-    AgentModelFamily ModelFamily = AgentModelFamily.Opus);
+    AgentModelLevel ModelLevel = AgentModelLevel.High);
 
 /// <summary>Supervision snapshot for an always-on agent (see AgentSupervisionState).</summary>
 public sealed record AgentSupervisionDto(
@@ -101,8 +101,8 @@ public sealed record CreateAgentRequest(
     Guid? DefaultWorkflowTemplateId = null,
     AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
     bool CreateWorkingDirectory = false,
-    // Null = Opus (the default family unless picked otherwise).
-    AgentModelFamily? ModelFamily = null);
+    // Null = High (the default level - the Opus tier - unless picked otherwise).
+    AgentModelLevel? ModelLevel = null);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -128,7 +128,7 @@ public sealed record UpdateAgentRequest(
     // Null = leave unchanged; empty/whitespace = clear.
     string? SystemPromptAppend = null,
     // Null = leave unchanged.
-    AgentModelFamily? ModelFamily = null);
+    AgentModelLevel? ModelLevel = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

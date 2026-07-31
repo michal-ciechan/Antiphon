@@ -141,11 +141,11 @@ public sealed class AgentControlService
             if (sessionName.Length > 0)
                 extraArgs.AddRange(["--name", sessionName]);
 
-            // Model FAMILY alias (opus/sonnet/fable/haiku) — deliberately not a full versioned
-            // model id, so every launch picks up the current model of the chosen family
-            // (aliases verified against the CLI 2026-07-31). Per-invocation like --name, so it
-            // applies to fresh launches AND resumes.
-            extraArgs.AddRange(["--model", agent.ModelFamily.ToString().ToLowerInvariant()]);
+            // Generic capability level mapped to the Claude family ALIAS (Frontier→fable,
+            // High→opus, Medium→sonnet, Low→haiku) — deliberately not a full versioned model id,
+            // so every launch picks up the current model of that family. Per-invocation like
+            // --name, so it applies to fresh launches AND resumes.
+            extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
 
             if (!string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
             {

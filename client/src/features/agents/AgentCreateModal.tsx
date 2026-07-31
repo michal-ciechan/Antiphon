@@ -2,9 +2,9 @@ import { Button, Divider, Group, Modal, Select, Stack, TextInput, Textarea } fro
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentModelFamily } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelLevel } from '../../api/agents'
 import { useCreateAgent, useDraftAgent } from '../../api/agents'
-import { ModelFamilySelect } from './ModelFamilySelect'
+import { ModelLevelSelect } from './ModelLevelSelect'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 
@@ -29,7 +29,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [pathMissing, setPathMissing] = useState(false)
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
-  const [modelFamily, setModelFamily] = useState<AgentModelFamily>('Opus')
+  const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
 
   const reset = () => {
     setDraftDescription('')
@@ -39,7 +39,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setPathMissing(false)
     setDetails('')
     setAssignmentPolicy('AutoPick')
-    setModelFamily('Opus')
+    setModelLevel('High')
     draftAgent.reset()
   }
 
@@ -60,7 +60,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         workingDirectory: workingDirectory.trim(),
         details: details.trim() || null,
         assignmentPolicy,
-        modelFamily,
+        modelLevel,
         createWorkingDirectory: createDir,
       },
       {
@@ -150,7 +150,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onChange={(value) => setAssignmentPolicy((value as AgentAssignmentPolicy | null) ?? 'AutoPick')}
           allowDeselect={false}
         />
-        <ModelFamilySelect value={modelFamily} onChange={setModelFamily} />
+        <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={handleClose}>
             Cancel

@@ -165,7 +165,7 @@ public sealed class AgentService
             DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId,
             AssignmentPolicy = request.AssignmentPolicy,
             Status = AgentStatus.Idle,
-            ModelFamily = request.ModelFamily ?? AgentModelFamily.Opus,
+            ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
             BoardId = board.Id,
             CreatedAt = now,
             UpdatedAt = now
@@ -207,8 +207,8 @@ public sealed class AgentService
             agent.RemoteControlEnabled = remoteControlEnabled;
         if (request.SystemPromptAppend is { } systemPromptAppend)
             agent.SystemPromptAppend = string.IsNullOrWhiteSpace(systemPromptAppend) ? null : systemPromptAppend;
-        if (request.ModelFamily is { } modelFamily)
-            agent.ModelFamily = modelFamily;
+        if (request.ModelLevel is { } modelLevel)
+            agent.ModelLevel = modelLevel;
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -627,7 +627,7 @@ public sealed class AgentService
             agent.RemoteControlEnabled,
             supervision,
             agent.SystemPromptAppend,
-            agent.ModelFamily);
+            agent.ModelLevel);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -672,7 +672,7 @@ public sealed class AgentService
             agent.RemoteControlEnabled,
             supervision,
             agent.SystemPromptAppend,
-            agent.ModelFamily);
+            agent.ModelLevel);
     }
 
     private async Task<string> UniqueSlugAsync(string baseSlug, Guid? excludeAgentId, CancellationToken ct)

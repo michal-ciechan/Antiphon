@@ -14,10 +14,11 @@ public class Agent
     public AgentStatus Status { get; set; } = AgentStatus.Idle;
 
     /// <summary>
-    /// Model family the agent's sessions launch with (<c>--model &lt;family&gt;</c> alias — never a
-    /// full versioned id). Defaults to Opus.
+    /// Generic capability level for the agent's sessions — mapped per agent kind to a provider
+    /// family alias at launch (Claude: Frontier→fable, High→opus, Medium→sonnet, Low→haiku).
+    /// Defaults to High (the Opus tier).
     /// </summary>
-    public AgentModelFamily ModelFamily { get; set; } = AgentModelFamily.Opus;
+    public AgentModelLevel ModelLevel { get; set; } = AgentModelLevel.High;
 
     /// <summary>Supervised: auto-started at boot and auto-restarted on crash (never-give-up backoff ladder).</summary>
     public bool AlwaysOn { get; set; }

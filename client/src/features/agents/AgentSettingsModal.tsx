@@ -2,9 +2,9 @@ import { Button, Divider, Group, Modal, Select, Stack, Switch, Text, TextInput, 
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentModelFamily, AgentSummaryDto } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelLevel, AgentSummaryDto } from '../../api/agents'
 import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
-import { ModelFamilySelect } from './ModelFamilySelect'
+import { ModelLevelSelect } from './ModelLevelSelect'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -31,7 +31,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
-  const [modelFamily, setModelFamily] = useState<AgentModelFamily>('Opus')
+  const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
   const [boardId, setBoardId] = useState<string | null>(null)
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
@@ -46,7 +46,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setWorkingDirectory(agent.workingDirectory)
     setDetails(agent.details)
     setAssignmentPolicy(agent.assignmentPolicy)
-    setModelFamily(agent.modelFamily ?? 'Opus')
+    setModelLevel(agent.modelLevel ?? 'High')
     setBoardId(agent.boardId)
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
@@ -81,7 +81,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         details: details.trim() || null,
         defaultWorkflowTemplateId: agent.defaultWorkflowTemplateId,
         assignmentPolicy,
-        modelFamily,
+        modelLevel,
         boardId,
         alwaysOn,
         remoteControlEnabled,
@@ -145,7 +145,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           disabled={boards.isLoading}
           searchable
         />
-        <ModelFamilySelect value={modelFamily} onChange={setModelFamily} />
+        <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
         <Select
           label="Assignment policy"
           data={ASSIGNMENT_POLICIES}

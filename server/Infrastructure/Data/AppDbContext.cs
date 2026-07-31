@@ -544,7 +544,7 @@ public class AppDbContext : DbContext
             entity.Property(a => a.Details).IsRequired().HasMaxLength(4000);
             entity.Property(a => a.AssignmentPolicy).IsRequired();
             entity.Property(a => a.Status).IsRequired();
-            entity.Property(a => a.ModelFamily).IsRequired().HasDefaultValue(AgentModelFamily.Opus);
+            entity.Property(a => a.ModelLevel).IsRequired().HasDefaultValue(AgentModelLevel.High);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();

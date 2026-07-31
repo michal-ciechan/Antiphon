@@ -14,36 +14,40 @@ export interface AgentDefinitionDto {
 }
 
 export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
-/** Model family the agent's sessions launch with (`--model <family>` alias, never a full model id). */
-export type AgentModelFamily = 'Opus' | 'Sonnet' | 'Fable' | 'Haiku'
-export const AGENT_MODEL_FAMILIES: AgentModelFamily[] = ['Opus', 'Sonnet', 'Fable', 'Haiku']
+/**
+ * Generic model capability LEVEL — each agent kind maps it to its provider's ladder at launch
+ * (Claude today: Frontier→Fable, High→Opus, Medium→Sonnet, Low→Haiku; a future GPT kind would
+ * map e.g. Sol=Frontier, Terra=High, Luna=Medium). Never a pinned model version.
+ */
+export type AgentModelLevel = 'Frontier' | 'High' | 'Medium' | 'Low'
 
-/** Picker options, default (Opus) first. Descriptions surface the capability/cost trade-off. */
-export const AGENT_MODEL_FAMILY_OPTIONS: Array<{
-  value: AgentModelFamily
+/** Picker options in capability order; High (the Opus tier) is the default. */
+export const AGENT_MODEL_LEVEL_OPTIONS: Array<{
+  value: AgentModelLevel
   label: string
   description: string
 }> = [
   {
-    value: 'Opus',
-    label: 'Opus (default)',
-    description: 'Frontier — hardest tasks, highest level of reasoning. Higher cost and token usage.',
-  },
-  {
-    value: 'Fable',
-    label: 'Fable',
+    value: 'Frontier',
+    label: 'Frontier',
     description:
-      'Frontier, Mythos-class (above Opus) — the most intelligent model for the very hardest tasks. Highest cost and token usage.',
+      'The most capable model — the very hardest tasks, highest level of reasoning. Highest cost and token usage. Claude: Fable.',
   },
   {
-    value: 'Sonnet',
-    label: 'Sonnet',
-    description: 'Balanced — strong everyday reasoning at moderate cost and token usage.',
+    value: 'High',
+    label: 'High (default)',
+    description:
+      'Frontier-grade daily driver — hard tasks, deep reasoning. Higher cost and token usage. Claude: Opus.',
   },
   {
-    value: 'Haiku',
-    label: 'Haiku',
-    description: 'Fast and light — simple tasks and quick replies. Lowest cost and token usage.',
+    value: 'Medium',
+    label: 'Medium',
+    description: 'Balanced — strong everyday reasoning at moderate cost and token usage. Claude: Sonnet.',
+  },
+  {
+    value: 'Low',
+    label: 'Low',
+    description: 'Fast and light — simple tasks and quick replies. Lowest cost and token usage. Claude: Haiku.',
   },
 ]
 export type AgentStatus = 'Idle' | 'Ready' | 'Working' | 'WaitingForHumanReview' | 'Stopped' | 'Disconnected' | 'Failed'
@@ -79,8 +83,8 @@ export interface AgentSummaryDto {
    * (--append-system-prompt). Null = none; also disables bootstrap/restart/recovery notes.
    */
   systemPromptAppend: string | null
-  /** Model family for the agent's sessions. Opus is the default. */
-  modelFamily: AgentModelFamily
+  /** Generic model capability level for the agent's sessions. High (the Opus tier) is the default. */
+  modelLevel: AgentModelLevel
 }
 
 export interface AgentSupervisionDto {
@@ -143,8 +147,8 @@ export interface CreateAgentRequest {
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy?: AgentAssignmentPolicy
   createWorkingDirectory?: boolean
-  /** Omit/null = Opus (the default family unless picked otherwise). */
-  modelFamily?: AgentModelFamily | null
+  /** Omit/null = High (the default level — the Opus tier — unless picked otherwise). */
+  modelLevel?: AgentModelLevel | null
 }
 
 export interface UpdateAgentRequest {
@@ -161,7 +165,7 @@ export interface UpdateAgentRequest {
   /** Omit/null = leave unchanged; empty string = clear. */
   systemPromptAppend?: string | null
   /** Omit/null = leave unchanged. */
-  modelFamily?: AgentModelFamily | null
+  modelLevel?: AgentModelLevel | null
 }
 
 export interface DraftAgentRequest {
