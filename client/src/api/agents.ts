@@ -17,6 +17,35 @@ export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
 /** Model family the agent's sessions launch with (`--model <family>` alias, never a full model id). */
 export type AgentModelFamily = 'Opus' | 'Sonnet' | 'Fable' | 'Haiku'
 export const AGENT_MODEL_FAMILIES: AgentModelFamily[] = ['Opus', 'Sonnet', 'Fable', 'Haiku']
+
+/** Picker options, default (Opus) first. Descriptions surface the capability/cost trade-off. */
+export const AGENT_MODEL_FAMILY_OPTIONS: Array<{
+  value: AgentModelFamily
+  label: string
+  description: string
+}> = [
+  {
+    value: 'Opus',
+    label: 'Opus (default)',
+    description: 'Frontier — hardest tasks, highest level of reasoning. Higher cost and token usage.',
+  },
+  {
+    value: 'Fable',
+    label: 'Fable',
+    description:
+      'Frontier, Mythos-class (above Opus) — the most intelligent model for the very hardest tasks. Highest cost and token usage.',
+  },
+  {
+    value: 'Sonnet',
+    label: 'Sonnet',
+    description: 'Balanced — strong everyday reasoning at moderate cost and token usage.',
+  },
+  {
+    value: 'Haiku',
+    label: 'Haiku',
+    description: 'Fast and light — simple tasks and quick replies. Lowest cost and token usage.',
+  },
+]
 export type AgentStatus = 'Idle' | 'Ready' | 'Working' | 'WaitingForHumanReview' | 'Stopped' | 'Disconnected' | 'Failed'
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 

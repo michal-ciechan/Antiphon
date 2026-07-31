@@ -3,7 +3,8 @@ import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentModelFamily, AgentSummaryDto } from '../../api/agents'
-import { AGENT_MODEL_FAMILIES, fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
+import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
+import { ModelFamilySelect } from './ModelFamilySelect'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 
@@ -144,13 +145,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           disabled={boards.isLoading}
           searchable
         />
-        <Select
-          label="Model"
-          description="Model family for the agent's sessions — launched with the family alias (--model opus), so it always picks up the current model of that family."
-          data={AGENT_MODEL_FAMILIES}
-          value={modelFamily}
-          onChange={(v) => setModelFamily((v as AgentModelFamily) ?? 'Opus')}
-        />
+        <ModelFamilySelect value={modelFamily} onChange={setModelFamily} />
         <Select
           label="Assignment policy"
           data={ASSIGNMENT_POLICIES}

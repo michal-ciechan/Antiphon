@@ -3,7 +3,8 @@ import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentModelFamily } from '../../api/agents'
-import { AGENT_MODEL_FAMILIES, useCreateAgent, useDraftAgent } from '../../api/agents'
+import { useCreateAgent, useDraftAgent } from '../../api/agents'
+import { ModelFamilySelect } from './ModelFamilySelect'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 
@@ -149,14 +150,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onChange={(value) => setAssignmentPolicy((value as AgentAssignmentPolicy | null) ?? 'AutoPick')}
           allowDeselect={false}
         />
-        <Select
-          label="Model"
-          description="Model family for the agent's sessions (--model alias, always the family's current model). Opus unless picked otherwise."
-          data={AGENT_MODEL_FAMILIES}
-          value={modelFamily}
-          onChange={(value) => setModelFamily((value as AgentModelFamily | null) ?? 'Opus')}
-          allowDeselect={false}
-        />
+        <ModelFamilySelect value={modelFamily} onChange={setModelFamily} />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={handleClose}>
             Cancel
