@@ -78,6 +78,33 @@ describe('isWorking', () => {
       isWorking([entry(1, 'TurnEnd'), entry(2, 'UserPrompt', 'why was my [Request interrupted] earlier?')]),
     ).toBe(true)
   })
+
+  // Live miss 2026-07-31: /model (and /clear etc.) write <command-name>/<local-command-stdout>
+  // USER records with NO TurnEnd — counting them as activity read "working" forever and stranded
+  // a queued Telegram delivery. Must stay in lockstep with the server's IsWorkingAsync.
+  it('ignores local slash-command records (/model, /clear) — housekeeping, not work', () => {
+    expect(
+      isWorking([
+        entry(1, 'UserPrompt', 'hi'),
+        entry(2, 'TurnEnd'),
+        entry(3, 'UserPrompt', '<command-name>/model</command-name>\n<command-message>model</command-message>'),
+        entry(4, 'UserPrompt', '<local-command-stdout>Set model to Opus 5</local-command-stdout>'),
+      ]),
+    ).toBe(false)
+    expect(
+      isWorking([entry(1, 'TurnEnd'), entry(2, 'UserPrompt', '<command-name>/clear</command-name>')]),
+    ).toBe(false)
+  })
+
+  it('still treats a real prompt after a slash command as working', () => {
+    expect(
+      isWorking([
+        entry(1, 'TurnEnd'),
+        entry(2, 'UserPrompt', '<command-name>/clear</command-name>'),
+        entry(3, 'UserPrompt', 'now do the thing'),
+      ]),
+    ).toBe(true)
+  })
 })
 
 describe('buildTurns', () => {

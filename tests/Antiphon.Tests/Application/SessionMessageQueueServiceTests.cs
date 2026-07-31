@@ -267,6 +267,60 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    // Live miss 2026-07-31: /model was run in the AZ Care session; Claude wrote the
+    // <command-name>/<local-command-stdout> USER records (no TurnEnd — local commands make no API
+    // call), the session read as permanently "working", and a queued Telegram message stranded.
+    // Local command records are housekeeping: they neither start nor end work. Real-Claude record
+    // shape pinned by ClaudeLocalCommandCanaryTests; fakeclaude mirrors it.
+    [Test]
+    public async Task Local_slash_command_records_do_not_read_as_working_and_do_not_block_delivery()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            await InsertEntryAsync(h, TranscriptKinds.TurnEnd, null);
+
+            // The user runs /model (or /clear): invocation + stdout records, NO TurnEnd after.
+            await InsertEntryAsync(
+                h, TranscriptKinds.UserPrompt,
+                "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>opus</command-args>");
+            await InsertEntryAsync(
+                h, TranscriptKinds.UserPrompt,
+                "<local-command-stdout>Set model to Opus 5 and saved as your default for new sessions</local-command-stdout>");
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeFalse("local command records are housekeeping, not agent work");
+
+            // A WhenIdle enqueue against the (correctly) idle session delivers immediately.
+            await h.Queue.EnqueueAsync(h.SessionId, "after slash command", MessageSendMode.WhenIdle, CancellationToken.None);
+            h.Adapter.SentInput.ShouldContain("after slash command");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Local_slash_command_records_do_not_end_a_running_turn()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            // Mid-turn the user fires /status — the records land, but the turn is still running.
+            await InsertEntryAsync(h, TranscriptKinds.UserPrompt, "<command-name>/status</command-name>");
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("a slash command mid-turn neither ends nor extends the turn");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
     private static async Task InsertEntryAsync(Harness h, string kind, string? text)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());

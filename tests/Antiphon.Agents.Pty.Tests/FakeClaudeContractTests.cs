@@ -82,11 +82,38 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
-    // The 2026-07-29 live-miss model: a LARGE unbracketed multi-line write fragments — ConPTY chunking
-    // breaks the TUI's paste heuristic and line breaks act as typed Enters, so the body splinters into
-    // partial turns instead of arriving whole. This pins the fake's hazard model (>512 chars + newlines).
+    // The fragmentation hazard, as MEASURED against real Claude (probe runs 2026-07-31): a body
+    // with CR/CRLF line endings fragments — each mid-body \r acts as Enter and submits the
+    // fragment before it. (\n endings are always literal and land intact; the original 2026-07-29
+    // live miss carried CR endings through a pipeline that did not normalize them. The server's
+    // DeliverAsync now normalizes to LF — SessionMessageQueuePtyIntegrationTests pins that.)
     [Test]
-    public async Task Large_unbracketed_multiline_write_fragments_into_partial_turns()
+    public async Task Unbracketed_body_with_CR_line_endings_fragments_into_partial_turns()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var body = "HEAD first line of a big paste\r\n"
+            + string.Join("\r\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
+            + "\r\nTAIL last line";
+        await runner.WriteAsync(body);
+        await Task.Delay(25);
+        await runner.WriteAsync("\r");
+
+        // The head submits as its OWN fragment turn — the very corruption LF-normalization prevents.
+        var fragmented = await runner.WaitForOutputAsync(
+            s => s.Contains("SUBMITTED:HEAD first line of a big paste") && !s.Contains("TAIL last line\\n"),
+            TimeSpan.FromSeconds(5));
+        fragmented.ShouldBeTrue("a CR-line-ending body must fragment (the hazard being modelled)");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The counterpart: the SAME multi-line body with \n endings lands intact even UNWRAPPED —
+    // measured behavior of real Claude (gap-split LF probe, 2026-07-31). Newlines are literal;
+    // only \r submits.
+    [Test]
+    public async Task Unbracketed_body_with_LF_line_endings_submits_as_one_intact_turn()
     {
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
@@ -94,16 +121,19 @@ public class FakeClaudeContractTests
         var body = "HEAD first line of a big paste\n"
             + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
             + "\nTAIL last line";
-        body.Length.ShouldBeGreaterThan(512);
         await runner.WriteAsync(body);
         await Task.Delay(25);
         await runner.WriteAsync("\r");
 
-        // The head submits as its OWN fragment turn — the very corruption the wrap must prevent.
-        var fragmented = await runner.WaitForOutputAsync(
-            s => s.Contains("SUBMITTED:HEAD first line of a big paste") && !s.Contains("TAIL last line\\n"),
+        var intact = await runner.WaitForOutputAsync(
+            s =>
+            {
+                var flat = s.Replace("\r", "").Replace("\n", "");
+                return System.Text.RegularExpressions.Regex.IsMatch(
+                    flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD first line(?:(?!FAKE response).)*TAIL last line");
+            },
             TimeSpan.FromSeconds(5));
-        fragmented.ShouldBeTrue("a large unbracketed multi-line write must fragment (the hazard being modelled)");
+        intact.ShouldBeTrue("an LF-line-ending body must submit whole, as one turn");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
@@ -278,6 +308,57 @@ public class FakeClaudeContractTests
             lines[1].ShouldContain("\"type\":\"assistant\"");
             lines[1].ShouldContain("\"stop_reason\":\"end_turn\"");
             lines[2].ShouldContain("\"subtype\":\"compact_boundary\"");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // Local built-in commands (/clear, /model, /status …) write ONLY <command-name> +
+    // <local-command-stdout> USER records to the JSONL — no assistant line, no TurnEnd (no API call
+    // happens). That absence is the working/idle hazard fixed 2026-07-31 (a session counting these
+    // as activity read "working" forever and stranded WhenIdle deliveries). Real-Claude record
+    // shape pinned by ClaudeLocalCommandCanaryTests; this pins the fake's mirror of it.
+    [Test]
+    public async Task Local_slash_command_writes_command_records_and_no_turn_end()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-localcmd-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
+
+            await runner.SendLineAsync("/model opus");
+            (await runner.WaitForOutputAsync(s => s.Contains("FAKE local command: /model"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            var lines = (await File.ReadAllLinesAsync(path)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+            lines.Length.ShouldBe(2);
+
+            string ContentOf(string line)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                doc.RootElement.GetProperty("type").GetString().ShouldBe("user");
+                return doc.RootElement.GetProperty("message").GetProperty("content").GetString()!;
+            }
+
+            var invocation = ContentOf(lines[0]);
+            invocation.ShouldStartWith("<command-name>/model</command-name>");
+            invocation.ShouldContain("<command-args>opus</command-args>");
+            var stdout = ContentOf(lines[1]);
+            stdout.ShouldStartWith("<local-command-stdout>");
+
+            // Both records match the shared classifier the server/client working checks key on.
+            Antiphon.SessionRunner.Contracts.TranscriptKinds
+                .IsLocalCommandRecord("UserPrompt", invocation).ShouldBeTrue();
+            Antiphon.SessionRunner.Contracts.TranscriptKinds
+                .IsLocalCommandRecord("UserPrompt", stdout).ShouldBeTrue();
+
+            // And crucially: NO assistant line, NO turn end.
+            lines.ShouldAllBe(l => !l.Contains("\"type\":\"assistant\"") && !l.Contains("stop_reason"));
         }
         finally
         {

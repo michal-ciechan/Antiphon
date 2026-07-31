@@ -377,7 +377,13 @@ public sealed class SessionMessageQueueService
     // message is never lost into a dead composer.
     private async Task<DeliveryVerdict> DeliverAsync(Guid sessionId, string body, CancellationToken ct)
     {
-        var trimmed = body.TrimEnd();
+        // Line endings are normalized to LF before anything touches the PTY. Measured against real
+        // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
+        // composer, while a \r MID-body acts as Enter and SUBMITS the fragment before it — and
+        // current conhost builds strip the bracketed-paste markers from written input, so the wrap
+        // alone cannot protect a CR-carrying body. CRLF bodies (Windows/Telegram sources) would
+        // fragment exactly like the 2026-07-29 live miss.
+        var trimmed = body.ReplaceLineEndings("\n").TrimEnd();
 
         var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;
@@ -553,6 +559,12 @@ public sealed class SessionMessageQueueService
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind != TranscriptKinds.TurnEnd
                 && t.Kind != TranscriptKinds.TurnTitle
+                // Local slash-command records (/model, /status …) are housekeeping with NO
+                // TurnEnd — counting them as activity stranded WhenIdle deliveries (2026-07-31).
+                && !(t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text != null
+                    && (t.Text.StartsWith(TranscriptKinds.LocalCommandPrefix)
+                        || t.Text.StartsWith(TranscriptKinds.LocalCommandStdoutPrefix)))
                 // Compaction is idle-time housekeeping, not work: counting the boundary as
                 // activity would flip an idle session to permanently "working" (no TurnEnd ever
                 // follows), stranding every WhenIdle message — including the recovery note.

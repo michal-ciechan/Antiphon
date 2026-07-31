@@ -22,6 +22,7 @@ internal sealed class TranscriptTailer : IAsyncDisposable
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan DefaultForkScanInterval = TimeSpan.FromSeconds(10);
     private const int MaxReadChunkBytes = 1 << 20; // 1 MiB per poll
     private const int CwdProbeLines = 25; // how many leading lines to scan for the "cwd" field
 
@@ -52,7 +53,8 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         ILogger logger,
         TimeSpan? exactIdGrace = null,
         TimeSpan? readoptionGrace = null,
-        TimeSpan? activeWriteWindow = null)
+        TimeSpan? activeWriteWindow = null,
+        TimeSpan? forkScanInterval = null)
     {
         _sessionId = sessionId;
         _cwd = cwd;
@@ -61,7 +63,11 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         _exactIdGrace = exactIdGrace ?? TimeSpan.FromSeconds(10);
         _readoptionGrace = readoptionGrace ?? TimeSpan.FromSeconds(30);
         _activeWriteWindow = activeWriteWindow ?? TimeSpan.FromSeconds(20);
+        ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
     }
+
+    /// <summary>How often the tailer looks for a mid-session conversation fork (see RunAsync).</summary>
+    private TimeSpan ForkScanInterval { get; }
 
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
 
@@ -84,8 +90,30 @@ internal sealed class TranscriptTailer : IAsyncDisposable
 
             long offset = 0;
             var pending = new List<byte>();
+            var lastForkScan = DateTime.UtcNow;
             while (!ct.IsCancellationRequested)
             {
+                // Mid-session fork watch: /clear forks the conversation to a FRESH file (canary:
+                // ClaudeLocalCommandCanaryTests) — the current file goes quiet and all further
+                // activity lands in the fork. Without following it, transcript ingestion (and with
+                // it working/idle + channel reply dispatch) silently dies for the rest of the
+                // session (live miss 2026-07-31: the AZ Care reply after a /clear never reached
+                // Telegram). Sequences stay monotonic across the switch; re-reading the fork from
+                // offset 0 is safe — the server dedupes by line uuid.
+                if (DateTime.UtcNow - lastForkScan >= ForkScanInterval)
+                {
+                    lastForkScan = DateTime.UtcNow;
+                    if (TryFindNewerFork(path) is { } fork)
+                    {
+                        _logger.LogWarning(
+                            "Session {SessionId}: conversation forked mid-session (e.g. /clear); "
+                            + "switching tail {Old} -> {New}", _sessionId, path, fork);
+                        path = fork;
+                        offset = 0;
+                        pending.Clear();
+                    }
+                }
+
                 try
                 {
                     var info = new FileInfo(path);
@@ -273,6 +301,46 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         }
 
         return eligible.Count == 0 ? null : eligible.OrderByDescending(m => m.Mtime).First().Path;
+    }
+
+    /// <summary>
+    /// A conversation file that forked off the one being tailed: created AFTER this tailer
+    /// started, written more recently than the current file, same recorded cwd. Newest wins.
+    /// Stale transcripts of earlier sessions can never qualify (their creation predates the tail).
+    /// </summary>
+    private string? TryFindNewerFork(string currentPath)
+    {
+        try
+        {
+            var currentWrite = File.GetLastWriteTimeUtc(currentPath);
+            var projectDir = Path.GetDirectoryName(currentPath);
+            if (projectDir is null || !Directory.Exists(projectDir))
+                return null;
+
+            string? best = null;
+            var bestWrite = DateTime.MinValue;
+            foreach (var file in Directory.EnumerateFiles(projectDir, "*.jsonl"))
+            {
+                if (string.Equals(file, currentPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                DateTime created, written;
+                try
+                {
+                    created = File.GetCreationTimeUtc(file);
+                    written = File.GetLastWriteTimeUtc(file);
+                }
+                catch (IOException) { continue; }
+                if (created < _startedAtUtc || written <= currentWrite || written <= bestWrite)
+                    continue;
+                if (!TranscriptCwdMatches(file))
+                    continue;
+                best = file;
+                bestWrite = written;
+            }
+            return best;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     private bool TranscriptCwdMatches(string file)

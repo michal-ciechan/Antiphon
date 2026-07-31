@@ -94,6 +94,16 @@ function isInterruptPrompt(e: TranscriptEntryDto): boolean {
   return e.kind === 'UserPrompt' && (e.text ?? '').trimStart().startsWith(INTERRUPTED_PREFIX)
 }
 
+// Local slash-commands (/model, /clear, /status …) write their invocation + output into the JSONL
+// as USER messages wrapped in these tags, with NO TurnEnd (no API call happens). Housekeeping, not
+// work — counting them as activity showed a phantom permanently-working agent and stranded
+// WhenIdle deliveries (live miss 2026-07-31; mirror of the server's IsWorkingAsync).
+function isLocalCommandRecord(e: TranscriptEntryDto): boolean {
+  if (e.kind !== 'UserPrompt') return false
+  const t = (e.text ?? '').trimStart()
+  return t.startsWith('<command-name>') || t.startsWith('<local-command-stdout>')
+}
+
 // Idle once the latest meaningful entry is a TurnEnd; working while activity outranks the last end.
 // CompactBoundary is idle-time housekeeping, not activity (mirror of the server's IsWorkingAsync —
 // counting it would show a phantom "working" agent after every compaction). Interrupt markers are
@@ -104,7 +114,7 @@ export function isWorking(entries: TranscriptEntryDto[]): boolean {
   let lastEnd = 0
   for (const e of entries) {
     if (e.kind === 'TurnEnd' || isInterruptPrompt(e)) lastEnd = Math.max(lastEnd, e.sequence)
-    else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary')
+    else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary' && !isLocalCommandRecord(e))
       lastActivity = Math.max(lastActivity, e.sequence)
   }
   return lastActivity > lastEnd

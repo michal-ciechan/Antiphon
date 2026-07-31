@@ -137,6 +137,26 @@ public static class TranscriptKinds
         kind == UserPrompt
         && text is not null
         && text.TrimStart().StartsWith(InterruptedPromptPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Local slash-commands (/model, /status, …) write their invocation and output into the JSONL
+    /// as USER messages wrapped in these tags — and produce NO TurnEnd (no API call happens).
+    /// They are housekeeping, not agent work: counting them as activity flipped the session to
+    /// permanently "working" and stranded every WhenIdle delivery until the next real turn
+    /// (live miss 2026-07-31: /model in the AZ Care session stranded a Telegram message).
+    /// </summary>
+    public const string LocalCommandPrefix = "<command-name>";
+    public const string LocalCommandStdoutPrefix = "<local-command-stdout>";
+
+    /// <summary>True when a transcript entry is a local slash-command record (see <see cref="LocalCommandPrefix"/>).</summary>
+    public static bool IsLocalCommandRecord(string? kind, string? text)
+    {
+        if (kind != UserPrompt || text is null)
+            return false;
+        var trimmed = text.TrimStart();
+        return trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal)
+            || trimmed.StartsWith(LocalCommandStdoutPrefix, StringComparison.Ordinal);
+    }
 }
 
 public static class SessionRunnerEventNames

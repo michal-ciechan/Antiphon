@@ -299,11 +299,12 @@ public class SessionMessageQueuePtyIntegrationTests
             }
 
             // The live-miss shape: envelope header, blank-line padding, content lines, long tail —
-            // comfortably past the paste-hazard threshold.
-            var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\n\n"
-                + string.Join("\n", Enumerable.Range(1, 12).Select(i => $"booking line {i} " + new string('x', 80)))
-                + "\nTAIL-MARKER also check my outlook calendar?";
-            body.Length.ShouldBeGreaterThan(512, "the body must exceed the paste-hazard threshold");
+            // deliberately with CRLF line endings, the actual fragmentation hazard (measured against
+            // real Claude 2026-07-31: mid-body \r submits; \n is literal). DeliverAsync must
+            // normalize the endings to LF or every line break submits a partial turn.
+            var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\r\n\r\n"
+                + string.Join("\r\n", Enumerable.Range(1, 12).Select(i => $"booking line {i} " + new string('x', 80)))
+                + "\r\nTAIL-MARKER also check my outlook calendar?";
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);

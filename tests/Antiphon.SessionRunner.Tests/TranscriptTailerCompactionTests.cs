@@ -217,6 +217,61 @@ public class TranscriptTailerCompactionTests
         }
     }
 
+    // Live miss 2026-07-31: /clear forks the conversation MID-SESSION to a fresh self-chosen file
+    // (real shape pinned by ClaudeLocalCommandCanaryTests) — the file being tailed goes quiet and
+    // everything after lands in the fork. The tailer must FOLLOW it, or transcript ingestion (and
+    // with it working/idle and channel reply dispatch) silently dies for the rest of the session
+    // (an AZ Care reply after a /clear never reached Telegram).
+    [Test]
+    public async Task Tailer_follows_a_mid_session_fork_such_as_clear()
+    {
+        var configDir = Path.Combine(Path.GetTempPath(), $"antiphon-tailer-midfork-{Guid.NewGuid():N}");
+        var projectDir = Path.Combine(configDir, "projects", "C--src-ClaudeBot-agents-family");
+        Directory.CreateDirectory(projectDir);
+        var cwd = Path.Combine(Path.GetTempPath(), $"agent-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid();
+        var jsonlPath = Path.Combine(projectDir, sessionId.ToString("D") + ".jsonl");
+        await File.WriteAllTextAsync(jsonlPath, UserLine("u1", cwd, "before clear") + "\n");
+
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
+        try
+        {
+            var hub = new SessionRunnerEventHub();
+            var tailer = new TranscriptTailer(
+                sessionId, cwd, hub, NullLogger.Instance,
+                forkScanInterval: TimeSpan.FromMilliseconds(300));
+            tailer.Start();
+            try
+            {
+                (await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10)))
+                    .ShouldContain(e => e.Text == "before clear");
+
+                // /clear: a FRESH conversation file appears; the original goes quiet forever.
+                await Task.Delay(300);
+                var fork = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+                await File.WriteAllTextAsync(
+                    fork, UserLine("u2", cwd, "<command-name>/clear</command-name>") + "\n");
+                await File.AppendAllTextAsync(fork, UserLine("u3", cwd, "after clear") + "\n");
+
+                var entries = await PollForEntriesAsync(tailer, want: 3, TimeSpan.FromSeconds(10));
+                entries.ShouldContain(
+                    e => e.Text == "after clear",
+                    "the tailer must switch to the forked conversation file");
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // A minimal Claude "user" JSONL line carrying a cwd field (what the tailer discovers by).
     private static string UserLine(string uuid, string cwd, string text) => JsonSerializer.Serialize(new
     {

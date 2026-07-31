@@ -56,6 +56,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         var banner = GetArg(args, "--banner") ?? "Fake Claude ready";
+        var debugInput = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1";
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
         var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
@@ -71,6 +72,13 @@ internal static class Program
 
         // Startup banner, then quiet — lets the quiet-period readiness detector settle.
         Write(banner + "\r\n");
+        if (debugInput)
+        {
+            var h = GetStdHandle(STD_INPUT_HANDLE);
+            Write(GetConsoleMode(h, out var m)
+                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0}\r\n"
+                : "INMODE:unavailable\r\n");
+        }
         // --echo-args: print the argv verbatim (newline-escaped) so tests can assert that args —
         // notably a multi-line --append-system-prompt value — survived process-spawn quoting intact.
         if (Array.IndexOf(args, "--echo-args") >= 0)
@@ -82,13 +90,13 @@ internal static class Program
         // SubmitTurn), two keystrokes that arrived 20ms apart would otherwise merge into one burst
         // and read as a paste — the reader thread's timestamps preserve the true gaps regardless
         // of how late the drain runs.
-        var stdin = Console.OpenStandardInput();
         var gate = new object();
         var pending = new List<(long AtMs, byte[] Bytes)>();
         var clock = Stopwatch.StartNew();
         long lastByteMs = 0;
         var eof = false;
 
+        var stdin = Console.OpenStandardInput();
         var reader = new Thread(() =>
         {
             var buf = new byte[8192];
@@ -110,6 +118,8 @@ internal static class Program
 
         var composer = new StringBuilder();
         var turnCount = 0;
+        // Inside a bracketed paste whose closing 201~ hasn't arrived yet (paste split across reads).
+        var inPaste = false;
 
         while (true)
         {
@@ -160,11 +170,21 @@ internal static class Program
                 return false;
 
             var chunk = Encoding.UTF8.GetString(burst);
+            if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1")
+                Write("RAWBURST:" + string.Concat(chunk.Select(c => c < 32 ? $"<{(int)c}>" : c.ToString())) + "\r\n");
 
             // Bracketed paste (\e[200~ ... \e[201~): wrapped content is always literal — a CR inside is a
-            // newline, never a submit. Strip the markers and treat the burst as paste text.
-            var wasBracketedPaste = chunk.Contains("\x1b[200~") || chunk.Contains("\x1b[201~");
-            if (wasBracketedPaste)
+            // newline, never a submit. Paste MODE is tracked ACROSS bursts: ConPTY can split one
+            // bracketed write over several reads, and the continuation chunks carry no markers — a
+            // real TUI stays in paste mode from 200~ until 201~ regardless of chunking. Deciding
+            // per-burst let a split bracketed paste fall into the unbracketed fragmentation hazard
+            // below (observed 2026-07-31: the pinned bracket contract test fragmented under load).
+            var pasteStart = chunk.Contains("\x1b[200~");
+            var pasteEnd = chunk.Contains("\x1b[201~");
+            var wasBracketedPaste = pasteStart || pasteEnd || inPaste;
+            if (pasteStart) inPaste = true;
+            if (pasteEnd) inPaste = false;
+            if (pasteStart || pasteEnd)
                 chunk = chunk.Replace("\x1b[200~", string.Empty).Replace("\x1b[201~", string.Empty);
 
             // A lone-Enter burst (only CR/LF, not part of a paste) submits the buffered line.
@@ -194,24 +214,35 @@ internal static class Program
                 return true;
             }
 
-            // The LARGE unbracketed multi-line hazard (live miss 2026-07-29, the calendar paste):
-            // ConPTY chunks big writes at arbitrary boundaries, so the real TUI's paste heuristic
-            // falls apart — line breaks surface as typed Enters and the body fragments into partial
-            // turns (only the tail survived as the answered prompt). Model that deterministically:
-            // an unbracketed burst over the threshold with embedded line breaks submits at EVERY
-            // break. Bracketed paste is immune (the markers delimit the paste regardless of read
-            // chunking) — which is exactly why programmatic multi-line delivery must wrap.
-            const int unbracketedPasteHazardThreshold = 512;
-            if (!wasBracketedPaste && chunk.Length > unbracketedPasteHazardThreshold
-                && (chunk.Contains('\n') || chunk.Contains('\r')))
+            // Input model MEASURED against real Claude via ConPTY probe runs (2026-07-31):
+            //  * \n is ALWAYS a literal newline in the composer — multi-line LF bodies land intact
+            //    regardless of size, chunk gaps, or bracket markers (current conhost builds strip
+            //    the \e[200~/\e[201~ markers from written input before the client reads them, and
+            //    real Claude keeps LF pastes intact anyway).
+            //  * A \r MID-burst acts as Enter and SUBMITS the fragment before it — CR/CRLF line
+            //    endings are the real fragmentation hazard (the 2026-07-29 live-miss shape; the
+            //    server's DeliverAsync normalizes endings to LF for exactly this reason).
+            //  * A single TRAILING \r at burst end is paste tail: it collapses to a literal
+            //    newline and does NOT submit (the queued-message trap — text+CR in one write).
+            if (wasBracketedPaste)
             {
-                var segments = chunk.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-                for (var s = 0; s < segments.Length; s++)
+                // Wrapped content is always literal, CRs included.
+                var pasted = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
+                composer.Append(pasted);
+                Write(pasted.Replace("\n", "\r\n"));
+                return true;
+            }
+
+            var work = chunk.Replace("\r\n", "\r");
+            var trailingCr = work.EndsWith('\r');
+            if (trailingCr) work = work[..^1];
+            if (work.Contains('\r'))
+            {
+                var segments = work.Split('\r');
+                for (var s = 0; s < segments.Length - 1; s++)
                 {
                     composer.Append(segments[s]);
-                    Write(segments[s]);
-                    if (s == segments.Length - 1)
-                        continue; // the tail stays in the composer awaiting the next Enter
+                    Write(segments[s].Replace("\n", "\r\n"));
                     var fragment = composer.ToString().Trim();
                     composer.Clear();
                     Write("\r\n");
@@ -221,23 +252,28 @@ internal static class Program
                         turnCount++;
                     }
                 }
-                return true;
+                work = segments[^1]; // the tail stays in the composer awaiting the next Enter
             }
-
-            // Text — optionally with a trailing CR if this was a paste. Accumulate into the composer and
-            // do NOT submit; the CR collapses to a literal newline. THIS is the paste trap that bit us.
-            var composerText = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
-            composer.Append(composerText);
 
             // Composer echo — the real TUI renders typed/pasted text in the composer (raw-mode consoles
             // don't echo, so we must). Delivery verification (ComposerDeliveryEvidence) reads the
             // rendered screen for exactly this; without the echo every verified delivery would look
             // like a wedged terminal. (We can't clear it on submit like the real composer — the fake's
             // screen is append-only — but verification only needs presence, not clearing.)
+            var composerText = work + (trailingCr ? "\n" : "");
+            composer.Append(composerText);
             Write(composerText.Replace("\n", "\r\n"));
             return true;
         }
     }
+
+    // Built-in LOCAL commands (no API call): the real TUI handles these in-process and writes
+    // <command-name>/<local-command-stdout> USER records to the JSONL — and NO assistant line, NO
+    // TurnEnd. That absence is a working/idle hazard (a session that counted these as activity
+    // read "working" forever — live miss 2026-07-31); real shape pinned by
+    // ClaudeLocalCommandCanaryTests. Slash SKILLS (e.g. /remote-control) are NOT in this set —
+    // they submit as real turns.
+    private static readonly string[] LocalCommands = ["/clear", "/model", "/status", "/help", "/config"];
 
     private static void SubmitTurn(Action<string> write, string text, string? transcriptPath)
     {
@@ -248,6 +284,25 @@ internal static class Program
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
+
+        var firstToken = text.TrimStart().Split(' ', 2, StringSplitOptions.None)[0].TrimEnd();
+        if (LocalCommands.Contains(firstToken, StringComparer.OrdinalIgnoreCase))
+        {
+            var commandArgs = text.TrimStart().Split(' ', 2, StringSplitOptions.None) is [_, var rest] ? rest : "";
+            if (transcriptPath is not null)
+            {
+                AppendTranscript(transcriptPath, JsonUserLine(
+                    $"<command-name>{firstToken}</command-name>\n"
+                    + $"            <command-message>{firstToken.TrimStart('/')}</command-message>\n"
+                    + $"            <command-args>{commandArgs}</command-args>"));
+                AppendTranscript(transcriptPath, JsonUserLine(
+                    $"<local-command-stdout>FAKE {firstToken} output</local-command-stdout>"));
+            }
+            write($"FAKE local command: {firstToken}\r\n");
+            write(IdleTitle);
+            return;
+        }
+
         // Guarded, not passed eagerly: first-call JSON serializer warm-up takes long enough to
         // stall the drain loop past the burst gap (glueing a following body+CR into one paste).
         if (transcriptPath is not null)
@@ -385,4 +440,5 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
 }
