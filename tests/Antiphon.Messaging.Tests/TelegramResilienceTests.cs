@@ -24,8 +24,12 @@ public sealed class TelegramResilienceTests
         SendRetryAttempts = sendRetries,
     };
 
-    private static TelegramChannelAdapter Adapter(FakeTelegramServer fake, TelegramSettings settings) =>
-        new(new HttpClient(), settings, NullLogger<TelegramChannelAdapter>.Instance);
+    private static TelegramChannelAdapter Adapter(
+        FakeTelegramServer fake, TelegramSettings settings, TimeSpan? httpTimeout = null) =>
+        new(
+            httpTimeout is { } t ? new HttpClient { Timeout = t } : new HttpClient(),
+            settings,
+            NullLogger<TelegramChannelAdapter>.Instance);
 
     private static async Task<ChannelMessage?> FirstMessageAsync(TelegramChannelAdapter adapter)
     {
@@ -83,7 +87,43 @@ public sealed class TelegramResilienceTests
         sw.Elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(900));   // waited ~retry_after, not a tight loop
     }
 
+    // The silent-ingress-death incident (2026-07-31, AZ Care): a stalled getUpdates connection
+    // trips HttpClient.Timeout, which throws TaskCanceledException — an OperationCanceledException
+    // with the ambient token NOT cancelled. Treating that as shutdown ended the receive stream
+    // forever with zero log output; the gateway ran on deaf for 19 hours.
+    [Test]
+    public async Task Receive_survives_an_http_client_timeout_and_keeps_polling()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueGetUpdatesHang(TimeSpan.FromSeconds(5));   // longer than the client timeout below
+        fake.EnqueueTextMessage(chatId: 103, fromId: 103, text: "after timeout");
+
+        var adapter = Adapter(fake, Settings(fake), httpTimeout: TimeSpan.FromMilliseconds(500));
+        var msg = await FirstMessageAsync(adapter);
+
+        msg.ShouldNotBeNull();   // the stream must keep polling past the timeout, not silently end
+        msg!.Text.ShouldBe("after timeout");
+        fake.GetUpdatesCalls.ShouldBeGreaterThanOrEqualTo(2);
+    }
+
     // ---- send ----
+
+    [Test]
+    public async Task Send_retries_after_an_http_client_timeout()
+    {
+        await using var fake = new FakeTelegramServer();
+        await fake.StartAsync();
+        fake.EnqueueSendHang(TimeSpan.FromSeconds(5));   // first send stalls past the client timeout
+
+        var adapter = Adapter(fake, Settings(fake), httpTimeout: TimeSpan.FromMilliseconds(500));
+        var result = await adapter.SendAsync(
+            new ChannelReply { Channel = "telegram", ConversationId = "100", Text = "timeout retry" },
+            CancellationToken.None);
+
+        result.Ok.ShouldBeTrue();   // a send timeout is transient — retried, not rethrown as a cancellation
+        fake.SendCalls.ShouldBe(2);
+    }
 
     [Test]
     public async Task Send_retries_on_429_then_succeeds()

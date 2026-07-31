@@ -154,6 +154,21 @@ public sealed class FakeTelegramServer : IAsyncDisposable
     public void EnqueueGetUpdatesServerError(int status = 502) =>
         Enqueue(_getUpdatesFaults, new Fault(status, null, "Bad Gateway", null, NonJson: true));
 
+    /// <summary>
+    /// Hold the next getUpdates response for <paramref name="holdFor"/> — a stalled long-poll that
+    /// trips the caller's <c>HttpClient.Timeout</c> as a TaskCanceledException while the ambient
+    /// cancellation token is NOT cancelled. The hazard behind the silent-ingress-death incident
+    /// (2026-07-31): treating that OCE as shutdown ended the receive stream with zero log output.
+    /// </summary>
+    public void EnqueueGetUpdatesHang(TimeSpan holdFor) =>
+        Enqueue(_getUpdatesFaults, new Fault(200, null, "", null, Hang: holdFor));
+
+    /// <summary>Hold the next send response for <paramref name="holdFor"/> — the outbound twin of
+    /// <see cref="EnqueueGetUpdatesHang"/> (a send timeout must be retried as transient, not
+    /// rethrown as a cancellation).</summary>
+    public void EnqueueSendHang(TimeSpan holdFor) =>
+        Enqueue(_sendFaults, new Fault(200, null, "", null, Hang: holdFor));
+
     public void EnqueueSendRateLimit(int retryAfterSeconds) =>
         Enqueue(_sendFaults, new Fault(429, 429, $"Too Many Requests: retry after {retryAfterSeconds}", retryAfterSeconds));
 
@@ -167,15 +182,23 @@ public sealed class FakeTelegramServer : IAsyncDisposable
 
     private void MapEndpoints(WebApplication app)
     {
-        app.MapGet("/{bot}/getUpdates", (string bot, long? offset, int? timeout) =>
+        app.MapGet("/{bot}/getUpdates", async (string bot, long? offset, int? timeout) =>
         {
             if (!TokenOk(bot)) return Unauthorized();
+            Fault? fault;
             lock (_gate)
             {
                 GetUpdatesCalls++;
-                if (_getUpdatesFaults.Count > 0)
-                    return FaultResult(_getUpdatesFaults.Dequeue());
-
+                fault = _getUpdatesFaults.Count > 0 ? _getUpdatesFaults.Dequeue() : null;
+            }
+            if (fault is not null)
+            {
+                if (fault.Hang is { } hang) await Task.Delay(hang);
+                if (fault.StatusCode != 200) return FaultResult(fault);
+                // Hang-only fault: answer normally — the caller usually gave up long ago.
+            }
+            lock (_gate)
+            {
                 var off = offset ?? 0;
                 if (off > 0) _updates.RemoveAll(u => UpdateId(u) < off);   // offset confirms earlier updates
                 var result = new JsonArray(_updates
@@ -190,11 +213,16 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         {
             if (!TokenOk(bot)) return Unauthorized();
 
+            Fault? sendFault;
             lock (_gate)
             {
                 SendCalls++;
-                if (_sendFaults.Count > 0)
-                    return FaultResult(_sendFaults.Dequeue());
+                sendFault = _sendFaults.Count > 0 ? _sendFaults.Dequeue() : null;
+            }
+            if (sendFault is not null)
+            {
+                if (sendFault.Hang is { } hang) await Task.Delay(hang);
+                if (sendFault.StatusCode != 200) return FaultResult(sendFault);
             }
 
             JsonObject? body;
@@ -230,11 +258,16 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         {
             if (!TokenOk(bot)) return Unauthorized();
 
+            Fault? docFault;
             lock (_gate)
             {
                 SendCalls++;
-                if (_sendFaults.Count > 0)
-                    return FaultResult(_sendFaults.Dequeue());
+                docFault = _sendFaults.Count > 0 ? _sendFaults.Dequeue() : null;
+            }
+            if (docFault is not null)
+            {
+                if (docFault.Hang is { } hang) await Task.Delay(hang);
+                if (docFault.StatusCode != 200) return FaultResult(docFault);
             }
 
             string? chatId = null, caption = null, fileName = null, mime = null, source = null;
@@ -378,7 +411,11 @@ public sealed class FakeTelegramServer : IAsyncDisposable
         return Results.Text(obj.ToJsonString(), "application/json", statusCode: f.StatusCode);
     }
 
-    private sealed record Fault(int StatusCode, int? ErrorCode, string Description, int? RetryAfter, bool NonJson = false);
+    private sealed record Fault(
+        int StatusCode, int? ErrorCode, string Description, int? RetryAfter, bool NonJson = false,
+        // Hold the response for this long before answering — models a stalled connection that trips
+        // the CALLER's HttpClient.Timeout (a TaskCanceledException with no token cancelled).
+        TimeSpan? Hang = null);
 
     public async ValueTask DisposeAsync() => await _app.DisposeAsync();
 }

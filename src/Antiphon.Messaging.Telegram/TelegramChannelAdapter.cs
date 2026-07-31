@@ -71,13 +71,17 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             {
                 outcome = await FetchBatchAsync(offset, cancellationToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 yield break;
             }
             catch (Exception ex)
             {
                 // Network/transport failure — back off so we don't hammer Telegram or spin the CPU.
+                // This MUST include OperationCanceledExceptions whose cause is not our token:
+                // HttpClient throws TaskCanceledException (an OCE) on TIMEOUT, and treating that as
+                // shutdown silently ended the ingress stream — the gateway stopped receiving
+                // Telegram messages forever with zero log output (live miss 2026-07-31, AZ Care).
                 _logger.LogWarning(ex, "[telegram] getUpdates failed; backing off {Backoff}s", ErrorBackoff.TotalSeconds);
                 if (!await DelayQuietAsync(ErrorBackoff, cancellationToken))
                     yield break;
@@ -517,12 +521,14 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 return (null, retryAfter is { } ra ? CapRetryAfter(ra) : ErrorBackoff);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception ex)
         {
+            // Includes HttpClient TIMEOUT TaskCanceledExceptions (an OCE without our token
+            // cancelled) — a transient transport failure to retry, not a shutdown.
             return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
         }
     }
@@ -611,12 +617,14 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                 return (null, retryAfter is { } ra ? CapRetryAfter(ra) : ErrorBackoff);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception ex)
         {
+            // Includes HttpClient TIMEOUT TaskCanceledExceptions (an OCE without our token
+            // cancelled) — a transient transport failure to retry, not a shutdown.
             return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
         }
     }
