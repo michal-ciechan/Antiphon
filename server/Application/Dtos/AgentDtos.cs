@@ -114,6 +114,8 @@ public sealed record UpdateAgentRequest(
     string? Details,
     Guid? DefaultWorkflowTemplateId,
     AgentAssignmentPolicy AssignmentPolicy,
+    // Null = leave unchanged. Every agent keeps a default board — an update can move it to
+    // another board, never clear the link.
     Guid? BoardId = null,
     // Null = leave unchanged (keeps older callers working).
     bool? AlwaysOn = null,

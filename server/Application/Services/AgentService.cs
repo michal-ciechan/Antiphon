@@ -194,7 +194,12 @@ public sealed class AgentService
         agent.Details = request.Details?.Trim() ?? string.Empty;
         agent.DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId;
         agent.AssignmentPolicy = request.AssignmentPolicy;
-        agent.BoardId = request.BoardId;
+        // Every agent keeps a default board (Add-Work and card routing rely on it): null means
+        // "leave unchanged" (mirrors AlwaysOn/RemoteControlEnabled) — an update can MOVE the agent
+        // to another board, never clear the link. Unconditional assignment here silently orphaned
+        // agents whenever an update omitted the board.
+        if (request.BoardId is { } newBoardId)
+            agent.BoardId = newBoardId;
         if (request.AlwaysOn is { } alwaysOn)
             agent.AlwaysOn = alwaysOn;
         if (request.RemoteControlEnabled is { } remoteControlEnabled)
@@ -207,6 +212,50 @@ public sealed class AgentService
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await GetByIdAsync(agent.Id, ct);
+    }
+
+    /// <summary>
+    /// Backfill: every agent must have a default board. Agents created before that rule — or whose
+    /// board link was cleared by the old update path — are RE-LINKED to their original board when
+    /// it still exists (same project, named after the agent, not claimed by another agent);
+    /// otherwise a board (and project) is created exactly like <see cref="CreateAsync"/> would
+    /// have. Runs at startup; idempotent. Saves per agent so two boardless agents sharing a
+    /// working directory reuse one project.
+    /// </summary>
+    public async Task<int> EnsureAgentBoardsAsync(CancellationToken ct)
+    {
+        var orphans = await _db.Agents.Where(a => a.BoardId == null).ToListAsync(ct);
+        foreach (var agent in orphans)
+        {
+            var now = UtcNow();
+            var project = await ResolveProjectForWorkingDirectoryAsync(agent.WorkingDirectory, agent.Name, now, ct);
+
+            var claimedBoardIds = await _db.Agents
+                .Where(a => a.BoardId != null)
+                .Select(a => a.BoardId!.Value)
+                .ToListAsync(ct);
+            var adopted = await _db.Boards
+                .Where(b => b.ProjectId == project.Id && b.Name == agent.Name && !claimedBoardIds.Contains(b.Id))
+                .OrderBy(b => b.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            var boardId = adopted?.Id;
+            if (boardId is null)
+            {
+                var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agent.Name, ct), now);
+                _db.Boards.Add(board);
+                boardId = board.Id;
+            }
+
+            agent.BoardId = boardId;
+            agent.UpdatedAt = now;
+            await SaveChangesOrConflictAsync(
+                $"A default board for agent '{agent.Name}' could not be created because another operation changed agent data.",
+                ct);
+            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId }, ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        }
+        return orphans.Count;
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)

@@ -117,6 +117,7 @@ export interface UpdateAgentRequest {
   details?: string | null
   defaultWorkflowTemplateId?: string | null
   assignmentPolicy: AgentAssignmentPolicy
+  /** Omit/null = leave unchanged. Every agent keeps a default board — it can be moved, not cleared. */
   boardId?: string | null
   /** Omit/null = leave unchanged. */
   alwaysOn?: boolean | null

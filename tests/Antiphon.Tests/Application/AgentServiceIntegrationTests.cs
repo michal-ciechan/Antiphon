@@ -131,6 +131,102 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
+    public async Task UpdateAsync_with_null_board_keeps_the_agents_board()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var agent = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Sticky Board Claude"), "D:/src/app"),
+            CancellationToken.None);
+        agent.BoardId.ShouldNotBeNull();
+
+        // An update that omits the board (settings save from an older client, partial PATCH)
+        // must leave the default board in place — clearing it orphaned Add-Work routing.
+        var updated = await service.UpdateAsync(
+            agent.Id,
+            new UpdateAgentRequest(
+                agent.Name,
+                agent.WorkingDirectory,
+                "edited",
+                agent.DefaultWorkflowTemplateId,
+                agent.AssignmentPolicy,
+                BoardId: null),
+            CancellationToken.None);
+
+        updated.BoardId.ShouldBe(agent.BoardId);
+
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).BoardId.ShouldBe(agent.BoardId);
+    }
+
+    [Test]
+    public async Task EnsureAgentBoardsAsync_relinks_the_agents_original_orphaned_board()
+    {
+        await using var db = CreateContext();
+        var eventBus = new MockEventBus();
+        var service = CreateService(db, eventBus);
+        var workingDirectory = $"D:/src/{Guid.NewGuid():N}";
+        var agentName = UniqueAgentName("Boardless Claude");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(agentName, workingDirectory),
+            CancellationToken.None);
+
+        // Simulate the old update path clearing the link; the original board still exists.
+        await using (var setup = CreateContext())
+        {
+            var row = await setup.Agents.SingleAsync(a => a.Id == created.Id);
+            row.BoardId = null;
+            await setup.SaveChangesAsync();
+        }
+
+        await using var backfillDb = CreateContext();
+        var backfilled = await CreateService(backfillDb, eventBus).EnsureAgentBoardsAsync(CancellationToken.None);
+
+        backfilled.ShouldBeGreaterThanOrEqualTo(1);
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        // ADOPTED, not duplicated: the same-named unclaimed board in the project is re-linked.
+        stored.BoardId.ShouldBe(created.BoardId);
+    }
+
+    [Test]
+    public async Task EnsureAgentBoardsAsync_creates_a_board_when_no_orphaned_original_exists()
+    {
+        await using var db = CreateContext();
+        var eventBus = new MockEventBus();
+        var service = CreateService(db, eventBus);
+        var workingDirectory = $"D:/src/{Guid.NewGuid():N}";
+        var agentName = UniqueAgentName("Fresh Board Claude");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(agentName, workingDirectory),
+            CancellationToken.None);
+
+        // Sever the link AND rename the original board so no adoption candidate matches.
+        await using (var setup = CreateContext())
+        {
+            var row = await setup.Agents.SingleAsync(a => a.Id == created.Id);
+            row.BoardId = null;
+            var oldBoard = await setup.Boards.SingleAsync(b => b.Id == created.BoardId!.Value);
+            oldBoard.Name = "Repurposed Board";
+            await setup.SaveChangesAsync();
+        }
+
+        await using var backfillDb = CreateContext();
+        await CreateService(backfillDb, eventBus).EnsureAgentBoardsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.Include(a => a.Board).SingleAsync(a => a.Id == created.Id);
+        stored.BoardId.ShouldNotBeNull();
+        stored.BoardId.ShouldNotBe(created.BoardId);
+        stored.Board!.Name.ShouldBe(agentName);
+        stored.Board.ProjectId.ShouldNotBe(Guid.Empty);
+
+        // Idempotent: a second run finds nothing to do for this agent.
+        await using var secondDb = CreateContext();
+        (await secondDb.Agents.AnyAsync(a => a.Id == created.Id && a.BoardId == null)).ShouldBeFalse();
+    }
+
+    [Test]
     public async Task UpdateAsync_rejects_unknown_board()
     {
         await using var db = CreateContext();

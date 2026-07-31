@@ -318,6 +318,12 @@ try
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+        // Every agent must have a default board (Add-Work and card routing rely on it) — create
+        // boards for any agent that predates the rule or lost its link to the old update path.
+        var backfilled = await scope.ServiceProvider.GetRequiredService<AgentService>()
+            .EnsureAgentBoardsAsync(CancellationToken.None);
+        if (backfilled > 0)
+            Log.Information("Backfilled default boards for {Count} agent(s)", backfilled);
     }
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)

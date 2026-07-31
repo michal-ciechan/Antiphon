@@ -133,12 +133,12 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         />
         <Select
           label="Default board"
-          placeholder="No board"
+          description="Where Add Work cards land. Every agent has one — it can be moved, not cleared."
+          placeholder="Pick a board"
           data={boardOptions}
           value={boardId}
           onChange={setBoardId}
           disabled={boards.isLoading}
-          clearable
           searchable
         />
         <Select

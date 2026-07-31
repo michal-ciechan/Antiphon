@@ -1,4 +1,4 @@
-import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack, Text, TextInput, Textarea } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentSummaryDto } from '../../api/agents'
@@ -13,11 +13,11 @@ interface AgentAddWorkModalProps {
 }
 
 /**
- * Add a new piece of work to an agent: create a card (on the agent's own board, or a chosen board
- * when the agent has none) and queue it on the agent in one step.
+ * Add a new piece of work to an agent: create a card and queue it on the agent in one step.
+ * The card lands on the agent's DEFAULT board (every agent has one — the server backfills it),
+ * pre-selected in the board picker; pick another board to override for this card only.
  */
 export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalProps) {
-  // Only needed as a fallback when the agent has no board of its own.
   const boards = useBoards()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -30,11 +30,11 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
     setTitle('')
     setDescription('')
     setPriority(0)
-    setPickedBoardId(null)
+    setPickedBoardId(agent.boardId)
     setRemoteControl(true)
-  }, [opened])
+  }, [opened, agent.boardId])
 
-  const targetBoardId = agent.boardId ?? pickedBoardId ?? ''
+  const targetBoardId = pickedBoardId ?? ''
   const createCard = useCreateCard(targetBoardId)
   const assignCard = useAssignAgentCard(agent.id)
   const startAgent = useStartAgent(agent.id)
@@ -121,21 +121,20 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
           onChange={(value) => setPriority(typeof value === 'number' ? value : 0)}
           min={0}
         />
-        {agent.boardId ? (
-          <Text size="sm" c="dimmed">
-            Board: {agent.boardName ?? 'agent board'}
-          </Text>
-        ) : (
-          <Select
-            label="Board"
-            placeholder="Choose a board"
-            data={boardOptions}
-            value={pickedBoardId}
-            onChange={setPickedBoardId}
-            disabled={boards.isLoading || boardOptions.length === 0}
-            searchable
-          />
-        )}
+        <Select
+          label="Board"
+          description={
+            agent.boardId && pickedBoardId === agent.boardId
+              ? "The agent's default board"
+              : undefined
+          }
+          placeholder="Choose a board"
+          data={boardOptions}
+          value={pickedBoardId}
+          onChange={setPickedBoardId}
+          disabled={boards.isLoading || boardOptions.length === 0}
+          searchable
+        />
         <Checkbox
           label="Remote control"
           description="Rename the agent and put it into /remote-control before the work, so you can monitor it."
