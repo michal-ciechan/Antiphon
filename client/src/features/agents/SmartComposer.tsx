@@ -12,7 +12,7 @@ import {
   useCombobox,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { TbClock, TbKeyboard, TbSend } from 'react-icons/tb'
+import { TbClock, TbKeyboard, TbMessagePlus, TbSend } from 'react-icons/tb'
 import {
   enqueueSessionMessage,
   sendSessionInput,
@@ -28,6 +28,14 @@ interface SmartComposerProps {
   sessionId: string
   defaultMode?: ComposerMode
   variant?: 'terminal' | 'messages'
+  /**
+   * Start as a single row of action items (no textbox) — the textarea only appears once
+   * "Message the agent…" is pressed, and Escape on an empty box collapses it again. For docks
+   * where vertical space is scarce (the files-view conversation panel).
+   */
+  collapsible?: boolean
+  /** Extra items rendered at the start of the action row (e.g. the working/idle status pill). */
+  actions?: React.ReactNode
 }
 
 const MODES: Record<ComposerMode, { icon: typeof TbSend; label: string; hint: string }> = {
@@ -56,12 +64,23 @@ const MODES: Record<ComposerMode, { icon: typeof TbSend; label: string; hint: st
  * The composer only authors text — Claude itself executes any slash command. It owns no SignalR or
  * pending list; `send-now`/`queue` enqueues surface in the Messages tab via the server's push.
  */
-export function SmartComposer({ sessionId, defaultMode = 'send-now', variant = 'messages' }: SmartComposerProps) {
+export function SmartComposer({
+  sessionId,
+  defaultMode = 'send-now',
+  variant = 'messages',
+  collapsible = false,
+  actions,
+}: SmartComposerProps) {
   const [value, setValue] = useState('')
   const [mode, setMode] = useState<ComposerMode>(defaultMode)
   const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState(!collapsible)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const combobox = useCombobox()
+
+  useEffect(() => {
+    if (expanded && collapsible) textareaRef.current?.focus()
+  }, [expanded, collapsible])
 
   // The leading token is a slash command only while it starts with "/" and has no whitespace yet
   // (a space means the user is writing arguments → stop suggesting).
@@ -142,6 +161,13 @@ export function SmartComposer({ sessionId, defaultMode = 'send-now', variant = '
       }
     }
 
+    // Escape on an empty box tucks a collapsible composer back into its action row.
+    if (e.key === 'Escape' && collapsible && !value.trim()) {
+      e.preventDefault()
+      setExpanded(false)
+      return
+    }
+
     // Enter submits (Shift+Enter = newline); Ctrl/⌘+Enter always submits.
     if (e.key === 'Enter' && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
       e.preventDefault()
@@ -151,6 +177,46 @@ export function SmartComposer({ sessionId, defaultMode = 'send-now', variant = '
 
   const active = MODES[mode]
   const ActiveIcon = active.icon
+
+  const modePicker = (
+    <SegmentedControl
+      size="xs"
+      value={mode}
+      onChange={(v) => setMode(v as ComposerMode)}
+      data={(Object.keys(MODES) as ComposerMode[]).map((m) => {
+        const Icon = MODES[m].icon
+        return {
+          value: m,
+          label: (
+            <Tooltip label={MODES[m].label} withArrow>
+              <Icon size={15} aria-label={MODES[m].label} />
+            </Tooltip>
+          ),
+        }
+      })}
+    />
+  )
+
+  // Collapsed: the whole composer is one row of action items — no textbox until it's asked for.
+  if (!expanded) {
+    return (
+      <Group gap="xs" wrap="nowrap">
+        {actions}
+        {modePicker}
+        <Button
+          variant="subtle"
+          color="gray"
+          size="xs"
+          leftSection={<TbMessagePlus size={14} />}
+          onClick={() => setExpanded(true)}
+          styles={{ inner: { justifyContent: 'flex-start' } }}
+          style={{ flexGrow: 1 }}
+        >
+          Message the agent…
+        </Button>
+      </Group>
+    )
+  }
 
   return (
     <Stack gap={6}>
@@ -196,36 +262,35 @@ export function SmartComposer({ sessionId, defaultMode = 'send-now', variant = '
         </Combobox.Dropdown>
       </Combobox>
 
-      <Group justify="space-between" gap="xs">
-        <SegmentedControl
-          size="xs"
-          value={mode}
-          onChange={(v) => setMode(v as ComposerMode)}
-          data={(Object.keys(MODES) as ComposerMode[]).map((m) => {
-            const Icon = MODES[m].icon
-            return {
-              value: m,
-              label: (
-                <Tooltip label={MODES[m].label} withArrow>
-                  <Icon size={15} aria-label={MODES[m].label} />
-                </Tooltip>
-              ),
-            }
-          })}
-        />
-        <Button
-          size="xs"
-          leftSection={<ActiveIcon size={14} />}
-          loading={busy}
-          disabled={!value.trim()}
-          onClick={submit}
+      <Group justify="space-between" gap="xs" wrap="nowrap">
+        <Group gap="xs" wrap="nowrap">
+          {actions}
+          {modePicker}
+        </Group>
+        {/* data-disabled (not disabled) keeps hover events alive so the hint tooltip still shows. */}
+        <Tooltip
+          label={`${active.hint} Enter to send, Shift+Enter for a newline.`}
+          withArrow
+          multiline
+          maw={300}
         >
-          {active.label}
-        </Button>
+          <Button
+            size="xs"
+            leftSection={<ActiveIcon size={14} />}
+            loading={busy}
+            data-disabled={!value.trim() || undefined}
+            onClick={(e) => {
+              if (!value.trim()) {
+                e.preventDefault()
+                return
+              }
+              submit()
+            }}
+          >
+            {active.label}
+          </Button>
+        </Tooltip>
       </Group>
-      <Text size="xs" c="dimmed">
-        {active.hint} Enter to send, Shift+Enter for a newline.
-      </Text>
     </Stack>
   )
 }

@@ -322,12 +322,15 @@ function ToolRow({ call, result }: { call: TranscriptEntryDto; result?: Transcri
 export function SessionTranscriptPanel({
   sessionId,
   withComposer = false,
+  composerCollapsed = false,
   fitHeight = false,
   initialEntries = null,
 }: {
   sessionId: string
   /** Show a message-entry composer at the bottom (send now / queue when idle / raw keystrokes). */
   withComposer?: boolean
+  /** Composer starts as a single action row — the textbox only appears when pressed. */
+  composerCollapsed?: boolean
   /** Fill the parent's height (flex) instead of the fixed embedded height. */
   fitHeight?: boolean
   /** Storybook/screenshot hook: render these entries statically — no HTTP fetch, no SignalR. */
@@ -466,6 +469,17 @@ export function SessionTranscriptPanel({
     return { input, output, cache }
   }, [metrics])
 
+  const statusBadge = (
+    <Badge
+      color={working ? 'yellow' : 'green'}
+      variant="light"
+      leftSection={working ? <Loader size={10} color="yellow" type="dots" /> : undefined}
+      style={{ flexShrink: 0 }}
+    >
+      {working ? 'Working…' : 'Idle'}
+    </Badge>
+  )
+
   return (
     <Stack gap="xs" style={fitHeight ? { minHeight: 0, height: '100%', flexGrow: 1 } : { minHeight: 0 }}>
       <Group justify="space-between">
@@ -565,18 +579,18 @@ export function SessionTranscriptPanel({
         )}
       </ScrollArea>
 
-      {/* Status lives at the BOTTOM — right where the newest turn lands and the composer sits. */}
-      <Group gap="xs">
-        <Badge
-          color={working ? 'yellow' : 'green'}
-          variant="light"
-          leftSection={working ? <Loader size={10} color="yellow" type="dots" /> : undefined}
-        >
-          {working ? 'Working…' : 'Idle'}
-        </Badge>
-      </Group>
-
-      {withComposer && <SmartComposer sessionId={sessionId} defaultMode="send-now" />}
+      {/* Status lives at the BOTTOM, where the newest turn lands. With a composer it joins the
+          composer's action row (below the textbox) instead of spending a row of its own. */}
+      {withComposer ? (
+        <SmartComposer
+          sessionId={sessionId}
+          defaultMode="send-now"
+          collapsible={composerCollapsed}
+          actions={statusBadge}
+        />
+      ) : (
+        <Group gap="xs">{statusBadge}</Group>
+      )}
     </Stack>
   )
 }

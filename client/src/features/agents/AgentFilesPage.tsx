@@ -42,9 +42,11 @@ const statusColor: Record<string, string> = {
 export function AgentFilesPage() {
   const { id } = useParams<{ id: string }>()
   const agent = useAgent(id ?? null)
+  // Key bumped to -v2 when the default changed to 'right' — the old key had 'bottom' persisted
+  // for existing users, which would silently pin the old default forever.
   const [dock, setDock] = useLocalStorage<DockSide>({
-    key: 'antiphon-files-conversation-dock',
-    defaultValue: 'bottom',
+    key: 'antiphon-files-conversation-dock-v2',
+    defaultValue: 'right',
   })
 
   if (!id) return null
@@ -126,7 +128,7 @@ export function AgentFilesPage() {
           data-testid="conversation-dock"
         >
           {sessionId ? (
-            <SessionTranscriptPanel sessionId={sessionId} withComposer fitHeight />
+            <SessionTranscriptPanel sessionId={sessionId} withComposer composerCollapsed fitHeight />
           ) : (
             <Text size="sm" c="dimmed" ta="center" py="xl">
               No session for this agent yet — start it from the Agents page to talk to it here.
