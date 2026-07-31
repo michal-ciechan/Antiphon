@@ -10,18 +10,13 @@ type DockSide = 'bottom' | 'right'
 
 const DOCK_SIZE: Record<DockSide, number> = { bottom: 380, right: 520 }
 
-// Viewport-derived editor heights: everything above/beside the viewer (page header, panel header,
-// mode buttons, paddings) plus the dock when it's at the bottom. max() keeps small windows usable —
-// the content column scrolls as the fallback.
+// Viewport-derived editor heights: everything above/below the viewer (page header, the viewer's
+// filename/mode row, comment row, paddings) plus the dock when it's at the bottom. The tree needs
+// no height — the sidebar layout flex-fills it. max() keeps small windows usable — the content
+// column scrolls as the fallback.
 const HEIGHTS: Record<DockSide, FilesPanelHeights> = {
-  bottom: {
-    tree: 'max(280px, calc(100vh - 620px))',
-    viewer: 'max(260px, calc(100vh - 660px))',
-  },
-  right: {
-    tree: 'max(280px, calc(100vh - 240px))',
-    viewer: 'max(260px, calc(100vh - 280px))',
-  },
+  bottom: { viewer: 'max(260px, calc(100vh - 545px))' },
+  right: { viewer: 'max(260px, calc(100vh - 165px))' },
 }
 
 const statusColor: Record<string, string> = {
@@ -109,8 +104,8 @@ export function AgentFilesPage() {
           flexDirection: dock === 'bottom' ? 'column' : 'row',
         }}
       >
-        <Box px="md" pb="md" style={{ flexGrow: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
-          <FilesReviewPanel agentId={id} heights={HEIGHTS[dock]} />
+        <Box px="md" py="sm" style={{ flexGrow: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+          <FilesReviewPanel agentId={id} heights={HEIGHTS[dock]} layout="sidebar" />
         </Box>
 
         <Paper

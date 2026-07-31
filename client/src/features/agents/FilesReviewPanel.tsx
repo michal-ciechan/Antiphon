@@ -93,7 +93,8 @@ const threadStatusColor: Record<ReviewThreadStatus, string> = {
 
 /** Tree/viewer heights — CSS values; the defaults suit the embedded AgentsPage panel. */
 export interface FilesPanelHeights {
-  tree: number | string
+  /** Tree scroll cap — embedded layout only (the sidebar layout flex-fills the tree). */
+  tree?: number | string
   viewer: number | string
 }
 
@@ -104,6 +105,7 @@ export function FilesReviewPanel({
   initialSelectedPath = null,
   heights = EMBEDDED_HEIGHTS,
   showExpand = false,
+  layout = 'embedded',
 }: {
   agentId: string
   /** Storybook/screenshot hook: pre-open a file without a click. */
@@ -112,6 +114,12 @@ export function FilesReviewPanel({
   heights?: FilesPanelHeights
   /** Show the "open full-screen files view" button (embedded AgentsPage usage). */
   showExpand?: boolean
+  /**
+   * 'embedded': header row above tree + viewer (the AgentsPage panel). 'sidebar': the tree is a
+   * full-height left bar owning its counts/filter/refresh controls, and the viewer takes the whole
+   * middle — its filename/mode/mark row sits at the very top (the full-screen files page).
+   */
+  layout?: 'embedded' | 'sidebar'
 }) {
   const files = useAgentFiles(agentId)
   const threads = useReviewThreads(agentId)
@@ -147,6 +155,141 @@ export function FilesReviewPanel({
   if (files.isLoading) return <Loader size="sm" />
   if (!files.data) return null
 
+  const unviewedCount = (files.data.files ?? []).filter(isUnviewed).length
+
+  const treeContent = (
+    <>
+      <TreeLevel
+        node={tree}
+        depth={0}
+        selectedPath={selectedPath}
+        threadsByPath={threadsByPath}
+        onSelect={setSelectedPath}
+        onContextMenu={(e, prefix) => {
+          e.preventDefault()
+          setContextMenu({ x: e.clientX, y: e.clientY, prefix })
+        }}
+      />
+      {externals.length > 0 && (
+        <>
+          <Text size="xs" c="dimmed" mt="xs">
+            Outside workspace
+          </Text>
+          {externals.map((f) => (
+            <FileRow
+              key={f.path}
+              file={f}
+              depth={0}
+              selected={selectedPath === f.path}
+              threadCount={threadsByPath.get(f.path)?.length ?? 0}
+              onSelect={setSelectedPath}
+              onContextMenu={(e) => e.preventDefault()}
+            />
+          ))}
+        </>
+      )}
+      {visibleFiles.length === 0 && (
+        <Text size="sm" c="dimmed" p="sm">
+          {onlyUnviewed ? 'Everything reviewed 🎉' : 'No changed or agent-touched files.'}
+        </Text>
+      )}
+    </>
+  )
+
+  const viewer = selectedFile ? (
+    <FileViewer
+      key={selectedFile.path}
+      agentId={agentId}
+      file={selectedFile}
+      threads={threadsByPath.get(selectedFile.path) ?? []}
+      viewerHeight={heights.viewer}
+      onMark={(level) => doMark({ paths: [selectedFile.path], level })}
+    />
+  ) : (
+    <Paper withBorder p="xl">
+      <Text c="dimmed" size="sm">
+        Select a file to view its changes, raw content, or rendered markdown — and to comment
+        inline.
+      </Text>
+    </Paper>
+  )
+
+  const contextMenuEl = contextMenu && (
+    <Menu opened onClose={() => setContextMenu(null)} position="bottom-start" withinPortal>
+      <Menu.Target>
+        <Box pos="fixed" left={contextMenu.x} top={contextMenu.y} w={1} h={1} />
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>{contextMenu.prefix || 'All files'}</Menu.Label>
+        <Menu.Item
+          leftSection={<TbEye size={14} />}
+          onClick={() => {
+            doMark({ prefix: contextMenu.prefix, level: 'Viewed' })
+            setContextMenu(null)
+          }}
+        >
+          Mark all as viewed
+        </Menu.Item>
+        <Menu.Item
+          leftSection={<TbChecks size={14} />}
+          onClick={() => {
+            doMark({ prefix: contextMenu.prefix, level: 'Reviewed' })
+            setContextMenu(null)
+          }}
+        >
+          Mark all as reviewed
+        </Menu.Item>
+        <Menu.Item
+          onClick={() => {
+            doMark({ prefix: contextMenu.prefix, level: null })
+            setContextMenu(null)
+          }}
+        >
+          Clear marks
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  )
+
+  if (layout === 'sidebar') {
+    // Full-height sidebar layout: the tree owns the left bar with its controls tucked into its
+    // header, and the viewer (whose filename/mode/mark row is its own top line) gets the rest.
+    return (
+      <Group align="stretch" gap="md" wrap="nowrap" style={{ height: '100%', minHeight: 0 }}>
+        <Paper
+          withBorder
+          p="xs"
+          w={340}
+          style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+        >
+          <Group justify="space-between" gap="xs" wrap="nowrap" pb={6} style={{ flexShrink: 0 }}>
+            <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+              {visibleFiles.length} file{visibleFiles.length === 1 ? '' : 's'} · {unviewedCount}{' '}
+              unviewed
+            </Text>
+            <Group gap="xs" wrap="nowrap">
+              <Checkbox
+                size="xs"
+                label="Unviewed"
+                checked={onlyUnviewed}
+                onChange={(e) => setOnlyUnviewed(e.currentTarget.checked)}
+              />
+              <ActionIcon variant="subtle" aria-label="Refresh files" onClick={() => files.refetch()}>
+                <TbRefresh size={16} />
+              </ActionIcon>
+            </Group>
+          </Group>
+          <ScrollArea type="auto" style={{ flexGrow: 1, minHeight: 0 }}>
+            {treeContent}
+          </ScrollArea>
+        </Paper>
+
+        <Box style={{ flexGrow: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>{viewer}</Box>
+        {contextMenuEl}
+      </Group>
+    )
+  }
+
   return (
     <Stack gap="sm" mt="md">
       <Group justify="space-between">
@@ -158,8 +301,7 @@ export function FilesReviewPanel({
             </Badge>
           )}
           <Text size="xs" c="dimmed">
-            {visibleFiles.length} file{visibleFiles.length === 1 ? '' : 's'} ·{' '}
-            {(files.data.files ?? []).filter(isUnviewed).length} unviewed
+            {visibleFiles.length} file{visibleFiles.length === 1 ? '' : 's'} · {unviewedCount} unviewed
           </Text>
         </Group>
         <Group gap="sm">
@@ -190,101 +332,13 @@ export function FilesReviewPanel({
 
       <Group align="flex-start" gap="md" wrap="nowrap">
         <Paper withBorder p="xs" w={340} style={{ flexShrink: 0 }}>
-          <ScrollArea.Autosize mah={heights.tree}>
-            <TreeLevel
-              node={tree}
-              depth={0}
-              selectedPath={selectedPath}
-              threadsByPath={threadsByPath}
-              onSelect={setSelectedPath}
-              onContextMenu={(e, prefix) => {
-                e.preventDefault()
-                setContextMenu({ x: e.clientX, y: e.clientY, prefix })
-              }}
-            />
-            {externals.length > 0 && (
-              <>
-                <Text size="xs" c="dimmed" mt="xs">
-                  Outside workspace
-                </Text>
-                {externals.map((f) => (
-                  <FileRow
-                    key={f.path}
-                    file={f}
-                    depth={0}
-                    selected={selectedPath === f.path}
-                    threadCount={threadsByPath.get(f.path)?.length ?? 0}
-                    onSelect={setSelectedPath}
-                    onContextMenu={(e) => e.preventDefault()}
-                  />
-                ))}
-              </>
-            )}
-            {visibleFiles.length === 0 && (
-              <Text size="sm" c="dimmed" p="sm">
-                {onlyUnviewed ? 'Everything reviewed 🎉' : 'No changed or agent-touched files.'}
-              </Text>
-            )}
-          </ScrollArea.Autosize>
+          <ScrollArea.Autosize mah={heights.tree}>{treeContent}</ScrollArea.Autosize>
         </Paper>
 
-        <Box style={{ flexGrow: 1, minWidth: 0 }}>
-          {selectedFile ? (
-            <FileViewer
-              key={selectedFile.path}
-              agentId={agentId}
-              file={selectedFile}
-              threads={threadsByPath.get(selectedFile.path) ?? []}
-              viewerHeight={heights.viewer}
-              onMark={(level) => doMark({ paths: [selectedFile.path], level })}
-            />
-          ) : (
-            <Paper withBorder p="xl">
-              <Text c="dimmed" size="sm">
-                Select a file to view its changes, raw content, or rendered markdown — and to comment
-                inline.
-              </Text>
-            </Paper>
-          )}
-        </Box>
+        <Box style={{ flexGrow: 1, minWidth: 0 }}>{viewer}</Box>
       </Group>
 
-      {contextMenu && (
-        <Menu opened onClose={() => setContextMenu(null)} position="bottom-start" withinPortal>
-          <Menu.Target>
-            <Box pos="fixed" left={contextMenu.x} top={contextMenu.y} w={1} h={1} />
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Label>{contextMenu.prefix || 'All files'}</Menu.Label>
-            <Menu.Item
-              leftSection={<TbEye size={14} />}
-              onClick={() => {
-                doMark({ prefix: contextMenu.prefix, level: 'Viewed' })
-                setContextMenu(null)
-              }}
-            >
-              Mark all as viewed
-            </Menu.Item>
-            <Menu.Item
-              leftSection={<TbChecks size={14} />}
-              onClick={() => {
-                doMark({ prefix: contextMenu.prefix, level: 'Reviewed' })
-                setContextMenu(null)
-              }}
-            >
-              Mark all as reviewed
-            </Menu.Item>
-            <Menu.Item
-              onClick={() => {
-                doMark({ prefix: contextMenu.prefix, level: null })
-                setContextMenu(null)
-              }}
-            >
-              Clear marks
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      )}
+      {contextMenuEl}
     </Stack>
   )
 }
