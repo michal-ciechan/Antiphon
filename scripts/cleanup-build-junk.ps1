@@ -14,8 +14,10 @@
     out from under itself. Uses robocopy empty-mirror for deletion so paths longer than
     MAX_PATH cannot break it.
 
-    Registered as the per-user Scheduled Task "Antiphon Build Junk Cleanup" (weekly +
-    at logon) by scripts/install-cleanup-task.ps1. Safe to run manually at any time.
+    Scheduled via Windmill (server2): script u/lndcobra/antiphon_build_junk_cleanup
+    (tag "desktop") SSHes from the desktop worker container into Windows and runs this
+    file weekly (Mon 09:00 Europe/London). scripts/install-cleanup-task.ps1 remains as
+    an optional local Scheduled Task alternative. Safe to run manually at any time.
 #>
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
