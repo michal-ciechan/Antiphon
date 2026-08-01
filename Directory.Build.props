@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    Keep MSBuild's default item globs (and NuGet restore's project evaluation) from crawling
+    runtime/output directories that live inside project folders. The SDK only auto-excludes
+    bin/ and obj/ — without this, the session-runner's workspace/ (session logs + pty-host
+    shadow copies) and the alternate build outputs (bin-verify/, bin-ptyhost/, used to build
+    while the daemons hold bin/ locked) get enumerated on EVERY evaluation. That once nested
+    recursively (shadow copies swallowing sibling output dirs) and drove restore+build of
+    Antiphon.SessionRunner past 10 minutes.
+  -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-verify/**;bin-ptyhost/**;bin-profile*/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

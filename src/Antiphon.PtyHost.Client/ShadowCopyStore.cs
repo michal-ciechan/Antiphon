@@ -13,8 +13,15 @@ namespace Antiphon.PtyHost.Client;
 /// </summary>
 public sealed class ShadowCopyStore(string binRoot)
 {
-    /// <summary>Excluded from hashing and copying (test/report noise, never runtime inputs).</summary>
-    private static readonly string[] ExcludedDirNames = ["TestResults"];
+    /// <summary>
+    /// Excluded from hashing and copying (never runtime inputs), matched at ANY path depth:
+    /// test/report noise, alternate build outputs, and the runner's own workspace. The workspace
+    /// exclusion is load-bearing — it holds these very shadow copies, so if it ever sits inside
+    /// the source dir (e.g. the runner ran with cwd = its bin), a top-level-only check would copy
+    /// every previous generation into the next one, nesting the tree deeper on each launch.
+    /// </summary>
+    private static readonly string[] ExcludedDirNames =
+        ["TestResults", "workspace", "bin-verify", "bin-ptyhost", "pty-hosts"];
 
     public string BinRoot => binRoot;
 
@@ -105,15 +112,30 @@ public sealed class ShadowCopyStore(string binRoot)
         // host can only ever load what its deps.json names. Falls back to everything when absent.
         var closure = TryBuildHostClosure(root);
 
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (var file in EnumerateFilesSkippingExcludedDirs(root))
         {
             var relative = Path.GetRelativePath(root, file);
-            var topSegment = relative.Split(Path.DirectorySeparatorChar, 2)[0];
-            if (ExcludedDirNames.Contains(topSegment, StringComparer.OrdinalIgnoreCase))
-                continue;
             if (closure is not null && !closure.Contains(Path.GetFileName(file)))
                 continue;
             yield return (file, relative);
+        }
+    }
+
+    /// <summary>
+    /// Depth-first file walk that PRUNES excluded directories instead of filtering afterwards —
+    /// an infected tree can hold millions of entries, so it must never be entered at all.
+    /// </summary>
+    private static IEnumerable<string> EnumerateFilesSkippingExcludedDirs(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root))
+            yield return file;
+
+        foreach (var dir in Directory.EnumerateDirectories(root))
+        {
+            if (ExcludedDirNames.Contains(Path.GetFileName(dir), StringComparer.OrdinalIgnoreCase))
+                continue;
+            foreach (var file in EnumerateFilesSkippingExcludedDirs(dir))
+                yield return file;
         }
     }
 

@@ -94,6 +94,40 @@ public partial class ShadowCopyStoreTests
         await Task.CompletedTask;
     }
 
+    // Regression lock for the 2026-08-01 recursive-copy explosion: the runner's workspace/ (which
+    // holds these very shadow copies) sat inside the copy source, and the old top-level-only
+    // exclusion let every new shadow copy swallow all previous generations at full depth. Junk
+    // dirs must be pruned at ANY depth, from both the hash and the copy.
+    [Test]
+    public async Task Workspace_and_alternate_output_dirs_are_excluded_at_any_depth()
+    {
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            var before = ShadowCopyStore.ComputeContentSha8(source);
+
+            // Top-level workspace holding a fake previous shadow copy, and junk nested deeper.
+            var nestedStamp = Path.Combine(source, "workspace", "session-runner-logs", "pty-hosts", "bin", "20260101-000000-deadbeef");
+            Directory.CreateDirectory(nestedStamp);
+            File.WriteAllText(Path.Combine(nestedStamp, "host.exe"), "previous-generation-bytes");
+            Directory.CreateDirectory(Path.Combine(source, "runtimes", "bin-verify"));
+            File.WriteAllText(Path.Combine(source, "runtimes", "bin-verify", "host.exe"), "stray-alt-output");
+
+            var after = ShadowCopyStore.ComputeContentSha8(source);
+            after.ShouldBe(before, "junk dirs must not affect the content hash at any depth");
+
+            var copy = store.EnsureCurrent(source);
+            Directory.Exists(Path.Combine(copy, "workspace")).ShouldBeFalse("workspace must not be copied");
+            Directory.Exists(Path.Combine(copy, "runtimes", "bin-verify")).ShouldBeFalse("nested junk must not be copied");
+            File.Exists(Path.Combine(copy, "runtimes", "win-x64", "native.dll")).ShouldBeTrue("real runtime assets still copy");
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task TestResults_dir_does_not_affect_the_content_hash()
     {
