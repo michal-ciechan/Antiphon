@@ -1,4 +1,4 @@
-# SessionRunner memory growth: unbounded transcript retention + Server GC
+# Feature 006 — SessionRunner memory growth: unbounded transcript retention + Server GC
 
 **Status:** investigation complete — proposed fixes below, not yet implemented
 **Date:** 2026-08-01
