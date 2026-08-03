@@ -16,23 +16,37 @@ public static class ReviewEndpoints
             .WithTags("Review");
 
         agents.MapGet("/files", async (
+            Guid agentId, string? since, AgentFilesService files, CancellationToken ct) =>
+        {
+            var result = await files.GetFilesAsync(agentId, since, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
+        agents.MapGet("/files/commits", async (
+            Guid agentId, int? limit, AgentFilesService files, CancellationToken ct) =>
+        {
+            var result = await files.GetCommitsAsync(agentId, limit ?? 30, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
+        agents.MapGet("/files/tree", async (
             Guid agentId, AgentFilesService files, CancellationToken ct) =>
         {
-            var result = await files.GetFilesAsync(agentId, ct);
+            var result = await files.GetTreeAsync(agentId, ct);
             return result is null ? Results.NotFound() : Results.Ok(result);
         });
 
         agents.MapGet("/files/content", async (
-            Guid agentId, string path, string? rev, AgentFilesService files, CancellationToken ct) =>
+            Guid agentId, string path, string? rev, string? since, AgentFilesService files, CancellationToken ct) =>
         {
-            var result = await files.GetContentAsync(agentId, path, rev ?? "work", ct);
+            var result = await files.GetContentAsync(agentId, path, rev ?? "work", since, ct);
             return result is null ? Results.NotFound() : Results.Ok(result);
         });
 
         agents.MapGet("/files/diff", async (
-            Guid agentId, string path, AgentFilesService files, CancellationToken ct) =>
+            Guid agentId, string path, string? since, AgentFilesService files, CancellationToken ct) =>
         {
-            var diff = await files.GetDiffAsync(agentId, path, ct);
+            var diff = await files.GetDiffAsync(agentId, path, since, ct);
             return Results.Ok(new { path, diff });
         });
 
@@ -45,8 +59,17 @@ public static class ReviewEndpoints
                 "reviewed" => FileReviewLevel.Reviewed,
                 _ => null,
             };
-            var count = await files.MarkAsync(agentId, request.Paths, request.Prefix, level, ct);
+            var count = await files.MarkAsync(agentId, request.Paths, request.Prefix, level, request.Since, ct);
             return Results.Ok(new { marked = count });
+        });
+
+        agents.MapPost("/review/checkpoint", async (
+            Guid agentId, AgentReviewCheckpointService checkpoints, CancellationToken ct) =>
+        {
+            var checkpoint = await checkpoints.CaptureAsync(agentId, "Manual baseline", ct);
+            return checkpoint is null
+                ? Results.NotFound()
+                : Results.Ok(new { checkpoint.Id, checkpoint.CommitSha, checkpoint.CreatedAt, checkpoint.Reason });
         });
 
         agents.MapGet("/review/threads", async (

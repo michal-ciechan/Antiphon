@@ -72,20 +72,149 @@ public sealed class GitWorkspaceService
             : $"{toplevel}/{repoRelative}";
     }
 
-    /// <summary>The file's content at HEAD, or null when it doesn't exist there (new file / no repo).</summary>
-    public async Task<string?> GetHeadContentAsync(string workingDirectory, string relativePath, CancellationToken ct)
+    /// <summary>
+    /// Working tree changes vs an arbitrary base commit — committed AND uncommitted differences
+    /// combined (git diff &lt;base&gt;), plus untracked files from status. This is the "changes since
+    /// commit X" view; with base=HEAD it degenerates to <see cref="GetChangesAsync"/> semantics.
+    /// </summary>
+    public async Task<IReadOnlyList<GitChange>> GetChangesSinceAsync(
+        string workingDirectory, string baseCommit, CancellationToken ct)
     {
-        // HEAD:./path is CWD-relative; a bare HEAD:path is repo-ROOT-relative and breaks for
+        var (code, stdout, stderr) = await RunAsync(
+            workingDirectory, ct, "diff", "--name-status", "-z", "--find-renames", baseCommit);
+        if (code != 0)
+        {
+            _logger.LogDebug("git diff {Base} failed in {Dir}: {Err}", baseCommit, workingDirectory, stderr);
+            return [];
+        }
+
+        var (prefixCode, prefixOut, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--show-prefix");
+        var prefix = prefixCode == 0 ? prefixOut.Trim() : "";
+        var (topCode, topOut, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--show-toplevel");
+        var toplevel = topCode == 0 ? topOut.Trim() : workingDirectory.Replace('\\', '/');
+
+        string Rebase(string repoRelative) =>
+            prefix.Length == 0 ? repoRelative
+            : repoRelative.StartsWith(prefix, StringComparison.Ordinal) ? repoRelative[prefix.Length..]
+            : $"{toplevel}/{repoRelative}";
+
+        // -z --name-status records: STATUS \0 path \0 (renames/copies: STATUS \0 old \0 new \0).
+        var changes = new List<GitChange>();
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var i = 0;
+        while (i + 1 < records.Length)
+        {
+            var status = records[i++];
+            var path = records[i++];
+            string? oldPath = null;
+            if ((status[0] == 'R' || status[0] == 'C') && i < records.Length)
+            {
+                oldPath = path;
+                path = records[i++];
+            }
+            changes.Add(new GitChange(
+                Rebase(path),
+                status[0] switch
+                {
+                    'A' => GitFileStatus.Added,
+                    'D' => GitFileStatus.Deleted,
+                    'R' or 'C' => GitFileStatus.Renamed,
+                    _ => GitFileStatus.Modified,
+                },
+                oldPath is null ? null : Rebase(oldPath)));
+        }
+
+        // git diff never lists untracked files — union them in from status.
+        var known = new HashSet<string>(changes.Select(c => c.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var change in await GetChangesAsync(workingDirectory, ct))
+        {
+            if (change.Status == GitFileStatus.Untracked && !known.Contains(change.Path))
+                changes.Add(change);
+        }
+        return changes;
+    }
+
+    /// <summary>The file's content at HEAD, or null when it doesn't exist there (new file / no repo).</summary>
+    public Task<string?> GetHeadContentAsync(string workingDirectory, string relativePath, CancellationToken ct)
+        => GetContentAtAsync(workingDirectory, relativePath, "HEAD", ct);
+
+    /// <summary>The file's content at an arbitrary commit, or null when it doesn't exist there.</summary>
+    public async Task<string?> GetContentAtAsync(
+        string workingDirectory, string relativePath, string gitRef, CancellationToken ct)
+    {
+        // ref:./path is CWD-relative; a bare ref:path is repo-ROOT-relative and breaks for
         // workspaces that are subdirectories of the repo.
-        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "show", $"HEAD:./{relativePath}");
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "show", $"{gitRef}:./{relativePath}");
         return code == 0 ? stdout : null;
     }
 
-    /// <summary>Unified diff of the file vs HEAD (staged + unstaged combined); null on failure/no repo.</summary>
-    public async Task<string?> GetDiffAsync(string workingDirectory, string relativePath, CancellationToken ct)
+    /// <summary>Unified diff of the file vs a base commit (default HEAD); null on failure/no repo.</summary>
+    public async Task<string?> GetDiffAsync(
+        string workingDirectory, string relativePath, CancellationToken ct, string baseRef = "HEAD")
     {
-        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "diff", "HEAD", "--", relativePath);
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "diff", baseRef, "--", relativePath);
         return code == 0 ? stdout : null;
+    }
+
+    /// <summary>Current HEAD commit sha, or null (no repo / unborn branch).</summary>
+    public async Task<string?> GetHeadShaAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", "HEAD");
+        return code == 0 ? stdout.Trim() : null;
+    }
+
+    /// <summary>True when the commit exists and is an ancestor of (or equal to) HEAD.</summary>
+    public async Task<bool> IsInHistoryAsync(string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, _, _) = await RunAsync(workingDirectory, ct, "merge-base", "--is-ancestor", sha, "HEAD");
+        return code == 0;
+    }
+
+    /// <summary>The newest commit on HEAD's history at or before the given time, or null.</summary>
+    public async Task<string?> GetLastCommitBeforeAsync(
+        string workingDirectory, DateTime utcTimestamp, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "rev-list", "-1", $"--before={utcTimestamp:yyyy-MM-ddTHH:mm:ssZ}", "HEAD");
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    public sealed record GitCommit(string Sha, string ShortSha, string Author, DateTime Date, string Subject);
+
+    /// <summary>Recent commits on HEAD, newest first.</summary>
+    public async Task<IReadOnlyList<GitCommit>> GetRecentCommitsAsync(
+        string workingDirectory, int limit, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "log", $"-{limit}", "--format=%H%x00%h%x00%an%x00%aI%x00%s%x01");
+        if (code != 0)
+            return [];
+
+        var commits = new List<GitCommit>();
+        foreach (var record in stdout.Split('\x01', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fields = record.TrimStart('\n', '\r').Split('\0');
+            if (fields.Length < 5)
+                continue;
+            if (!DateTimeOffset.TryParse(fields[3], out var date))
+                continue;
+            commits.Add(new GitCommit(fields[0], fields[1], fields[2], date.UtcDateTime, fields[4]));
+        }
+        return commits;
+    }
+
+    /// <summary>
+    /// Every file git knows about or would add (tracked + untracked-but-not-ignored), workspace
+    /// relative. The "show all files" listing — .gitignore keeps node_modules/bin out for free.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ListFilesAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "ls-files", "-z", "--cached", "--others", "--exclude-standard");
+        if (code != 0)
+            return [];
+        return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
     }
 
     private static GitFileStatus Classify(char index, char work)

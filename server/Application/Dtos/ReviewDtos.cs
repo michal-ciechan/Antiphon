@@ -5,7 +5,37 @@ public sealed record AgentFilesDto(
     Guid AgentId,
     string WorkspaceRoot,
     bool IsGitRepository,
-    IReadOnlyList<AgentFileDto> Files);
+    IReadOnlyList<AgentFileDto> Files,
+    FilesBaselineDto Baseline);
+
+/// <summary>
+/// What the git half of the listing was diffed against. Kind: "head" (working tree vs HEAD —
+/// the default when nothing else resolves), "checkpoint" (the latest work-completed checkpoint),
+/// or "commit" (an explicitly requested sha). TimestampFallback marks a checkpoint whose commit
+/// was not in history (or never captured), resolved to the newest commit before its timestamp.
+/// </summary>
+public sealed record FilesBaselineDto(
+    string Kind,
+    string? CommitSha,
+    string? CheckpointReason,
+    DateTime? CheckpointAt,
+    bool TimestampFallback);
+
+public sealed record WorkspaceCommitDto(
+    string Sha,
+    string ShortSha,
+    string Author,
+    DateTime Date,
+    string Subject,
+    bool IsCheckpoint);
+
+public sealed record WorkspaceCommitsDto(
+    IReadOnlyList<WorkspaceCommitDto> Commits);
+
+/// <summary>Full workspace file listing for the "show all files" toggle (paths only, capped).</summary>
+public sealed record WorkspaceTreeDto(
+    IReadOnlyList<string> Paths,
+    bool Truncated);
 
 public sealed record AgentFileDto(
     string Path,
@@ -30,7 +60,8 @@ public sealed record AgentFileContentDto(
 public sealed record MarkFilesReviewRequest(
     IReadOnlyList<string>? Paths,
     string? Prefix,
-    string? Level); // "viewed" | "reviewed" | null/"none" to clear
+    string? Level, // "viewed" | "reviewed" | null/"none" to clear
+    string? Since = null); // baseline the client is viewing — prefix marks apply to that listing
 
 public sealed record ReviewThreadDto(
     Guid Id,

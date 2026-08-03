@@ -27,20 +27,26 @@ import {
   TbChecks,
   TbEye,
   TbFile,
+  TbFlag,
   TbFolder,
+  TbGitCommit,
   TbMessagePlus,
   TbRefresh,
   TbSend,
 } from 'react-icons/tb'
 import {
   useAddReviewComment,
+  useAgentCommits,
   useAgentFileContent,
   useAgentFiles,
+  useAgentFilesTree,
   useCreateReviewThread,
   useMarkFilesReview,
   useResolveReviewThread,
   useReviewThreads,
+  useSetReviewCheckpoint,
   type AgentFileDto,
+  type FilesBaselineDto,
   type ReviewThreadDto,
   type ReviewThreadStatus,
 } from '../../api/review'
@@ -48,7 +54,35 @@ import { getApiErrorMessage } from '../../api/client'
 
 /** A file needs attention when it has no mark or its mark predates the current content. */
 export function isUnviewed(file: AgentFileDto): boolean {
+  if (file.contextOnly) return false
   return file.reviewLevel === null || file.reviewStale
+}
+
+/**
+ * Merge the full workspace tree into the changed/agent-touched listing ("All files" toggle):
+ * every path the review listing doesn't already cover becomes a dimmed context entry — browsable,
+ * but outside the review set.
+ */
+export function mergeTreePaths(files: AgentFileDto[], treePaths: string[]): AgentFileDto[] {
+  const known = new Set(files.map((f) => f.path.toLowerCase()))
+  const extras = treePaths
+    .filter((p) => !known.has(p.toLowerCase()))
+    .map<AgentFileDto>((p) => ({
+      path: p,
+      gitStatus: 'None',
+      external: false,
+      agentEdits: 0,
+      lastAgentEditAt: null,
+      contentHash: null,
+      reviewLevel: null,
+      reviewStale: false,
+      sizeBytes: null,
+      isMarkdown: /\.(md|markdown)$/i.test(p),
+      contextOnly: true,
+    }))
+  return [...files, ...extras].sort((a, b) =>
+    a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }),
+  )
 }
 
 interface TreeNode {
@@ -121,17 +155,27 @@ export function FilesReviewPanel({
    */
   layout?: 'embedded' | 'sidebar'
 }) {
-  const files = useAgentFiles(agentId)
+  // Baseline defaults to the latest "work completed" checkpoint; the server degrades to HEAD
+  // when none exists (the response's baseline.kind says which actually applied).
+  const [since, setSince] = useState<string>('checkpoint')
+  const [showAll, setShowAll] = useState(false)
+  const files = useAgentFiles(agentId, since)
+  const workspaceTree = useAgentFilesTree(agentId, showAll)
   const threads = useReviewThreads(agentId)
   const mark = useMarkFilesReview(agentId)
   const [selectedPath, setSelectedPath] = useState<string | null>(initialSelectedPath)
   const [onlyUnviewed, setOnlyUnviewed] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; prefix: string } | null>(null)
 
-  const visibleFiles = useMemo(() => {
-    const all = files.data?.files ?? []
-    return onlyUnviewed ? all.filter(isUnviewed) : all
-  }, [files.data, onlyUnviewed])
+  const mergedFiles = useMemo(() => {
+    const base = files.data?.files ?? []
+    return showAll && workspaceTree.data ? mergeTreePaths(base, workspaceTree.data.paths) : base
+  }, [files.data, showAll, workspaceTree.data])
+
+  const visibleFiles = useMemo(
+    () => (onlyUnviewed ? mergedFiles.filter(isUnviewed) : mergedFiles),
+    [mergedFiles, onlyUnviewed],
+  )
 
   const tree = useMemo(() => buildTree(visibleFiles.filter((f) => !f.external)), [visibleFiles])
   const externals = useMemo(() => visibleFiles.filter((f) => f.external), [visibleFiles])
@@ -144,18 +188,45 @@ export function FilesReviewPanel({
     return map
   }, [threads.data])
 
-  const selectedFile = files.data?.files.find((f) => f.path === selectedPath) ?? null
+  const selectedFile = mergedFiles.find((f) => f.path === selectedPath) ?? null
 
   const doMark = (request: { paths?: string[]; prefix?: string; level: 'Viewed' | 'Reviewed' | null }) =>
-    mark.mutate(request, {
-      onError: (error) =>
-        notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Marking failed') }),
-    })
+    mark.mutate(
+      { ...request, since },
+      {
+        onError: (error) =>
+          notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Marking failed') }),
+      },
+    )
 
   if (files.isLoading) return <Loader size="sm" />
   if (!files.data) return null
 
   const unviewedCount = (files.data.files ?? []).filter(isUnviewed).length
+  const baseline = files.data.baseline
+
+  const baselineControls = (
+    <Group gap="xs" wrap="nowrap">
+      <BaselineMenu agentId={agentId} since={since} baseline={baseline} onChange={setSince} />
+      <Checkbox
+        size="xs"
+        label="All files"
+        checked={showAll}
+        onChange={(e) => setShowAll(e.currentTarget.checked)}
+      />
+    </Group>
+  )
+
+  const baselineCaption = baseline && baseline.kind !== 'head' && (
+    <Text size="xs" c="dimmed" data-testid="baseline-caption">
+      Changes since {baseline.commitSha?.slice(0, 7)}
+      {baseline.kind === 'checkpoint' &&
+        ` — ${baseline.checkpointReason ?? 'work completed'}${
+          baseline.checkpointAt ? `, ${new Date(baseline.checkpointAt).toLocaleString()}` : ''
+        }${baseline.timestampFallback ? ' (resolved by timestamp)' : ''}`}
+      {workspaceTree.data?.truncated && showAll ? ' · file list truncated' : ''}
+    </Text>
+  )
 
   const treeContent = (
     <>
@@ -190,7 +261,9 @@ export function FilesReviewPanel({
       )}
       {visibleFiles.length === 0 && (
         <Text size="sm" c="dimmed" p="sm">
-          {onlyUnviewed ? 'Everything reviewed 🎉' : 'No changed or agent-touched files.'}
+          {onlyUnviewed
+            ? 'Everything reviewed 🎉'
+            : 'No changed or agent-touched files since the selected baseline.'}
         </Text>
       )}
     </>
@@ -198,9 +271,10 @@ export function FilesReviewPanel({
 
   const viewer = selectedFile ? (
     <FileViewer
-      key={selectedFile.path}
+      key={`${selectedFile.path}:${since}`}
       agentId={agentId}
       file={selectedFile}
+      since={since}
       threads={threadsByPath.get(selectedFile.path) ?? []}
       viewerHeight={heights.viewer}
       onMark={(level) => doMark({ paths: [selectedFile.path], level })}
@@ -262,7 +336,7 @@ export function FilesReviewPanel({
           w={340}
           style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}
         >
-          <Group justify="space-between" gap="xs" wrap="nowrap" pb={6} style={{ flexShrink: 0 }}>
+          <Group justify="space-between" gap="xs" wrap="nowrap" pb={4} style={{ flexShrink: 0 }}>
             <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
               {visibleFiles.length} file{visibleFiles.length === 1 ? '' : 's'} · {unviewedCount}{' '}
               unviewed
@@ -279,6 +353,10 @@ export function FilesReviewPanel({
               </ActionIcon>
             </Group>
           </Group>
+          <Group justify="space-between" gap="xs" wrap="nowrap" pb={6} style={{ flexShrink: 0 }}>
+            {baselineControls}
+          </Group>
+          {baselineCaption && <Box pb={4}>{baselineCaption}</Box>}
           <ScrollArea type="auto" style={{ flexGrow: 1, minHeight: 0 }}>
             {treeContent}
           </ScrollArea>
@@ -305,6 +383,7 @@ export function FilesReviewPanel({
           </Text>
         </Group>
         <Group gap="sm">
+          {baselineControls}
           <Checkbox
             size="xs"
             label="Only unviewed"
@@ -329,6 +408,7 @@ export function FilesReviewPanel({
           )}
         </Group>
       </Group>
+      {baselineCaption}
 
       <Group align="flex-start" gap="md" wrap="nowrap">
         <Paper withBorder p="xs" w={340} style={{ flexShrink: 0 }}>
@@ -340,6 +420,123 @@ export function FilesReviewPanel({
 
       {contextMenuEl}
     </Stack>
+  )
+}
+
+/**
+ * Baseline picker: what the change listing diffs against — uncommitted only (HEAD), the last
+ * "work completed" checkpoint, or any recent commit. Also hosts "Mark work complete", which
+ * records a new checkpoint at the current commit.
+ */
+function BaselineMenu({
+  agentId,
+  since,
+  baseline,
+  onChange,
+}: {
+  agentId: string
+  since: string
+  baseline: FilesBaselineDto | undefined
+  onChange: (since: string) => void
+}) {
+  const commits = useAgentCommits(agentId)
+  const setCheckpoint = useSetReviewCheckpoint(agentId)
+
+  const label =
+    since === 'head'
+      ? 'Uncommitted'
+      : since === 'checkpoint'
+        ? baseline?.kind === 'checkpoint'
+          ? 'Since completed'
+          : 'Uncommitted'
+        : `Since ${since.slice(0, 7)}`
+
+  const check = <TbCheck size={14} />
+  return (
+    <Menu shadow="md" width={380} position="bottom-start">
+      <Menu.Target>
+        <Button
+          size="compact-xs"
+          variant="light"
+          leftSection={<TbGitCommit size={14} />}
+          data-testid="baseline-menu"
+        >
+          {label}
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown style={{ maxHeight: 420, overflowY: 'auto' }}>
+        <Menu.Label>Show changes…</Menu.Label>
+        <Menu.Item
+          leftSection={since === 'head' ? check : <Box w={14} />}
+          onClick={() => onChange('head')}
+        >
+          Uncommitted only (vs HEAD)
+        </Menu.Item>
+        <Menu.Item
+          leftSection={since === 'checkpoint' ? check : <Box w={14} />}
+          onClick={() => onChange('checkpoint')}
+        >
+          <div>
+            Since last completed work
+            {baseline?.kind === 'checkpoint' && baseline.checkpointAt && (
+              <Text size="xs" c="dimmed">
+                {baseline.checkpointReason ?? 'checkpoint'} ·{' '}
+                {new Date(baseline.checkpointAt).toLocaleString()}
+              </Text>
+            )}
+          </div>
+        </Menu.Item>
+        {(commits.data?.commits.length ?? 0) > 0 && (
+          <>
+            <Menu.Divider />
+            <Menu.Label>Since commit</Menu.Label>
+            {commits.data!.commits.map((c) => (
+              <Menu.Item
+                key={c.sha}
+                leftSection={since === c.sha ? check : <Box w={14} />}
+                onClick={() => onChange(c.sha)}
+              >
+                <Group gap={6} wrap="nowrap">
+                  <Text size="xs" ff="monospace" c="dimmed">
+                    {c.shortSha}
+                  </Text>
+                  <Text size="sm" truncate style={{ flexGrow: 1 }}>
+                    {c.subject}
+                  </Text>
+                  {c.isCheckpoint && (
+                    <Badge size="xs" variant="light" color="teal">
+                      baseline
+                    </Badge>
+                  )}
+                </Group>
+                <Text size="xs" c="dimmed">
+                  {new Date(c.date).toLocaleString()}
+                </Text>
+              </Menu.Item>
+            ))}
+          </>
+        )}
+        <Menu.Divider />
+        <Menu.Item
+          leftSection={<TbFlag size={14} />}
+          onClick={() =>
+            setCheckpoint.mutate(undefined, {
+              onSuccess: () => {
+                onChange('checkpoint')
+                notifications.show({ color: 'green', message: 'Baseline set at the current commit' })
+              },
+              onError: (error) =>
+                notifications.show({
+                  color: 'red',
+                  message: getApiErrorMessage(error, 'Setting baseline failed'),
+                }),
+            })
+          }
+        >
+          Mark work complete (set baseline here)
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
   )
 }
 
@@ -431,8 +628,14 @@ function FileRow({
       onContextMenu={onContextMenu}
       data-testid={`file-row-${file.path}`}
     >
-      <TbFile size={14} style={{ flexShrink: 0 }} />
-      <Text size="sm" truncate style={{ flexGrow: 1 }} fw={isUnviewed(file) ? 600 : 400}>
+      <TbFile size={14} style={{ flexShrink: 0, opacity: file.contextOnly ? 0.45 : 1 }} />
+      <Text
+        size="sm"
+        truncate
+        style={{ flexGrow: 1 }}
+        fw={isUnviewed(file) ? 600 : 400}
+        c={file.contextOnly ? 'dimmed' : undefined}
+      >
         {file.path.split('/').pop()}
       </Text>
       {threadCount > 0 && (
@@ -452,7 +655,7 @@ function FileRow({
           {file.gitStatus === 'Untracked' ? 'U' : file.gitStatus[0]}
         </Badge>
       )}
-      {file.reviewLevel && !file.reviewStale ? (
+      {file.contextOnly ? null : file.reviewLevel && !file.reviewStale ? (
         <Tooltip label={file.reviewLevel}>
           <TbCheck size={14} color="var(--mantine-color-green-6)" style={{ flexShrink: 0 }} />
         </Tooltip>
@@ -474,19 +677,22 @@ function FileRow({
 function FileViewer({
   agentId,
   file,
+  since,
   threads,
   viewerHeight,
   onMark,
 }: {
   agentId: string
   file: AgentFileDto
+  /** Baseline selection — the diff's original side is the file's content at this baseline. */
+  since: string
   threads: ReviewThreadDto[]
   viewerHeight: number | string
   onMark: (level: 'Viewed' | 'Reviewed' | null) => void
 }) {
   const [mode, setMode] = useState<string>(file.gitStatus !== 'None' ? 'diff' : file.isMarkdown ? 'rendered' : 'raw')
-  const work = useAgentFileContent(agentId, file.path, 'work')
-  const head = useAgentFileContent(agentId, file.path, 'head')
+  const work = useAgentFileContent(agentId, file.path, 'work', since)
+  const head = useAgentFileContent(agentId, file.path, 'head', since)
   const [commentLine, setCommentLine] = useState<number | null>(null)
   const [commentBody, setCommentBody] = useState('')
   const createThread = useCreateReviewThread(agentId)
@@ -538,18 +744,22 @@ function FileViewer({
         </Group>
         <Group gap="xs">
           <SegmentedControl size="xs" data={modes} value={mode} onChange={setMode} />
-          <Button size="compact-xs" variant="light" leftSection={<TbEye size={14} />} onClick={() => onMark('Viewed')}>
-            Viewed
-          </Button>
-          <Button
-            size="compact-xs"
-            variant="light"
-            color="green"
-            leftSection={<TbChecks size={14} />}
-            onClick={() => onMark('Reviewed')}
-          >
-            Reviewed
-          </Button>
+          {!file.contextOnly && (
+            <>
+              <Button size="compact-xs" variant="light" leftSection={<TbEye size={14} />} onClick={() => onMark('Viewed')}>
+                Viewed
+              </Button>
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="green"
+                leftSection={<TbChecks size={14} />}
+                onClick={() => onMark('Reviewed')}
+              >
+                Reviewed
+              </Button>
+            </>
+          )}
         </Group>
       </Group>
 

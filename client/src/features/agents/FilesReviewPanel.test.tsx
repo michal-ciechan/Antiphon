@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentFileDto } from '../../api/review'
-import { buildTree, isUnviewed } from './FilesReviewPanel'
+import { buildTree, isUnviewed, mergeTreePaths } from './FilesReviewPanel'
 
 function file(path: string, overrides: Partial<AgentFileDto> = {}): AgentFileDto {
   return {
@@ -31,6 +31,26 @@ describe('isUnviewed', () => {
   // The hash anchor: an edit after the mark makes it stale — the file is unviewed again.
   it('a stale mark needs attention again', () => {
     expect(isUnviewed(file('a.md', { reviewLevel: 'Viewed', reviewStale: true }))).toBe(true)
+  })
+
+  // "All files" context entries are browsable but outside the review set — never "unviewed".
+  it('context-only files never need attention', () => {
+    expect(isUnviewed(file('a.md', { contextOnly: true }))).toBe(false)
+  })
+})
+
+describe('mergeTreePaths', () => {
+  it('adds unlisted workspace paths as context entries without duplicating review files', () => {
+    const merged = mergeTreePaths(
+      [file('docs/tasks.md')],
+      ['docs/tasks.md', 'docs/raw.md', 'src/index.ts'],
+    )
+    expect(merged.map((f) => f.path)).toEqual(['docs/raw.md', 'docs/tasks.md', 'src/index.ts'])
+    const raw = merged.find((f) => f.path === 'docs/raw.md')!
+    expect(raw.contextOnly).toBe(true)
+    expect(raw.isMarkdown).toBe(true)
+    // The reviewable file keeps its real listing entry (not replaced by a context stub).
+    expect(merged.find((f) => f.path === 'docs/tasks.md')!.contextOnly).toBeUndefined()
   })
 })
 

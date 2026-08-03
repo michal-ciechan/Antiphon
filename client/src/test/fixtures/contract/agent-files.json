@@ -27,5 +27,12 @@
       "sizeBytes": 69,
       "isMarkdown": true
     }
-  ]
+  ],
+  "baseline": {
+    "kind": "head",
+    "commitSha": null,
+    "checkpointReason": null,
+    "checkpointAt": null,
+    "timestampFallback": false
+  }
 }

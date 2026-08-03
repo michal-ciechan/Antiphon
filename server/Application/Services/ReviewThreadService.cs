@@ -179,7 +179,7 @@ public sealed class ReviewThreadService
         if (!string.IsNullOrWhiteSpace(thread.Snippet))
             lines.Add($"> {thread.Snippet!.Trim()}");
 
-        var diff = await _files.GetDiffAsync(thread.AgentId, thread.Path, ct);
+        var diff = await _files.GetDiffAsync(thread.AgentId, thread.Path, since: null, ct);
         if (!string.IsNullOrWhiteSpace(diff))
         {
             var trimmed = diff.Length > 4000 ? diff[..4000] + "\n… (diff truncated)" : diff;

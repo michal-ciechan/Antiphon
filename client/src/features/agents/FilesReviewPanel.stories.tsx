@@ -30,11 +30,13 @@ function withContractData(threadData: ReviewThreadDto[]) {
         queries: { retry: false, staleTime: Infinity, gcTime: Infinity, refetchInterval: false },
       },
     })
-    client.setQueryData(reviewKeys.files(agentId), agentFiles)
+    // 'checkpoint' is the panel's default baseline selection — seed under that key.
+    client.setQueryData(reviewKeys.files(agentId, 'checkpoint'), agentFiles)
+    client.setQueryData(reviewKeys.commits(agentId), { commits: [] })
     client.setQueryData(reviewKeys.threads(agentId), threadData)
-    client.setQueryData(reviewKeys.content(agentId, 'README.md', 'work'), contentWork)
-    client.setQueryData(reviewKeys.content(agentId, 'README.md', 'head'), contentHead)
-    client.setQueryData(reviewKeys.content(agentId, 'notes/report.md', 'work'), {
+    client.setQueryData(reviewKeys.content(agentId, 'README.md', 'work', 'checkpoint'), contentWork)
+    client.setQueryData(reviewKeys.content(agentId, 'README.md', 'head', 'checkpoint'), contentHead)
+    client.setQueryData(reviewKeys.content(agentId, 'notes/report.md', 'work', 'checkpoint'), {
       path: 'notes/report.md',
       rev: 'work',
       text: '# Report\n\n- finding one\n- finding two\n',
@@ -42,7 +44,7 @@ function withContractData(threadData: ReviewThreadDto[]) {
       missing: false,
       isBinary: false,
     } satisfies AgentFileContentDto)
-    client.setQueryData(reviewKeys.content(agentId, 'notes/report.md', 'head'), {
+    client.setQueryData(reviewKeys.content(agentId, 'notes/report.md', 'head', 'checkpoint'), {
       path: 'notes/report.md',
       rev: 'head',
       text: null,

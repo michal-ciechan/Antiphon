@@ -17,6 +17,24 @@ export interface AgentFileDto {
   reviewStale: boolean
   sizeBytes: number | null
   isMarkdown: boolean
+  /**
+   * Client-side only: an unchanged workspace file merged in by the "All files" toggle for
+   * browsing context — not part of the review set (no unviewed dot, no marks).
+   */
+  contextOnly?: boolean
+}
+
+/**
+ * What the git half of the listing was diffed against: 'head' = working tree vs HEAD, 'checkpoint'
+ * = the latest "work completed" checkpoint (timestampFallback when its commit left history and the
+ * baseline resolved by time instead), 'commit' = an explicitly selected sha.
+ */
+export interface FilesBaselineDto {
+  kind: 'head' | 'checkpoint' | 'commit'
+  commitSha: string | null
+  checkpointReason: string | null
+  checkpointAt: string | null
+  timestampFallback: boolean
 }
 
 export interface AgentFilesDto {
@@ -24,6 +42,21 @@ export interface AgentFilesDto {
   workspaceRoot: string
   isGitRepository: boolean
   files: AgentFileDto[]
+  baseline: FilesBaselineDto
+}
+
+export interface WorkspaceCommitDto {
+  sha: string
+  shortSha: string
+  author: string
+  date: string
+  subject: string
+  isCheckpoint: boolean
+}
+
+export interface WorkspaceTreeDto {
+  paths: string[]
+  truncated: boolean
 }
 
 export interface AgentFileContentDto {
@@ -36,27 +69,59 @@ export interface AgentFileContentDto {
 }
 
 export const reviewKeys = {
-  files: (agentId: string) => ['agents', agentId, 'files'] as const,
-  content: (agentId: string, path: string, rev: string) =>
-    ['agents', agentId, 'files', 'content', path, rev] as const,
+  filesRoot: (agentId: string) => ['agents', agentId, 'files'] as const,
+  files: (agentId: string, since: string) => ['agents', agentId, 'files', 'list', since] as const,
+  commits: (agentId: string) => ['agents', agentId, 'files', 'commits'] as const,
+  tree: (agentId: string) => ['agents', agentId, 'files', 'tree'] as const,
+  content: (agentId: string, path: string, rev: string, since: string) =>
+    ['agents', agentId, 'files', 'content', path, rev, since] as const,
   threads: (agentId: string) => ['agents', agentId, 'review-threads'] as const,
 }
 
-export function useAgentFiles(agentId: string | null) {
+/**
+ * @param since baseline the listing diffs against: 'checkpoint' (default — the server falls back
+ * to HEAD when no checkpoint exists), 'head', or a commit sha.
+ */
+export function useAgentFiles(agentId: string | null, since: string = 'checkpoint') {
   return useQuery({
-    queryKey: reviewKeys.files(agentId ?? ''),
-    queryFn: () => apiGet<AgentFilesDto>(`/agents/${agentId}/files`),
+    queryKey: reviewKeys.files(agentId ?? '', since),
+    queryFn: () =>
+      apiGet<AgentFilesDto>(`/agents/${agentId}/files?since=${encodeURIComponent(since)}`),
     enabled: agentId !== null,
     refetchInterval: 15_000,
   })
 }
 
-export function useAgentFileContent(agentId: string | null, path: string | null, rev: 'work' | 'head') {
+export function useAgentCommits(agentId: string | null) {
   return useQuery({
-    queryKey: reviewKeys.content(agentId ?? '', path ?? '', rev),
+    queryKey: reviewKeys.commits(agentId ?? ''),
+    queryFn: () =>
+      apiGet<{ commits: WorkspaceCommitDto[] }>(`/agents/${agentId}/files/commits?limit=100`),
+    enabled: agentId !== null,
+    refetchInterval: 60_000,
+  })
+}
+
+export function useAgentFilesTree(agentId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: reviewKeys.tree(agentId ?? ''),
+    queryFn: () => apiGet<WorkspaceTreeDto>(`/agents/${agentId}/files/tree`),
+    enabled: agentId !== null && enabled,
+    refetchInterval: 60_000,
+  })
+}
+
+export function useAgentFileContent(
+  agentId: string | null,
+  path: string | null,
+  rev: 'work' | 'head',
+  since: string = 'checkpoint',
+) {
+  return useQuery({
+    queryKey: reviewKeys.content(agentId ?? '', path ?? '', rev, since),
     queryFn: () =>
       apiGet<AgentFileContentDto>(
-        `/agents/${agentId}/files/content?path=${encodeURIComponent(path!)}&rev=${rev}`,
+        `/agents/${agentId}/files/content?path=${encodeURIComponent(path!)}&rev=${rev}&since=${encodeURIComponent(since)}`,
       ),
     enabled: agentId !== null && path !== null,
   })
@@ -65,13 +130,28 @@ export function useAgentFileContent(agentId: string | null, path: string | null,
 export function useMarkFilesReview(agentId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (request: { paths?: string[]; prefix?: string; level: FileReviewLevel | null }) =>
+    mutationFn: (request: {
+      paths?: string[]
+      prefix?: string
+      level: FileReviewLevel | null
+      since?: string
+    }) =>
       apiPost(`/agents/${agentId}/files/review`, {
         paths: request.paths ?? null,
         prefix: request.prefix ?? null,
         level: request.level,
+        since: request.since ?? null,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: reviewKeys.files(agentId) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: reviewKeys.filesRoot(agentId) }),
+  })
+}
+
+/** Record a manual "work completed up to here" baseline (current HEAD + timestamp). */
+export function useSetReviewCheckpoint(agentId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost(`/agents/${agentId}/review/checkpoint`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: reviewKeys.filesRoot(agentId) }),
   })
 }
 

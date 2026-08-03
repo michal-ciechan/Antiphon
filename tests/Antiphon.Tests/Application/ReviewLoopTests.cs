@@ -45,10 +45,11 @@ public class ReviewLoopTests
         await File.WriteAllTextAsync(agentFile, "# Report");
         await h.InsertToolCallAsync("Write", agentFile);
 
-        var listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
 
         listing.ShouldNotBeNull();
         listing!.IsGitRepository.ShouldBeTrue();
+        listing.Baseline.Kind.ShouldBe("head");
         var byPath = listing.Files.ToDictionary(f => f.Path);
         byPath["committed.md"].GitStatus.ShouldBe("Modified");
         byPath["scratch.txt"].GitStatus.ShouldBe("Untracked");
@@ -64,16 +65,16 @@ public class ReviewLoopTests
         var file = Path.Combine(h.Workspace, "committed.md");
         await File.WriteAllTextAsync(file, "v1");
 
-        (await h.Files.MarkAsync(h.AgentId, ["committed.md"], null, FileReviewLevel.Viewed, CancellationToken.None))
+        (await h.Files.MarkAsync(h.AgentId, ["committed.md"], null, FileReviewLevel.Viewed, null, CancellationToken.None))
             .ShouldBe(1);
-        var listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
         var dto = listing!.Files.Single(f => f.Path == "committed.md");
         dto.ReviewLevel.ShouldBe("Viewed");
         dto.ReviewStale.ShouldBeFalse();
 
         // The file changes → the mark survives but reads STALE (unviewed changes again).
         await File.WriteAllTextAsync(file, "v2 — changed after the mark");
-        listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+        listing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
         dto = listing!.Files.Single(f => f.Path == "committed.md");
         dto.ReviewLevel.ShouldBe("Viewed");
         dto.ReviewStale.ShouldBeTrue();
@@ -88,13 +89,109 @@ public class ReviewLoopTests
         await File.WriteAllTextAsync(Path.Combine(h.Workspace, "docs", "b.md"), "b");
         await File.WriteAllTextAsync(Path.Combine(h.Workspace, "top.md"), "top");
 
-        var marked = await h.Files.MarkAsync(h.AgentId, null, "docs", FileReviewLevel.Reviewed, CancellationToken.None);
+        var marked = await h.Files.MarkAsync(h.AgentId, null, "docs", FileReviewLevel.Reviewed, null, CancellationToken.None);
 
         marked.ShouldBe(2, "only files under docs/ — not top.md");
-        var listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
         listing!.Files.Single(f => f.Path == "docs/a.md").ReviewLevel.ShouldBe("Reviewed");
         listing.Files.Single(f => f.Path == "docs/b.md").ReviewLevel.ShouldBe("Reviewed");
         listing.Files.Single(f => f.Path == "top.md").ReviewLevel.ShouldBeNull();
+    }
+
+    // ---------- baselines: "changes since the last completed work" ----------
+
+    // A self-committing agent leaves the tree clean, so diff-vs-HEAD is empty moments after every
+    // commit (live miss 2026-08-03: Torquay Leander's committed raw.md invisible in the files
+    // view). The checkpoint baseline diffs against the commit recorded when work was last marked
+    // complete, surfacing everything committed since.
+    [Test]
+    public async Task Checkpoint_baseline_lists_files_committed_after_the_checkpoint()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        var checkpoint = await h.Checkpoints.CaptureAsync(h.AgentId, "Card CARD-0001 completed", CancellationToken.None);
+        checkpoint.ShouldNotBeNull();
+        checkpoint!.CommitSha.ShouldNotBeNull("repo workspace must capture HEAD");
+
+        // Work after the sign-off, all committed — tree ends clean.
+        await File.WriteAllTextAsync(Path.Combine(h.Workspace, "committed.md"), "changed after checkpoint");
+        await File.WriteAllTextAsync(Path.Combine(h.Workspace, "raw.md"), "new doc");
+        await TryGitAsync(h.Workspace, "add", ".");
+        await TryGitAsync(h.Workspace, "commit", "-m", "post-checkpoint work");
+
+        // Default HEAD baseline: clean tree, nothing to show.
+        var headListing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
+        headListing!.Files.ShouldBeEmpty();
+
+        // Checkpoint baseline: both files surface, and the baseline metadata says why.
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: "checkpoint", CancellationToken.None);
+        listing!.Baseline.Kind.ShouldBe("checkpoint");
+        listing.Baseline.CommitSha.ShouldBe(checkpoint.CommitSha);
+        listing.Baseline.TimestampFallback.ShouldBeFalse();
+        var byPath = listing.Files.ToDictionary(f => f.Path);
+        byPath["committed.md"].GitStatus.ShouldBe("Modified");
+        byPath["raw.md"].GitStatus.ShouldBe("Added");
+
+        // The diff's base side serves the checkpoint-time content, not literal HEAD.
+        var baseSide = await h.Files.GetContentAsync(h.AgentId, "committed.md", "head", "checkpoint", CancellationToken.None);
+        baseSide!.Text!.TrimEnd().ShouldBe("original content");
+        (await h.Files.GetContentAsync(h.AgentId, "raw.md", "head", "checkpoint", CancellationToken.None))!
+            .Missing.ShouldBeTrue("raw.md did not exist at the checkpoint");
+    }
+
+    // History rewritten (or no sha captured) → the checkpoint resolves by TIMESTAMP: the newest
+    // commit at or before the checkpoint time becomes the diff base.
+    [Test]
+    public async Task Checkpoint_without_a_commit_in_history_falls_back_to_its_timestamp()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        // Second commit dated well after the (backdated) checkpoint we insert below.
+        await File.WriteAllTextAsync(Path.Combine(h.Workspace, "later.md"), "second commit");
+        await TryGitAsync(h.Workspace, "add", ".");
+        await TryGitAsync(h.Workspace, "commit", "-m", "second");
+
+        // A checkpoint with NO sha, timestamped before the second commit: only the seed commit
+        // qualifies as "at or before", so the listing must show the second commit's changes.
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            db.AgentReviewCheckpoints.Add(new AgentReviewCheckpoint
+            {
+                Id = Guid.NewGuid(), AgentId = h.AgentId, CommitSha = null,
+                Reason = "Fallback test", CreatedAt = h.SeedCommitAt.AddSeconds(30),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: "checkpoint", CancellationToken.None);
+        listing!.Baseline.Kind.ShouldBe("checkpoint");
+        listing.Baseline.TimestampFallback.ShouldBeTrue();
+        listing.Files.Single(f => f.Path == "later.md").GitStatus.ShouldBe("Added");
+    }
+
+    [Test]
+    public async Task Explicit_commit_baseline_and_full_tree_listing_work()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        await File.WriteAllTextAsync(Path.Combine(h.Workspace, "extra.md"), "x");
+        await TryGitAsync(h.Workspace, "add", ".");
+        await TryGitAsync(h.Workspace, "commit", "-m", "extra");
+
+        var commits = await h.Files.GetCommitsAsync(h.AgentId, 10, CancellationToken.None);
+        commits!.Commits.Count.ShouldBe(2);
+        var seed = commits.Commits[^1];
+
+        // Diff against the explicitly selected seed commit.
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: seed.Sha, CancellationToken.None);
+        listing!.Baseline.Kind.ShouldBe("commit");
+        listing.Files.Single(f => f.Path == "extra.md").GitStatus.ShouldBe("Added");
+
+        // The all-files tree lists clean committed files the change listing never would.
+        var tree = await h.Files.GetTreeAsync(h.AgentId, CancellationToken.None);
+        tree!.Paths.ShouldContain("committed.md");
+        tree.Paths.ShouldContain("extra.md");
+        tree.Truncated.ShouldBeFalse();
     }
 
     // Live miss 2026-07-29 (Family agent, workspace agents/family INSIDE the ClaudeBot repo):
@@ -130,16 +227,16 @@ public class ReviewLoopTests
                 await db.SaveChangesAsync();
             }
 
-            var listing = await h.Files.GetFilesAsync(h.AgentId, CancellationToken.None);
+            var listing = await h.Files.GetFilesAsync(h.AgentId, since: null, CancellationToken.None);
             listing.ShouldNotBeNull();
 
             // The workspace file: WORKSPACE-relative path, real content served, HEAD readable.
             var inside = listing!.Files.Single(f => f.Path == "inside.md");
             inside.GitStatus.ShouldBe("Modified");
             inside.External.ShouldBeFalse();
-            var work = await h.Files.GetContentAsync(h.AgentId, "inside.md", "work", CancellationToken.None);
+            var work = await h.Files.GetContentAsync(h.AgentId, "inside.md", "work", null, CancellationToken.None);
             work!.Text.ShouldBe("changed inside", "the viewer rendered empty before the fix");
-            var head = await h.Files.GetContentAsync(h.AgentId, "inside.md", "head", CancellationToken.None);
+            var head = await h.Files.GetContentAsync(h.AgentId, "inside.md", "head", null, CancellationToken.None);
             head!.Text.ShouldNotBeNull();
             head.Text!.TrimEnd().ShouldBe("committed inside");
 
@@ -147,7 +244,7 @@ public class ReviewLoopTests
             // and its content is servable.
             var shared = listing.Files.Single(f => f.Path.EndsWith("/shared.md", StringComparison.Ordinal));
             shared.External.ShouldBeTrue();
-            var sharedContent = await h.Files.GetContentAsync(h.AgentId, shared.Path, "work", CancellationToken.None);
+            var sharedContent = await h.Files.GetContentAsync(h.AgentId, shared.Path, "work", null, CancellationToken.None);
             sharedContent!.Text.ShouldBe("changed shared");
         }
         finally
@@ -259,6 +356,9 @@ public class ReviewLoopTests
     {
         public required ServiceProvider Provider { get; init; }
         public required AgentFilesService Files { get; init; }
+        public required AgentReviewCheckpointService Checkpoints { get; init; }
+        /// <summary>Committer timestamp of the seed commit (backdated 2h so tests can straddle it).</summary>
+        public required DateTime SeedCommitAt { get; init; }
         public required ReviewThreadService Threads { get; init; }
         public required ReviewReplyDispatcher Replies { get; init; }
         public required FakeAgentProtocolAdapter Adapter { get; init; }
@@ -314,6 +414,7 @@ public class ReviewLoopTests
             {
                 await db.ReviewThreads.Where(t => t.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.FileReviewStates.Where(f => f.AgentId == AgentId).ExecuteDeleteAsync();
+                await db.AgentReviewCheckpoints.Where(c => c.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
@@ -328,6 +429,9 @@ public class ReviewLoopTests
     {
         var workspace = Path.Combine(Path.GetTempPath(), $"antiphon-review-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workspace);
+        // Backdated so later commits/checkpoints are unambiguously AFTER it (git timestamps are
+        // second-granular — same-second commits would make the timestamp-fallback tests flaky).
+        var seedCommitAt = DateTime.UtcNow.AddHours(-2);
         if (withGitRepo)
         {
             if (!await TryGitAsync(workspace, "init"))
@@ -336,7 +440,8 @@ public class ReviewLoopTests
             await TryGitAsync(workspace, "config", "user.name", "Antiphon Tests");
             await File.WriteAllTextAsync(Path.Combine(workspace, "committed.md"), "original content");
             await TryGitAsync(workspace, "add", ".");
-            await TryGitAsync(workspace, "commit", "-m", "seed");
+            var seedDate = seedCommitAt.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            await TryGitAsync(workspace, ["commit", "-m", "seed"], seedDate);
         }
 
         var services = new ServiceCollection();
@@ -354,6 +459,7 @@ public class ReviewLoopTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<GitWorkspaceService>();
+        services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
         services.AddSingleton<ReviewReplyDispatcher>();
         services.AddScoped<ReviewThreadService>();
@@ -395,6 +501,8 @@ public class ReviewLoopTests
         {
             Provider = provider,
             Files = scope2.ServiceProvider.GetRequiredService<AgentFilesService>(),
+            Checkpoints = scope2.ServiceProvider.GetRequiredService<AgentReviewCheckpointService>(),
+            SeedCommitAt = seedCommitAt,
             Threads = scope2.ServiceProvider.GetRequiredService<ReviewThreadService>(),
             Replies = provider.GetRequiredService<ReviewReplyDispatcher>(),
             Adapter = adapter,
@@ -405,6 +513,9 @@ public class ReviewLoopTests
     }
 
     private static async Task<bool> TryGitAsync(string dir, params string[] args)
+        => await TryGitAsync(dir, args, commitDateUtc: null);
+
+    private static async Task<bool> TryGitAsync(string dir, string[] args, string? commitDateUtc)
     {
         try
         {
@@ -414,6 +525,12 @@ public class ReviewLoopTests
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
             };
+            if (commitDateUtc is not null)
+            {
+                // Committer date drives rev-list --before; author date kept in step for sanity.
+                psi.Environment["GIT_COMMITTER_DATE"] = commitDateUtc;
+                psi.Environment["GIT_AUTHOR_DATE"] = commitDateUtc;
+            }
             foreach (var a in args) psi.ArgumentList.Add(a);
             using var p = Process.Start(psi);
             if (p is null) return false;

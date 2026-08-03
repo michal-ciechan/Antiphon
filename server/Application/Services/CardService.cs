@@ -17,6 +17,7 @@ public sealed class CardService
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    private readonly AgentReviewCheckpointService _reviewCheckpoints;
 
     public CardService(
         AppDbContext db,
@@ -24,7 +25,8 @@ public sealed class CardService
         OrchestratorService orchestrator,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        AgentReviewCheckpointService reviewCheckpoints)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -32,6 +34,7 @@ public sealed class CardService
         _launchQueue = launchQueue;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _reviewCheckpoints = reviewCheckpoints;
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -94,8 +97,15 @@ public sealed class CardService
         if (targetColumn.BoardId != card.BoardId)
             throw new ValidationException(nameof(request.BoardColumnId), "Target column belongs to a different board.");
 
+        var wasTerminal = card.BoardColumn.IsTerminal;
         ApplyColumnMove(card, targetColumn);
         await _db.SaveChangesAsync(ct);
+
+        // Completing a card is the "work is done" sign-off — checkpoint the assigned agent's
+        // workspace (HEAD sha + timestamp) so the Files review surface can show changes since
+        // this point next time.
+        if (targetColumn.IsTerminal && !wasTerminal && card.AssignedAgentId is { } assignedAgentId)
+            await _reviewCheckpoints.CaptureAsync(assignedAgentId, $"Card {card.Identifier} completed", ct);
 
         if (targetColumn.IsActive && card.OwnerSessionId is null)
             await SpawnAsync(card.Id, new SpawnCardRequest(), ct);

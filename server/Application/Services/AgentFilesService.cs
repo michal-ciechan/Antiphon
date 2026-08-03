@@ -10,29 +10,75 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// The data source for the agent Files review surface: merges (1) git working-tree changes vs
-/// HEAD, (2) files the agent touched via Write/Edit tool calls in its session transcript, and
-/// (3) per-file viewed/reviewed marks (hash-anchored — any content change makes a mark stale).
+/// The data source for the agent Files review surface: merges (1) git working-tree changes vs a
+/// baseline (HEAD, the latest "work completed" checkpoint, or an explicit commit), (2) files the
+/// agent touched via Write/Edit tool calls in its session transcript, and (3) per-file
+/// viewed/reviewed marks (hash-anchored — any content change makes a mark stale).
 /// Content reads are workspace-rooted; the only paths served from outside the workspace are ones
 /// the agent itself touched (they're listed flagged as external).
 /// </summary>
 public sealed class AgentFilesService
 {
     private const long MaxContentBytes = 2 * 1024 * 1024;
+    private const int MaxTreePaths = 20_000;
     private static readonly string[] FileToolNames = ["Write", "Edit", "NotebookEdit"];
+    private static readonly string[] TreeWalkExcludedDirs =
+        [".git", "node_modules", "bin", "obj", "dist", ".vite", ".next", "coverage", "__pycache__"];
 
     private readonly AppDbContext _db;
     private readonly GitWorkspaceService _git;
+    private readonly AgentReviewCheckpointService _checkpoints;
     private readonly ILogger<AgentFilesService> _logger;
 
-    public AgentFilesService(AppDbContext db, GitWorkspaceService git, ILogger<AgentFilesService> logger)
+    public AgentFilesService(
+        AppDbContext db,
+        GitWorkspaceService git,
+        AgentReviewCheckpointService checkpoints,
+        ILogger<AgentFilesService> logger)
     {
         _db = db;
         _git = git;
+        _checkpoints = checkpoints;
         _logger = logger;
     }
 
-    public async Task<AgentFilesDto?> GetFilesAsync(Guid agentId, CancellationToken ct)
+    private sealed record Baseline(string Kind, string? CommitSha, string? Reason, DateTime? At, bool TimestampFallback)
+    {
+        public static readonly Baseline Head = new("head", null, null, null, false);
+    }
+
+    /// <summary>
+    /// Resolve the requested baseline ("head", "checkpoint", or a commit sha) to something git
+    /// can diff against. A checkpoint whose commit is still in HEAD's history diffs against that
+    /// commit; otherwise (rewritten history, or no sha captured) it falls back to the newest
+    /// commit at or before the checkpoint's timestamp. Anything unresolvable degrades to HEAD.
+    /// </summary>
+    private async Task<Baseline> ResolveBaselineAsync(Guid agentId, string root, bool isRepo, string? since, CancellationToken ct)
+    {
+        if (!isRepo || string.IsNullOrWhiteSpace(since) || since.Equals("head", StringComparison.OrdinalIgnoreCase))
+            return Baseline.Head;
+
+        if (!since.Equals("checkpoint", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _git.IsInHistoryAsync(root, since, ct)
+                ? new Baseline("commit", since, null, null, false)
+                : Baseline.Head;
+        }
+
+        var checkpoint = await _checkpoints.GetLatestAsync(agentId, ct);
+        if (checkpoint is null)
+            return Baseline.Head;
+
+        if (checkpoint.CommitSha is not null && await _git.IsInHistoryAsync(root, checkpoint.CommitSha, ct))
+            return new Baseline("checkpoint", checkpoint.CommitSha, checkpoint.Reason, checkpoint.CreatedAt, false);
+
+        var fallback = await _git.GetLastCommitBeforeAsync(root, checkpoint.CreatedAt, ct);
+        return fallback is null
+            ? Baseline.Head
+            : new Baseline("checkpoint", fallback, checkpoint.Reason, checkpoint.CreatedAt, true);
+    }
+
+    public async Task<AgentFilesDto?> GetFilesAsync(Guid agentId, string? since, CancellationToken ct)
     {
         var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
         if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -40,7 +86,12 @@ public sealed class AgentFilesService
         var root = Path.GetFullPath(agent.WorkingDirectory);
 
         var isRepo = await _git.IsRepositoryAsync(root, ct);
-        var gitChanges = isRepo ? await _git.GetChangesAsync(root, ct) : [];
+        var baseline = await ResolveBaselineAsync(agentId, root, isRepo, since, ct);
+        var gitChanges =
+            !isRepo ? []
+            : baseline.CommitSha is null
+                ? await _git.GetChangesAsync(root, ct)
+                : await _git.GetChangesSinceAsync(root, baseline.CommitSha, ct);
         var activity = await GetAgentActivityAsync(agent, root, ct);
         var reviews = await _db.FileReviewStates.AsNoTracking()
             .Where(r => r.AgentId == agentId)
@@ -107,11 +158,86 @@ public sealed class AgentFilesService
             agentId,
             root,
             isRepo,
-            files.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList());
+            files.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList(),
+            new FilesBaselineDto(
+                baseline.Kind, baseline.CommitSha, baseline.Reason, baseline.At, baseline.TimestampFallback));
+    }
+
+    /// <summary>Recent workspace commits for the baseline picker, checkpoint commit flagged.</summary>
+    public async Task<WorkspaceCommitsDto?> GetCommitsAsync(Guid agentId, int limit, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
+            return null;
+        var root = Path.GetFullPath(agent.WorkingDirectory);
+
+        var commits = await _git.GetRecentCommitsAsync(root, Math.Clamp(limit, 1, 200), ct);
+        var isRepo = commits.Count > 0 || await _git.IsRepositoryAsync(root, ct);
+        var baseline = await ResolveBaselineAsync(agentId, root, isRepo, "checkpoint", ct);
+        return new WorkspaceCommitsDto(commits
+            .Select(c => new WorkspaceCommitDto(
+                c.Sha, c.ShortSha, c.Author, c.Date, c.Subject,
+                string.Equals(c.Sha, baseline.CommitSha, StringComparison.OrdinalIgnoreCase)))
+            .ToList());
+    }
+
+    /// <summary>
+    /// Every file in the workspace for the "show all files" toggle. Repos list via git (tracked +
+    /// untracked-not-ignored, so node_modules stays out for free); non-repos walk the filesystem
+    /// skipping well-known junk dirs. Capped — the client shows a truncation notice.
+    /// </summary>
+    public async Task<WorkspaceTreeDto?> GetTreeAsync(Guid agentId, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
+            return null;
+        var root = Path.GetFullPath(agent.WorkingDirectory);
+
+        List<string> paths;
+        if (await _git.IsRepositoryAsync(root, ct))
+        {
+            paths = (await _git.ListFilesAsync(root, ct)).ToList();
+        }
+        else
+        {
+            paths = [];
+            try
+            {
+                WalkTree(root, root, paths);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Workspace tree walk failed in {Root}", root);
+            }
+        }
+
+        var truncated = paths.Count > MaxTreePaths;
+        return new WorkspaceTreeDto(
+            (truncated ? paths.Take(MaxTreePaths) : paths)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList(),
+            truncated);
+    }
+
+    private static void WalkTree(string root, string dir, List<string> paths)
+    {
+        foreach (var file in Directory.EnumerateFiles(dir))
+        {
+            if (paths.Count > MaxTreePaths)
+                return;
+            paths.Add(Path.GetRelativePath(root, file).Replace('\\', '/'));
+        }
+        foreach (var sub in Directory.EnumerateDirectories(dir))
+        {
+            if (TreeWalkExcludedDirs.Contains(Path.GetFileName(sub), StringComparer.OrdinalIgnoreCase))
+                continue;
+            if (paths.Count > MaxTreePaths)
+                return;
+            WalkTree(root, sub, paths);
+        }
     }
 
     public async Task<AgentFileContentDto?> GetContentAsync(
-        Guid agentId, string path, string rev, CancellationToken ct)
+        Guid agentId, string path, string rev, string? since, CancellationToken ct)
     {
         var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
         if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -123,7 +249,7 @@ public sealed class AgentFilesService
         {
             // Absolute paths are served ONLY when they appear in the agent's file listing —
             // agent-touched files or repo changes outside a subdirectory workspace.
-            var listing = await GetFilesAsync(agentId, ct);
+            var listing = await GetFilesAsync(agentId, since, ct);
             var normalized = Normalize(path);
             var listed = listing?.Files.Any(f =>
                 f.External && string.Equals(f.Path, normalized, StringComparison.OrdinalIgnoreCase)) ?? false;
@@ -133,10 +259,16 @@ public sealed class AgentFilesService
 
         if (string.Equals(rev, "head", StringComparison.OrdinalIgnoreCase))
         {
+            // "head" means "the baseline side of the diff" — with a since selection it serves the
+            // file as of the resolved baseline commit rather than literal HEAD.
             if (external)
                 return new AgentFileContentDto(path, "head", null, false, true);
-            var head = await _git.GetHeadContentAsync(root, Normalize(path), ct);
-            return new AgentFileContentDto(path, "head", head, false, head is null);
+            var isRepo = await _git.IsRepositoryAsync(root, ct);
+            var baseline = await ResolveBaselineAsync(agentId, root, isRepo, since, ct);
+            var text = baseline.CommitSha is null
+                ? await _git.GetHeadContentAsync(root, Normalize(path), ct)
+                : await _git.GetContentAtAsync(root, Normalize(path), baseline.CommitSha, ct);
+            return new AgentFileContentDto(path, "head", text, false, text is null);
         }
 
         var abs = external ? Normalize(path) : Resolve(root, path, external: false);
@@ -153,12 +285,14 @@ public sealed class AgentFilesService
         return new AgentFileContentDto(path, "work", Encoding.UTF8.GetString(bytes), truncated, false);
     }
 
-    public async Task<string?> GetDiffAsync(Guid agentId, string path, CancellationToken ct)
+    public async Task<string?> GetDiffAsync(Guid agentId, string path, string? since, CancellationToken ct)
     {
         var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
         if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory) || Path.IsPathRooted(path))
             return null;
-        return await _git.GetDiffAsync(Path.GetFullPath(agent.WorkingDirectory), Normalize(path), ct);
+        var root = Path.GetFullPath(agent.WorkingDirectory);
+        var baseline = await ResolveBaselineAsync(agentId, root, await _git.IsRepositoryAsync(root, ct), since, ct);
+        return await _git.GetDiffAsync(root, Normalize(path), ct, baseline.CommitSha ?? "HEAD");
     }
 
     /// <summary>
@@ -166,9 +300,10 @@ public sealed class AgentFilesService
     /// (the right-click "mark all as viewed" flow). Level null clears the mark.
     /// </summary>
     public async Task<int> MarkAsync(
-        Guid agentId, IReadOnlyList<string>? paths, string? prefix, FileReviewLevel? level, CancellationToken ct)
+        Guid agentId, IReadOnlyList<string>? paths, string? prefix, FileReviewLevel? level, string? since,
+        CancellationToken ct)
     {
-        var listing = await GetFilesAsync(agentId, ct);
+        var listing = await GetFilesAsync(agentId, since, ct);
         if (listing is null)
             return 0;
 

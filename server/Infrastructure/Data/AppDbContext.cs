@@ -43,6 +43,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
+    public DbSet<AgentReviewCheckpoint> AgentReviewCheckpoints => Set<AgentReviewCheckpoint>();
     public DbSet<ReviewThread> ReviewThreads => Set<ReviewThread>();
     public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
     public DbSet<Alert> Alerts => Set<Alert>();
@@ -63,6 +64,21 @@ public class AppDbContext : DbContext
             entity.HasOne(f => f.Agent)
                 .WithMany()
                 .HasForeignKey(f => f.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentReviewCheckpoint>(entity =>
+        {
+            entity.ToTable("AgentReviewCheckpoints");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.CommitSha).HasMaxLength(64);
+            entity.Property(c => c.Reason).IsRequired().HasMaxLength(500);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.HasIndex(c => new { c.AgentId, c.CreatedAt })
+                .HasDatabaseName("IX_AgentReviewCheckpoints_AgentId_CreatedAt");
+            entity.HasOne(c => c.Agent)
+                .WithMany()
+                .HasForeignKey(c => c.AgentId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
