@@ -146,11 +146,18 @@ export function useMarkFilesReview(agentId: string) {
   })
 }
 
-/** Record a manual "work completed up to here" baseline (current HEAD + timestamp). */
+/**
+ * Record a manual "work completed up to here" baseline — at the current HEAD, or at an explicit
+ * (historic) commit when commitSha is given.
+ */
 export function useSetReviewCheckpoint(agentId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => apiPost(`/agents/${agentId}/review/checkpoint`, {}),
+    mutationFn: (request?: { commitSha?: string; reason?: string }) =>
+      apiPost(`/agents/${agentId}/review/checkpoint`, {
+        commitSha: request?.commitSha ?? null,
+        reason: request?.reason ?? null,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: reviewKeys.filesRoot(agentId) }),
   })
 }

@@ -64,12 +64,21 @@ public static class ReviewEndpoints
         });
 
         agents.MapPost("/review/checkpoint", async (
-            Guid agentId, AgentReviewCheckpointService checkpoints, CancellationToken ct) =>
+            Guid agentId, SetReviewCheckpointRequest? request,
+            AgentReviewCheckpointService checkpoints, CancellationToken ct) =>
         {
-            var checkpoint = await checkpoints.CaptureAsync(agentId, "Manual baseline", ct);
-            return checkpoint is null
-                ? Results.NotFound()
-                : Results.Ok(new { checkpoint.Id, checkpoint.CommitSha, checkpoint.CreatedAt, checkpoint.Reason });
+            var commit = string.IsNullOrWhiteSpace(request?.CommitSha) ? null : request!.CommitSha!.Trim();
+            var reason = string.IsNullOrWhiteSpace(request?.Reason)
+                ? commit is null ? "Manual baseline" : $"Manual baseline at {commit[..Math.Min(7, commit.Length)]}"
+                : request!.Reason!.Trim();
+            var checkpoint = await checkpoints.CaptureAsync(agentId, reason, commit, ct);
+            if (checkpoint is null)
+            {
+                return commit is null
+                    ? Results.NotFound()
+                    : Results.BadRequest(new { message = $"Commit '{commit}' not found in the workspace history." });
+            }
+            return Results.Ok(new { checkpoint.Id, checkpoint.CommitSha, checkpoint.CreatedAt, checkpoint.Reason });
         });
 
         agents.MapGet("/review/threads", async (

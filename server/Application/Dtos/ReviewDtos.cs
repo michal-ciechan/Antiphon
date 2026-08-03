@@ -63,6 +63,14 @@ public sealed record MarkFilesReviewRequest(
     string? Level, // "viewed" | "reviewed" | null/"none" to clear
     string? Since = null); // baseline the client is viewing — prefix marks apply to that listing
 
+/// <summary>
+/// Manual checkpoint request. CommitSha null = current HEAD; otherwise any ref/short sha in the
+/// workspace's history ("work up to this historic commit is signed off").
+/// </summary>
+public sealed record SetReviewCheckpointRequest(
+    string? CommitSha = null,
+    string? Reason = null);
+
 public sealed record ReviewThreadDto(
     Guid Id,
     Guid AgentId,

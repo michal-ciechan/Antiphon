@@ -169,6 +169,33 @@ public class ReviewLoopTests
         listing.Files.Single(f => f.Path == "later.md").GitStatus.ShouldBe("Added");
     }
 
+    // "That historic commit is where I last signed off" — a manual checkpoint at an explicit
+    // commit (short sha accepted) baselines there, not at HEAD; garbage refs are rejected.
+    [Test]
+    public async Task Manual_checkpoint_at_a_historic_commit_baselines_there()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        await File.WriteAllTextAsync(Path.Combine(h.Workspace, "after.md"), "post-baseline work");
+        await TryGitAsync(h.Workspace, "add", ".");
+        await TryGitAsync(h.Workspace, "commit", "-m", "after");
+
+        var commits = await h.Files.GetCommitsAsync(h.AgentId, 10, CancellationToken.None);
+        var seed = commits!.Commits[^1];
+
+        (await h.Checkpoints.CaptureAsync(h.AgentId, "bogus", "not-a-commit", CancellationToken.None))
+            .ShouldBeNull("an unresolvable commit must be rejected, not silently baselined at HEAD");
+
+        var checkpoint = await h.Checkpoints.CaptureAsync(
+            h.AgentId, "Signed off at seed", seed.ShortSha, CancellationToken.None);
+        checkpoint!.CommitSha.ShouldBe(seed.Sha, "short shas resolve to the full commit");
+
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: "checkpoint", CancellationToken.None);
+        listing!.Baseline.Kind.ShouldBe("checkpoint");
+        listing.Baseline.CommitSha.ShouldBe(seed.Sha);
+        listing.Files.Single(f => f.Path == "after.md").GitStatus.ShouldBe("Added");
+    }
+
     [Test]
     public async Task Explicit_commit_baseline_and_full_tree_listing_work()
     {

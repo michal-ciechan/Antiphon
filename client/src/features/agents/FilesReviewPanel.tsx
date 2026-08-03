@@ -442,6 +442,27 @@ function BaselineMenu({
   const commits = useAgentCommits(agentId)
   const setCheckpoint = useSetReviewCheckpoint(agentId)
 
+  const captureCheckpoint = (commitSha?: string) =>
+    setCheckpoint.mutate(
+      commitSha ? { commitSha } : undefined,
+      {
+        onSuccess: () => {
+          onChange('checkpoint')
+          notifications.show({
+            color: 'green',
+            message: commitSha
+              ? `Baseline set at ${commitSha.slice(0, 7)}`
+              : 'Baseline set at the current commit',
+          })
+        },
+        onError: (error) =>
+          notifications.show({
+            color: 'red',
+            message: getApiErrorMessage(error, 'Setting baseline failed'),
+          }),
+      },
+    )
+
   const label =
     since === 'head'
       ? 'Uncommitted'
@@ -494,6 +515,22 @@ function BaselineMenu({
               <Menu.Item
                 key={c.sha}
                 leftSection={since === c.sha ? check : <Box w={14} />}
+                rightSection={
+                  <Tooltip label="Set checkpoint at this commit" withArrow>
+                    <ActionIcon
+                      component="div"
+                      size="sm"
+                      variant="subtle"
+                      aria-label={`Set checkpoint at ${c.shortSha}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        captureCheckpoint(c.sha)
+                      }}
+                    >
+                      <TbFlag size={13} />
+                    </ActionIcon>
+                  </Tooltip>
+                }
                 onClick={() => onChange(c.sha)}
               >
                 <Group gap={6} wrap="nowrap">
@@ -517,22 +554,7 @@ function BaselineMenu({
           </>
         )}
         <Menu.Divider />
-        <Menu.Item
-          leftSection={<TbFlag size={14} />}
-          onClick={() =>
-            setCheckpoint.mutate(undefined, {
-              onSuccess: () => {
-                onChange('checkpoint')
-                notifications.show({ color: 'green', message: 'Baseline set at the current commit' })
-              },
-              onError: (error) =>
-                notifications.show({
-                  color: 'red',
-                  message: getApiErrorMessage(error, 'Setting baseline failed'),
-                }),
-            })
-          }
-        >
+        <Menu.Item leftSection={<TbFlag size={14} />} onClick={() => captureCheckpoint()}>
           Mark work complete (set baseline here)
         </Menu.Item>
       </Menu.Dropdown>

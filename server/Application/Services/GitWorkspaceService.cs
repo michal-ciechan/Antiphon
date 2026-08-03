@@ -163,6 +163,15 @@ public sealed class GitWorkspaceService
         return code == 0 ? stdout.Trim() : null;
     }
 
+    /// <summary>Resolve a ref/short sha to the full commit sha, or null when it doesn't exist.</summary>
+    public async Task<string?> ResolveCommitAsync(string workingDirectory, string gitRef, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "rev-parse", "--verify", "--quiet", $"{gitRef}^{{commit}}");
+        var sha = stdout.Trim();
+        return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
     /// <summary>True when the commit exists and is an ancestor of (or equal to) HEAD.</summary>
     public async Task<bool> IsInHistoryAsync(string workingDirectory, string sha, CancellationToken ct)
     {

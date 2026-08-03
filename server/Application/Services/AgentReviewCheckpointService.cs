@@ -30,7 +30,16 @@ public sealed class AgentReviewCheckpointService
     /// only). Best-effort: failures are logged, never thrown — completing a card must not break
     /// on git problems.
     /// </summary>
-    public async Task<AgentReviewCheckpoint?> CaptureAsync(Guid agentId, string reason, CancellationToken ct)
+    public Task<AgentReviewCheckpoint?> CaptureAsync(Guid agentId, string reason, CancellationToken ct) =>
+        CaptureAsync(agentId, reason, commit: null, ct);
+
+    /// <summary>
+    /// Capture a checkpoint at an explicit commit (ref or short sha) instead of HEAD — "work up
+    /// to this historic commit is signed off". Returns null when the commit doesn't resolve in
+    /// the workspace, so callers can reject the request rather than silently baselining HEAD.
+    /// </summary>
+    public async Task<AgentReviewCheckpoint?> CaptureAsync(
+        Guid agentId, string reason, string? commit, CancellationToken ct)
     {
         try
         {
@@ -38,7 +47,12 @@ public sealed class AgentReviewCheckpointService
             if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
                 return null;
 
-            var sha = await _git.GetHeadShaAsync(Path.GetFullPath(agent.WorkingDirectory), ct);
+            var root = Path.GetFullPath(agent.WorkingDirectory);
+            var sha = commit is null
+                ? await _git.GetHeadShaAsync(root, ct)
+                : await _git.ResolveCommitAsync(root, commit, ct);
+            if (commit is not null && sha is null)
+                return null;
             var checkpoint = new AgentReviewCheckpoint
             {
                 Id = Guid.NewGuid(),
