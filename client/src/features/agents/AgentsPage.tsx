@@ -8,6 +8,7 @@ import {
   Drawer,
   Group,
   Loader,
+  Menu,
   Paper,
   SimpleGrid,
   Stack,
@@ -21,6 +22,8 @@ import { notifications } from '@mantine/notifications'
 import { useEffect, useState } from 'react'
 import {
   TbAlertCircle,
+  TbDotsVertical,
+  TbFiles,
   TbHistory,
   TbLayoutKanban,
   TbPlayerPlay,
@@ -123,25 +126,22 @@ export function AgentsPage() {
                       </Text>
                       <Group gap={4} style={{ flexShrink: 0 }}>
                         <SupervisionBadge agent={agent} compact />
-                        <Badge variant="light">{agent.status}</Badge>
+                        <AgentActivityBadge agent={agent} />
                       </Group>
                     </Group>
                     <Text size="xs" c="dimmed" lineClamp={1}>
                       {agent.workingDirectory}
                     </Text>
-                    <Group justify="space-between">
-                      <Text size="sm">{agent.queueLength} queued</Text>
-                      <Badge color="gray" variant="outline">
-                        {agent.assignmentPolicy}
-                      </Badge>
-                    </Group>
+                    <Text size="sm">{agent.queueLength} queued</Text>
                   </Stack>
                 </Paper>
               </UnstyledButton>
+              {/* Liveness lives in the terminal icon colour: green = running, yellow = starting/
+                  stopping, gray = no session. The status badge is reserved for real activity. */}
               <Tooltip
                 label={
                   agent.liveSession?.status === 'Running'
-                    ? 'Open running terminal'
+                    ? 'Terminal — live now'
                     : agent.liveSession
                       ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
                       : 'No terminal — start agent'
@@ -163,17 +163,43 @@ export function AgentsPage() {
                   <TbTerminal2 size={18} />
                 </ActionIcon>
               </Tooltip>
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                aria-label={`Settings ${agent.name}`}
-                onClick={() => setSettingsAgent(agent)}
-                pos="absolute"
-                top={8}
-                right={8}
-              >
-                <TbSettings size={18} />
-              </ActionIcon>
+              <Menu shadow="md" position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    aria-label={`Agent menu ${agent.name}`}
+                    pos="absolute"
+                    top={8}
+                    right={8}
+                  >
+                    <TbDotsVertical size={18} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item
+                    leftSection={<TbFiles size={14} />}
+                    component="a"
+                    href={`/agents/${agent.id}/files`}
+                    target="_blank"
+                  >
+                    Open files view
+                  </Menu.Item>
+                  {agent.boardId && (
+                    <Menu.Item
+                      leftSection={<TbLayoutKanban size={14} />}
+                      component={Link}
+                      to={`/boards/${agent.boardId}`}
+                    >
+                      Open board
+                    </Menu.Item>
+                  )}
+                  <Menu.Divider />
+                  <Menu.Item leftSection={<TbSettings size={14} />} onClick={() => setSettingsAgent(agent)}>
+                    Edit settings
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
             </Box>
           ))}
         </SimpleGrid>
@@ -196,7 +222,7 @@ export function AgentsPage() {
               <Stack gap={2}>
                 <Group gap="xs">
                   <Title order={3}>{selected.data.name}</Title>
-                  <Badge variant="light">{selected.data.status}</Badge>
+                  <AgentActivityBadge agent={selected.data} />
                   <SupervisionBadge agent={selected.data} />
                 </Group>
                 <Text size="sm" c="dimmed">
@@ -213,7 +239,7 @@ export function AgentsPage() {
                 {selected.data.details && <Text size="sm">{selected.data.details}</Text>}
               </Stack>
               <Group gap="sm" align="center">
-                {selected.data.status === 'Working' ? (
+                {selected.data.liveSession || selected.data.status === 'Working' ? (
                   <Button
                     variant="light"
                     color="red"
@@ -354,6 +380,42 @@ export function AgentsPage() {
       </Drawer>
     </Box>
   )
+}
+
+/**
+ * The card's activity badge — shown only when it says something real: "Working" with a spinner
+ * while the session is genuinely mid-turn (transcript-derived, not merely "started"), and the
+ * attention states (review wanted / failed / disconnected). Quiet states show nothing — liveness
+ * is the terminal icon's colour, not a badge.
+ */
+function AgentActivityBadge({ agent }: { agent: AgentSummaryDto }) {
+  if (agent.working) {
+    return (
+      <Badge
+        color="yellow"
+        variant="light"
+        leftSection={<Loader size={10} color="yellow" type="dots" />}
+        data-testid={`agent-working-${agent.id}`}
+      >
+        Working
+      </Badge>
+    )
+  }
+  if (agent.status === 'WaitingForHumanReview') {
+    return (
+      <Badge color="orange" variant="light">
+        Review
+      </Badge>
+    )
+  }
+  if (agent.status === 'Failed' || agent.status === 'Disconnected') {
+    return (
+      <Badge color="red" variant="light">
+        {agent.status}
+      </Badge>
+    )
+  }
+  return null
 }
 
 const SEVERITY_COLORS: Record<string, string> = {

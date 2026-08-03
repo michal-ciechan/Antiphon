@@ -13,6 +13,10 @@ vi.mock('@mantine/notifications', () => ({
   },
 }))
 
+// jsdom typing + Mantine portals (menu dropdown, modals) regularly overrun the 5s default on a
+// loaded machine — these are interaction-heavy tests, not unit checks.
+vi.setConfig({ testTimeout: 20_000 })
+
 const agentSummary: AgentSummaryDto = {
   id: 'agent-1',
   name: 'Frontend Claude',
@@ -36,6 +40,7 @@ const agentSummary: AgentSummaryDto = {
   supervision: null,
   systemPromptAppend: null,
   modelLevel: 'High',
+  working: false,
 }
 
 const agentDetail: AgentDetailDto = {
@@ -131,14 +136,53 @@ function getVisibleInput(label: string) {
 }
 
 describe('AgentsPage', () => {
-  it('renders agent roster with status and queue length', async () => {
+  it('renders agent roster with queue length and no badge for quiet states', async () => {
     server.use(...agentHandlers())
 
     renderWithProviders(<AgentsPage />)
 
     expect(await screen.findByText('Frontend Claude')).toBeInTheDocument()
-    expect(screen.getAllByText('Idle')[0]).toBeInTheDocument()
     expect(screen.getByText('2 queued')).toBeInTheDocument()
+    // Idle is a quiet state: no status badge — liveness is the terminal icon's colour.
+    expect(screen.queryByText('Idle')).not.toBeInTheDocument()
+  })
+
+  // "Working" must mean mid-turn RIGHT NOW (transcript-derived), never merely "started".
+  it('shows the Working spinner badge only for the transcript-working agent', async () => {
+    const workingAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-2',
+      name: 'Busy Agent',
+      slug: 'busy-agent',
+      status: 'Working',
+      working: true,
+    }
+    const startedIdleAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-3',
+      name: 'Started But Idle',
+      slug: 'started-idle',
+      status: 'Working', // started, session live — but not mid-turn
+      working: false,
+    }
+    server.use(...agentHandlers([workingAgent, startedIdleAgent], { ...agentDetail, id: 'agent-2' }))
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByText('Busy Agent')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-working-agent-2')).toHaveTextContent('Working')
+    expect(screen.queryByTestId('agent-working-agent-3')).not.toBeInTheDocument()
+  })
+
+  // Settings-via-menu is covered by the edit/delete tests below; here we pin the files link.
+  it('links the files view from the card menu', async () => {
+    server.use(...agentHandlers())
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Agent menu Frontend Claude' }))
+    const filesItem = await screen.findByRole('menuitem', { name: /Open files view/ })
+    expect(filesItem).toHaveAttribute('href', '/agents/agent-1/files')
   })
 
   it('links the selected agent to its board', async () => {
@@ -163,7 +207,8 @@ describe('AgentsPage', () => {
 
     renderWithProviders(<AgentsPage />)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Settings Frontend Claude' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agent menu Frontend Claude' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Edit settings/ }))
 
     const detailsField = await screen.findByLabelText('Details')
     await userEvent.clear(detailsField)
@@ -192,7 +237,8 @@ describe('AgentsPage', () => {
 
     renderWithProviders(<AgentsPage />)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Settings Frontend Claude' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Agent menu Frontend Claude' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Edit settings/ }))
     // Two-step confirmation: the trigger reveals the confirm button (same label).
     await userEvent.click(await screen.findByRole('button', { name: 'Delete agent' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Delete agent' }))

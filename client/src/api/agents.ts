@@ -85,6 +85,11 @@ export interface AgentSummaryDto {
   systemPromptAppend: string | null
   /** Generic model capability level for the agent's sessions. High (the Opus tier) is the default. */
   modelLevel: AgentModelLevel
+  /**
+   * Transcript-derived "mid-turn right now" for the live session. Distinct from status=Working,
+   * which only means the agent was started — this is what deserves a spinner.
+   */
+  working: boolean
 }
 
 export interface AgentSupervisionDto {
@@ -232,6 +237,9 @@ export function useAgentList() {
   return useQuery({
     queryKey: agentKeys.all,
     queryFn: () => apiGet<AgentSummaryDto[]>('/agents'),
+    // SignalR covers turn END (SessionFinished invalidates this key) but nothing fires on turn
+    // START — poll so the cards' Working spinner appears without a manual refresh.
+    refetchInterval: 5000,
   })
 }
 
@@ -245,6 +253,8 @@ export function useAgent(id: string | null) {
       return apiGet<AgentDetailDto>(`/agents/${id}`)
     },
     enabled: !!id,
+    // Same reasoning as useAgentList — the detail header renders the Working spinner too.
+    refetchInterval: 5000,
   })
 }
 

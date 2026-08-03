@@ -37,7 +37,10 @@ public sealed record AgentSummaryDto(
     AgentSupervisionDto? Supervision = null,
     string? SystemPromptAppend = null,
     // Generic model capability level (mapped per agent kind to a family alias at launch). Default High.
-    AgentModelLevel ModelLevel = AgentModelLevel.High);
+    AgentModelLevel ModelLevel = AgentModelLevel.High,
+    // Transcript-derived "mid-turn right now" (SessionMessageQueueService.IsWorkingAsync) for the
+    // live session. Distinct from Status=Working, which only means the agent was started.
+    bool Working = false);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -62,7 +65,9 @@ public sealed record AgentDetailDto(
     bool RemoteControlEnabled = false,
     AgentSupervisionDto? Supervision = null,
     string? SystemPromptAppend = null,
-    AgentModelLevel ModelLevel = AgentModelLevel.High);
+    AgentModelLevel ModelLevel = AgentModelLevel.High,
+    // See AgentSummaryDto.Working.
+    bool Working = false);
 
 /// <summary>Supervision snapshot for an always-on agent (see AgentSupervisionState).</summary>
 public sealed record AgentSupervisionDto(

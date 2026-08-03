@@ -542,7 +542,9 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    // Internal so the agent list/detail can surface the SAME working signal on agent cards —
+    // "Working" on a card must mean mid-turn right now, not merely "session started".
+    internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
         // Mirror the client's isWorking(): the agent is working while activity outranks the last
         // turn-end. An interrupt marker ("[Request interrupted...") counts as a turn END, not

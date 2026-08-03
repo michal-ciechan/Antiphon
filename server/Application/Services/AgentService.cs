@@ -46,11 +46,23 @@ public sealed class AgentService
 
         var liveSessions = await LoadLiveSessionsAsync(agents.Select(a => a.PersistentSessionId), ct);
         var supervision = await LoadSupervisionAsync(agents.Where(a => a.AlwaysOn).Select(a => a.Id), ct);
-        return agents
-            .Select(a => ToSummaryDto(
-                a, ResolveLiveSession(liveSessions, a.PersistentSessionId), supervision.GetValueOrDefault(a.Id)))
-            .ToList();
+        var result = new List<AgentSummaryDto>(agents.Count);
+        foreach (var a in agents)
+        {
+            var live = ResolveLiveSession(liveSessions, a.PersistentSessionId);
+            result.Add(ToSummaryDto(
+                a, live, supervision.GetValueOrDefault(a.Id), await IsSessionWorkingAsync(live, ct)));
+        }
+        return result;
     }
+
+    /// <summary>
+    /// The transcript-derived "mid-turn right now" signal for a live session — what the agent
+    /// cards render as Working (with a spinner). Status=Working only means "started".
+    /// </summary>
+    private async Task<bool> IsSessionWorkingAsync(AgentSessionSummaryDto? live, CancellationToken ct) =>
+        live is { Status: SessionStatus.Running }
+        && await SessionMessageQueueService.IsWorkingAsync(_db, live.Id, ct);
 
     public async Task<AgentDetailDto> GetByIdAsync(Guid id, CancellationToken ct)
     {
@@ -59,7 +71,8 @@ public sealed class AgentService
         var supervision = agent.AlwaysOn
             ? (await LoadSupervisionAsync([agent.Id], ct)).GetValueOrDefault(agent.Id)
             : null;
-        return ToDetailDto(agent, ResolveLiveSession(liveSessions, agent.PersistentSessionId), supervision);
+        var live = ResolveLiveSession(liveSessions, agent.PersistentSessionId);
+        return ToDetailDto(agent, live, supervision, await IsSessionWorkingAsync(live, ct));
     }
 
     public async Task<IReadOnlyList<AgentIncidentDto>> GetIncidentsAsync(Guid agentId, int take, CancellationToken ct)
@@ -603,7 +616,7 @@ public sealed class AgentService
     }
 
     private static AgentSummaryDto ToSummaryDto(
-        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision)
+        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision, bool working = false)
     {
         return new AgentSummaryDto(
             agent.Id,
@@ -627,11 +640,13 @@ public sealed class AgentService
             agent.RemoteControlEnabled,
             supervision,
             agent.SystemPromptAppend,
-            agent.ModelLevel);
+            agent.ModelLevel,
+            working);
     }
 
     private static AgentDetailDto ToDetailDto(
-        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision = null)
+        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision = null,
+        bool working = false)
     {
         var queue = agent.QueueCards
             .Where(c => c.AgentQueuePosition is not null)
@@ -672,7 +687,8 @@ public sealed class AgentService
             agent.RemoteControlEnabled,
             supervision,
             agent.SystemPromptAppend,
-            agent.ModelLevel);
+            agent.ModelLevel,
+            working);
     }
 
     private async Task<string> UniqueSlugAsync(string baseSlug, Guid? excludeAgentId, CancellationToken ct)
