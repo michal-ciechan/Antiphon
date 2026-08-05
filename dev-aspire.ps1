@@ -7,9 +7,10 @@
     - OTLP:      http://localhost:17206  (fixed)
     - Control API: http://localhost:17207/control/{name}/start|stop|restart
     - Script exits after dashboard is ready (AppHost continues in background).
-.PARAMETER NoBuild  Skip dotnet restore/build before starting.
+.PARAMETER NoBuild    Skip dotnet restore/build before starting.
+.PARAMETER NoBrowser  Do not open the dashboard in a browser (used by the logon auto-start).
 #>
-param([switch]$NoBuild)
+param([switch]$NoBuild, [switch]$NoBrowser)
 
 $ErrorActionPreference = 'Stop'
 $root         = $PSScriptRoot
@@ -146,7 +147,7 @@ if ($dashboardUrl) {
     Write-Host ""
     Write-Host "  Dashboard : $dashboardUrl" -ForegroundColor Green
     $dashboardUrl | Set-Content "$root\logs\apphost-dashboard-url.txt"
-    Start-Process $dashboardUrl
+    if (-not $NoBrowser) { Start-Process $dashboardUrl }
 } else {
     Write-Host ""
     Write-Host "  Dashboard URL not found after ${timeout}s." -ForegroundColor Yellow

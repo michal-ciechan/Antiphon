@@ -9,15 +9,31 @@
       2. Session-runner - registers a per-user Scheduled Task that starts the
                        session-runner daemon (port 17204) at logon via
                        scripts/autostart-session-runner.ps1.
+      3. AppHost      - registers a second per-user Scheduled Task that brings up the
+                       Aspire AppHost (server 17202, client 17203, dashboard 17205,
+                       control API 17207) at logon via scripts/autostart-apphost.ps1.
+                       Skip it with -NoAppHost if you would rather start the app by
+                       hand with dev-aspire.ps1.
 
-    The .NET server, React client and Aspire dashboard are intentionally NOT
-    auto-started - launch those with dev-aspire.ps1 when you sit down to work. The
-    AppHost adopts the already-running Postgres + session-runner.
+    The AppHost task fires 1 minute after logon and waits for Docker Desktop before
+    starting; it no-ops if the AppHost is already running, and it adopts the
+    already-running Postgres + session-runner.
 .PARAMETER Uninstall
-    Remove the Scheduled Task. Leaves the Postgres container and its data alone
+    Remove both Scheduled Tasks. Leaves the Postgres container and its data alone
     (prints how to remove them if you want to).
+.PARAMETER NoAppHost
+    Do not register (or, with -Uninstall, do not remove) the AppHost logon task.
+    Restores the old behaviour: only Postgres + session-runner are always-on.
+.PARAMETER AppHostOnly
+    Only touch the AppHost task; leave the session-runner task alone. Use this when the
+    session-runner is already running - re-registering a RUNNING task terminates its
+    live supervisor, which would leave the daemon unsupervised until the next logon.
 .PARAMETER TaskName
-    Scheduled Task name. Default: "Antiphon Session Runner".
+    Session-runner Scheduled Task name. Default: "Antiphon Session Runner".
+.PARAMETER AppHostTaskName
+    AppHost Scheduled Task name. Default: "Antiphon AppHost".
+.PARAMETER AppHostDelay
+    ISO-8601 duration to delay the AppHost task after logon. Default: PT1M.
 .EXAMPLE
     pwsh -File scripts/install-autostart.ps1
 .EXAMPLE
@@ -26,7 +42,11 @@
 [CmdletBinding()]
 param(
     [switch]$Uninstall,
-    [string]$TaskName = 'Antiphon Session Runner'
+    [switch]$NoAppHost,
+    [switch]$AppHostOnly,
+    [string]$TaskName = 'Antiphon Session Runner',
+    [string]$AppHostTaskName = 'Antiphon AppHost',
+    [string]$AppHostDelay = 'PT1M'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,13 +61,17 @@ function Write-Warn2($msg){ Write-Host "  $msg" -ForegroundColor Yellow }
 
 # -- Uninstall path ----------------------------------------------------------
 if ($Uninstall) {
-    Write-Step "Removing Scheduled Task '$TaskName'..."
-    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if ($existing) {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Ok "Task removed."
-    } else {
-        Write-Note "No such task - nothing to do."
+    $toRemove = @()
+    if (-not $AppHostOnly) { $toRemove += $TaskName }
+    if (-not $NoAppHost)   { $toRemove += $AppHostTaskName }
+    foreach ($t in $toRemove) {
+        Write-Step "Removing Scheduled Task '$t'..."
+        if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $t -Confirm:$false
+            Write-Ok "Task removed."
+        } else {
+            Write-Note "No such task - nothing to do."
+        }
     }
     Write-Note "Postgres container left running. To stop and remove it (data kept in the 'antiphon_pgdata' volume):"
     Write-Note "  docker compose -f `"$composeFile`" down"
@@ -56,18 +80,27 @@ if ($Uninstall) {
 }
 
 # -- Pre-flight --------------------------------------------------------------
+$appHostScript = Join-Path $PSScriptRoot 'autostart-apphost.ps1'
 if (-not (Test-Path $autostartScript)) { throw "Missing $autostartScript" }
 if (-not (Test-Path $composeFile))     { throw "Missing $composeFile" }
+if (-not $NoAppHost -and -not (Test-Path $appHostScript)) { throw "Missing $appHostScript" }
 
 # Resolve a PowerShell host for the task action (prefer pwsh 7, fall back to 5.1).
-# Probe the real install dirs first - pwsh may not be on THIS session's PATH, and
-# the real exe is more robust for Scheduled Tasks than the WindowsApps app-exec alias.
+# Probe the real install dirs first - pwsh may not be on THIS session's PATH.
+#
+# NEVER bake in a version-pinned MSIX package path
+# (C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.4.0_x64__...\pwsh.exe): pwsh is
+# installed here as an MSIX, and Get-Command resolves to that versioned dir when this
+# script itself runs under it. That path disappears on the next PowerShell update and
+# the Scheduled Task silently stops working. The per-user WindowsApps app-exec alias
+# ($env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe) is version-independent - prefer it.
 $psExe = @(
     "$env:ProgramFiles\PowerShell\7\pwsh.exe",
     "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe",
-    (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source,
-    "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"
-) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe",
+    (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+) | Where-Object { $_ -and (Test-Path $_) -and $_ -notmatch 'WindowsApps\\Microsoft\.PowerShell_' } |
+    Select-Object -First 1
 if (-not $psExe) { $psExe = (Get-Command powershell.exe).Source }
 Write-Note "PowerShell host for task: $psExe"
 
@@ -99,6 +132,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # -- 2. Session-runner logon Scheduled Task ----------------------------------
+# NOTE: re-registering this task while it is RUNNING terminates the live supervisor
+# (Unregister kills the running instance), leaving the session-runner unsupervised
+# until the next logon. Use -AppHostOnly to add/refresh the AppHost task without
+# touching a healthy, running session-runner.
+if ($AppHostOnly) {
+    Write-Step "Skipping session-runner task (-AppHostOnly)."
+    Write-Note "Existing '$TaskName' left untouched."
+} else {
+
 Write-Step "Registering logon Scheduled Task '$TaskName'..."
 
 $action = New-ScheduledTaskAction `
@@ -139,12 +181,69 @@ Register-ScheduledTask `
 
 Write-Ok "Task registered (runs at logon as $env:USERNAME)."
 
+}   # end -not $AppHostOnly
+
+# -- 3. AppHost logon Scheduled Task -----------------------------------------
+if (-not $NoAppHost) {
+    Write-Step "Registering logon Scheduled Task '$AppHostTaskName'..."
+
+    $ahAction = New-ScheduledTaskAction `
+        -Execute $psExe `
+        -Argument "-NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$appHostScript`"" `
+        -WorkingDirectory $root
+
+    # Delay after logon so Docker Desktop gets a head start (the script also waits
+    # for Docker itself, so this is just to avoid burning that wait every boot).
+    $ahTrigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $ahTrigger.Delay = $AppHostDelay
+
+    $ahPrincipal = New-ScheduledTaskPrincipal `
+        -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive `
+        -RunLevel Limited
+
+    # One-shot launcher (exits once the backend is healthy), so a finite time limit is
+    # right here - unlike the session-runner supervisor, which blocks forever.
+    $ahSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
+        -RestartCount 2 `
+        -RestartInterval (New-TimeSpan -Minutes 5)
+
+    if (Get-ScheduledTask -TaskName $AppHostTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $AppHostTaskName -Confirm:$false
+    }
+
+    Register-ScheduledTask `
+        -TaskName $AppHostTaskName `
+        -Action $ahAction `
+        -Trigger $ahTrigger `
+        -Principal $ahPrincipal `
+        -Settings $ahSettings `
+        -Description 'Starts the Antiphon Aspire AppHost (server 17202 / client 17203 / dashboard 17205) at logon, after waiting for Docker Desktop.' | Out-Null
+
+    Write-Ok "Task registered (runs $AppHostDelay after logon as $env:USERNAME)."
+} else {
+    Write-Step "Skipping AppHost logon task (-NoAppHost)."
+    Write-Note "Start the app by hand with:  .\dev-aspire.ps1"
+}
+
 # -- Done --------------------------------------------------------------------
 Write-Host ""
 Write-Host "Always-on backend configured:" -ForegroundColor Green
 Write-Note "  Postgres       : docker container 'antiphon-postgres'  (localhost:17280)"
 Write-Note "  Session-runner : Scheduled Task '$TaskName'            (http://localhost:17204)"
-Write-Note "  The rest (server/client/dashboard): run  .\dev-aspire.ps1"
+if (-not $NoAppHost) {
+    Write-Note "  AppHost        : Scheduled Task '$AppHostTaskName'  (server :17202, client :17203, dashboard :17205)"
+} else {
+    Write-Note "  The rest (server/client/dashboard): run  .\dev-aspire.ps1"
+}
 Write-Host ""
 Write-Note "Start the session-runner now without logging out:  Start-ScheduledTask -TaskName `"$TaskName`""
+if (-not $NoAppHost) {
+    Write-Note "Start the AppHost now without logging out:          Start-ScheduledTask -TaskName `"$AppHostTaskName`""
+    Write-Note "AppHost auto-start log:                             $root\logs\autostart-apphost.log"
+}
 Write-Note "Remove auto-start later:                            pwsh -File scripts/install-autostart.ps1 -Uninstall"

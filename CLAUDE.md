@@ -20,12 +20,18 @@ Dashboard is pinned to **http://localhost:17205** via `applicationUrl` in `Antip
 
 ## Always-on backend (auto-start)
 
-So agents can run without launching the AppHost, two pieces auto-start at login (set up once via `scripts/install-autostart.ps1`; remove with `-Uninstall`):
+So agents can run without launching the AppHost, three pieces auto-start at login (set up once via `scripts/install-autostart.ps1`; remove with `-Uninstall`):
 
 - **PostgreSQL** — standalone container `antiphon-postgres` (`docker-compose.dev.yml`, `restart: unless-stopped`) on host port **17280**. Returns on boot via that restart policy + Docker Desktop "AutoStart". It is **no longer Aspire-managed**: the AppHost references it with `AddConnectionString("DefaultConnection")` (value in `Antiphon.AppHost/appsettings.json` = the same `localhost:17280` string the server uses).
 - **Session-runner** — native daemon (port **17204**) started by the per-user Scheduled Task **"Antiphon Session Runner"**, which runs `scripts/autostart-session-runner.ps1` → `scripts/run-daemon.ps1`. It writes the same `logs/session-runner.*` pid/state files the AppHost uses, so `dev-aspire.ps1` **adopts** the already-running instance instead of spawning a duplicate (see `DaemonProcessService.InitialiseAsync` — "port already listening — adopting"). **It runs the built `Antiphon.SessionRunner.exe` directly, NOT `dotnet run`** (`run-daemon.ps1 -BuildProjectDir` rebuilds first, then launches the exe): `dotnet run` wraps the app in a kill-on-close Job Object that would capture the detached pty-hosts and kill them on restart, defeating session survival. See the pty-host-split spec.
 
-The **server, client, and dashboard** are NOT auto-started — run `.\dev-aspire.ps1` for those. Start the session-runner now without re-login: `Start-ScheduledTask -TaskName "Antiphon Session Runner"`.
+- **AppHost** (server 17202, client 17203, dashboard 17205, control API 17207) — per-user Scheduled Task **"Antiphon AppHost"**, firing **1 minute after logon**, which runs `scripts/autostart-apphost.ps1` → `dev-aspire.ps1 -NoBrowser`. It **waits for Docker Desktop** (up to 5 min — at logon Docker is still starting and `dev-aspire.ps1` hard-errors if it isn't ready), waits for `antiphon-postgres` to be healthy, and **no-ops if port 17202 is already listening** so it never clobbers a manual `dev-aspire.ps1`. Logs to `logs/autostart-apphost.log`; exits 0 once `/health` returns 200. Opt out with `install-autostart.ps1 -NoAppHost`.
+
+Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session Runner"` / `-TaskName "Antiphon AppHost"`.
+
+> ⚠️ **`install-autostart.ps1` re-registers tasks by Unregister+Register, which TERMINATES a running instance.** Re-running it plainly while the session-runner is up kills its live supervisor (the daemon is left unsupervised until next logon). Use **`-AppHostOnly`** to add/refresh the AppHost task without touching a healthy session-runner.
+>
+> ⚠️ **Never bake a version-pinned MSIX `pwsh.exe` path into a Scheduled Task.** pwsh 7 is MSIX-installed here, so `Get-Command pwsh.exe` resolves to `C:\Program Files\WindowsApps\Microsoft.PowerShell_<version>_x64__…\pwsh.exe` when the installer itself runs under it — that path vanishes on the next PowerShell update and the task silently stops firing. `install-autostart.ps1` now filters those out and prefers the version-independent app-exec alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`.
 
 > **PowerShell 7 (pwsh 7.6+) is installed** (winget MSIX — runs via the per-user WindowsApps app-exec alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, not `Program Files`). The Scheduled Task and AppHost daemon supervisors use it. Keep **Windows PowerShell 5.1** (`powershell.exe`) in mind as the fallback: it reads no-BOM `.ps1` files as CP1252, so a non-ASCII char (em-dash `—`, arrows, box-drawing) can inject a smart-quote and break parsing. **Keep daemon/auto-start scripts ASCII-only** so they work under either host.
 
