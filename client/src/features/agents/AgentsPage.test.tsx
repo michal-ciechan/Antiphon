@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { notifications } from '@mantine/notifications'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto } from '../../api/agents'
-import type { BoardDetailDto, BoardSummaryDto } from '../../api/boards'
+import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentsPage } from './AgentsPage'
@@ -46,6 +46,20 @@ const agentSummary: AgentSummaryDto = {
 const agentDetail: AgentDetailDto = {
   ...agentSummary,
   queue: [],
+}
+
+const liveSession: AgentSessionSummaryDto = {
+  id: 'session-1',
+  definitionName: 'claude',
+  agentKind: 'ClaudeCode',
+  status: 'Running',
+  cwd: 'D:/src/app',
+  createdAt: '2026-05-18T09:00:00Z',
+  startedAt: '2026-05-18T09:00:00Z',
+  lastSeenAt: '2026-05-18T09:00:00Z',
+  endedAt: null,
+  exitCode: null,
+  failureReason: null,
 }
 
 const boardSummary: BoardSummaryDto = {
@@ -172,6 +186,135 @@ describe('AgentsPage', () => {
     expect(await screen.findByText('Busy Agent')).toBeInTheDocument()
     expect(screen.getByTestId('agent-working-agent-2')).toHaveTextContent('Working')
     expect(screen.queryByTestId('agent-working-agent-3')).not.toBeInTheDocument()
+  })
+
+  // The detail header renders the same activity badge as the card.
+  it('shows the Working spinner in the detail header when the detail is mid-turn', async () => {
+    // Card quiet (working: false) so the only spinner badge on the page is the header's.
+    server.use(...agentHandlers([agentSummary], { ...agentDetail, working: true }))
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByTestId('agent-working-agent-1')).toHaveTextContent('Working')
+  })
+
+  it('shows no activity badge for the quiet lifecycle states', async () => {
+    const quiet = (id: string, status: AgentSummaryDto['status']): AgentSummaryDto => ({
+      ...agentSummary,
+      id,
+      name: `Agent ${status}`,
+      slug: `agent-${status.toLowerCase()}`,
+      status,
+    })
+    server.use(
+      ...agentHandlers(
+        [quiet('agent-idle', 'Idle'), quiet('agent-ready', 'Ready'), quiet('agent-stopped', 'Stopped')],
+        { ...agentDetail, id: 'agent-idle', status: 'Idle' },
+      ),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByText('Agent Idle')).toBeInTheDocument()
+    // Quiet states carry no badge — liveness lives in the terminal icon's colour.
+    expect(screen.queryByText('Idle')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+    expect(screen.queryByText('Working')).not.toBeInTheDocument()
+  })
+
+  it('badges the attention states: Review, Failed, Disconnected', async () => {
+    const attention = (id: string, status: AgentSummaryDto['status']): AgentSummaryDto => ({
+      ...agentSummary,
+      id,
+      name: `Agent ${status}`,
+      slug: `agent-${status.toLowerCase()}`,
+      status,
+    })
+    server.use(
+      ...agentHandlers(
+        [
+          attention('agent-review', 'WaitingForHumanReview'),
+          attention('agent-failed', 'Failed'),
+          attention('agent-disc', 'Disconnected'),
+        ],
+        { ...agentDetail, id: 'agent-review', status: 'WaitingForHumanReview' },
+      ),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByText('Agent Failed')).toBeInTheDocument()
+    // WaitingForHumanReview renders as the short "Review" label (card + selected detail header).
+    expect(screen.getAllByText('Review').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('Failed')).toBeInTheDocument()
+    expect(screen.getByText('Disconnected')).toBeInTheDocument()
+  })
+
+  // Pins the badge precedence: a genuinely mid-turn agent shows the spinner even when the
+  // lifecycle status is an attention state.
+  it('prefers the Working spinner over the attention badge when mid-turn', async () => {
+    const failedButWorking: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-2',
+      name: 'Failed Yet Busy',
+      slug: 'failed-yet-busy',
+      status: 'Failed',
+      working: true,
+    }
+    server.use(...agentHandlers([failedButWorking], { ...agentDetail, id: 'agent-2', status: 'Failed', working: true }))
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByTestId('agent-working-agent-2')).toHaveTextContent('Working')
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument()
+  })
+
+  // Stop gating is liveSession-OR-started: a live session with a quiet lifecycle status must
+  // still offer Stop (the session is real), not Start.
+  it('offers Stop when a live session exists even though the lifecycle status is quiet', async () => {
+    const stoppedWithSession: AgentSummaryDto = {
+      ...agentSummary,
+      status: 'Stopped',
+      persistentSessionId: 'session-1',
+      liveSession,
+    }
+    server.use(...agentHandlers([stoppedWithSession], { ...stoppedWithSession, queue: [] }))
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
+  })
+
+  // Liveness is the terminal icon's colour/tooltip, not a badge.
+  it('describes terminal liveness in the card terminal icon tooltip', async () => {
+    const runningAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-live',
+      name: 'Live Agent',
+      slug: 'live-agent',
+      liveSession,
+    }
+    const startingAgent: AgentSummaryDto = {
+      ...agentSummary,
+      id: 'agent-starting',
+      name: 'Starting Agent',
+      slug: 'starting-agent',
+      liveSession: { ...liveSession, id: 'session-2', status: 'Starting' },
+    }
+    server.use(
+      ...agentHandlers([runningAgent, startingAgent, agentSummary], { ...agentDetail, id: 'agent-live' }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.hover(await screen.findByRole('button', { name: 'Terminal Live Agent' }))
+    expect(await screen.findByText('Terminal — live now')).toBeInTheDocument()
+    await userEvent.hover(screen.getByRole('button', { name: 'Terminal Starting Agent' }))
+    expect(await screen.findByText('Terminal starting…')).toBeInTheDocument()
+    await userEvent.hover(screen.getByRole('button', { name: 'Terminal Frontend Claude' }))
+    expect(await screen.findByText('No terminal — start agent')).toBeInTheDocument()
   })
 
   // Settings-via-menu is covered by the edit/delete tests below; here we pin the files link.
