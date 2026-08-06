@@ -337,6 +337,10 @@ public class BoardServiceIntegrationTests
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(new System.IO.Abstractions.FileSystem()));
         services.AddScoped<BoardService>();
+        // CardService now depends on AgentReviewCheckpointService (files-review checkpoints);
+        // register it and its GitWorkspaceService dep alongside, as ReviewLoopTests does.
+        services.AddSingleton<GitWorkspaceService>();
+        services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddLogging();
 

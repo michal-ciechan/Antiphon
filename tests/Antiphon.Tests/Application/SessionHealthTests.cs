@@ -237,6 +237,10 @@ public class SessionHealthTests
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<BoardService>();
+        // CardService now depends on AgentReviewCheckpointService (files-review checkpoints);
+        // register it and its GitWorkspaceService dep alongside, as ReviewLoopTests does.
+        services.AddSingleton<GitWorkspaceService>();
+        services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
         services.AddScoped<OrchestratorService>();
         services.AddSingleton<OrchestratorControlState>();
