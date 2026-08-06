@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.FileSystem;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -510,6 +511,230 @@ public class AgentServiceIntegrationTests
         await using var verify = CreateContext();
         var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
         stored.WorkingDirectory.ShouldBe("D:/src/skipdir");
+    }
+
+    // ── Feature 004: Working on the agent DTOs means mid-turn RIGHT NOW ──────────────────────
+    // AgentService projects the transcript-derived working signal
+    // (SessionMessageQueueService.IsWorkingAsync) onto the agent list/detail, gated on a RUNNING
+    // live session. The rule's exclusion matrix (interrupt markers, local slash-commands, compact
+    // boundaries) is pinned at the queue tier by SessionMessageQueueServiceTests — these tests pin
+    // the agent-tier PROJECTION only, plus one shared-rule canary (interrupt marker).
+
+    // The headline regression from the 004 investigation: every started agent read "Working"
+    // forever because the card rendered the lifecycle latch. The two fields answer different
+    // questions and must be able to disagree.
+    [Test]
+    public async Task Idle_live_session_reports_working_false_while_lifecycle_status_stays_started()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            await InsertTranscriptAsync(sessionId, TranscriptKinds.AssistantText, "did the thing");
+            await InsertTranscriptAsync(sessionId, TranscriptKinds.TurnEnd, null);
+
+            await using var db = CreateContext();
+            var summary = (await CreateService(db, new MockEventBus()).GetAllAsync(CancellationToken.None))
+                .Single(a => a.Id == agentId);
+
+            summary.Working.ShouldBeFalse("the last turn ended — the agent is idle at the prompt");
+            summary.Status.ShouldBe(AgentStatus.Working, "the lifecycle latch still says 'started'");
+            summary.LiveSession.ShouldNotBeNull();
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    [Test]
+    public async Task Mid_turn_live_session_reports_working_true()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            // Activity with no TurnEnd after it = mid-turn.
+            await InsertTranscriptAsync(sessionId, TranscriptKinds.AssistantText, "working on it");
+
+            await using var db = CreateContext();
+            var summary = (await CreateService(db, new MockEventBus()).GetAllAsync(CancellationToken.None))
+                .Single(a => a.Id == agentId);
+
+            summary.Working.ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    // Pins the gate in AgentService.IsSessionWorkingAsync: a session that is not RUNNING must
+    // never report working, even when its (stale) transcript looks mid-turn — a dead session's
+    // last recorded activity is history, not work.
+    [Test]
+    [Arguments(SessionStatus.Starting)]
+    [Arguments(SessionStatus.Stopped)]
+    public async Task Non_running_live_session_never_reports_working(SessionStatus sessionStatus)
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(sessionStatus);
+        try
+        {
+            await InsertTranscriptAsync(sessionId, TranscriptKinds.AssistantText, "mid-turn when it died");
+
+            await using var db = CreateContext();
+            var summary = (await CreateService(db, new MockEventBus()).GetAllAsync(CancellationToken.None))
+                .Single(a => a.Id == agentId);
+
+            summary.Working.ShouldBeFalse($"a {sessionStatus} session must not read as working");
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    [Test]
+    public async Task Agent_without_a_live_session_reports_working_false()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Sessionless Claude"), "D:/src/app"),
+            CancellationToken.None);
+
+        var summary = (await service.GetAllAsync(CancellationToken.None)).Single(a => a.Id == created.Id);
+        summary.Working.ShouldBeFalse();
+        summary.LiveSession.ShouldBeNull();
+
+        var detail = await service.GetByIdAsync(created.Id, CancellationToken.None);
+        detail.Working.ShouldBeFalse();
+    }
+
+    // Detail must ride the same projection as the list, and the agent tier must ride the SAME
+    // hardened rule as the queue tier — one canary case (interrupt marker = turn end) proves the
+    // shared code path; the full exclusion matrix stays pinned in SessionMessageQueueServiceTests.
+    [Test]
+    public async Task Detail_working_matches_summary_and_an_interrupt_marker_reads_idle()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            await InsertTranscriptAsync(sessionId, TranscriptKinds.AssistantText, "working on it");
+
+            await using (var db = CreateContext())
+            {
+                var service = CreateService(db, new MockEventBus());
+                (await service.GetByIdAsync(agentId, CancellationToken.None)).Working
+                    .ShouldBeTrue("detail must agree with the mid-turn summary");
+            }
+
+            // Esc / rejected tool call: a USER marker entry, NO TurnEnd — the marker IS the end.
+            await InsertTranscriptAsync(
+                sessionId, TranscriptKinds.UserPrompt, "[Request interrupted by user for tool use]");
+
+            await using (var db = CreateContext())
+            {
+                var service = CreateService(db, new MockEventBus());
+                (await service.GetAllAsync(CancellationToken.None)).Single(a => a.Id == agentId)
+                    .Working.ShouldBeFalse("the interrupt marker ends the turn at the agent tier too");
+                (await service.GetByIdAsync(agentId, CancellationToken.None)).Working.ShouldBeFalse();
+            }
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    // Catches any future batched-query grouping bug: working must be computed per agent, not
+    // smeared across the list.
+    [Test]
+    public async Task List_projection_computes_working_per_agent()
+    {
+        var (busyAgentId, busySessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        var (idleAgentId, idleSessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            await InsertTranscriptAsync(busySessionId, TranscriptKinds.AssistantText, "working on it");
+            await InsertTranscriptAsync(idleSessionId, TranscriptKinds.AssistantText, "done");
+            await InsertTranscriptAsync(idleSessionId, TranscriptKinds.TurnEnd, null);
+
+            await using var db = CreateContext();
+            var all = await CreateService(db, new MockEventBus()).GetAllAsync(CancellationToken.None);
+
+            all.Single(a => a.Id == busyAgentId).Working.ShouldBeTrue();
+            all.Single(a => a.Id == idleAgentId).Working.ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupSessionsAsync(busySessionId, idleSessionId);
+        }
+    }
+
+    /// <summary>
+    /// A started agent as AgentControlService leaves it: lifecycle latch set, PersistentSessionId
+    /// pointing at a seeded session in the given state. Transcript starts empty (= idle).
+    /// </summary>
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedStartedAgentAsync(SessionStatus sessionStatus)
+    {
+        Guid agentId;
+        await using (var db = CreateContext())
+        {
+            var created = await CreateService(db, new MockEventBus()).CreateAsync(
+                new CreateAgentRequest(UniqueAgentName("Working Projection Claude"), "D:/src/app"),
+                CancellationToken.None);
+            agentId = created.Id;
+        }
+
+        var sessionId = Guid.NewGuid();
+        await using (var db = CreateContext())
+        {
+            var now = DateTime.UtcNow;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                CardId = null,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = sessionStatus,
+                Cwd = $"D:/tmp/agent-working-tests/{sessionId:N}",
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+            });
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.PersistentSessionId = sessionId.ToString("D");
+            agent.Status = AgentStatus.Working; // the "started" lifecycle latch, as Start sets it
+            await db.SaveChangesAsync();
+        }
+
+        return (agentId, sessionId);
+    }
+
+    private static async Task InsertTranscriptAsync(Guid sessionId, string kind, string? text)
+    {
+        await using var db = CreateContext();
+        var baseSeq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = baseSeq + 1,
+            Kind = kind,
+            Text = text,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    // Transcript entries cascade-delete with the session.
+    private static async Task CleanupSessionsAsync(params Guid[] sessionIds)
+    {
+        await using var db = CreateContext();
+        await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
     }
 
     private static AgentService CreateService(
