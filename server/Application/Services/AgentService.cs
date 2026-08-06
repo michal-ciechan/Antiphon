@@ -58,7 +58,7 @@ public sealed class AgentService
 
     /// <summary>
     /// The transcript-derived "mid-turn right now" signal for a live session — what the agent
-    /// cards render as Working (with a spinner). Status=Working only means "started".
+    /// cards render as Working (with a spinner). Status=Running only means "started".
     /// </summary>
     private async Task<bool> IsSessionWorkingAsync(AgentSessionSummaryDto? live, CancellationToken ct) =>
         live is { Status: SessionStatus.Running }

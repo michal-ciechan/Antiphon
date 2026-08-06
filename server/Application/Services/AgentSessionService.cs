@@ -286,12 +286,12 @@ public sealed class AgentSessionService
             session.EndedAt = UtcNow();
             session.LastSeenAt = session.EndedAt.Value;
 
-            // The Start API already flipped the agent to Working before this background launch ran.
-            // Without rolling that back the UI shows a phantom "Working" agent with no live session
+            // The Start API already flipped the agent to Running before this background launch ran.
+            // Without rolling that back the UI shows a phantom "Running" agent with no live session
             // and no error. Failed makes the outcome visible and re-enables the Start button.
             var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, CancellationToken.None);
             if (agent is not null
-                && agent.Status == AgentStatus.Working
+                && agent.Status == AgentStatus.Running
                 && string.Equals(agent.PersistentSessionId, sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
             {
                 agent.Status = AgentStatus.Failed;

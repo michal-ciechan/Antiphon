@@ -54,7 +54,7 @@ public class AgentSupervisionTests
 
             var detail = await harness.Scope.ServiceProvider.GetRequiredService<AgentService>()
                 .GetByIdAsync(agent.Id, CancellationToken.None);
-            detail.Status.ShouldBe(AgentStatus.Working);
+            detail.Status.ShouldBe(AgentStatus.Running);
             detail.LiveSession.ShouldNotBeNull();
 
             await using (var verify = CreateContext())

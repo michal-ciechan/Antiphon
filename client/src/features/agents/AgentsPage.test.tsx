@@ -168,7 +168,7 @@ describe('AgentsPage', () => {
       id: 'agent-2',
       name: 'Busy Agent',
       slug: 'busy-agent',
-      status: 'Working',
+      status: 'Running',
       working: true,
     }
     const startedIdleAgent: AgentSummaryDto = {
@@ -176,7 +176,7 @@ describe('AgentsPage', () => {
       id: 'agent-3',
       name: 'Started But Idle',
       slug: 'started-idle',
-      status: 'Working', // started, session live — but not mid-turn
+      status: 'Running', // started, session live — but not mid-turn
       working: false,
     }
     server.use(...agentHandlers([workingAgent, startedIdleAgent], { ...agentDetail, id: 'agent-2' }))
@@ -633,7 +633,7 @@ describe('AgentsPage', () => {
       }),
       http.post('/api/agents/agent-1/start', async ({ request }) => {
         startSpy(await request.json())
-        return HttpResponse.json({ ...queuedDetail, status: 'Working', persistentSessionId: 'session-1' })
+        return HttpResponse.json({ ...queuedDetail, status: 'Running', persistentSessionId: 'session-1' })
       }),
     )
 
@@ -676,7 +676,7 @@ describe('AgentsPage', () => {
       ...agentHandlers([agentSummary], queuedDetail),
       http.post('/api/agents/agent-1/start', async ({ request }) => {
         startSpy(await request.json())
-        return HttpResponse.json({ ...queuedDetail, status: 'Working', persistentSessionId: 'session-1' })
+        return HttpResponse.json({ ...queuedDetail, status: 'Running', persistentSessionId: 'session-1' })
       }),
     )
 
@@ -696,7 +696,7 @@ describe('AgentsPage', () => {
       ...agentHandlers(),
       http.post('/api/agents/agent-1/start', async ({ request }) => {
         startSpy(await request.json())
-        return HttpResponse.json({ ...agentDetail, status: 'Working', persistentSessionId: 'session-1' })
+        return HttpResponse.json({ ...agentDetail, status: 'Running', persistentSessionId: 'session-1' })
       }),
     )
 

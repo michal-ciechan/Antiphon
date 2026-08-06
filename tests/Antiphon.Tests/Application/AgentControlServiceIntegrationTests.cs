@@ -53,7 +53,7 @@ public class AgentControlServiceIntegrationTests
                 agent.Id, new StartAgentRequest(RemoteControl: true), CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
-            detail.Status.ShouldBe(AgentStatus.Working);
+            detail.Status.ShouldBe(AgentStatus.Running);
             detail.CurrentCardId.ShouldBe(card.Id);
             detail.PersistentSessionId.ShouldNotBeNull();
 

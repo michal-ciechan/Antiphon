@@ -537,7 +537,7 @@ public class AgentServiceIntegrationTests
                 .Single(a => a.Id == agentId);
 
             summary.Working.ShouldBeFalse("the last turn ended — the agent is idle at the prompt");
-            summary.Status.ShouldBe(AgentStatus.Working, "the lifecycle latch still says 'started'");
+            summary.Status.ShouldBe(AgentStatus.Running, "the lifecycle latch still says 'started'");
             summary.LiveSession.ShouldNotBeNull();
         }
         finally
@@ -705,7 +705,7 @@ public class AgentServiceIntegrationTests
             });
             var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
             agent.PersistentSessionId = sessionId.ToString("D");
-            agent.Status = AgentStatus.Working; // the "started" lifecycle latch, as Start sets it
+            agent.Status = AgentStatus.Running; // the "started" lifecycle latch, as Start sets it
             await db.SaveChangesAsync();
         }
 

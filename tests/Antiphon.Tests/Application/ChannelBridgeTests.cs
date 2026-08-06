@@ -597,7 +597,7 @@ public class ChannelBridgeTests
                 Name = $"BridgeTestAgent-{agentId:N}"[..30],
                 Slug = $"bridge-test-{agentId:N}"[..20],
                 WorkingDirectory = Path.GetTempPath(),
-                Status = AgentStatus.Working,
+                Status = AgentStatus.Running,
                 PersistentSessionId = sessionId.ToString("D"),
                 CreatedAt = now,
                 UpdatedAt = now,

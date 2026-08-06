@@ -94,7 +94,7 @@ public sealed class AgentControlService
         }
 
         agent.PersistentSessionId = sessionId.ToString("D");
-        agent.Status = AgentStatus.Working;
+        agent.Status = AgentStatus.Running;
         agent.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
@@ -171,9 +171,9 @@ public sealed class AgentControlService
             ? new LaunchNotes(ChannelPreamble.BootstrapBody, ChannelPreamble.RestartResumeBody)
             : null;
 
-        // Reject an unspawnable executable NOW, before the agent is flipped to Working or any
+        // Reject an unspawnable executable NOW, before the agent is flipped to Running or any
         // session row exists — otherwise the launch fails in the background and the UI shows a
-        // phantom "Working" agent with no process behind it (the claude.cmd → claude.exe incident).
+        // phantom "Running" agent with no process behind it (the claude.cmd → claude.exe incident).
         AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
 
         if (!fresh)

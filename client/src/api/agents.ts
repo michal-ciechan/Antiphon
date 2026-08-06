@@ -50,7 +50,7 @@ export const AGENT_MODEL_LEVEL_OPTIONS: Array<{
     description: 'Fast and light — simple tasks and quick replies. Lowest cost and token usage. Claude: Haiku.',
   },
 ]
-export type AgentStatus = 'Idle' | 'Ready' | 'Working' | 'WaitingForHumanReview' | 'Stopped' | 'Disconnected' | 'Failed'
+export type AgentStatus = 'Idle' | 'Ready' | 'Running' | 'WaitingForHumanReview' | 'Stopped' | 'Disconnected' | 'Failed'
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'
 
 export interface AgentSummaryDto {
@@ -86,7 +86,7 @@ export interface AgentSummaryDto {
   /** Generic model capability level for the agent's sessions. High (the Opus tier) is the default. */
   modelLevel: AgentModelLevel
   /**
-   * Transcript-derived "mid-turn right now" for the live session. Distinct from status=Working,
+   * Transcript-derived "mid-turn right now" for the live session. Distinct from status=Running,
    * which only means the agent was started — this is what deserves a spinner.
    */
   working: boolean

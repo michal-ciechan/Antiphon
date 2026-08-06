@@ -39,7 +39,7 @@ public sealed record AgentSummaryDto(
     // Generic model capability level (mapped per agent kind to a family alias at launch). Default High.
     AgentModelLevel ModelLevel = AgentModelLevel.High,
     // Transcript-derived "mid-turn right now" (SessionMessageQueueService.IsWorkingAsync) for the
-    // live session. Distinct from Status=Working, which only means the agent was started.
+    // live session. Distinct from Status=Running, which only means the agent was started.
     bool Working = false);
 
 public sealed record AgentDetailDto(

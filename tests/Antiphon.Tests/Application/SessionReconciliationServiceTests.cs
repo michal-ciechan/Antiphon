@@ -112,7 +112,7 @@ public class SessionReconciliationServiceTests
 
             await using var verify = CreateContext();
             (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Starting);
-            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Working);
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
         }
         finally
         {
@@ -128,7 +128,7 @@ public class SessionReconciliationServiceTests
         {
             // Agent flipped to Working just now, session already closed — e.g. the launch queue is
             // between "session row created" and "process running". Must not be touched yet.
-            var agentId = await SeedAgentAsync(marker, AgentStatus.Working, sessionId: Guid.NewGuid(), updatedAt: DateTime.UtcNow);
+            var agentId = await SeedAgentAsync(marker, AgentStatus.Running, sessionId: Guid.NewGuid(), updatedAt: DateTime.UtcNow);
 
             await using var db = CreateContext();
             var service = BuildService(db, new FakeRunnerClient { Sessions = [] }, new MockEventBus());
@@ -136,7 +136,7 @@ public class SessionReconciliationServiceTests
             await service.ScanAsync(CancellationToken.None);
 
             await using var verify = CreateContext();
-            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Working);
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
         }
         finally
         {
@@ -163,7 +163,7 @@ public class SessionReconciliationServiceTests
             // still live in the DB, the agent stays Working too. No guessing while blind.
             await using var verify = CreateContext();
             (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status.ShouldBe(SessionStatus.Running);
-            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Working);
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
         }
         finally
         {
@@ -230,7 +230,7 @@ public class SessionReconciliationServiceTests
             Name = marker,
             Slug = marker,
             WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
-            Status = AgentStatus.Working,
+            Status = AgentStatus.Running,
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now.AddHours(-2),
             UpdatedAt = staleAgent ? now.AddHours(-1) : now

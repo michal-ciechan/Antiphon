@@ -165,7 +165,7 @@ public sealed class AgentSessionRuntime
             Guid? changedAgentId = null;
             var sessionIdText = sessionId.ToString("D");
             var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
-            if (agent is not null && agent.Status == AgentStatus.Working && agent.CurrentCardId is null)
+            if (agent is not null && agent.Status == AgentStatus.Running && agent.CurrentCardId is null)
             {
                 agent.Status = exitCode == 0 ? AgentStatus.Stopped : AgentStatus.Failed;
                 agent.UpdatedAt = now;

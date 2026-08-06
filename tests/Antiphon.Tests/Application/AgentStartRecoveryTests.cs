@@ -52,7 +52,7 @@ public class AgentStartRecoveryTests
             var detail = await harness.Control.StartAsync(
                 agent.Id, new StartAgentRequest(), CancellationToken.None);
             // The Start API returns optimistically (launch is queued); Working here is expected.
-            detail.Status.ShouldBe(AgentStatus.Working);
+            detail.Status.ShouldBe(AgentStatus.Running);
 
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 

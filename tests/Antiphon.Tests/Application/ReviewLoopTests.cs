@@ -505,7 +505,7 @@ public class ReviewLoopTests
                 Name = $"ReviewTestAgent-{agentId:N}"[..30],
                 Slug = $"review-test-{agentId:N}"[..20],
                 WorkingDirectory = workspace,
-                Status = AgentStatus.Working,
+                Status = AgentStatus.Running,
                 PersistentSessionId = sessionId.ToString("D"),
                 CreatedAt = now,
                 UpdatedAt = now,

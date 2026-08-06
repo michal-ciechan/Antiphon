@@ -239,7 +239,7 @@ export function AgentsPage() {
                 {selected.data.details && <Text size="sm">{selected.data.details}</Text>}
               </Stack>
               <Group gap="sm" align="center">
-                {selected.data.liveSession || selected.data.status === 'Working' ? (
+                {selected.data.liveSession || selected.data.status === 'Running' ? (
                   <Button
                     variant="light"
                     color="red"

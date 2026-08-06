@@ -176,7 +176,7 @@ public sealed class SessionReconciliationService
     {
         var agentGrace = TimeSpan.FromMilliseconds(Math.Max(0, _settings.AgentGraceMs));
         var workingAgents = await _db.Agents
-            .Where(a => a.Status == AgentStatus.Working)
+            .Where(a => a.Status == AgentStatus.Running)
             .ToListAsync(ct);
 
         var changedAgentIds = new List<Guid>();
