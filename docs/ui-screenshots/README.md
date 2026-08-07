@@ -34,6 +34,14 @@ here before anyone opens the app.
 
 ![agents-filesreviewpanel--diff-no-threads](./agents-filesreviewpanel--diff-no-threads.png)
 
+## Agents/SessionTranscriptPanel — Conversation
+
+![agents-sessiontranscriptpanel--conversation](./agents-sessiontranscriptpanel--conversation.png)
+
+## Agents/SessionTranscriptPanel — With Composer
+
+![agents-sessiontranscriptpanel--with-composer](./agents-sessiontranscriptpanel--with-composer.png)
+
 ## Pages/Home (Workflows) — Desktop
 
 ![pages-home-workflows--desktop](./pages-home-workflows--desktop.png)
@@ -50,10 +58,14 @@ here before anyone opens the app.
 
 ![dashboard-newworkflowdialog-submitbutton--fixed](./dashboard-newworkflowdialog-submitbutton--fixed.png)
 
-## Agents/SessionTranscriptPanel — Conversation
+## Delegations/Board — Board
 
-![agents-sessiontranscriptpanel--conversation](./agents-sessiontranscriptpanel--conversation.png)
+![delegations-board--board](./delegations-board--board.png)
 
-## Agents/SessionTranscriptPanel — With Composer
+## Delegations/Board — Drawer
 
-![agents-sessiontranscriptpanel--with-composer](./agents-sessiontranscriptpanel--with-composer.png)
+![delegations-board--drawer](./delegations-board--drawer.png)
+
+## Delegations/Board — Delegate
+
+![delegations-board--delegate](./delegations-board--delegate.png)

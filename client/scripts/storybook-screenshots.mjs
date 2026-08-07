@@ -90,6 +90,10 @@ async function main() {
   }
   await page.close()
 
+  // The index is every story Storybook knows about, whether or not this run captured it. Writing
+  // the manifest from `manifest` alone would silently delete every other entry on a filtered run —
+  // the README would then claim the suite is three screenshots when it is thirty.
+  const allStories = Object.values(index.entries).filter((e) => e.type === 'story')
   const readme = [
     '# UI screenshots',
     '',
@@ -99,7 +103,7 @@ async function main() {
     'Regenerate after UI changes and review the image diff — a drastic rendering break shows up',
     'here before anyone opens the app.',
     '',
-    ...manifest.map((m) => `## ${m.title} — ${m.name}\n\n![${m.id}](./${m.file})\n`),
+    ...allStories.map((s) => `## ${s.title} — ${s.name}\n\n![${s.id}](./${s.id}.png)\n`),
   ].join('\n')
   writeFileSync(join(outDir, 'README.md'), readme)
   console.log(`Wrote ${manifest.length} screenshots + README to docs/ui-screenshots/`)

@@ -1,0 +1,177 @@
+import { describe, expect, it } from 'vitest'
+import type { AgentTaskSummaryDto } from '../../api/agentTasks'
+import {
+  LANES,
+  STATUS_COLOR,
+  TIER_VISUALS,
+  buildTaskForest,
+  countSubtree,
+  elapsedSeconds,
+  formatCost,
+  formatDuration,
+  laneOf,
+  subtreeIds,
+} from './taskVisuals'
+
+function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTaskSummaryDto {
+  return {
+    rootTaskId: overrides.rootTaskId ?? overrides.id,
+    parentTaskId: null,
+    depth: 0,
+    title: overrides.id,
+    kind: 'Worker',
+    role: 'Custom',
+    modelLevel: 'High',
+    escalatedFrom: null,
+    status: 'Queued',
+    workspace: 'Shared',
+    workingDirectory: 'C:/src/antiphon',
+    repoPath: 'C:/src/antiphon',
+    scopeGlob: null,
+    agentId: null,
+    agentName: null,
+    agentSessionId: null,
+    attempt: 1,
+    createdAt: '2026-08-07T10:00:00Z',
+    dispatchedAt: null,
+    completedAt: null,
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    subtreeCostUsd: 0,
+    childCount: 0,
+    ...overrides,
+  }
+}
+
+describe('the tier axis', () => {
+  it('never borrows a health colour, so rank cannot read as trouble', () => {
+    // A ladder rendered in green/orange/red says "this task is fine / in trouble", which is a
+    // different question from "how expensive is the model running it". Grey is the deliberate
+    // exception: it means "nothing to say" on both axes, which is why it is the bottom rung.
+    const health = new Set(Object.values(STATUS_COLOR).filter((colour) => colour !== 'gray'))
+    for (const tier of Object.values(TIER_VISUALS)) {
+      expect(health.has(tier.color), `${tier.alias} must not use a health colour`).toBe(false)
+    }
+  })
+
+  it('separates the rungs by intensity, not by hue', () => {
+    // Four shades of one violet reads as rank; four different hues reads as four categories.
+    const variants = Object.values(TIER_VISUALS).map((tier) => tier.variant)
+    expect(new Set(variants).size).toBeGreaterThan(1)
+    expect(new Set(Object.values(TIER_VISUALS).map((t) => t.color)).size).toBeLessThanOrEqual(2)
+  })
+
+  it('orders the four tiers by rank, most capable first', () => {
+    expect(TIER_VISUALS.Frontier.rank).toBeLessThan(TIER_VISUALS.High.rank)
+    expect(TIER_VISUALS.High.rank).toBeLessThan(TIER_VISUALS.Medium.rank)
+    expect(TIER_VISUALS.Medium.rank).toBeLessThan(TIER_VISUALS.Low.rank)
+  })
+})
+
+describe('lanes', () => {
+  it('places every status in exactly one lane', () => {
+    const statuses = Object.keys(STATUS_COLOR) as Array<keyof typeof STATUS_COLOR>
+    for (const status of statuses) {
+      const matching = LANES.filter((lane) => lane.statuses.includes(status))
+      expect(matching, `${status} should be in one lane`).toHaveLength(1)
+    }
+  })
+
+  it('treats Dispatched and Working as one thing — a delegate is on it either way', () => {
+    expect(laneOf('Dispatched')).toBe('working')
+    expect(laneOf('Working')).toBe('working')
+  })
+
+  it('keeps Blocked out of Done — a question needs an answer, not filing', () => {
+    expect(laneOf('Blocked')).toBe('blocked')
+  })
+})
+
+describe('buildTaskForest', () => {
+  it('nests children under their parent', () => {
+    const forest = buildTaskForest([
+      task({ id: 'root', kind: 'Orchestrator' }),
+      task({ id: 'child', parentTaskId: 'root', rootTaskId: 'root', createdAt: '2026-08-07T10:01:00Z' }),
+      task({ id: 'grandchild', parentTaskId: 'child', rootTaskId: 'root', createdAt: '2026-08-07T10:02:00Z' }),
+    ])
+
+    expect(forest).toHaveLength(1)
+    expect(forest[0].task.id).toBe('root')
+    expect(forest[0].children[0].task.id).toBe('child')
+    expect(forest[0].children[0].children[0].task.id).toBe('grandchild')
+  })
+
+  it('promotes a task whose parent is missing rather than dropping it', () => {
+    // A filtered or partial listing must never silently lose work — an orphan is still a task
+    // someone is paying for.
+    const forest = buildTaskForest([task({ id: 'orphan', parentTaskId: 'not-in-this-set' })])
+
+    expect(forest.map((n) => n.task.id)).toEqual(['orphan'])
+  })
+
+  it('puts the newest run first and orders each subtree oldest first', () => {
+    const forest = buildTaskForest([
+      task({ id: 'older-run', createdAt: '2026-08-07T09:00:00Z' }),
+      task({ id: 'newer-run', createdAt: '2026-08-07T11:00:00Z' }),
+      task({ id: 'second', parentTaskId: 'newer-run', createdAt: '2026-08-07T11:02:00Z' }),
+      task({ id: 'first', parentTaskId: 'newer-run', createdAt: '2026-08-07T11:01:00Z' }),
+    ])
+
+    expect(forest.map((n) => n.task.id)).toEqual(['newer-run', 'older-run'])
+    expect(forest[0].children.map((n) => n.task.id)).toEqual(['first', 'second'])
+  })
+
+  it('counts a whole subtree, including itself', () => {
+    const forest = buildTaskForest([
+      task({ id: 'root' }),
+      task({ id: 'a', parentTaskId: 'root' }),
+      task({ id: 'b', parentTaskId: 'a' }),
+    ])
+
+    expect(countSubtree(forest[0])).toBe(3)
+    expect([...subtreeIds(forest[0])].sort()).toEqual(['a', 'b', 'root'])
+  })
+})
+
+describe('formatting', () => {
+  it('counts a running task up from dispatch, not from creation', () => {
+    // Time queued is not time worked; charging a task for the dispatcher's backlog would make the
+    // concurrency cap look like a slow delegate.
+    const now = Date.parse('2026-08-07T10:05:00Z')
+    const running = task({ id: 't', dispatchedAt: '2026-08-07T10:02:00Z' })
+
+    expect(elapsedSeconds(running, now)).toBe(180)
+  })
+
+  it('shows a settled task what it took, not how long ago it was', () => {
+    const now = Date.parse('2026-08-07T18:00:00Z')
+    const done = task({
+      id: 't',
+      dispatchedAt: '2026-08-07T10:00:00Z',
+      completedAt: '2026-08-07T10:04:00Z',
+      status: 'Succeeded',
+    })
+
+    expect(elapsedSeconds(done, now)).toBe(240)
+  })
+
+  it('shows how long a queued task has been waiting', () => {
+    const now = Date.parse('2026-08-07T10:00:30Z')
+    expect(elapsedSeconds(task({ id: 't' }), now)).toBe(30)
+  })
+
+  it.each([
+    [45, '45s'],
+    [90, '1m30'],
+    [3_720, '1h02m'],
+  ])('formats %i seconds as %s', (seconds, expected) => {
+    expect(formatDuration(seconds)).toBe(expected)
+  })
+
+  it('keeps sub-cent spend visible instead of rounding a haiku task to nothing', () => {
+    expect(formatCost(0.0031)).toBe('$0.0031')
+    expect(formatCost(1.234)).toBe('$1.23')
+    expect(formatCost(0)).toBe('$0')
+  })
+})

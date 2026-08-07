@@ -17,7 +17,7 @@ import { DashboardPage } from './features/dashboard/DashboardPage'
 import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
-import { OrchestratorPanel } from './features/orchestrator/OrchestratorPanel'
+import { OrchestratorPage } from './features/orchestrator/OrchestratorPage'
 import { AgentsPage } from './features/agents/AgentsPage'
 import { AgentFilesPage } from './features/agents/AgentFilesPage'
 import { ChannelsPage } from './features/channels/ChannelsPage'
@@ -118,7 +118,7 @@ export default function App() {
                   element={
                     <ErrorBoundary fallbackTitle="Orchestrator error">
                       <SuspenseBoundary variant="page">
-                        <OrchestratorPanel />
+                        <OrchestratorPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

@@ -1,0 +1,201 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { apiGet, apiPost } from './client'
+import type { AgentModelLevel } from './agents'
+
+/**
+ * Delegated agent tasks (feature 007). One task is one delegated unit of work — deliberately not a
+ * Card: tasks are cheap, they nest, and hundreds can exist for a single run.
+ */
+
+/** The only structural choice when delegating: do a piece of work, or own a chunk and run agents. */
+export type AgentTaskKind = 'Worker' | 'Orchestrator'
+
+export type AgentTaskRole =
+  | 'Custom'
+  | 'Plan'
+  | 'Code'
+  | 'Review'
+  | 'Debug'
+  | 'Coverage'
+  | 'Docs'
+  | 'Commit'
+  | 'Test'
+  | 'Deploy'
+  | 'Merge'
+
+export type AgentTaskStatus =
+  | 'Queued'
+  | 'Dispatched'
+  | 'Working'
+  /** The delegate asked a question — it needs an answer, not a retry. */
+  | 'Blocked'
+  | 'Succeeded'
+  | 'Failed'
+  | 'Canceled'
+
+export type WorkspaceMode = 'Shared' | 'Worktree' | 'ReadOnly'
+
+export type AgentTaskEventType =
+  | 'Created'
+  | 'Dispatched'
+  | 'Escalated'
+  | 'Blocked'
+  | 'Replied'
+  | 'Merged'
+  | 'Conflicted'
+  | 'Retried'
+  | 'Completed'
+  | 'Failed'
+  | 'Canceled'
+  | 'Rejected'
+
+export interface AgentTaskSummaryDto {
+  id: string
+  rootTaskId: string
+  parentTaskId: string | null
+  depth: number
+  title: string
+  kind: AgentTaskKind
+  role: AgentTaskRole
+  modelLevel: AgentModelLevel
+  /** Set when the task was bumped up a tier — the chip shows the ladder, not just the destination. */
+  escalatedFrom: AgentModelLevel | null
+  status: AgentTaskStatus
+  workspace: WorkspaceMode
+  workingDirectory: string
+  repoPath: string | null
+  scopeGlob: string | null
+  agentId: string | null
+  agentName: string | null
+  agentSessionId: string | null
+  attempt: number
+  createdAt: string
+  dispatchedAt: string | null
+  completedAt: string | null
+  tokensIn: number
+  tokensOut: number
+  costUsd: number
+  /** This task plus everything under it — what a collapsed sub-orchestrator row reports. */
+  subtreeCostUsd: number
+  childCount: number
+}
+
+export interface AgentTaskEventDto {
+  type: AgentTaskEventType
+  modelLevel: AgentModelLevel | null
+  detail: string
+  at: string
+}
+
+export interface AgentTaskDetailDto {
+  summary: AgentTaskSummaryDto
+  goal: string
+  /** The delegate's final message, untouched — forwarding may excerpt it, this never does. */
+  result: string | null
+  resultFilePath: string | null
+  failureReason: string | null
+  mergeTargetRef: string | null
+  events: AgentTaskEventDto[]
+}
+
+export interface CreateAgentTaskRequest {
+  goal: string
+  title?: string | null
+  kind?: AgentTaskKind
+  role?: AgentTaskRole
+  /** Null takes the role policy's tier — which is the whole point of picking a role. */
+  modelLevel?: AgentModelLevel | null
+  workspace?: WorkspaceMode
+  workingDirectory?: string | null
+  scopeGlob?: string | null
+}
+
+export interface AgentTaskCreatedDto {
+  id: string
+  shortId: string
+  status: AgentTaskStatus
+  modelLevel: AgentModelLevel
+}
+
+/** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */
+export const AGENT_TASK_ROLES: Array<{
+  value: AgentTaskRole
+  label: string
+  use: string
+  level: AgentModelLevel
+}> = [
+  { value: 'Plan', label: 'Plan', use: 'decompose, design, choose an approach', level: 'Frontier' },
+  { value: 'Code', label: 'Code', use: 'write or change code', level: 'Frontier' },
+  { value: 'Review', label: 'Review', use: 'judge whether logic is correct', level: 'Frontier' },
+  { value: 'Debug', label: 'Debug', use: 'find out why something is broken', level: 'High' },
+  { value: 'Coverage', label: 'Coverage', use: 'check what a change missed', level: 'High' },
+  { value: 'Merge', label: 'Merge', use: 'resolve a conflict left by a worktree task', level: 'High' },
+  { value: 'Docs', label: 'Docs', use: 'prose, markdown, comments', level: 'Medium' },
+  { value: 'Commit', label: 'Commit', use: 'git add/commit/push/branch, PRs', level: 'Medium' },
+  { value: 'Test', label: 'Test', use: 'run a suite or build and report what failed', level: 'Low' },
+  { value: 'Deploy', label: 'Deploy', use: 'run a script, restart a service, check health', level: 'Low' },
+  { value: 'Custom', label: 'Custom', use: 'anything else', level: 'High' },
+]
+
+export const agentTaskKeys = {
+  list: ['agentTasks', 'list'] as const,
+  detail: (id: string) => ['agentTasks', 'detail', id] as const,
+}
+
+export function useAgentTasks() {
+  return useQuery({
+    queryKey: agentTaskKeys.list,
+    queryFn: () => apiGet<AgentTaskSummaryDto[]>('/agent-tasks'),
+    // SignalR invalidates on every task change; this only covers a dropped connection.
+    refetchInterval: 15_000,
+  })
+}
+
+export function useAgentTask(id: string | null) {
+  return useQuery({
+    queryKey: agentTaskKeys.detail(id ?? ''),
+    queryFn: () => apiGet<AgentTaskDetailDto>(`/agent-tasks/${id}`),
+    enabled: !!id,
+  })
+}
+
+/** Invalidate the board and the open drawer together — an action changes both. */
+function useTaskMutation<TVariables, TResult>(
+  mutationFn: (variables: TVariables) => Promise<TResult>,
+) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: agentTaskKeys.list })
+      queryClient.invalidateQueries({ queryKey: ['agentTasks', 'detail'] })
+    },
+  })
+}
+
+export function useCreateAgentTask() {
+  return useTaskMutation((request: CreateAgentTaskRequest) =>
+    apiPost<AgentTaskCreatedDto>('/agent-tasks', request),
+  )
+}
+
+export function useCancelAgentTask() {
+  return useTaskMutation((id: string) => apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/cancel`, {}))
+}
+
+export function useRetryAgentTask() {
+  return useTaskMutation((id: string) => apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/retry`, {}))
+}
+
+export function useEscalateAgentTask() {
+  return useTaskMutation(({ id, modelLevel }: { id: string; modelLevel?: AgentModelLevel }) =>
+    apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/escalate`, { modelLevel: modelLevel ?? null }),
+  )
+}
+
+/** Answer a Blocked delegate's question. Taking the work back is the failure mode this prevents. */
+export function useReplyToAgentTask() {
+  return useTaskMutation(({ id, message }: { id: string; message: string }) =>
+    apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/reply`, { message }),
+  )
+}

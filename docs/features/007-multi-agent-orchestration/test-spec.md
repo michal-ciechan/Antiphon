@@ -190,6 +190,16 @@ work (still no `Edit`/`Write` in its transcript).
   the tier display with it; role chips update the displayed tier; submitting posts the chosen `Kind`.
 - **U4** A sub-orchestrator row in the tree collapses its children by default and shows the subtree's
   task count and spend on the parent row; expanding reveals them.
+- **U5** Drawer actions hit the endpoint they claim: Retry posts `/retry`, Escalate posts `/escalate`
+  with no tier (the ladder is the server's decision), Cancel posts `/cancel` and closes. Escalate is
+  unavailable at `fable` and Retry is unavailable on a task that has not run — a disabled control is
+  cheaper than a 409 the user has to read.
+- **U6** A `Blocked` task's drawer offers an ANSWER, not a retry: typing one posts `/reply` with the
+  message. Taking the work back is the failure mode delegation exists to prevent.
+
+> Built as `client/src/features/delegations/*.test.tsx` (+ `taskVisuals.test.ts`), 41 tests.
+> The board/drawer/modal stories seed from the `agent-tasks.json` / `agent-task-detail.json`
+> contract fixtures, captured by `ContractSnapshotTests.Delegated_task_board_and_drawer_contracts`.
 
 ---
 
@@ -212,6 +222,6 @@ resolves for this role", not a literal.
 - S1–S22 green in the fast suite. **S16 is the one that must never be skipped** — it is the only
   thing stopping recursion from becoming unbounded.
 - E1 and E2b each green twice consecutively (nondeterminism check), E2–E4 green.
-- U1–U4 green.
+- U1–U6 green.
 - The role table in `SKILL.md` and C2's accepted sets reviewed together — they are the same contract
   written twice, and drift between them is silent.

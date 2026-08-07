@@ -35,7 +35,7 @@ import {
   TbShieldX,
   TbTerminal2,
 } from 'react-icons/tb'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import type { AgentIncidentDto, AgentSummaryDto } from '../../api/agents'
 import { useAgent, useAgentIncidents, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
@@ -47,7 +47,10 @@ import { AgentSettingsModal } from './AgentSettingsModal'
 
 export function AgentsPage() {
   const agents = useAgentList()
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  // ?agent=<id> deep-links a specific agent — how the delegations board points at the delegate
+  // that ran a task.
+  const [searchParams] = useSearchParams()
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(searchParams.get('agent'))
   const selected = useAgent(selectedAgentId)
   const [createOpen, setCreateOpen] = useState(false)
   const [addWorkOpen, setAddWorkOpen] = useState(false)

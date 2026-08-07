@@ -13,6 +13,7 @@ interface EventPayload {
   boardId?: string
   cardId?: string
   agentId?: string
+  taskId?: string
   [key: string]: unknown
 }
 
@@ -112,6 +113,15 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   {
     event: 'OrchestratorTick',
     getKeys: () => [['orchestrator', 'state']],
+  },
+  {
+    // Delegated tasks change from three directions — the dispatcher, the delegate's turn-end, and
+    // the board's own actions — so the board is only ever live if it listens.
+    event: 'AgentTaskChanged',
+    getKeys: (p) => [
+      ['agentTasks', 'list'],
+      ...(p.taskId ? [['agentTasks', 'detail', p.taskId]] : []),
+    ],
   },
   {
     event: 'ChannelChanged',

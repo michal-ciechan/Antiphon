@@ -1,6 +1,6 @@
 # Feature 007 — Multi-agent orchestration: delegated tasks, model tiers, task board
 
-**Status:** proposal — for review, not yet scheduled
+**Status:** P1 shipped; P2/P3 mostly shipped (see [§3 Phasing](#3-phasing) for what is still open)
 **Date:** 2026-08-06
 **Supersedes the unbuilt parts of:** [002-agent-orchestrator.md](../002-agent-orchestrator.md) (2026-05-15 draft; its
 long-poll/`wt.exe`/SQLite branch is dead — Antiphon went the PTY + xterm.js + Postgres route)
@@ -507,6 +507,11 @@ a plan file.
 
 ### 2.9 UI
 
+> **As built:** `client/src/features/delegations/` — `DelegationsBoard` (tree + lanes), `TaskTree`,
+> `TaskChip`/`TierBadge`, `TaskDrawer`, `DelegateModal`; mounted as the second tab of
+> `features/orchestrator/OrchestratorPage` (`/orchestrator?tab=delegations`) and reachable from the
+> files view's "Delegate…". Screenshots: `docs/ui-screenshots/delegations-board--*.png`.
+
 **Delegations board** — a second tab on the existing `/orchestrator` page rather than a new
 top-level section; that page already owns "what is the fleet doing right now". Left: the task tree
 (root → children, indent guides, the shape of the fan-out). Right: lanes for Queued / Working /
@@ -548,18 +553,20 @@ scope, so `POST /api/agent-tasks` from inside a worker is a 403 — the enforcem
 
 ## 3. Phasing
 
-**P1 — the spine.** `AgentTask` + migration, create/get/reply endpoints, the env contract and task
-token, dispatcher against *pinned* agents, `Shared` mode + `AllowedRoots` + cross-repo targeting,
-the reporting contract,
+**P1 — the spine. ✅ shipped.** `AgentTask` + migration, create/get/reply endpoints, the env contract
+and task token, dispatcher against *pinned* agents, `Shared` mode + `AllowedRoots` + cross-repo
+targeting, the reporting contract,
 `AgentTaskReplySink` with the 20 k rule, the skill and script, the orchestrator preamble. At the end
 of P1 the orchestrator delegates, stays small, and gets real reports back. Everything after is
 leverage.
 
-**P2 — the ladder.** Role policy, escalation with handoff, ephemeral agents, rebase merge-back with
-conflict → `Merge` task, the Delegations board, the optional `PreToolUse` deny hook.
+**P2 — the ladder.** Role policy ✅, escalation with handoff ✅ (manual; the stall trigger is not
+wired yet), ephemeral agents ✅ (spawned, but not deleted when the task settles), the Delegations
+board ✅. Still open: rebase merge-back with conflict → `Merge` task, the optional `PreToolUse` deny
+hook.
 
-**P3 — the rest.** File-view delegate modal, `Shared` mode with advisory leases, cost rollups and
-subtree collapse on the board.
+**P3 — the rest.** File-view delegate modal ✅, advisory scope leases ✅ (dispatcher-side), cost
+rollups and subtree collapse on the board ✅. Still open: nothing in this phase.
 
 Sub-orchestrators land in **P1**, not later: the token scoping and the reply-to-parent routing are the
 same code either way, and building the worker path first and retrofitting recursion would mean

@@ -33,7 +33,9 @@ import {
   TbMessagePlus,
   TbRefresh,
   TbSend,
+  TbUserShare,
 } from 'react-icons/tb'
+import { DelegateModal } from '../delegations/DelegateModal'
 import {
   useAddReviewComment,
   useAgentCommits,
@@ -273,6 +275,7 @@ export function FilesReviewPanel({
     <FileViewer
       key={`${selectedFile.path}:${since}`}
       agentId={agentId}
+      workspaceRoot={files.data.workspaceRoot}
       file={selectedFile}
       since={since}
       threads={threadsByPath.get(selectedFile.path) ?? []}
@@ -698,6 +701,7 @@ function FileRow({
 
 function FileViewer({
   agentId,
+  workspaceRoot,
   file,
   since,
   threads,
@@ -705,6 +709,8 @@ function FileViewer({
   onMark,
 }: {
   agentId: string
+  /** The agent's workspace root — where a delegate launched from this file will run. */
+  workspaceRoot: string
   file: AgentFileDto
   /** Baseline selection — the diff's original side is the file's content at this baseline. */
   since: string
@@ -717,6 +723,7 @@ function FileViewer({
   const head = useAgentFileContent(agentId, file.path, 'head', since)
   const [commentLine, setCommentLine] = useState<number | null>(null)
   const [commentBody, setCommentBody] = useState('')
+  const [delegateOpen, setDelegateOpen] = useState(false)
   const createThread = useCreateReviewThread(agentId)
 
   const language = useMemo(() => languageFor(file.path), [file.path])
@@ -766,6 +773,17 @@ function FileViewer({
         </Group>
         <Group gap="xs">
           <SegmentedControl size="xs" data={modes} value={mode} onChange={setMode} />
+          {/* Hand this file to an agent from where you are reading it — the goal and the scope
+              lease are prefilled with the path, and nothing else is inferred. */}
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="violet"
+            leftSection={<TbUserShare size={14} />}
+            onClick={() => setDelegateOpen(true)}
+          >
+            Delegate…
+          </Button>
           {!file.contextOnly && (
             <>
               <Button size="compact-xs" variant="light" leftSection={<TbEye size={14} />} onClick={() => onMark('Viewed')}>
@@ -784,6 +802,17 @@ function FileViewer({
           )}
         </Group>
       </Group>
+
+      <DelegateModal
+        opened={delegateOpen}
+        onClose={() => setDelegateOpen(false)}
+        title={`Delegate — ${file.path}`}
+        prefill={{
+          goal: `In ${file.path}: `,
+          workingDirectory: workspaceRoot,
+          scopeGlob: file.path,
+        }}
+      />
 
       <Paper withBorder style={{ overflow: 'hidden' }}>
         {work.isLoading ? (
