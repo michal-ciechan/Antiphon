@@ -230,14 +230,19 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public async Task SeedPendingMessageAsync(string body, Guid? sessionId = null)
     {
+        var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
+        // FIFO sequence continues from whatever is already queued, so a test can seed several.
+        var seq = ((await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sid)
+            .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
             Id = Guid.NewGuid(),
-            AgentSessionId = sessionId ?? SessionId,
+            AgentSessionId = sid,
             Body = body,
             Status = QueuedMessageStatus.Pending,
-            Sequence = 1,
+            Sequence = seq,
             CreatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(5),
         });
         await db.SaveChangesAsync();
