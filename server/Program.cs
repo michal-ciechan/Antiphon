@@ -86,6 +86,7 @@ try
     builder.Services.AddOptions<OrchestratorSettings>()
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
+    builder.Services.Configure<DelegationSettings>(builder.Configuration.GetSection("Delegation"));
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
@@ -140,6 +141,12 @@ try
     builder.Services.AddScoped<RunAttemptStallDetector>();
     builder.Services.AddScoped<OrchestratorService>();
     builder.Services.AddScoped<ExternalTrackerSyncService>();
+    // Delegated agent tasks (feature 007). The reply service is a SINGLETON because the runtime's
+    // transcript observer (itself a singleton) calls it on every turn-end; it opens its own scope.
+    builder.Services.AddSingleton<DelegationWorkspaceResolver>();
+    builder.Services.AddScoped<AgentTaskService>();
+    builder.Services.AddScoped<AgentTaskDispatcher>();
+    builder.Services.AddSingleton<AgentTaskReplyService>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -248,6 +255,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
+    builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
 
@@ -345,6 +353,7 @@ try
     app.MapGitHubEndpoints();
     app.MapSessionEndpoints();
     app.MapOrchestratorEndpoints();
+    app.MapAgentTaskEndpoints();
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
 

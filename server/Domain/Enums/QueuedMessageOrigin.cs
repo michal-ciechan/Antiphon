@@ -16,4 +16,11 @@ public enum QueuedMessageOrigin
 
     /// <summary>Injected by Antiphon itself (bootstrap/restart/compaction-recovery notes).</summary>
     System = 2,
+
+    /// <summary>
+    /// A delegated task's completion note, or an answer to a delegate's question. Batches like
+    /// <see cref="Channel"/> — five delegates finishing together should produce ONE note, not five
+    /// turns — but with a size cap, since task reports are far bigger than chat messages.
+    /// </summary>
+    Delegation = 3,
 }

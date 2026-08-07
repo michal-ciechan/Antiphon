@@ -41,3 +41,4 @@ bin-ptyhost/
 bin-verify/
 bin-fix/
 bin-profile*/
+bin-deleg*/

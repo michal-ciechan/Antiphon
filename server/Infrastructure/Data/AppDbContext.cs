@@ -47,6 +47,8 @@ public class AppDbContext : DbContext
     public DbSet<ReviewThread> ReviewThreads => Set<ReviewThread>();
     public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
     public DbSet<Alert> Alerts => Set<Alert>();
+    public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
+    public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -970,6 +972,62 @@ public class AppDbContext : DbContext
             entity.HasOne(r => r.StageExecution)
                 .WithMany()
                 .HasForeignKey(r => r.StageExecutionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentTask>(entity =>
+        {
+            entity.ToTable("AgentTasks");
+            entity.HasKey(t => t.Id);
+            entity.Property(t => t.RootTaskId).IsRequired();
+            entity.Property(t => t.Depth).IsRequired();
+            entity.Property(t => t.Title).IsRequired().HasMaxLength(300);
+            entity.Property(t => t.Goal).IsRequired().HasMaxLength(20000);
+            entity.Property(t => t.Kind).IsRequired();
+            entity.Property(t => t.Role).IsRequired();
+            entity.Property(t => t.ModelLevel).IsRequired();
+            entity.Property(t => t.Workspace).IsRequired().HasDefaultValue(WorkspaceMode.Shared);
+            entity.Property(t => t.WorkingDirectory).IsRequired().HasMaxLength(1000);
+            entity.Property(t => t.RepoPath).HasMaxLength(1000);
+            entity.Property(t => t.MergeTargetRef).HasMaxLength(300);
+            entity.Property(t => t.ScopeGlob).HasMaxLength(1000);
+            entity.Property(t => t.Status).IsRequired();
+            entity.Property(t => t.ReplyTo).IsRequired();
+            entity.Property(t => t.FailureReason).HasMaxLength(4000);
+            entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
+            entity.Property(t => t.TokenHash).HasMaxLength(128);
+            entity.Property(t => t.CostUsd).HasPrecision(18, 6);
+            entity.Property(t => t.CreatedAt).IsRequired();
+            entity.Property(t => t.ConcurrencyToken).IsRequired();
+
+            entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
+            entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");
+            entity.HasIndex(t => t.ParentTaskId).HasDatabaseName("IX_AgentTasks_ParentTaskId");
+            entity.HasIndex(t => t.AgentSessionId).HasDatabaseName("IX_AgentTasks_AgentSessionId");
+            entity.HasIndex(t => t.TokenHash).HasDatabaseName("IX_AgentTasks_TokenHash");
+
+            // Self-reference: deleting a parent must NOT cascade a whole subtree away — the tree is
+            // the audit trail. Restrict forces an explicit decision instead.
+            entity.HasOne(t => t.ParentTask)
+                .WithMany(t => t.Children)
+                .HasForeignKey(t => t.ParentTaskId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AgentTaskEvent>(entity =>
+        {
+            entity.ToTable("AgentTaskEvents");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.AgentTaskId).IsRequired();
+            entity.Property(e => e.Type).IsRequired();
+            entity.Property(e => e.Detail).IsRequired().HasMaxLength(4000);
+            entity.Property(e => e.At).IsRequired();
+
+            entity.HasIndex(e => new { e.AgentTaskId, e.At }).HasDatabaseName("IX_AgentTaskEvents_AgentTaskId_At");
+
+            entity.HasOne(e => e.AgentTask)
+                .WithMany(t => t.Events)
+                .HasForeignKey(e => e.AgentTaskId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

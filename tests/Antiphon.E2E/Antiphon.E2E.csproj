@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
+    <!-- Drives a REAL Claude in a ConPTY for the delegation end-to-end test. -->
+    <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
   </ItemGroup>
 
 </Project>

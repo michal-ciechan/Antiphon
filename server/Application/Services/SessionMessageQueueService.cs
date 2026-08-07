@@ -33,6 +33,7 @@ public sealed class SessionMessageQueueService
     private readonly TimeProvider _timeProvider;
     private readonly DeliveryVerificationSettings _verification;
     private readonly Settings.ChannelBridgeSettings _bridgeSettings;
+    private readonly DelegationSettings _delegationSettings;
     private readonly ILogger<SessionMessageQueueService> _logger;
 
     public SessionMessageQueueService(
@@ -42,7 +43,8 @@ public sealed class SessionMessageQueueService
         TimeProvider timeProvider,
         ILogger<SessionMessageQueueService> logger,
         IOptions<SupervisionSettings>? supervisionSettings = null,
-        IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null)
+        IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null,
+        IOptions<DelegationSettings>? delegationSettings = null)
     {
         _scopeFactory = scopeFactory;
         _runtime = runtime;
@@ -50,6 +52,7 @@ public sealed class SessionMessageQueueService
         _timeProvider = timeProvider;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
         _bridgeSettings = bridgeSettings?.Value ?? new Settings.ChannelBridgeSettings();
+        _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _logger = logger;
     }
 
@@ -321,14 +324,30 @@ public sealed class SessionMessageQueueService
 
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
-        if (_bridgeSettings.BatchingEnabled
-            && head.Origin == QueuedMessageOrigin.Channel
-            && head.ConversationKey is not null)
+
+        // Delegation batches for the same reason Channel does — five delegates finishing together
+        // should reach the orchestrator as ONE note, not five turns — but with a size cap. Task
+        // reports run to thousands of characters where chat messages run to tens, so an uncapped
+        // run could push 100k into a TUI in a single paste. The overflow simply rides the next
+        // turn-end, which the queue already does naturally.
+        var batches = _bridgeSettings.BatchingEnabled
+            && head.ConversationKey is not null
+            && head.Origin is QueuedMessageOrigin.Channel or QueuedMessageOrigin.Delegation;
+
+        if (batches)
         {
+            var budget = head.Origin == QueuedMessageOrigin.Delegation
+                ? Math.Max(head.Body.Length, _delegationSettings.ReplyInlineMaxChars)
+                : int.MaxValue;
+            var used = head.Body.Length;
+
             foreach (var m in pending.Skip(1))
             {
-                if (m.Origin != QueuedMessageOrigin.Channel || m.ConversationKey != head.ConversationKey)
+                if (m.Origin != head.Origin || m.ConversationKey != head.ConversationKey)
                     break;
+                if (used + m.Body.Length > budget)
+                    break;
+                used += m.Body.Length;
                 run.Add(m);
             }
         }

@@ -247,6 +247,13 @@ public sealed class AgentSessionRuntime
             var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
             if (reviewReplies is not null)
                 await reviewReplies.OnTurnEndAsync(sessionId, ct);
+
+            // Same reason as the channel dispatcher above: Claude can write the turn's stop marker
+            // BEFORE its report text, so a delegate's task would stay Working forever if only the
+            // TurnEnd triggered settlement. The text's own arrival re-triggers it (no-op otherwise).
+            var taskReplies = scope.ServiceProvider.GetService<AgentTaskReplyService>();
+            if (taskReplies is not null)
+                await taskReplies.OnTurnEndAsync(sessionId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -274,6 +281,12 @@ public sealed class AgentSessionRuntime
             var reviewReplies = scope.ServiceProvider.GetService<ReviewReplyDispatcher>();
             if (reviewReplies is not null)
                 await reviewReplies.OnTurnEndAsync(sessionId, ct);
+
+            // A delegate's finished turn IS its report — settle the task and deliver the note to
+            // its parent before the queue injects anything else into this session.
+            var taskReplies = scope.ServiceProvider.GetService<AgentTaskReplyService>();
+            if (taskReplies is not null)
+                await taskReplies.OnTurnEndAsync(sessionId, ct);
 
             var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
             if (queue is not null)
