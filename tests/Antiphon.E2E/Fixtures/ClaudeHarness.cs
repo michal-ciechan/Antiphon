@@ -16,18 +16,30 @@ public sealed class ClaudeHarness : IAsyncDisposable
 {
     private readonly PtyAgentRunner _runner;
 
-    private ClaudeHarness(PtyAgentRunner runner) => _runner = runner;
+    /// <summary>The session's own JSONL — the primary source of truth for turn end and report text.</summary>
+    public ClaudeJsonlTail Transcript { get; }
+
+    private ClaudeHarness(PtyAgentRunner runner, ClaudeJsonlTail transcript)
+    {
+        _runner = runner;
+        Transcript = transcript;
+    }
 
     public static async Task<ClaudeHarness> StartAsync(
         string cwd, IDictionary<string, string> env, string model)
     {
         TrustDirectory(cwd);
 
+        // Pin the session id at launch so the transcript file can be located exactly, rather than
+        // guessed at from the newest file in a directory.
+        var sessionId = Guid.NewGuid();
         var runner = new PtyAgentRunner();
-        var (app, args) = BuildLaunch(ResolveClaudeOrThrow(), "--dangerously-skip-permissions", "--model", model);
+        var (app, args) = BuildLaunch(
+            ResolveClaudeOrThrow(),
+            "--dangerously-skip-permissions", "--model", model, "--session-id", sessionId.ToString("D"));
         await runner.StartAsync(app, args, cwd: cwd, env: env, cols: 120, rows: 30);
 
-        var harness = new ClaudeHarness(runner);
+        var harness = new ClaudeHarness(runner, new ClaudeJsonlTail(sessionId));
         if (!await harness.WaitUntilUsableAsync())
         {
             await runner.DisposeAsync();
@@ -117,8 +129,7 @@ public sealed class ClaudeHarness : IAsyncDisposable
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             await _runner.WriteAsync(normalized);
-            if (await _runner.WaitForScreenAsync(
-                    s => Squash(s).Contains(probe, StringComparison.Ordinal), TimeSpan.FromSeconds(10)))
+            if (await _runner.WaitForScreenAsync(s => BodyLanded(s, probe), TimeSpan.FromSeconds(10)))
                 break;
 
             if (attempt == 3)
@@ -180,6 +191,16 @@ public sealed class ClaudeHarness : IAsyncDisposable
         string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     /// <summary>
+    /// Did the body reach the composer? A short single-line body appears verbatim, but anything
+    /// multi-line is COLLAPSED into a placeholder — "[Pasted text #1 +18 lines]" — so looking only
+    /// for the literal text reports failure for a paste that landed perfectly well, and the retry
+    /// then stacks a second and third paste into the same composer.
+    /// </summary>
+    private static bool BodyLanded(string screen, string probe) =>
+        Squash(screen).Contains(probe, StringComparison.Ordinal)
+        || System.Text.RegularExpressions.Regex.IsMatch(screen, @"Pasted text\s*#\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
     /// Wait for the turn to genuinely finish.
     ///
     /// Quiet alone is not enough: a hook, a tool call or a slow first token can leave the pty silent
@@ -187,23 +208,72 @@ public sealed class ClaudeHarness : IAsyncDisposable
     /// the model's report. So wait for the working indicator to GO AWAY first — a positive end
     /// signal — and only then require a quiet window to be sure the text has finished rendering.
     /// </summary>
-    public async Task<bool> WaitForTurnEndAsync(TimeSpan? timeout = null)
+    /// <summary>
+    /// Wait for the turn to finish, and return what the model actually said.
+    ///
+    /// PRIMARY signal is the session's own JSONL: it carries an explicit stop reason and the
+    /// assistant text in full. SECONDARY is the screen, with the animated chrome stripped
+    /// (<see cref="ClaudeScreen.Stable"/>) so "settled" means something — raw snapshots are never
+    /// equal, because the status line animates every frame.
+    ///
+    /// The screen can only CORROBORATE, never decide: it shows a viewport, so a long report is
+    /// partly scrolled away, and its wording is chrome-laden. When the two disagree the transcript
+    /// wins, and the disagreement is reported rather than swallowed.
+    /// </summary>
+    public async Task<TurnResult> WaitForTurnEndAsync(TimeSpan? timeout = null)
     {
         var budget = timeout ?? TimeSpan.FromMinutes(5);
+        var text = await Transcript.WaitForTurnEndAsync(budget);
 
-        // The turn is over when the COMPOSER comes back — a positive signal, unlike silence.
-        // Quiet-window detection does not work against current Claude builds: the TUI animates its
-        // status line continuously, so the pty never goes quiet even when the model has finished,
-        // and every quiet-based wait burns its whole budget on a turn that ended minutes earlier.
-        var ended = await _runner.WaitForScreenAsync(
-            s => ComposerIsLive(s) && !TurnHasStarted(s), budget);
-        if (!ended)
-            return false;
+        if (text is not null)
+        {
+            // Corroborate: the TUI should also look finished. A mismatch is worth surfacing — it
+            // means either the transcript ran ahead of the render, or the screen signals drifted
+            // against a new Claude build.
+            var screenAgrees = !ClaudeScreen.IsWorking(Screen());
+            return new TurnResult(true, text, screenAgrees, Transcript.Path);
+        }
 
-        // Trailing text can render just after the composer returns; give it a moment to land before
-        // anything scrapes the screen for the report.
-        await Task.Delay(2_000);
-        return true;
+        // No transcript (Claude may not have created the file — a turn that produced nothing, or a
+        // session that never started). Fall back to the screen, and say so, so a caller can tell a
+        // corroborated result from a scraped one.
+        var settled = await WaitForScreenToSettleAsync(TimeSpan.FromSeconds(30));
+        return new TurnResult(settled, LastMessage(), ScreenCorroborated: false, Transcript.Path);
+    }
+
+    /// <param name="Completed">Whether a turn boundary was observed at all.</param>
+    /// <param name="Text">The model's message — from the transcript when available.</param>
+    /// <param name="ScreenCorroborated">Whether the rendered screen agreed with the transcript.</param>
+    /// <param name="TranscriptPath">Where the transcript was read from; null when it was not found.</param>
+    public sealed record TurnResult(bool Completed, string Text, bool ScreenCorroborated, string? TranscriptPath);
+
+    /// <summary>
+    /// Wait until the screen stops changing, ignoring the parts that animate forever. Useful as a
+    /// fallback and as a corroboration step; never as the primary end-of-turn signal.
+    /// </summary>
+    public async Task<bool> WaitForScreenToSettleAsync(TimeSpan timeout, int stableChecks = 3)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        var previous = ClaudeScreen.Stable(Screen());
+        var consecutive = 0;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(1_000);
+            var current = ClaudeScreen.Stable(Screen());
+
+            if (string.Equals(current, previous, StringComparison.Ordinal) && !ClaudeScreen.IsWorking(Screen()))
+            {
+                if (++consecutive >= stableChecks)
+                    return true;
+            }
+            else
+            {
+                consecutive = 0;
+            }
+            previous = current;
+        }
+        return false;
     }
 
     /// <summary>

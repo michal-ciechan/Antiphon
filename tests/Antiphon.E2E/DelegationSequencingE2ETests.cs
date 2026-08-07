@@ -275,11 +275,22 @@ public class DelegationSequencingE2ETests
                 model: ModelLevelAliases.ForClaude(task.ModelLevel));
 
             await session.SubmitAsync(brief);
-            (await session.WaitForTurnEndAsync()).ShouldBeTrue(
-                $"delegate for task {DelegationReportFormatter.Short(taskId)} must finish a turn. "
-                + "Screen:\n" + session.Screen());
 
-            var report = session.LastMessage();
+            // The transcript decides whether the turn ended and what was said; the screen only
+            // corroborates. Screen-scraping alone cannot do either job: the viewport truncates a
+            // long report, and the status line animates forever so "settled" never arrives.
+            var turn = await session.WaitForTurnEndAsync();
+            turn.Completed.ShouldBeTrue(
+                $"delegate for task {DelegationReportFormatter.Short(taskId)} must finish a turn "
+                + $"(transcript: {turn.TranscriptPath ?? "not found"}).\nScreen:\n{session.Screen()}");
+            if (!turn.ScreenCorroborated)
+            {
+                Console.WriteLine(
+                    $"[warn] task {DelegationReportFormatter.Short(taskId)}: the transcript reported a "
+                    + "completed turn but the screen still looked busy — check if this persists.");
+            }
+
+            var report = turn.Text;
             await IngestTurnAsync(sessionId, brief, report);
             await fixture.Services.GetRequiredService<AgentTaskReplyService>()
                 .OnTurnEndAsync(sessionId, CancellationToken.None);
