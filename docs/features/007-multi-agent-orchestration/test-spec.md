@@ -123,6 +123,16 @@ layers can run without the real CLI:
 | **S22** | Depth backstop | A task at `MaxDepth` is rejected with a message naming the limit; the tree below it is untouched |
 
 Run: `dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-ptyhost\ --treenode-filter "/*/*/AgentTask*/*"`
+
+> **As built:** S10 is `AgentTaskStallEscalationTests` (auto-bump pins the shipped Debug policy;
+> transcript progress resets the clock; no-target and at-target tasks untouched) plus the
+> retry/escalate/token-refresh tests in `AgentTaskServiceIntegrationTests`. S12 splits into
+> `DelegationWorktreeTests` (real-git lifecycle: branch-from-target, adopt-leftover, commit-all
+> sweep, ff-advance of a checked-out target, conflict aborts cleanly with the file list, no-target
+> leaves the branch, empty branch removed) and the settle-side tests in
+> `AgentTaskReplyIntegrationTests` (merged→note, conflict→Blocked+Merge task, Merge-task completion
+> un-blocks the conflicted parent). Ephemeral cleanup: succeeded → session stopped + agent row
+> deleted; Blocked keeps both.
 (alternate output path because the always-on daemons lock `bin/`).
 
 ---

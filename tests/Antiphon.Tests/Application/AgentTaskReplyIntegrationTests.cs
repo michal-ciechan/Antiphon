@@ -237,13 +237,191 @@ public class AgentTaskReplyIntegrationTests
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
     }
 
+    // ---- ephemeral cleanup -----------------------------------------------------------------
+
+    [Test]
+    public async Task a_succeeded_ephemeral_delegate_is_stopped_and_its_agent_row_deleted()
+    {
+        // The delegate is spent: leaving the session running spends memory on nothing, and the
+        // agent row would pile onto the agents page one settled task at a time.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, "task-cleanup");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.Ephemeral = true; t.AgentId = agentId; t.AgentName = "task-cleanup"; });
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBe([sessionId]);
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse("the throwaway row must go");
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.AgentName.ShouldBe("task-cleanup", "the snapshot keeps naming who ran the work");
+    }
+
+    [Test]
+    public async Task a_blocked_delegate_keeps_its_session_and_agent()
+    {
+        // Blocked means the conversation continues — killing the session here would orphan the
+        // -Reply path and force a cold retry of work that only needed an answer.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, "task-blocked");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.Ephemeral = true; t.AgentId = agentId; });
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Should negatives throw?");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked);
+    }
+
+    // ---- worktree merge-back on settle -----------------------------------------------------
+
+    [Test]
+    public async Task a_succeeded_worktree_task_lands_its_branch_and_says_so_in_the_note()
+    {
+        using var repo = new ScratchGitRepo("antiphon-reply-merge");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.MergeTargetRef = "feat/parent";
+        });
+        await CreateWorktreeForAsync(factory, task);
+        await File.WriteAllTextAsync(Path.Combine(TaskWorktreePath(task)!, "feature.md"), "the work\n");
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Wrote feature.md.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        (await repo.GitReadAsync("show", "feat/parent:feature.md")).ShouldBe("the work\n");
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Merged)).ShouldBeTrue();
+
+        var note = await verify.SessionQueuedMessages
+            .SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("merged → feat/parent", customMessage: "the caller must learn the branch landed");
+    }
+
+    [Test]
+    public async Task a_merge_conflict_blocks_the_task_and_spawns_a_merge_delegate()
+    {
+        // "Done" work that cannot land is not done. The task blocks, and the conflict goes to a
+        // Merge-role delegate working in the conflicted worktree — never an automatic resolution.
+        using var repo = new ScratchGitRepo("antiphon-reply-conflict");
+        await repo.CommitFileAsync("shared.md", "original\n");
+        await repo.GitAsync("branch", "feat/parent");
+        var factory = new TestScopeFactory(repo.WorktreeRoot);
+
+        var parentSessionId = await SeedSessionAsync(repo.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parentSessionId, t =>
+        {
+            t.Workspace = WorkspaceMode.Worktree;
+            t.RepoPath = repo.Path;
+            t.MergeTargetRef = "feat/parent";
+        });
+        await CreateWorktreeForAsync(factory, task);
+        await File.WriteAllTextAsync(Path.Combine(TaskWorktreePath(task)!, "shared.md"), "delegate version\n");
+        await repo.GitAsync("checkout", "feat/parent");
+        await repo.CommitFileAsync("shared.md", "target version\n");
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Rewrote shared.md.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var blocked = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
+        blocked.FailureReason.ShouldContain("conflict");
+
+        var merge = await verify.AgentTasks.SingleAsync(t => t.ParentTaskId == task.Id);
+        merge.Role.ShouldBe(AgentTaskRole.Merge);
+        merge.ModelLevel.ShouldBe(AgentModelLevel.High, "conflict resolution is High-tier work by policy");
+        merge.WorkingDirectory.ShouldBe(TaskWorktreePath(task), "it resolves IN the conflicted worktree");
+        merge.ParentSessionId.ShouldBe(parentSessionId, "its report goes to the same caller");
+        merge.Goal.ShouldContain("shared.md");
+    }
+
+    [Test]
+    public async Task a_finished_merge_delegate_unblocks_its_conflicted_parent()
+    {
+        // The loop-closer: without it, a conflicted task stays Blocked forever after its conflict
+        // was actually resolved.
+        using var workspace = new TempWorkspace();
+        var conflictedId = Guid.NewGuid();
+        await using (var db = CreateContext())
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = conflictedId,
+                RootTaskId = conflictedId,
+                Title = "The conflicted task",
+                Goal = "original work",
+                Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = workspace.Path,
+                WorktreePath = workspace.Path,
+                WorktreeBranch = "feat/card-task-x",
+                MergeTargetRef = "master",
+                Status = AgentTaskStatus.Blocked,
+                FailureReason = "Rebase onto master conflicted in 1 file(s).",
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        var (merge, mergeSessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.RootTaskId = conflictedId;
+            t.ParentTaskId = conflictedId;
+            t.Role = AgentTaskRole.Merge;
+            t.ModelLevel = AgentModelLevel.High;
+        });
+
+        await SeedTurnAsync(
+            mergeSessionId, DelegationReportFormatter.TaskMarker(merge.Id),
+            "Resolved shared.md keeping the task's version; master fast-forwarded.");
+        await CreateService().OnTurnEndAsync(mergeSessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == merge.Id)).Status.ShouldBe(AgentTaskStatus.Succeeded);
+        var parent = await verify.AgentTasks.SingleAsync(t => t.Id == conflictedId);
+        parent.Status.ShouldBe(AgentTaskStatus.Succeeded, "the conflict it was blocked on no longer exists");
+        parent.FailureReason.ShouldBeNull();
+    }
+
+    private static async Task CreateWorktreeForAsync(TestScopeFactory factory, AgentTask seeded)
+    {
+        // The dispatcher's move, replayed: create the worktree and persist its coordinates.
+        var worktrees = factory.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+        await worktrees.CreateForTaskAsync(seeded, CancellationToken.None);
+        await using var db = CreateContext();
+        var row = await db.AgentTasks.SingleAsync(t => t.Id == seeded.Id);
+        row.WorktreePath = seeded.WorktreePath;
+        row.WorktreeBranch = seeded.WorktreeBranch;
+        await db.SaveChangesAsync();
+    }
+
+    private static string? TaskWorktreePath(AgentTask task) => task.WorktreePath;
+
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static AgentTaskReplyService CreateService()
+    private static AgentTaskReplyService CreateService(TestScopeFactory? factory = null)
     {
         var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000 };
         return new AgentTaskReplyService(
-            new TestScopeFactory(),
+            factory ?? new TestScopeFactory(),
             Options.Create(settings),
             new MockEventBus(),
             TimeProvider.System,
@@ -251,7 +429,7 @@ public class AgentTaskReplyIntegrationTests
     }
 
     private static async Task<(AgentTask Task, Guid SessionId)> SeedDispatchedTaskAsync(
-        string workingDirectory, Guid? parentSessionId = null)
+        string workingDirectory, Guid? parentSessionId = null, Action<AgentTask>? configure = null)
     {
         var sessionId = await SeedSessionAsync(workingDirectory);
         var id = Guid.NewGuid();
@@ -273,11 +451,32 @@ public class AgentTaskReplyIntegrationTests
             CreatedAt = DateTime.UtcNow,
             DispatchedAt = DateTime.UtcNow,
         };
+        configure?.Invoke(task);
 
         await using var db = CreateContext();
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return (task, sessionId);
+    }
+
+    private static async Task<Guid> SeedAgentAsync(string workingDirectory, string name)
+    {
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Slug = name,
+            WorkingDirectory = workingDirectory,
+            Details = "Ephemeral delegate.",
+            Status = AgentStatus.Running,
+            ModelLevel = AgentModelLevel.Medium,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        await using var db = CreateContext();
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+        return agent.Id;
     }
 
     private static async Task<Guid> SeedSessionAsync(string cwd)
@@ -347,7 +546,10 @@ public class AgentTaskReplyIntegrationTests
     {
         private readonly ServiceProvider _provider;
 
-        public TestScopeFactory()
+        /// <summary>Records what the settle path asked to stop — the ephemeral-cleanup assertion.</summary>
+        public RecordingSessionStopper Stopper { get; } = new();
+
+        public TestScopeFactory(string? worktreeRoot = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -359,6 +561,21 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton(TimeProvider.System);
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
+            // The settle path's collaborators: merge-back, the Merge-task spawner, ephemeral cleanup.
+            services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
+            services.AddSingleton<DelegationWorkspaceResolver>();
+            services.AddScoped<AgentTaskService>();
+            services.AddSingleton(Options.Create(new GitSettings
+            {
+                WorktreeBasePath = worktreeRoot ?? Path.Combine(Path.GetTempPath(), "antiphon-reply-wt"),
+                WorktreeStaleAfterDays = 7,
+                WorktreeJanitorIntervalHours = 24,
+            }));
+            services.AddSingleton<Antiphon.Server.Application.Interfaces.IWorktreeManager,
+                Antiphon.Server.Infrastructure.Git.WorktreeManager>();
+            services.AddSingleton<Antiphon.Server.Application.Interfaces.IGitService,
+                Antiphon.Server.Infrastructure.Git.GitService>();
+            services.AddScoped<DelegationWorktreeService>();
             _provider = services.BuildServiceProvider();
         }
 

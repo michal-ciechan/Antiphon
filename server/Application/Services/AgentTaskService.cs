@@ -157,10 +157,14 @@ public sealed class AgentTaskService
             WorkingDirectory = resolved.WorkingDirectory,
             RepoPath = resolved.RepoPath,
             ScopeGlob = string.IsNullOrWhiteSpace(request.ScopeGlob) ? null : request.ScopeGlob.Trim(),
-            // A worktree task merges into its parent's branch — but only when they share a repo.
-            // Cross-repo "merge" is a release-coordination problem and deliberately out of scope.
+            // A worktree task merges into its parent's BRANCH — but only when they share a repo.
+            // A worktree parent's children target its task branch (integration once per level);
+            // a shared-workspace parent passes its own target down. Cross-repo "merge" is a
+            // release-coordination problem and deliberately out of scope.
             MergeTargetRef = request.MergeTargetRef
-                ?? (SharesRepoWith(parent, resolved.RepoPath) ? parent?.MergeTargetRef : null),
+                ?? (SharesRepoWith(parent, resolved.RepoPath)
+                    ? parent?.WorktreeBranch ?? parent?.MergeTargetRef
+                    : null),
             AgentId = request.AgentId,
             Ephemeral = request.AgentId is null,
             Status = AgentTaskStatus.Queued,
@@ -209,8 +213,7 @@ public sealed class AgentTaskService
         if (status is { } s) query = query.Where(t => t.Status == s);
 
         var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
-        var names = await AgentNamesAsync(tasks, ct);
-        return tasks.Select(t => ToSummary(t, tasks, names)).ToList();
+        return tasks.Select(t => ToSummary(t, tasks)).ToList();
     }
 
     public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct)
@@ -230,7 +233,7 @@ public sealed class AgentTaskService
             .ToListAsync(ct);
 
         return new AgentTaskDetailDto(
-            ToSummary(task, family, await AgentNamesAsync([task], ct)), task.Goal, task.Result,
+            ToSummary(task, family), task.Goal, task.Result,
             task.ResultFilePath, task.FailureReason, task.MergeTargetRef, events);
     }
 
@@ -245,6 +248,7 @@ public sealed class AgentTaskService
         // Stop the delegate BEFORE relabelling the row. A cancel that only changes a status leaves
         // a Claude running against the run's cost ceiling while the board says the work stopped.
         await StopDelegateAsync(task, ct);
+        await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
 
         var now = UtcNow();
         task.Status = AgentTaskStatus.Canceled;
@@ -284,7 +288,8 @@ public sealed class AgentTaskService
     /// than forking a second row — and the next attempt carries a handoff block built from what the
     /// last one found, because escalation that restarts cold just pays more for the same dead end.
     /// </summary>
-    public async Task<AgentTaskSummaryDto> EscalateAsync(Guid id, AgentModelLevel? to, CancellationToken ct)
+    public async Task<AgentTaskSummaryDto> EscalateAsync(
+        Guid id, AgentModelLevel? to, CancellationToken ct, string? reason = null)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
@@ -300,7 +305,8 @@ public sealed class AgentTaskService
 
         task.EscalatedFrom = from;
         task.ModelLevel = target.Value;
-        var detail = $"Escalated {ModelLevelAliases.ForClaude(from)} -> {ModelLevelAliases.ForClaude(target.Value)}.";
+        var detail = $"Escalated {ModelLevelAliases.ForClaude(from)} -> {ModelLevelAliases.ForClaude(target.Value)}."
+            + (reason is null ? string.Empty : $" {reason}");
 
         // A task that has not started yet only needs the new tier — there is nothing to requeue.
         if (task.Status == AgentTaskStatus.Queued)
@@ -354,9 +360,13 @@ public sealed class AgentTaskService
         task.Status = AgentTaskStatus.Queued;
         task.AgentSessionId = null;
         // --model is a LAUNCH argument, so a new tier needs a new process. An ephemeral delegate is
-        // discarded; a pinned agent is the caller's explicit choice and stays.
+        // discarded — row included, or every retry leaks a dead agent; a pinned agent is the
+        // caller's explicit choice and stays.
         if (task.Ephemeral)
+        {
+            await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
             task.AgentId = null;
+        }
         task.DispatchedAt = null;
         task.CompletedAt = null;
         task.ConcurrencyToken = Guid.NewGuid();
@@ -375,6 +385,104 @@ public sealed class AgentTaskService
             "Task {ShortId} requeued as attempt {Attempt} at {Alias}: {Detail}",
             DelegationReportFormatter.Short(task.Id), task.Attempt,
             ModelLevelAliases.ForClaude(task.ModelLevel), detail);
+    }
+
+    /// <summary>
+    /// Delete an ephemeral delegate's Agent row (dependents cascade). The task's snapshotted
+    /// <see cref="AgentTask.AgentName"/> keeps the board naming who ran the work; the row itself is
+    /// throwaway by design and would otherwise pile up on the agents page one task at a time.
+    /// </summary>
+    internal async Task RemoveEphemeralAgentAsync(AgentTask task, Guid? agentId, CancellationToken ct)
+    {
+        if (!task.Ephemeral || agentId is not Guid id)
+            return;
+
+        var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (agent is not null)
+            _db.Agents.Remove(agent);
+    }
+
+    /// <summary>
+    /// Spawn the Merge-role delegate that resolves a Worktree task's rebase conflict. SYSTEM
+    /// spawned — the server decides this, so it bypasses the caller checks — but the run's task
+    /// cap still applies: a run at its limit gets the Blocked task and no fixer, stated in events.
+    /// It is a CHILD of the conflicted task (the tree records that this work needed a merge hand)
+    /// and reports to the same parent session, working directly in the conflicted worktree.
+    /// </summary>
+    internal async Task<AgentTask?> CreateMergeTaskAsync(
+        AgentTask conflicted, IReadOnlyList<string> conflictFiles, CancellationToken ct)
+    {
+        var siblings = await _db.AgentTasks.CountAsync(t => t.RootTaskId == conflicted.RootTaskId, ct);
+        if (siblings >= _settings.MaxTasksPerRoot || conflicted.Depth + 1 > _settings.MaxDepth)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: merge conflict but the run is at its task/depth cap — leaving Blocked",
+                DelegationReportFormatter.Short(conflicted.Id));
+            return null;
+        }
+
+        if (conflicted.WorktreePath is not { } worktree || conflicted.WorktreeBranch is not { } branch
+            || conflicted.MergeTargetRef is not { } target)
+        {
+            return null;
+        }
+
+        var id = Guid.NewGuid();
+        var now = UtcNow();
+        var (token, tokenHash) = NewToken();
+        var files = string.Join("\n", conflictFiles.Select(f => $"- {f}"));
+
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = conflicted.RootTaskId,
+            ParentTaskId = conflicted.Id,
+            ParentSessionId = conflicted.ParentSessionId,
+            Depth = conflicted.Depth + 1,
+            Title = $"Resolve merge conflict: {Clamp(conflicted.Title, 250)}",
+            Goal = $"""
+                Task {DelegationReportFormatter.Short(conflicted.Id)} finished its work on branch
+                {branch}, but rebasing onto {target} hit conflicts in:
+                {files}
+
+                You are in its worktree. Complete the merge:
+                1. git rebase {target} — resolve each conflict the way the TASK intended; its work
+                   is the newer change. Read the conflicted task's goal in your context if unsure.
+                2. git rebase --continue until clean.
+                3. Fast-forward the target: git fetch . {branch}:{target} — if git refuses because
+                   {target} is checked out elsewhere, run git merge --ff-only {branch} in that
+                   checkout instead.
+                Report which files conflicted and how you resolved each. Do NOT redo or review the
+                task's work — only integrate it.
+                """,
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Merge,
+            ModelLevel = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null),
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = worktree,
+            RepoPath = conflicted.RepoPath,
+            MergeTargetRef = target,
+            Ephemeral = true,
+            Status = AgentTaskStatus.Queued,
+            ReplyTo = conflicted.ReplyTo,
+            MaxAttempts = 2,
+            CreatedAt = now,
+            TokenHash = tokenHash,
+        };
+
+        _db.AgentTasks.Add(task);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = id,
+            Type = AgentTaskEventType.Created,
+            ModelLevel = task.ModelLevel,
+            Detail = $"Spawned by the server to resolve {conflictFiles.Count} conflicted file(s) from "
+                + $"task {DelegationReportFormatter.Short(conflicted.Id)}.",
+            At = now,
+        });
+        RawTokens[id] = token;
+        return task;
     }
 
     /// <summary>
@@ -417,32 +525,16 @@ public sealed class AgentTaskService
 
     /// <summary>Project a loaded task to its DTO. <paramref name="family"/> is the whole run — it
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
-    public async Task<AgentTaskSummaryDto> GetSummaryAsync(
+    public Task<AgentTaskSummaryDto> GetSummaryAsync(
         AgentTask task, IReadOnlyList<AgentTask> family, CancellationToken ct = default) =>
-        ToSummary(task, family, await AgentNamesAsync([task], ct));
+        Task.FromResult(ToSummary(task, family));
 
     /// <summary>The DTO for one task, re-reading its run for the cost rollup.</summary>
     private async Task<AgentTaskSummaryDto> SummaryOfAsync(AgentTask task, CancellationToken ct)
     {
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return ToSummary(task, family, await AgentNamesAsync([task], ct));
-    }
-
-    /// <summary>
-    /// Agent names for the tasks that have one. The board chip names the delegate that ran the work
-    /// ("doc-hand · sonnet · 4m12s"), and an id is not a name.
-    /// </summary>
-    private async Task<Dictionary<Guid, string>> AgentNamesAsync(
-        IReadOnlyList<AgentTask> tasks, CancellationToken ct)
-    {
-        var ids = tasks.Where(t => t.AgentId is not null).Select(t => t.AgentId!.Value).Distinct().ToList();
-        if (ids.Count == 0)
-            return [];
-
-        return await _db.Agents.AsNoTracking()
-            .Where(a => ids.Contains(a.Id))
-            .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+        return ToSummary(task, family);
     }
 
     internal static bool IsSettled(AgentTaskStatus status) =>
@@ -453,8 +545,7 @@ public sealed class AgentTaskService
         && repoPath is not null
         && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.RepoPath);
 
-    private static AgentTaskSummaryDto ToSummary(
-        AgentTask task, IReadOnlyList<AgentTask> family, IReadOnlyDictionary<Guid, string> agentNames)
+    private static AgentTaskSummaryDto ToSummary(AgentTask task, IReadOnlyList<AgentTask> family)
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
@@ -471,7 +562,8 @@ public sealed class AgentTaskService
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
             task.RepoPath, task.ScopeGlob, task.AgentId,
-            task.AgentId is { } agentId && agentNames.TryGetValue(agentId, out var name) ? name : null,
+            // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
+            task.AgentName,
             task.AgentSessionId, task.Attempt,
             task.CreatedAt, task.DispatchedAt, task.CompletedAt,
             task.TokensIn, task.TokensOut, task.CostUsd, subtreeCost, childCount);

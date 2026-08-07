@@ -74,7 +74,7 @@ public sealed class AgentTaskReplyService
                 return;
             }
 
-            await SettleAsync(db, task, turn, ct);
+            await SettleAsync(scope.ServiceProvider, db, task, turn, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -114,7 +114,8 @@ public sealed class AgentTaskReplyService
         return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
     }
 
-    private async Task SettleAsync(AppDbContext db, AgentTask task, string report, CancellationToken ct)
+    private async Task SettleAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, CancellationToken ct)
     {
         var now = UtcNow();
         task.Result = report;
@@ -152,26 +153,156 @@ public sealed class AgentTaskReplyService
                 ? "Delegate asked a question."
                 : $"Delegate reported {report.Length:N0} characters.",
             now));
+
+        // The work landed; now the BRANCH has to. Only a genuinely finished Worktree task merges —
+        // a question-Blocked one keeps its worktree and session alive to continue.
+        string? workspaceNote = null;
+        if (task.Status == AgentTaskStatus.Succeeded && task.Workspace == WorkspaceMode.Worktree)
+            workspaceNote = await MergeBackAsync(services, db, task, now, ct);
+
+        // A finished Merge task is what un-blocks the conflicted task it was spawned for.
+        if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
+            await ResolveConflictedParentAsync(services, db, task, now, ct);
+
+        // A settled ephemeral delegate is spent: stop the session, drop the agent row. Blocked
+        // tasks keep both — the session is how the conversation continues.
+        if (task.Status == AgentTaskStatus.Succeeded)
+            await CleanupEphemeralAsync(services, db, task, ct);
+
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation(
             "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000})",
             DelegationReportFormatter.Short(task.Id), task.Status, report.Length, task.CostUsd);
 
-        await DeliverToParentAsync(task, report, ct);
+        await DeliverToParentAsync(task, report, ct, workspaceNote);
         await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// Land a succeeded Worktree task's branch on its target. On conflict the task flips to
+    /// Blocked and a Merge-role delegate is spawned with the conflict list — never an automatic
+    /// resolution. Returns the one-phrase outcome for the completion note's header.
+    /// </summary>
+    private async Task<string?> MergeBackAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+    {
+        DelegationWorktreeService.MergeOutcome outcome;
+        try
+        {
+            outcome = await services.GetRequiredService<DelegationWorktreeService>()
+                .TryMergeBackAsync(task, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            outcome = new DelegationWorktreeService.MergeOutcome(
+                DelegationWorktreeService.MergeResult.Failed, [], ex.Message);
+        }
+
+        switch (outcome.Result)
+        {
+            case DelegationWorktreeService.MergeResult.Merged:
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Merged, $"Merged: {outcome.Detail}", now));
+                return $"merged → {task.MergeTargetRef}";
+
+            case DelegationWorktreeService.MergeResult.NothingToMerge:
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Merged, "No changes beyond the target — worktree removed.", now));
+                return "no changes";
+
+            case DelegationWorktreeService.MergeResult.LeftForHuman:
+                db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Completed, outcome.Detail!, now));
+                return $"branch {task.WorktreeBranch} left for review";
+
+            case DelegationWorktreeService.MergeResult.Conflicted:
+                // The report said "done", but done work that cannot land is not done — Blocked
+                // until the Merge delegate integrates it.
+                task.Status = AgentTaskStatus.Blocked;
+                task.FailureReason =
+                    $"Rebase onto {task.MergeTargetRef} conflicted in {outcome.ConflictFiles.Count} file(s).";
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Conflicted,
+                    $"Conflicts: {string.Join(", ", outcome.ConflictFiles)}", now));
+
+                var merge = await services.GetRequiredService<AgentTaskService>()
+                    .CreateMergeTaskAsync(task, outcome.ConflictFiles, ct);
+                return merge is null
+                    ? $"MERGE CONFLICT in {string.Join(", ", outcome.ConflictFiles)} — run at task cap, resolve by hand"
+                    : $"merge conflict → task {DelegationReportFormatter.Short(merge.Id)} is resolving it";
+
+            default:
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Failed, $"Merge-back failed: {outcome.Detail}", now));
+                return $"NOT merged ({outcome.Detail}) — branch {task.WorktreeBranch} kept";
+        }
+    }
+
+    /// <summary>
+    /// A Merge delegate finishing means its conflicted parent's work has finally landed — flip that
+    /// parent from Blocked to Succeeded and release its session, or the row (and its delegate)
+    /// dangle forever on a conflict that no longer exists.
+    /// </summary>
+    private async Task ResolveConflictedParentAsync(
+        IServiceProvider services, AppDbContext db, AgentTask merge, DateTime now, CancellationToken ct)
+    {
+        if (merge.ParentTaskId is not Guid parentId)
+            return;
+
+        var conflicted = await db.AgentTasks.FirstOrDefaultAsync(
+            t => t.Id == parentId
+                && t.Status == AgentTaskStatus.Blocked
+                && t.Workspace == WorkspaceMode.Worktree, ct);
+        if (conflicted is null)
+            return;
+
+        conflicted.Status = AgentTaskStatus.Succeeded;
+        conflicted.FailureReason = null;
+        conflicted.ConcurrencyToken = Guid.NewGuid();
+        db.AgentTaskEvents.Add(NewEvent(
+            conflicted.Id, AgentTaskEventType.Merged,
+            $"Conflict resolved by merge task {DelegationReportFormatter.Short(merge.Id)}.", now));
+        await CleanupEphemeralAsync(services, db, conflicted, ct);
+        await PublishAsync(conflicted, ct);
+    }
+
+    /// <summary>Stop the delegate's session and delete its throwaway agent row, best-effort.</summary>
+    private async Task CleanupEphemeralAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        if (!task.Ephemeral)
+            return;
+
+        if (task.AgentSessionId is Guid sessionId)
+        {
+            try
+            {
+                await services.GetRequiredService<IDelegateSessionStopper>().KillAsync(sessionId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Could not stop finished delegate session {SessionId}", sessionId);
+            }
+        }
+
+        if (task.AgentId is Guid agentId)
+        {
+            var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
+            if (agent is not null)
+                db.Agents.Remove(agent);
+        }
     }
 
     /// <summary>
     /// Deliver the completion note into the parent's session — WhenIdle, so it lands between the
     /// parent's turns rather than interrupting one.
     /// </summary>
-    private async Task DeliverToParentAsync(AgentTask task, string report, CancellationToken ct)
+    private async Task DeliverToParentAsync(
+        AgentTask task, string report, CancellationToken ct, string? workspaceNote = null)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
-        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, report);
+        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, report, workspaceNote);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

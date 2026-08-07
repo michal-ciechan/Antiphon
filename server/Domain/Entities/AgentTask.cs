@@ -59,6 +59,16 @@ public class AgentTask
 
     public Guid? WorktreeId { get; set; }
 
+    /// <summary>
+    /// Where a Worktree task actually runs — filled at dispatch by <c>git worktree add</c>. The
+    /// card-scoped <see cref="Worktree"/> entity requires a card, which a task doesn't have, so the
+    /// task carries its own worktree coordinates.
+    /// </summary>
+    public string? WorktreePath { get; set; }
+
+    /// <summary>The task branch the worktree is on; what merges into <see cref="MergeTargetRef"/>.</summary>
+    public string? WorktreeBranch { get; set; }
+
     /// <summary>Branch a Worktree task merges into. Defaults to the parent's branch; null leaves it for a human.</summary>
     public string? MergeTargetRef { get; set; }
 
@@ -67,6 +77,12 @@ public class AgentTask
 
     /// <summary>Pinned agent; null means an ephemeral one is spawned at the task's tier.</summary>
     public Guid? AgentId { get; set; }
+
+    /// <summary>
+    /// The delegate's name, snapshotted at dispatch. Denormalised on purpose: an ephemeral agent's
+    /// row is deleted when the task settles, and the board chip must keep naming who ran the work.
+    /// </summary>
+    public string? AgentName { get; set; }
 
     public Guid? AgentSessionId { get; set; }
 

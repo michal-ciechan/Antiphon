@@ -23,6 +23,8 @@ public sealed class AgentTaskDispatcher
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly SessionMessageQueueService _queue;
+    private readonly DelegationWorktreeService _worktrees;
+    private readonly AgentTaskService _tasks;
     private readonly DelegationSettings _settings;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
@@ -33,6 +35,8 @@ public sealed class AgentTaskDispatcher
         AgentRegistry agentRegistry,
         AgentSessionLaunchQueue launchQueue,
         SessionMessageQueueService queue,
+        DelegationWorktreeService worktrees,
+        AgentTaskService tasks,
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
@@ -42,6 +46,8 @@ public sealed class AgentTaskDispatcher
         _agentRegistry = agentRegistry;
         _launchQueue = launchQueue;
         _queue = queue;
+        _worktrees = worktrees;
+        _tasks = tasks;
         _settings = settings.Value;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
@@ -54,6 +60,10 @@ public sealed class AgentTaskDispatcher
     {
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
+
+        // Before dispatching new work, deal with running work that has gone quiet — a stalled
+        // opus Debug task escalating to fable IS the tier ladder working, not an error path.
+        await AutoEscalateStalledAsync(ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -127,6 +137,74 @@ public sealed class AgentTaskDispatcher
         return new TickResult(queued.Count, dispatched, skippedConcurrency, skippedScope, failures);
     }
 
+    /// <summary>
+    /// The automatic rung of the ladder: a task whose role policy names an EscalateTo, still
+    /// running past EscalateAfterMinutes with NO transcript progress in that window, is stopped
+    /// and requeued one tier up. Progress resets the clock — a task that keeps producing output
+    /// is thinking, not stalled, however long it takes.
+    /// </summary>
+    internal async Task<int> AutoEscalateStalledAsync(CancellationToken ct)
+    {
+        // Which roles can escalate at all is config; don't scan tasks that have nowhere to go.
+        var escalatable = _settings.RolePolicy
+            .Where(p => p.Value.EscalateTo is not null && p.Value.EscalateAfterMinutes is not null)
+            .ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+        if (escalatable.Count == 0)
+            return 0;
+
+        var running = await _db.AgentTasks.AsNoTracking()
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.DispatchedAt != null && t.AgentSessionId != null)
+            .ToListAsync(ct);
+
+        var escalated = 0;
+        var now = UtcNow();
+        foreach (var task in running)
+        {
+            if (!escalatable.TryGetValue(task.Role.ToString(), out var policy))
+                continue;
+            // Already at (or above) the configured target — repeating the bump would be a no-op
+            // that still kills the session. Frontier = 0, so "at or above" is <=.
+            if ((int)task.ModelLevel <= (int)policy.EscalateTo!.Value)
+                continue;
+
+            var window = TimeSpan.FromMinutes(policy.EscalateAfterMinutes!.Value);
+            var lastProgress = await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == task.AgentSessionId)
+                .MaxAsync(e => (DateTime?)e.CreatedAt, ct);
+            var stalledSince = lastProgress is { } p && p > task.DispatchedAt!.Value
+                ? p
+                : task.DispatchedAt!.Value;
+            if (now - stalledSince < window)
+                continue;
+
+            try
+            {
+                // The handoff (BuildBrief) carries FailureReason into the next attempt — say WHY
+                // this escalated so the bigger model starts from the stall, not from zero.
+                var tracked = await _db.AgentTasks.FirstAsync(t => t.Id == task.Id, ct);
+                tracked.FailureReason =
+                    $"Stalled: no transcript progress for {(int)(now - stalledSince).TotalMinutes} minutes "
+                    + $"at {ModelLevelAliases.ForClaude(task.ModelLevel)}.";
+                await _tasks.EscalateAsync(
+                    task.Id, policy.EscalateTo, ct,
+                    reason: $"Auto: no progress for {(int)window.TotalMinutes}+ minutes.");
+                escalated++;
+                _logger.LogInformation(
+                    "Task {ShortId} auto-escalated to {Level} after stalling",
+                    DelegationReportFormatter.Short(task.Id), policy.EscalateTo);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A concurrent settle or cancel beat us to the row — that IS progress; move on.
+                _logger.LogDebug(ex, "Auto-escalation of task {ShortId} skipped",
+                    DelegationReportFormatter.Short(task.Id));
+            }
+        }
+
+        return escalated;
+    }
+
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
     {
         // Transactional claim: re-read under the concurrency token so a second tick (or another
@@ -143,7 +221,26 @@ public sealed class AgentTaskDispatcher
         }
 
         var now = UtcNow();
+
+        // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
+        // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
+        // target keeps the eventual rebase-back linear.
+        if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
+        {
+            await _worktrees.CreateForTaskAsync(claimed, ct);
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = claimed.Id,
+                Type = AgentTaskEventType.Dispatched,
+                Detail = $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}"
+                    + (claimed.MergeTargetRef is { } t ? $" (merges into {t})" : " (no merge target — branch left for review)"),
+                At = now,
+            });
+        }
+
         var agent = await ResolveAgentAsync(claimed, now, ct);
+        var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
         var session = new AgentSession
         {
             Id = Guid.NewGuid(),
@@ -152,7 +249,7 @@ public sealed class AgentTaskDispatcher
             DefinitionName = _agentRegistry.Settings.DefaultDefinition,
             AgentKind = AgentKind.ClaudeCode,
             Status = SessionStatus.Starting,
-            Cwd = claimed.WorkingDirectory,
+            Cwd = cwd,
             Cols = _settings.DefaultCols,
             Rows = _settings.DefaultRows,
             CreatedAt = now,
@@ -162,6 +259,9 @@ public sealed class AgentTaskDispatcher
         _db.AgentSessions.Add(session);
 
         claimed.AgentId = agent.Id;
+        // Snapshotted, not joined: the ephemeral agent row is deleted when the task settles, and
+        // the board must keep naming who ran the work.
+        claimed.AgentName = agent.Name;
         claimed.AgentSessionId = session.Id;
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
@@ -238,7 +338,9 @@ public sealed class AgentTaskDispatcher
         return _agentRegistry.Resolve(
             _agentRegistry.Settings.DefaultDefinition,
             new AgentLaunchOptions(
-                Cwd: task.WorkingDirectory,
+                // A Worktree task lives in its worktree — launching in the shared directory would
+                // silently defeat the isolation the caller opted into.
+                Cwd: task.WorktreePath ?? task.WorkingDirectory,
                 Cols: session.Cols,
                 Rows: session.Rows,
                 ExtraArgs: extraArgs,
@@ -287,7 +389,7 @@ public sealed class AgentTaskDispatcher
             Id = Guid.NewGuid(),
             Name = name,
             Slug = name,
-            WorkingDirectory = task.WorkingDirectory,
+            WorkingDirectory = task.WorktreePath ?? task.WorkingDirectory,
             Details = $"Ephemeral delegate for {task.Kind}/{task.Role} task {shortId}.",
             Status = AgentStatus.Idle,
             ModelLevel = task.ModelLevel,

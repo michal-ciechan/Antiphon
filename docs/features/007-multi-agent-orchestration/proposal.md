@@ -1,6 +1,7 @@
 # Feature 007 — Multi-agent orchestration: delegated tasks, model tiers, task board
 
-**Status:** P1 shipped; P2/P3 mostly shipped (see [§3 Phasing](#3-phasing) for what is still open)
+**Status:** shipped through P3 (see [§3 Phasing](#3-phasing)); the only open item is the optional
+`PreToolUse` deny hook
 **Date:** 2026-08-06
 **Supersedes the unbuilt parts of:** [002-agent-orchestrator.md](../002-agent-orchestrator.md) (2026-05-15 draft; its
 long-poll/`wt.exe`/SQLite branch is dead — Antiphon went the PTY + xterm.js + Postgres route)
@@ -560,13 +561,18 @@ targeting, the reporting contract,
 of P1 the orchestrator delegates, stays small, and gets real reports back. Everything after is
 leverage.
 
-**P2 — the ladder.** Role policy ✅, escalation with handoff ✅ (manual; the stall trigger is not
-wired yet), ephemeral agents ✅ (spawned, but not deleted when the task settles), the Delegations
-board ✅. Still open: rebase merge-back with conflict → `Merge` task, the optional `PreToolUse` deny
-hook.
+**P2 — the ladder. ✅ shipped**, except the optional `PreToolUse` deny hook. Role policy ✅,
+escalation with handoff ✅ (manual via the drawer/API **and** automatic — the dispatcher tick bumps
+a task with no transcript progress for its policy's `escalateAfterMinutes`; progress resets the
+clock), ephemeral agents ✅ (spawned at dispatch, session stopped and row deleted when the task
+settles — `AgentTask.AgentName` snapshots the name for the board), rebase merge-back ✅
+(`DelegationWorktreeService`: worktree created at dispatch from the merge target, commit-all →
+rebase → fast-forward on success, target advanced even while checked out, conflict → task `Blocked`
++ a `Merge`-role delegate spawned into the conflicted worktree, whose completion un-blocks the
+task), the Delegations board ✅.
 
-**P3 — the rest.** File-view delegate modal ✅, advisory scope leases ✅ (dispatcher-side), cost
-rollups and subtree collapse on the board ✅. Still open: nothing in this phase.
+**P3 — the rest. ✅ shipped.** File-view delegate modal ✅, advisory scope leases ✅
+(dispatcher-side), cost rollups and subtree collapse on the board ✅.
 
 Sub-orchestrators land in **P1**, not later: the token scoping and the reply-to-parent routing are the
 same code either way, and building the worker path first and retrofitting recursion would mean

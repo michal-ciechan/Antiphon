@@ -393,6 +393,36 @@ public class AgentTaskServiceIntegrationTests
         summary.Status.ShouldBe(AgentTaskStatus.Canceled);
     }
 
+    [Test]
+    public async Task a_child_of_a_worktree_parent_merges_into_the_parents_task_branch()
+    {
+        // Integration once per level: a sub-orchestrator in a worktree collects its children's work
+        // on ITS branch and merges one level up when the subtree is done. If children targeted the
+        // parent's TARGET instead, a dozen workers would race to integrate against a moving branch.
+        using var repo = new ScratchGitRepo("antiphon-task-inherit");
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var parent = await SeedTaskAsync(AgentTaskKind.Orchestrator, repo.Path);
+        await using (var setup = CreateContext())
+        {
+            var row = await setup.AgentTasks.SingleAsync(t => t.Id == parent.Id);
+            row.RepoPath = repo.Path;
+            row.WorktreeBranch = "feat/card-task-parent";
+            row.MergeTargetRef = "master";
+            parent = row;
+            await setup.SaveChangesAsync();
+        }
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("write the docs half"),
+            new AgentTaskService.Caller(parent, Guid.NewGuid(), repo.Path),
+            CancellationToken.None);
+
+        var child = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        child.MergeTargetRef.ShouldBe("feat/card-task-parent", "children integrate into the parent's branch, not past it");
+    }
+
     // ---- retry and escalation --------------------------------------------------------------
 
     [Test]

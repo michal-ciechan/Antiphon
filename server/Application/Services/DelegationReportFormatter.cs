@@ -142,11 +142,13 @@ public static class DelegationReportFormatter
     public sealed record Note(string Body, bool Excerpted);
 
     /// <summary>
-    /// The completion note delivered to the parent. A header line carrying who/tier/duration/cost,
-    /// then the delegate's report — WHOLE when it fits, because the report is the deliverable and
-    /// clipping it just forces a second call to read what was already paid for.
+    /// The completion note delivered to the parent. A header line carrying who/tier/duration/cost
+    /// (and what happened to the branch, for a Worktree task), then the delegate's report — WHOLE
+    /// when it fits, because the report is the deliverable and clipping it just forces a second
+    /// call to read what was already paid for.
     /// </summary>
-    public static Note BuildCompletionNote(AgentTask task, DelegationSettings settings, string report)
+    public static Note BuildCompletionNote(
+        AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -158,6 +160,7 @@ public static class DelegationReportFormatter
         if (task.DispatchedAt is { } started && task.CompletedAt is { } finished)
             bits.Add(FormatDuration(finished - started));
         if (task.CostUsd > 0) bits.Add($"${task.CostUsd:0.000}");
+        if (!string.IsNullOrWhiteSpace(workspaceNote)) bits.Add(workspaceNote.Trim());
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings);

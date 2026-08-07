@@ -989,7 +989,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Workspace).IsRequired().HasDefaultValue(WorkspaceMode.Shared);
             entity.Property(t => t.WorkingDirectory).IsRequired().HasMaxLength(1000);
             entity.Property(t => t.RepoPath).HasMaxLength(1000);
+            entity.Property(t => t.WorktreePath).HasMaxLength(1000);
+            entity.Property(t => t.WorktreeBranch).HasMaxLength(300);
             entity.Property(t => t.MergeTargetRef).HasMaxLength(300);
+            entity.Property(t => t.AgentName).HasMaxLength(200);
             entity.Property(t => t.ScopeGlob).HasMaxLength(1000);
             entity.Property(t => t.Status).IsRequired();
             entity.Property(t => t.ReplyTo).IsRequired();

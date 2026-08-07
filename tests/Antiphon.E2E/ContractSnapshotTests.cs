@@ -231,7 +231,7 @@ public class ContractSnapshotTests
             await db.SaveChangesAsync();
 
             db.AgentTasks.AddRange(
-                Task(root, root, null, 0, "Ship the Postgres 18 upgrade", cwd, t0, agents["task-upgrade"], t =>
+                Task(root, root, null, 0, "Ship the Postgres 18 upgrade", cwd, t0, agents["task-upgrade"], "task-upgrade", t =>
                 {
                     t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
                     t.Role = Server.Domain.Enums.AgentTaskRole.Plan;
@@ -241,7 +241,7 @@ public class ContractSnapshotTests
                     t.TokensIn = 84_000; t.TokensOut = 3_100; t.CostUsd = 0.412m;
                 }),
                 Task(schema, root, root, 1, "Migrate the schema and connection strings", cwd, t0.AddMinutes(2),
-                    agents["task-schema"], t =>
+                    agents["task-schema"], "task-schema", t =>
                 {
                     t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
                     t.Role = Server.Domain.Enums.AgentTaskRole.Code;
@@ -253,7 +253,7 @@ public class ContractSnapshotTests
                     t.TokensIn = 61_500; t.TokensOut = 4_800; t.CostUsd = 0.318m;
                 }),
                 Task(suite, root, schema, 2, "Run the integration suite and report failures", cwd, t0.AddMinutes(9),
-                    agents["task-suite"], t =>
+                    agents["task-suite"], "task-suite", t =>
                 {
                     t.Role = Server.Domain.Enums.AgentTaskRole.Test;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Low;
@@ -267,7 +267,7 @@ public class ContractSnapshotTests
                     t.TokensIn = 22_000; t.TokensOut = 900; t.CostUsd = 0.019m;
                 }),
                 Task(install, root, root, 1, "Rewrite the Windows install section", cwd, t0.AddMinutes(3),
-                    agents["task-install"], t =>
+                    agents["task-install"], "task-install", t =>
                 {
                     t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
@@ -281,7 +281,7 @@ public class ContractSnapshotTests
                     t.TokensIn = 18_400; t.TokensOut = 1_250; t.CostUsd = 0.031m;
                 }),
                 Task(hang, root, root, 1, "Find out why the suite hangs on CI", cwd, t0.AddMinutes(4),
-                    agents["task-hang"], t =>
+                    agents["task-hang"], "task-hang", t =>
                 {
                     t.Role = Server.Domain.Enums.AgentTaskRole.Debug;
                     // The escalation ladder, visible on the chip: started at opus, now on fable.
@@ -334,7 +334,7 @@ public class ContractSnapshotTests
 
     private static AgentTask Task(
         Guid id, Guid rootId, Guid? parentId, int depth, string title, string cwd, DateTime createdAt,
-        Guid agentId, Action<AgentTask> configure)
+        Guid agentId, string agentName, Action<AgentTask> configure)
     {
         var task = new AgentTask
         {
@@ -347,6 +347,9 @@ public class ContractSnapshotTests
             WorkingDirectory = cwd,
             RepoPath = cwd,
             AgentId = agentId,
+            // Snapshotted at dispatch in production; the projection reads THIS, not a join — the
+            // ephemeral agent row is deleted when a task settles.
+            AgentName = agentName,
             Ephemeral = true,
             CreatedAt = createdAt,
             MaxAttempts = 2,

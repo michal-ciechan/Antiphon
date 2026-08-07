@@ -155,6 +155,7 @@ try
     // Delegated agent tasks (feature 007). The reply service is a SINGLETON because the runtime's
     // transcript observer (itself a singleton) calls it on every turn-end; it opens its own scope.
     builder.Services.AddSingleton<DelegationWorkspaceResolver>();
+    builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
