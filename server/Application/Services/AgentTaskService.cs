@@ -23,6 +23,7 @@ public sealed class AgentTaskService
     private readonly DelegationWorkspaceResolver _workspace;
     private readonly DelegationSettings _settings;
     private readonly IEventBus _eventBus;
+    private readonly IDelegateSessionStopper _sessions;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskService> _logger;
 
@@ -31,6 +32,7 @@ public sealed class AgentTaskService
         DelegationWorkspaceResolver workspace,
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
+        IDelegateSessionStopper sessions,
         TimeProvider timeProvider,
         ILogger<AgentTaskService> logger)
     {
@@ -38,6 +40,7 @@ public sealed class AgentTaskService
         _workspace = workspace;
         _settings = settings.Value;
         _eventBus = eventBus;
+        _sessions = sessions;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -206,7 +209,8 @@ public sealed class AgentTaskService
         if (status is { } s) query = query.Where(t => t.Status == s);
 
         var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
-        return tasks.Select(t => ToSummary(t, tasks)).ToList();
+        var names = await AgentNamesAsync(tasks, ct);
+        return tasks.Select(t => ToSummary(t, tasks, names)).ToList();
     }
 
     public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct)
@@ -226,8 +230,8 @@ public sealed class AgentTaskService
             .ToListAsync(ct);
 
         return new AgentTaskDetailDto(
-            ToSummary(task, family), task.Goal, task.Result, task.ResultFilePath,
-            task.FailureReason, task.MergeTargetRef, events);
+            ToSummary(task, family, await AgentNamesAsync([task], ct)), task.Goal, task.Result,
+            task.ResultFilePath, task.FailureReason, task.MergeTargetRef, events);
     }
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct)
@@ -238,6 +242,10 @@ public sealed class AgentTaskService
         if (IsSettled(task.Status))
             throw new ConflictException($"Task {DelegationReportFormatter.Short(id)} has already finished.");
 
+        // Stop the delegate BEFORE relabelling the row. A cancel that only changes a status leaves
+        // a Claude running against the run's cost ceiling while the board says the work stopped.
+        await StopDelegateAsync(task, ct);
+
         var now = UtcNow();
         task.Status = AgentTaskStatus.Canceled;
         task.CompletedAt = now;
@@ -246,8 +254,148 @@ public sealed class AgentTaskService
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
 
-        var family = await _db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return ToSummary(task, family);
+        return await SummaryOfAsync(task, ct);
+    }
+
+    /// <summary>
+    /// Run a task again, at the same tier. For a task that stalled, failed, or came back with an
+    /// answer the caller rejected — the goal is unchanged, so what changes is the attempt.
+    /// </summary>
+    public async Task<AgentTaskSummaryDto> RetryAsync(Guid id, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+
+        if (task.Status == AgentTaskStatus.Queued)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} has not run yet — it is already queued.");
+        }
+
+        await RequeueAsync(
+            task, AgentTaskEventType.Retried, task.ModelLevel,
+            $"Retried at {ModelLevelAliases.ForClaude(task.ModelLevel)}.", ct);
+        return await SummaryOfAsync(task, ct);
+    }
+
+    /// <summary>
+    /// Move a task up the ladder and run it again. The tier bump is applied IN PLACE (one chip per
+    /// task, <see cref="AgentTask.EscalatedFrom"/> set, the ladder readable in the events) rather
+    /// than forking a second row — and the next attempt carries a handoff block built from what the
+    /// last one found, because escalation that restarts cold just pays more for the same dead end.
+    /// </summary>
+    public async Task<AgentTaskSummaryDto> EscalateAsync(Guid id, AgentModelLevel? to, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+
+        var from = task.ModelLevel;
+        var target = ResolveEscalationTarget(task, to);
+        if (target is null)
+        {
+            throw new ConflictException(
+                $"Task {DelegationReportFormatter.Short(id)} is already at the top of the ladder "
+                + $"({ModelLevelAliases.ForClaude(from)}).");
+        }
+
+        task.EscalatedFrom = from;
+        task.ModelLevel = target.Value;
+        var detail = $"Escalated {ModelLevelAliases.ForClaude(from)} -> {ModelLevelAliases.ForClaude(target.Value)}.";
+
+        // A task that has not started yet only needs the new tier — there is nothing to requeue.
+        if (task.Status == AgentTaskStatus.Queued)
+        {
+            var now = UtcNow();
+            task.ConcurrencyToken = Guid.NewGuid();
+            AddEvent(task.Id, AgentTaskEventType.Escalated, target.Value, detail, now);
+            await _db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
+            return await SummaryOfAsync(task, ct);
+        }
+
+        await RequeueAsync(task, AgentTaskEventType.Escalated, target.Value, detail, ct);
+        return await SummaryOfAsync(task, ct);
+    }
+
+    /// <summary>
+    /// One rung up, unless the role policy names a specific target — the ladder is config, so a
+    /// configured <c>EscalateTo</c> wins over counting rungs. Null means there is nowhere to go.
+    /// </summary>
+    private AgentModelLevel? ResolveEscalationTarget(AgentTask task, AgentModelLevel? requested)
+    {
+        // Frontier = 0, so "higher tier" is a LOWER enum value.
+        if (requested is { } explicitTarget)
+            return (int)explicitTarget < (int)task.ModelLevel ? explicitTarget : null;
+
+        if (_settings.RolePolicy.TryGetValue(task.Role.ToString(), out var policy)
+            && policy.EscalateTo is { } configured
+            && (int)configured < (int)task.ModelLevel)
+        {
+            return configured;
+        }
+
+        return task.ModelLevel == AgentModelLevel.Frontier ? null : task.ModelLevel - 1;
+    }
+
+    /// <summary>
+    /// Put a task back on the queue for another attempt. Shared by retry and escalation because the
+    /// mechanics are identical — only the reason differs.
+    /// </summary>
+    private async Task RequeueAsync(
+        AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct)
+    {
+        await StopDelegateAsync(task, ct);
+
+        var now = UtcNow();
+        task.Attempt++;
+        // A human asking for another go outranks the automatic attempt cap.
+        if (task.Attempt > task.MaxAttempts)
+            task.MaxAttempts = task.Attempt;
+        task.Status = AgentTaskStatus.Queued;
+        task.AgentSessionId = null;
+        // --model is a LAUNCH argument, so a new tier needs a new process. An ephemeral delegate is
+        // discarded; a pinned agent is the caller's explicit choice and stays.
+        if (task.Ephemeral)
+            task.AgentId = null;
+        task.DispatchedAt = null;
+        task.CompletedAt = null;
+        task.ConcurrencyToken = Guid.NewGuid();
+
+        // Result and FailureReason are deliberately KEPT: they are the handoff the next attempt gets
+        // (DelegationReportFormatter.BuildBrief), and the drawer still shows what the last try said.
+        var (token, hash) = NewToken();
+        task.TokenHash = hash;
+        RawTokens[task.Id] = token;
+
+        AddEvent(task.Id, type, level, detail, now);
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync(
+            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        _logger.LogInformation(
+            "Task {ShortId} requeued as attempt {Attempt} at {Alias}: {Detail}",
+            DelegationReportFormatter.Short(task.Id), task.Attempt,
+            ModelLevelAliases.ForClaude(task.ModelLevel), detail);
+    }
+
+    /// <summary>
+    /// End the delegate's session if it has one. Best-effort: a session the runner has already lost
+    /// must not stop the caller from cancelling or requeueing the task.
+    /// </summary>
+    private async Task StopDelegateAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.AgentSessionId is not Guid sessionId)
+            return;
+
+        try
+        {
+            await _sessions.KillAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not stop session {SessionId} for task {ShortId}",
+                sessionId, DelegationReportFormatter.Short(task.Id));
+        }
     }
 
     /// <summary>
@@ -269,8 +417,33 @@ public sealed class AgentTaskService
 
     /// <summary>Project a loaded task to its DTO. <paramref name="family"/> is the whole run — it
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
-    public Task<AgentTaskSummaryDto> GetSummaryAsync(AgentTask task, IReadOnlyList<AgentTask> family) =>
-        Task.FromResult(ToSummary(task, family));
+    public async Task<AgentTaskSummaryDto> GetSummaryAsync(
+        AgentTask task, IReadOnlyList<AgentTask> family, CancellationToken ct = default) =>
+        ToSummary(task, family, await AgentNamesAsync([task], ct));
+
+    /// <summary>The DTO for one task, re-reading its run for the cost rollup.</summary>
+    private async Task<AgentTaskSummaryDto> SummaryOfAsync(AgentTask task, CancellationToken ct)
+    {
+        var family = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+        return ToSummary(task, family, await AgentNamesAsync([task], ct));
+    }
+
+    /// <summary>
+    /// Agent names for the tasks that have one. The board chip names the delegate that ran the work
+    /// ("doc-hand · sonnet · 4m12s"), and an id is not a name.
+    /// </summary>
+    private async Task<Dictionary<Guid, string>> AgentNamesAsync(
+        IReadOnlyList<AgentTask> tasks, CancellationToken ct)
+    {
+        var ids = tasks.Where(t => t.AgentId is not null).Select(t => t.AgentId!.Value).Distinct().ToList();
+        if (ids.Count == 0)
+            return [];
+
+        return await _db.Agents.AsNoTracking()
+            .Where(a => ids.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+    }
 
     internal static bool IsSettled(AgentTaskStatus status) =>
         status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
@@ -280,7 +453,8 @@ public sealed class AgentTaskService
         && repoPath is not null
         && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.RepoPath);
 
-    private static AgentTaskSummaryDto ToSummary(AgentTask task, IReadOnlyList<AgentTask> family)
+    private static AgentTaskSummaryDto ToSummary(
+        AgentTask task, IReadOnlyList<AgentTask> family, IReadOnlyDictionary<Guid, string> agentNames)
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
@@ -296,7 +470,9 @@ public sealed class AgentTaskService
         return new AgentTaskSummaryDto(
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
-            task.RepoPath, task.ScopeGlob, task.AgentId, task.AgentSessionId, task.Attempt,
+            task.RepoPath, task.ScopeGlob, task.AgentId,
+            task.AgentId is { } agentId && agentNames.TryGetValue(agentId, out var name) ? name : null,
+            task.AgentSessionId, task.Attempt,
             task.CreatedAt, task.DispatchedAt, task.CompletedAt,
             task.TokensIn, task.TokensOut, task.CostUsd, subtreeCost, childCount);
     }

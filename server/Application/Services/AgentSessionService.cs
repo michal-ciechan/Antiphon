@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
-public sealed class AgentSessionService
+public sealed class AgentSessionService : IDelegateSessionStopper
 {
     private const string MemoryKilledFailureReason = "MemoryKilled: agent exceeded the configured memory limit.";
     public const string ClaudeSessionNotFoundFailureReason =

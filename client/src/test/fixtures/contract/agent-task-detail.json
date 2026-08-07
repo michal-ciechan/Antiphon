@@ -1,0 +1,55 @@
+{
+  "summary": {
+    "id": "aaaaaaaa-0000-0000-0000-000000000004",
+    "rootTaskId": "aaaaaaaa-0000-0000-0000-000000000001",
+    "parentTaskId": "aaaaaaaa-0000-0000-0000-000000000001",
+    "depth": 1,
+    "title": "Rewrite the Windows install section",
+    "kind": "Worker",
+    "role": "Docs",
+    "modelLevel": "Medium",
+    "escalatedFrom": null,
+    "status": "Blocked",
+    "workspace": "ReadOnly",
+    "workingDirectory": "C:\\src\\antiphon",
+    "repoPath": "C:\\src\\antiphon",
+    "scopeGlob": "docs/setup.md",
+    "agentId": "bbbbbbbb-0000-0000-0000-000000000004",
+    "agentName": "task-install",
+    "agentSessionId": null,
+    "attempt": 1,
+    "createdAt": "2026-02-03T09:03:00Z",
+    "dispatchedAt": "2026-02-03T09:03:00Z",
+    "completedAt": null,
+    "tokensIn": 18400,
+    "tokensOut": 1250,
+    "costUsd": 0.031000,
+    "subtreeCostUsd": 0.031000,
+    "childCount": 0
+  },
+  "goal": "Rewrite the Windows install section.",
+  "result": "Rewrote \u0022## Windows install\u0022 in docs/setup.md \u2014 34 lines changed, every command now pwsh 7.\n\nOne decision is yours: should the old cmd examples be deleted, or kept alongside?",
+  "resultFilePath": null,
+  "failureReason": null,
+  "mergeTargetRef": null,
+  "events": [
+    {
+      "type": "Created",
+      "modelLevel": "Medium",
+      "detail": "Worker/Docs at Medium (role policy) in C:\\src\\antiphon",
+      "at": "2026-02-03T09:03:00Z"
+    },
+    {
+      "type": "Dispatched",
+      "modelLevel": "Medium",
+      "detail": "Dispatched to agent \u0027task-install\u0027 (sonnet) in C:\\src\\antiphon",
+      "at": "2026-02-03T09:03:04Z"
+    },
+    {
+      "type": "Blocked",
+      "modelLevel": null,
+      "detail": "Delegate asked a question.",
+      "at": "2026-02-03T09:07:11Z"
+    }
+  ]
+}

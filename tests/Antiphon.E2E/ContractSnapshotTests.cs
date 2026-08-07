@@ -177,7 +177,188 @@ public class ContractSnapshotTests
         }
     }
 
+    [Test]
+    public async Task Delegated_task_board_and_drawer_contracts()
+    {
+        var app = await SharedApp.GetAsync();
+
+        // A run with the shape the design is FOR — orchestrator → sub-orchestrator → worker —
+        // carrying every state the board has to render: all four tiers, all four lanes, an
+        // escalation, and each workspace mode. Seeded at the DB tier (like the transcript above)
+        // because the interesting part is the projection, not the creation path, which
+        // AgentTaskServiceIntegrationTests already covers.
+        const string cwd = @"C:\src\antiphon";
+        var t0 = new DateTime(2026, 2, 3, 9, 0, 0, DateTimeKind.Utc);
+        var root = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+        var schema = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002");
+        var suite = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000003");
+        var install = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000004");
+        var hang = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000005");
+
+        using (var scope = app.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentTasks.AnyAsync(t => t.RootTaskId == root))
+            {
+                db.AgentTaskEvents.RemoveRange(db.AgentTaskEvents.Where(e => db.AgentTasks
+                    .Where(t => t.RootTaskId == root).Select(t => t.Id).Contains(e.AgentTaskId)));
+                db.AgentTasks.RemoveRange(db.AgentTasks.Where(t => t.RootTaskId == root));
+                await db.SaveChangesAsync();
+            }
+
+            // Fixed agent ids as well as fixed task ids: the snapshot carries agentId, so a random
+            // one would make this test fail on its own second run instead of on a real drift.
+            var agents = new Dictionary<string, Guid>
+            {
+                ["task-upgrade"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
+                ["task-schema"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+                ["task-suite"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000003"),
+                ["task-install"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000004"),
+                ["task-hang"] = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000005"),
+            };
+            var levels = new Dictionary<string, Server.Domain.Enums.AgentModelLevel>
+            {
+                ["task-upgrade"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+                ["task-schema"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+                ["task-suite"] = Server.Domain.Enums.AgentModelLevel.Low,
+                ["task-install"] = Server.Domain.Enums.AgentModelLevel.Medium,
+                ["task-hang"] = Server.Domain.Enums.AgentModelLevel.Frontier,
+            };
+            var existing = await db.Agents
+                .Where(a => agents.Values.Contains(a.Id)).Select(a => a.Id).ToListAsync();
+            foreach (var (name, id) in agents.Where(a => !existing.Contains(a.Value)))
+                db.Agents.Add(DelegateAgent(id, name, cwd, levels[name], t0));
+            await db.SaveChangesAsync();
+
+            db.AgentTasks.AddRange(
+                Task(root, root, null, 0, "Ship the Postgres 18 upgrade", cwd, t0, agents["task-upgrade"], t =>
+                {
+                    t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Plan;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.DispatchedAt = t0;
+                    t.TokensIn = 84_000; t.TokensOut = 3_100; t.CostUsd = 0.412m;
+                }),
+                Task(schema, root, root, 1, "Migrate the schema and connection strings", cwd, t0.AddMinutes(2),
+                    agents["task-schema"], t =>
+                {
+                    t.Kind = Server.Domain.Enums.AgentTaskKind.Orchestrator;
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Code;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.Worktree;
+                    t.MergeTargetRef = "feat/pg18";
+                    t.DispatchedAt = t0.AddMinutes(2);
+                    t.TokensIn = 61_500; t.TokensOut = 4_800; t.CostUsd = 0.318m;
+                }),
+                Task(suite, root, schema, 2, "Run the integration suite and report failures", cwd, t0.AddMinutes(9),
+                    agents["task-suite"], t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Test;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Low;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Succeeded;
+                    t.ScopeGlob = "tests/**";
+                    t.DispatchedAt = t0.AddMinutes(9);
+                    t.CompletedAt = t0.AddMinutes(13).AddSeconds(24);
+                    t.Result = "3 failures, all in Antiphon.Tests.Application.CardServiceTests — "
+                        + "each is a missing checkpoint dependency, not a schema problem. Rerun with "
+                        + "dotnet run --project tests/Antiphon.Tests.";
+                    t.TokensIn = 22_000; t.TokensOut = 900; t.CostUsd = 0.019m;
+                }),
+                Task(install, root, root, 1, "Rewrite the Windows install section", cwd, t0.AddMinutes(3),
+                    agents["task-install"], t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Docs;
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Blocked;
+                    t.Workspace = Server.Domain.Enums.WorkspaceMode.ReadOnly;
+                    t.ScopeGlob = "docs/setup.md";
+                    t.DispatchedAt = t0.AddMinutes(3);
+                    t.Result = "Rewrote \"## Windows install\" in docs/setup.md — 34 lines changed, "
+                        + "every command now pwsh 7.\n\nOne decision is yours: should the old cmd "
+                        + "examples be deleted, or kept alongside?";
+                    t.TokensIn = 18_400; t.TokensOut = 1_250; t.CostUsd = 0.031m;
+                }),
+                Task(hang, root, root, 1, "Find out why the suite hangs on CI", cwd, t0.AddMinutes(4),
+                    agents["task-hang"], t =>
+                {
+                    t.Role = Server.Domain.Enums.AgentTaskRole.Debug;
+                    // The escalation ladder, visible on the chip: started at opus, now on fable.
+                    t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
+                    t.EscalatedFrom = Server.Domain.Enums.AgentModelLevel.High;
+                    t.Attempt = 2;
+                    t.Status = Server.Domain.Enums.AgentTaskStatus.Queued;
+                    t.Result = "Could not reproduce in 25 minutes; the hang only appears under load.";
+                    t.TokensIn = 40_100; t.TokensOut = 2_600; t.CostUsd = 0.204m;
+                }));
+
+            db.AgentTaskEvents.AddRange(
+                Event(install, Server.Domain.Enums.AgentTaskEventType.Created,
+                    "Worker/Docs at Medium (role policy) in " + cwd, t0.AddMinutes(3),
+                    Server.Domain.Enums.AgentModelLevel.Medium),
+                Event(install, Server.Domain.Enums.AgentTaskEventType.Dispatched,
+                    "Dispatched to agent 'task-install' (sonnet) in " + cwd, t0.AddMinutes(3).AddSeconds(4),
+                    Server.Domain.Enums.AgentModelLevel.Medium),
+                Event(install, Server.Domain.Enums.AgentTaskEventType.Blocked,
+                    "Delegate asked a question.", t0.AddMinutes(7).AddSeconds(11), null));
+            await db.SaveChangesAsync();
+        }
+
+        // Timestamps NOT scrubbed: the chips show elapsed and the drawer shows a timeline, so the
+        // OFFSETS between these instants are the data. Ids are fixed, so there is nothing to scrub.
+        await SnapshotAsync(app, $"/api/agent-tasks?rootId={root:D}", "agent-tasks.json",
+            workspace: null, scrubTimestamps: false, scrubGuids: false);
+        await SnapshotAsync(app, $"/api/agent-tasks/{install:D}", "agent-task-detail.json",
+            workspace: null, scrubTimestamps: false, scrubGuids: false);
+    }
+
     // ---- scenario helpers ----
+
+    private static Agent DelegateAgent(
+        Guid id, string name, string cwd, Server.Domain.Enums.AgentModelLevel level, DateTime at) =>
+        new()
+        {
+            Id = id,
+            Name = name,
+            Slug = name,
+            WorkingDirectory = cwd,
+            Details = "Ephemeral delegate.",
+            Status = Server.Domain.Enums.AgentStatus.Running,
+            ModelLevel = level,
+            AlwaysOn = false,
+            RemoteControlEnabled = false,
+            CreatedAt = at,
+            UpdatedAt = at,
+        };
+
+    private static AgentTask Task(
+        Guid id, Guid rootId, Guid? parentId, int depth, string title, string cwd, DateTime createdAt,
+        Guid agentId, Action<AgentTask> configure)
+    {
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = rootId,
+            ParentTaskId = parentId,
+            Depth = depth,
+            Title = title,
+            Goal = title + ".",
+            WorkingDirectory = cwd,
+            RepoPath = cwd,
+            AgentId = agentId,
+            Ephemeral = true,
+            CreatedAt = createdAt,
+            MaxAttempts = 2,
+        };
+        configure(task);
+        return task;
+    }
+
+    private static AgentTaskEvent Event(
+        Guid taskId, Server.Domain.Enums.AgentTaskEventType type, string detail, DateTime at,
+        Server.Domain.Enums.AgentModelLevel? level) =>
+        new() { Id = Guid.NewGuid(), AgentTaskId = taskId, Type = type, Detail = detail, At = at, ModelLevel = level };
 
     private static TranscriptEntry Entry(
         Guid sessionId, long sequence, string kind, DateTime timestamp, Action<TranscriptEntry> configure)
@@ -208,12 +389,13 @@ public class ContractSnapshotTests
     // ---- snapshot machinery ----
 
     private static async Task SnapshotAsync(
-        AntiphonAppFixture app, string url, string fixtureName, string workspace, bool scrubTimestamps = true)
+        AntiphonAppFixture app, string url, string fixtureName, string? workspace,
+        bool scrubTimestamps = true, bool scrubGuids = true)
     {
         var response = await app.HttpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
         var raw = await response.Content.ReadAsStringAsync();
-        var scrubbed = Scrub(raw, workspace, scrubTimestamps);
+        var scrubbed = Scrub(raw, workspace, scrubTimestamps, scrubGuids);
 
         var fixturePath = Path.Combine(FixturesDir(), fixtureName);
         if (!File.Exists(fixturePath))
@@ -234,35 +416,41 @@ public class ContractSnapshotTests
     /// <summary>
     /// Strip run-specific values so snapshots are stable: GUIDs → sequential placeholders (order of
     /// first appearance), timestamps → a fixed instant, the temp workspace root → a token. File
-    /// hashes/sizes stay REAL — the scenario content is deterministic, so they are too.
+    /// hashes/sizes stay REAL — the scenario content is deterministic, so they are too. A scenario
+    /// that fixes its own ids/paths up front opts out of the corresponding pass.
     /// </summary>
-    private static string Scrub(string json, string workspace, bool scrubTimestamps = true)
+    private static string Scrub(
+        string json, string? workspace, bool scrubTimestamps = true, bool scrubGuids = true)
     {
         var guidMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var scrubbed = Regex.Replace(
-            json,
-            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-            m =>
-            {
-                if (!guidMap.TryGetValue(m.Value, out var placeholder))
+        var scrubbed = scrubGuids
+            ? Regex.Replace(
+                json,
+                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                m =>
                 {
-                    placeholder = $"00000000-0000-0000-0000-{guidMap.Count + 1:D12}";
-                    guidMap[m.Value] = placeholder;
-                }
-                return placeholder;
-            });
+                    if (!guidMap.TryGetValue(m.Value, out var placeholder))
+                    {
+                        placeholder = $"00000000-0000-0000-0000-{guidMap.Count + 1:D12}";
+                        guidMap[m.Value] = placeholder;
+                    }
+                    return placeholder;
+                })
+            : json;
         if (scrubTimestamps)
             scrubbed = Regex.Replace(
                 scrubbed,
                 @"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?",
                 "2026-01-01T00:00:00Z");
-        var workspaceForward = workspace.Replace('\\', '/');
-        scrubbed = scrubbed
-            // Double-encoded first: toolInput is a JSON string CONTAINING JSON, so paths inside it
-            // carry twice-escaped backslashes.
-            .Replace(JsonEncode(JsonEncode(workspace)), "<workspace>")
-            .Replace(JsonEncode(workspace), "<workspace>")
-            .Replace(workspaceForward, "<workspace>");
+        if (workspace is not null)
+        {
+            scrubbed = scrubbed
+                // Double-encoded first: toolInput is a JSON string CONTAINING JSON, so paths inside
+                // it carry twice-escaped backslashes.
+                .Replace(JsonEncode(JsonEncode(workspace)), "<workspace>")
+                .Replace(JsonEncode(workspace), "<workspace>")
+                .Replace(workspace.Replace('\\', '/'), "<workspace>");
+        }
         // The agent name embeds a GUID fragment for uniqueness in the shared DB.
         scrubbed = Regex.Replace(scrubbed, "Contract Agent [0-9a-fA-F]+", "Contract Agent");
         return PrettyPrint(scrubbed);

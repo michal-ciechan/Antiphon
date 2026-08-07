@@ -361,6 +361,193 @@ public class AgentTaskServiceIntegrationTests
             () => CreateService(db).CancelAsync(task.Id, CancellationToken.None));
     }
 
+    [Test]
+    public async Task cancelling_a_running_task_stops_its_delegate()
+    {
+        // A cancel that only relabels the row leaves a Claude running against the run's cost
+        // ceiling while the board claims the work stopped.
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: sessionId);
+
+        await using var db = CreateContext();
+        var stopper = new RecordingSessionStopper();
+        await CreateService(db, stopper: stopper).CancelAsync(task.Id, CancellationToken.None);
+
+        stopper.Killed.ShouldBe([sessionId]);
+    }
+
+    [Test]
+    public async Task a_task_still_cancels_when_its_session_is_already_gone()
+    {
+        // The runner losing a session must not strand the task as un-cancellable.
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: Guid.NewGuid());
+
+        await using var db = CreateContext();
+        var stopper = new RecordingSessionStopper { Throws = new InvalidOperationException("session gone") };
+        var summary = await CreateService(db, stopper: stopper).CancelAsync(task.Id, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Canceled);
+    }
+
+    // ---- retry and escalation --------------------------------------------------------------
+
+    [Test]
+    public async Task retrying_a_failed_task_requeues_it_at_the_same_tier()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: AgentModelLevel.Medium);
+
+        await using var db = CreateContext();
+        var summary = await CreateService(db).RetryAsync(task.Id, CancellationToken.None);
+
+        summary.Status.ShouldBe(AgentTaskStatus.Queued);
+        summary.ModelLevel.ShouldBe(AgentModelLevel.Medium, "a retry is the same work, not a bigger model");
+        summary.Attempt.ShouldBe(2);
+    }
+
+    [Test]
+    public async Task a_requeued_task_gets_a_fresh_token()
+    {
+        // The raw token is consumed by the dispatch that injects it into the delegate's env, so a
+        // requeued task without a new one launches a delegate that cannot call back at all — and a
+        // sub-orchestrator that cannot call back cannot delegate.
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Orchestrator, workspace.Path, status: AgentTaskStatus.Failed);
+
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        await service.RetryAsync(task.Id, CancellationToken.None);
+
+        AgentTaskService.RawTokens.TryGetValue(task.Id, out var raw).ShouldBeTrue();
+        var stored = await db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == task.Id);
+        stored.TokenHash.ShouldBe(AgentTaskService.HashToken(raw!));
+
+        // And it authenticates as this task, which is what the delegate's callback depends on.
+        var caller = await service.AuthenticateAsync(raw, CancellationToken.None);
+        caller.Task!.Id.ShouldBe(task.Id);
+    }
+
+    [Test]
+    public async Task a_queued_task_cannot_be_retried()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(AgentTaskKind.Worker, workspace.Path);
+
+        await using var db = CreateContext();
+
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(db).RetryAsync(task.Id, CancellationToken.None));
+        ex.Message.ShouldContain("has not run yet");
+    }
+
+    [Test]
+    public async Task retrying_a_running_task_stops_the_delegate_first()
+    {
+        using var workspace = new TempWorkspace();
+        var sessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working, sessionId: sessionId);
+
+        await using var db = CreateContext();
+        var stopper = new RecordingSessionStopper();
+        var summary = await CreateService(db, stopper: stopper).RetryAsync(task.Id, CancellationToken.None);
+
+        stopper.Killed.ShouldBe([sessionId], "two delegates on one task would both report back");
+        summary.AgentSessionId.ShouldBeNull("the next dispatch assigns a fresh session");
+    }
+
+    [Test]
+    [Arguments(AgentModelLevel.Low, AgentModelLevel.Medium)]
+    [Arguments(AgentModelLevel.Medium, AgentModelLevel.High)]
+    [Arguments(AgentModelLevel.High, AgentModelLevel.Frontier)]
+    public async Task escalating_moves_one_rung_up_the_ladder(AgentModelLevel from, AgentModelLevel to)
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: from);
+
+        await using var db = CreateContext();
+        var summary = await CreateService(db).EscalateAsync(task.Id, null, CancellationToken.None);
+
+        summary.ModelLevel.ShouldBe(to);
+        summary.EscalatedFrom.ShouldBe(from, "the chip shows the ladder, not just where it ended up");
+        summary.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task escalating_from_the_top_of_the_ladder_is_refused()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path,
+            status: AgentTaskStatus.Failed, level: AgentModelLevel.Frontier);
+
+        await using var db = CreateContext();
+
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(db).EscalateAsync(task.Id, null, CancellationToken.None));
+        ex.Message.ShouldContain("top of the ladder");
+    }
+
+    [Test]
+    public async Task escalating_a_queued_task_changes_its_tier_without_spending_an_attempt()
+    {
+        // Bumping a task before it starts is not a second try — it is the first one, at a
+        // different tier.
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, level: AgentModelLevel.Medium);
+
+        await using var db = CreateContext();
+        var summary = await CreateService(db).EscalateAsync(task.Id, null, CancellationToken.None);
+
+        summary.ModelLevel.ShouldBe(AgentModelLevel.High);
+        summary.Attempt.ShouldBe(1);
+        summary.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task an_explicit_escalation_target_must_be_a_higher_tier()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: AgentModelLevel.High);
+
+        await using var db = CreateContext();
+
+        // Downgrading through "escalate" would silently make work cheaper than the caller asked for.
+        await Should.ThrowAsync<ConflictException>(
+            () => CreateService(db).EscalateAsync(task.Id, AgentModelLevel.Low, CancellationToken.None));
+    }
+
+    [Test]
+    public async Task the_next_attempt_carries_what_the_last_one_found()
+    {
+        // Escalation that restarts cold just pays a higher tier to rediscover the same dead end.
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path,
+            status: AgentTaskStatus.Failed, level: AgentModelLevel.High,
+            result: "Could not reproduce; the failure only appears under load.");
+
+        await using var db = CreateContext();
+        await CreateService(db).EscalateAsync(task.Id, null, CancellationToken.None);
+
+        var requeued = await db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == task.Id);
+        var brief = DelegationReportFormatter.BuildBrief(requeued, new DelegationSettings());
+
+        brief.ShouldContain("previous attempt");
+        brief.ShouldContain("only appears under load");
+        brief.ShouldContain("opus", Case.Insensitive);
+        brief.ShouldContain("fable", Case.Insensitive);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static CreateAgentTaskRequest NewRequest(
@@ -378,7 +565,11 @@ public class AgentTaskServiceIntegrationTests
         int depth = 0,
         decimal costUsd = 0m,
         AgentTaskStatus status = AgentTaskStatus.Queued,
-        AgentTask? parent = null)
+        AgentTask? parent = null,
+        AgentModelLevel level = AgentModelLevel.High,
+        AgentTaskRole role = AgentTaskRole.Custom,
+        Guid? sessionId = null,
+        string? result = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -390,12 +581,14 @@ public class AgentTaskServiceIntegrationTests
             Title = $"Seeded {kind}",
             Goal = "Seeded goal.",
             Kind = kind,
-            Role = AgentTaskRole.Custom,
-            ModelLevel = AgentModelLevel.High,
+            Role = role,
+            ModelLevel = level,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = workingDirectory,
             Status = status,
             CostUsd = costUsd,
+            AgentSessionId = sessionId,
+            Result = result,
             CreatedAt = DateTime.UtcNow,
         };
 
@@ -405,7 +598,10 @@ public class AgentTaskServiceIntegrationTests
         return task;
     }
 
-    private static AgentTaskService CreateService(AppDbContext db, IReadOnlyList<string>? allowedRoots = null)
+    private static AgentTaskService CreateService(
+        AppDbContext db,
+        IReadOnlyList<string>? allowedRoots = null,
+        RecordingSessionStopper? stopper = null)
     {
         var settings = new DelegationSettings
         {
@@ -419,6 +615,7 @@ public class AgentTaskServiceIntegrationTests
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(settings),
             new MockEventBus(),
+            stopper ?? new RecordingSessionStopper(),
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance);
     }

@@ -42,6 +42,17 @@ public static class AgentTaskEndpoints
             AgentTaskService service,
             CancellationToken ct) => Results.Ok(await service.CancelAsync(id, ct)));
 
+        tasks.MapPost("/{id:guid}/retry", async (
+            Guid id,
+            AgentTaskService service,
+            CancellationToken ct) => Results.Ok(await service.RetryAsync(id, ct)));
+
+        tasks.MapPost("/{id:guid}/escalate", async (
+            Guid id,
+            EscalateAgentTaskRequest? request,
+            AgentTaskService service,
+            CancellationToken ct) => Results.Ok(await service.EscalateAsync(id, request?.ModelLevel, ct)));
+
         tasks.MapPost("/{id:guid}/reply", async (
             Guid id,
             ReplyToAgentTaskRequest request,

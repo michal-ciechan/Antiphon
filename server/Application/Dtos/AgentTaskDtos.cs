@@ -38,6 +38,8 @@ public sealed record AgentTaskSummaryDto(
     string? RepoPath,
     string? ScopeGlob,
     Guid? AgentId,
+    /// <summary>The delegate that ran (or is running) the work — the board chip names it.</summary>
+    string? AgentName,
     Guid? AgentSessionId,
     int Attempt,
     DateTime CreatedAt,
@@ -70,3 +72,6 @@ public sealed record AgentTaskEventDto(
 public sealed record AgentTaskCreatedDto(Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel);
 
 public sealed record ReplyToAgentTaskRequest(string Message);
+
+/// <summary>Manual tier bump. Null takes the next rung up (or the role policy's target).</summary>
+public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);

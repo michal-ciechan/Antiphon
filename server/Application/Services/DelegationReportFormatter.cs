@@ -35,11 +35,48 @@ public static class DelegationReportFormatter
 
         sb.AppendLine(task.Goal.Trim()).AppendLine();
 
+        if (BuildHandoff(task) is { } handoff)
+            sb.AppendLine(handoff).AppendLine();
+
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
 
         sb.Append(ReportingContract(task.Id, task.Kind, settings.ReplyInlineMaxChars));
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// What the previous attempt found, carried into this one. Without it an escalation just pays a
+    /// higher tier to rediscover the same dead end — which is the whole failure mode escalation is
+    /// supposed to fix. Null on a first attempt, or when the last one left nothing to hand over.
+    /// </summary>
+    internal static string? BuildHandoff(AgentTask task)
+    {
+        if (task.Attempt <= 1)
+            return null;
+
+        var carried = !string.IsNullOrWhiteSpace(task.Result) ? task.Result!.Trim()
+            : !string.IsNullOrWhiteSpace(task.FailureReason) ? task.FailureReason!.Trim()
+            : null;
+        if (carried is null)
+            return null;
+
+        // Enough to orient the next attempt; the full text stays on the task row either way.
+        const int max = 4_000;
+        if (carried.Length > max)
+            carried = carried[..max] + $"\n[... clipped — full text: /api/agent-tasks/{task.Id} ...]";
+
+        var tier = task.EscalatedFrom is { } from
+            ? $"at {ModelLevelAliases.ForClaude(from)}, escalated to {ModelLevelAliases.ForClaude(task.ModelLevel)}"
+            : $"at {ModelLevelAliases.ForClaude(task.ModelLevel)}";
+
+        return $"""
+            --- previous attempt ---
+            Attempt {task.Attempt - 1} ran {tier} and did not settle this. Do not start cold — this is
+            what it reported:
+
+            {carried}
+            """;
     }
 
     /// <summary>
