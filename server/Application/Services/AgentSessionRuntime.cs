@@ -192,22 +192,26 @@ public sealed class AgentSessionRuntime
             "SessionTranscript",
             ToTranscriptPayload(entry),
             ct);
+
+        // Decided BEFORE persisting: the check asks "has a row like this already landed?", and
+        // persisting first would make every entry look like one we had already acted on.
+        var actOnTurnBoundary = IsTurnBoundary(entry) && await IsUnseenTurnBoundaryAsync(entry, ct);
+
         var storedSeq = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
 
         // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
-        if (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
+        // Interrupted turns (Esc / rejected tool call) end with the "[Request interrupted..." user
+        // marker and NO TurnEnd — they are turn boundaries too, and the queue must flush or every
+        // WhenIdle delivery strands until some later turn completes (live miss 2026-07-29).
+        if (actOnTurnBoundary)
             await FlushQueueOnIdleAsync(entry.SessionId, ct);
 
-        // An interrupted turn (Esc / rejected tool call) ends with the "[Request interrupted..."
-        // user marker and NO TurnEnd — it is still a turn boundary, and the queue must flush or
-        // every WhenIdle delivery strands until some later turn completes (live miss 2026-07-29).
-        if (TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text))
-            await FlushQueueOnIdleAsync(entry.SessionId, ct);
-
-        // Claude sometimes writes the turn's stop marker BEFORE its reply text — the TurnEnd-time
-        // dispatch then sees no text and leaves the correlations pending, so the text's own arrival
-        // must re-trigger the channel reply dispatch (cheap no-op when nothing is pending).
+        // Claude writes the turn's stop marker BEFORE its reply text: one API response becomes
+        // several JSONL records (thinking first, then text) and EVERY one carries the response's
+        // stop_reason, so the turn end we act on is the thinking record's. The TurnEnd-time
+        // dispatch therefore sees no text and leaves the correlations pending — the text's own
+        // arrival must re-trigger the channel reply dispatch (cheap no-op when nothing is pending).
         if (entry.Kind == TranscriptKinds.AssistantText)
             await DispatchChannelRepliesAsync(entry.SessionId, ct);
 
@@ -219,6 +223,65 @@ public sealed class AgentSessionRuntime
         // deduped away (replay) was already handled.
         if (entry.Kind == TranscriptKinds.CompactBoundary && storedSeq is long boundarySeq)
             await DispatchCompactionRecoveryAsync(entry.SessionId, boundarySeq, ct);
+    }
+
+    /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
+    /// <see cref="FlushQueueOnIdleAsync"/> for why the interrupt marker counts).</summary>
+    private static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>
+        (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
+        || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text);
+
+    /// <summary>
+    /// True when this turn boundary is one we have not already acted on. Two ways it can be a
+    /// repeat, and both fired a duplicate queue flush and a duplicate "Agent finished" toast
+    /// (live miss 2026-08-06: 13 toasts in one second on agent start, then 2 per turn after):
+    ///
+    /// 1. REPLAY. The runner's tailer always re-reads the transcript from offset 0 — on agent
+    ///    start, on runner restart/adoption, and on the /clear fork-follow — so EVERY historic turn
+    ///    end is re-published. Its transcript uuid is already stored: that is history, not news.
+    /// 2. SPLIT API RESPONSE. Claude Code writes one API response as several JSONL records (a
+    ///    "thinking" record, then a "text" record) and stamps every one with the response's
+    ///    stop_reason, so a single turn yields several TurnEnd entries sharing one ApiCallId. Only
+    ///    the first of them is the turn's end.
+    ///
+    /// Fails OPEN — an unknown session, a null uuid, or a failed query all count as "unseen".
+    /// Missing a real turn end strands every WhenIdle delivery on that session (2026-07-29,
+    /// 2026-07-31); a duplicate toast is merely noisy.
+    /// </summary>
+    private async Task<bool> IsUnseenTurnBoundaryAsync(SessionRunnerTranscriptEvent entry, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sessionId = entry.SessionId;
+
+            // (1) Same (uuid, kind) as a stored row — the same transcript line, seen again.
+            // Mirrors the dedup key PersistTranscriptAsync uses, so "acted on" and "persisted"
+            // can never disagree.
+            var uuid = entry.Uuid;
+            if (uuid is not null && await db.TranscriptEntries.AnyAsync(
+                    t => t.AgentSessionId == sessionId && t.Uuid == uuid && t.Kind == entry.Kind, ct))
+                return false;
+
+            // (2) A different line of the SAME API response — its sibling already ended the turn.
+            var apiCallId = entry.ApiCallId;
+            if (entry.Kind == TranscriptKinds.TurnEnd
+                && apiCallId is not null
+                && await db.TranscriptEntries.AnyAsync(
+                    t => t.AgentSessionId == sessionId
+                        && t.Kind == TranscriptKinds.TurnEnd
+                        && t.ApiCallId == apiCallId, ct))
+                return false;
+
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Turn-boundary replay check failed for session {SessionId}; treating as live", entry.SessionId);
+            return true;
+        }
     }
 
     private async Task DispatchCompactionRecoveryAsync(Guid sessionId, long sequence, CancellationToken ct)
