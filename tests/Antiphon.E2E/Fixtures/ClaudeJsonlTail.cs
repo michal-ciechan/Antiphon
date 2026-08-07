@@ -44,6 +44,64 @@ public sealed class ClaudeJsonlTail
         Path is not null && TryReadCompletedTurn(Path, out var text) ? text : null;
 
     /// <summary>
+    /// Every shell command the session actually ran, in order.
+    ///
+    /// This is the difference between "something went wrong" and a defect you can fix. The screen is
+    /// a viewport, so a failing command has usually scrolled away before anything inspects it — the
+    /// transcript keeps the exact argv. Reading it back is what identified the real cause of the
+    /// classification canary's failures: not garbled quoting, but the model resolving
+    /// scripts/delegate.ps1 against the skill's own folder because the skill never said otherwise.
+    /// </summary>
+    public IReadOnlyList<string> ShellCommands()
+    {
+        if (Path is null)
+            return [];
+
+        var commands = new List<string>();
+        try
+        {
+            using var stream = new FileStream(
+                Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            while (reader.ReadLine() is { } line)
+            {
+                if (line.Length == 0)
+                    continue;
+
+                JsonElement root;
+                try { root = JsonDocument.Parse(line).RootElement; }
+                catch (JsonException) { continue; }
+
+                if (!root.TryGetProperty("message", out var message)
+                    || !message.TryGetProperty("content", out var content)
+                    || content.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                foreach (var block in content.EnumerateArray())
+                {
+                    if (!block.TryGetProperty("type", out var type) || type.GetString() != "tool_use")
+                        continue;
+                    if (!block.TryGetProperty("input", out var input))
+                        continue;
+
+                    // Bash and PowerShell tools both put the argv under "command".
+                    if (input.TryGetProperty("command", out var command)
+                        && command.GetString() is { Length: > 0 } text)
+                    {
+                        commands.Add(text.ReplaceLineEndings(" ").Trim());
+                    }
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // Mid-append read — whatever was gathered is still worth reporting.
+        }
+
+        return commands;
+    }
+
+    /// <summary>
     /// Records are appended, so a partially-written final line is normal — skip anything that does
     /// not parse rather than failing, and re-read on the next poll.
     /// </summary>

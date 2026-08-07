@@ -93,23 +93,9 @@ public class DelegationPipelineE2ETests
             await orchestrator.SubmitAsync(instruction);
 
             var task = await WaitForChildAsync(fixture, rootTaskId, TimeSpan.FromMinutes(5));
-            if (task is null)
-            {
-                // Distinguish the two ways this can produce nothing. If PowerShell printed its usage
-                // banner, the model garbled its own quoting and the command never reached
-                // delegate.ps1 — nothing about our contract was exercised, so failing would be
-                // noise. A canary people learn to ignore is worse than no canary.
-                if (ShellRejectedTheCommand(orchestrator.Screen()))
-                {
-                    throw new TUnit.Core.Exceptions.SkipTestException(
-                        "the model garbled its shell invocation, so delegate.ps1 was never reached — "
-                        + "model-side flake, not a delegation failure");
-                }
-
-                task.ShouldNotBeNull(
-                    "a real Claude must find the skill and reach the API from prose alone. "
-                    + Describe(orchestrator));
-            }
+            task.ShouldNotBeNull(
+                "a real Claude must find the skill and reach the API from prose alone. "
+                + Describe(orchestrator));
 
             Console.WriteLine($"Model chose: kind={task!.Kind} role={task.Role} tier={task.ModelLevel}");
 
@@ -129,22 +115,26 @@ public class DelegationPipelineE2ETests
     }
 
     /// <summary>
-    /// True when the shell rejected the command outright and printed its own usage banner — the
-    /// model's quoting was wrong and delegate.ps1 was never invoked.
+    /// Say WHY nothing happened. "Task was null" after five minutes is not a bug report — and the
+    /// SCREEN alone is not enough either: it is a viewport, so the command that failed has usually
+    /// scrolled off by the time anything looks. Reading the commands back out of the transcript is
+    /// what turned "the model garbled something" into the actual defect (the model resolved
+    /// scripts/delegate.ps1 relative to the SKILL folder rather than the repo root, because the
+    /// skill did not say which).
     /// </summary>
-    private static bool ShellRejectedTheCommand(string screen) =>
-        screen.Contains("[-ExecutionPolicy", StringComparison.OrdinalIgnoreCase)
-        || screen.Contains("[-InputFormat", StringComparison.OrdinalIgnoreCase)
-        || screen.Contains("PowerShell[.exe]", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Say WHY nothing happened — "task was null" after five minutes is not a bug report.</summary>
     private static string Describe(ClaudeHarness session)
     {
         var blocked = session.BlockedOn();
         var reason = blocked is null
             ? "The TUI is not blocked on a dialog — it either never ran the command, or the command failed."
             : $"The TUI is BLOCKED on a [{blocked.Kind}] dialog: {blocked.Title}";
-        return $"{reason}\nScreen:\n{session.Screen()}";
+
+        var commands = session.Transcript.ShellCommands();
+        var attempted = commands.Count == 0
+            ? "No shell commands were recorded in the transcript."
+            : "Commands the model actually ran:\n  " + string.Join("\n  ", commands);
+
+        return $"{reason}\n{attempted}\nScreen:\n{session.Screen()}";
     }
 
     private static async Task<AgentTask?> WaitForChildAsync(

@@ -6,8 +6,14 @@ description: Hand a piece of work to another agent, at the model tier the work d
 # antiphon-delegate — hand work to another agent
 
 **Run it exactly like this** — `pwsh -NoProfile -File`, then the script path, then the arguments.
-The script is not directly executable; a bare `./scripts/delegate.ps1` fails, and putting the
-arguments before `-File` makes PowerShell reject them as its own and print its usage banner.
+
+> **The path is relative to your working directory — the repo root — NOT to this skill's folder.**
+> It is `scripts/delegate.ps1`. There is no copy inside `.claude/skills/`, so
+> `.claude/skills/antiphon-delegate/scripts/delegate.ps1` does not exist; pointing `-File` at it
+> makes PowerShell print its usage banner instead of running anything.
+
+The script is not directly executable, so a bare `./scripts/delegate.ps1` fails, and putting the
+arguments before `-File` makes PowerShell take them as its own.
 
 ```powershell
 # a worker: one piece of work, reports back to you
