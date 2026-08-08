@@ -51,6 +51,9 @@ public sealed record AgentTaskSummaryDto(
     WorkspaceMode Workspace,
     string WorkingDirectory,
     string? RepoPath,
+    /// <summary>Where a Worktree task actually runs — the throwaway checkout, branch included.</summary>
+    string? WorktreePath,
+    string? WorktreeBranch,
     string? ScopeGlob,
     Guid? AgentId,
     /// <summary>The delegate that ran (or is running) the work — the board chip names it.</summary>

@@ -66,6 +66,9 @@ export interface AgentTaskSummaryDto {
   workspace: WorkspaceMode
   workingDirectory: string
   repoPath: string | null
+  /** Where a Worktree task actually runs — the throwaway checkout, branch included. */
+  worktreePath: string | null
+  worktreeBranch: string | null
   scopeGlob: string | null
   agentId: string | null
   agentName: string | null

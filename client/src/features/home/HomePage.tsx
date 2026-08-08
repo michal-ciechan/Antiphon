@@ -15,16 +15,33 @@ import {
 } from '@mantine/core'
 import { useDisclosure, useLocalStorage } from '@mantine/hooks'
 import { useMemo } from 'react'
-import { TbChevronDown, TbFolder, TbLayoutList, TbMessage, TbUserShare } from 'react-icons/tb'
+import {
+  TbChevronDown,
+  TbFolder,
+  TbGitBranch,
+  TbLayoutList,
+  TbMessage,
+  TbUserShare,
+} from 'react-icons/tb'
 import { Link } from 'react-router'
 import { useAgentList } from '../../api/agents'
 import { useAgentTasks } from '../../api/agentTasks'
+import { useWorkspaceGitInfos, useWorkspaceWorktrees } from '../../api/filesystem'
 import { DelegateModal } from '../delegations/DelegateModal'
 import { FilesReviewPanel, type FilesPanelHeights } from '../agents/FilesReviewPanel'
 import { SessionTranscriptPanel } from '../agents/SessionTranscriptPanel'
 import { AgentRail } from './AgentRail'
 import { ProjectTasksPanel } from './ProjectTasksPanel'
-import { buildProjects, pickAgent } from './projectGrouping'
+import {
+  buildProjects,
+  isActiveTask,
+  mergeWorktrees,
+  pickAgent,
+  pickWorkspace,
+  taskRunDir,
+  type WorkspaceEntry,
+  type WorkspaceKind,
+} from './projectGrouping'
 
 // Fill the viewport under the 56px app header and the AppShell.Main md padding (16px top+bottom).
 const PAGE_HEIGHT = 'calc(100dvh - 56px - 2 * var(--mantine-spacing-md))'
@@ -43,9 +60,25 @@ export function HomePage() {
   const tasks = useAgentTasks()
   const [delegateOpen, delegate] = useDisclosure(false)
 
+  // Git identity (repo root + branch) for every directory on screen — what lets a worktree- or
+  // subdirectory-scoped agent nest under the repo it belongs to instead of standing alone.
+  const gitDirs = useMemo(() => {
+    const dirs = new Set<string>()
+    for (const a of agents.data ?? []) {
+      if (a.workingDirectory.trim()) dirs.add(a.workingDirectory.trim())
+    }
+    for (const t of tasks.data ?? []) {
+      if (!isActiveTask(t)) continue
+      dirs.add(taskRunDir(t))
+      if (t.repoPath) dirs.add(t.repoPath)
+    }
+    return [...dirs].sort()
+  }, [agents.data, tasks.data])
+  const gitInfos = useWorkspaceGitInfos(gitDirs)
+
   const projects = useMemo(
-    () => buildProjects(agents.data ?? [], tasks.data ?? []),
-    [agents.data, tasks.data],
+    () => buildProjects(agents.data ?? [], tasks.data ?? [], gitInfos.data ?? []),
+    [agents.data, tasks.data, gitInfos.data],
   )
 
   const [storedProject, setStoredProject] = useLocalStorage<string | null>({
@@ -67,7 +100,27 @@ export function HomePage() {
       null,
     [projects, storedProject],
   )
-  const agent = pickAgent(project, project ? (agentByProject[project.key] ?? null) : null)
+
+  // The selected project's live worktree list fills in checkouts nobody has an agent in yet
+  // (and refreshes branch names from git truth).
+  const worktreeListing = useWorkspaceWorktrees(project?.path ?? null)
+  const projectView = useMemo(
+    () => (project ? mergeWorktrees(project, worktreeListing.data) : null),
+    [project, worktreeListing.data],
+  )
+
+  const [workspaceByProject, setWorkspaceByProject] = useLocalStorage<Record<string, string>>({
+    key: 'antiphon-home-workspace-by-project',
+    defaultValue: {},
+  })
+  const workspace = pickWorkspace(
+    projectView,
+    project ? (workspaceByProject[project.key] ?? null) : null,
+  )
+
+  // Remembered agent is keyed by WORKSPACE directory; a main workspace's key equals the old
+  // project key, so pre-switcher selections carry over.
+  const agent = pickAgent(workspace, workspace ? (agentByProject[workspace.key] ?? null) : null)
   const sessionId = agent ? (agent.liveSession?.id ?? agent.persistentSessionId) : null
 
   if (agents.isLoading) {
@@ -87,10 +140,14 @@ export function HomePage() {
             selectedKey={project?.key ?? null}
             onSelect={setStoredProject}
           />
-          {project && (
-            <Text size="xs" c="dimmed" truncate style={{ maxWidth: 380 }} visibleFrom="md">
-              {project.path}
-            </Text>
+          {projectView && workspace && (
+            <WorkspaceSwitcher
+              workspaces={projectView.workspaces}
+              selected={workspace}
+              onSelect={(key) => {
+                if (project) setWorkspaceByProject({ ...workspaceByProject, [project.key]: key })
+              }}
+            />
           )}
         </Group>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -111,7 +168,13 @@ export function HomePage() {
       <DelegateModal
         opened={delegateOpen}
         onClose={delegate.close}
-        prefill={project ? { workingDirectory: project.path } : undefined}
+        prefill={
+          workspace
+            ? { workingDirectory: workspace.path }
+            : project
+              ? { workingDirectory: project.path }
+              : undefined
+        }
       />
 
       <Group align="stretch" gap="sm" wrap="nowrap" style={{ flexGrow: 1, minHeight: 0 }}>
@@ -131,10 +194,10 @@ export function HomePage() {
             </Anchor>
           </Group>
           <AgentRail
-            agents={project?.agents ?? []}
+            agents={workspace?.agents ?? []}
             selectedId={agent?.id ?? null}
             onSelect={(id) => {
-              if (project) setAgentByProject({ ...agentByProject, [project.key]: id })
+              if (workspace) setAgentByProject({ ...agentByProject, [workspace.key]: id })
             }}
           />
         </Paper>
@@ -149,7 +212,9 @@ export function HomePage() {
                 <Text c="dimmed">
                   {projects.length === 0
                     ? 'No agents and no work yet.'
-                    : 'No agents in this project yet.'}
+                    : workspace && workspace.kind !== 'main'
+                      ? `No agent is scoped to this ${workspace.kind === 'worktree' ? 'worktree' : 'subdirectory'} yet.`
+                      : 'No agents in this project yet.'}
                 </Text>
                 <Text size="sm" c="dimmed">
                   <Anchor onClick={delegate.open}>Delegate work</Anchor> to queue something for the
@@ -203,8 +268,10 @@ export function HomePage() {
               p="xs"
               style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
             >
-              {project ? (
-                <ProjectTasksPanel projectKey={project.key} />
+              {projectView ? (
+                <ProjectTasksPanel
+                  dirKeys={[projectView.key, ...projectView.workspaces.map((w) => w.key)]}
+                />
               ) : (
                 <Text size="sm" c="dimmed" ta="center" py="xl">
                   No project selected.
@@ -215,6 +282,114 @@ export function HomePage() {
         </Paper>
       </Group>
     </Box>
+  )
+}
+
+/**
+ * The directory scope WITHIN the selected project: its main checkout, agent-scoped
+ * subdirectories, and git worktrees — branch names included. Selecting one narrows the agent
+ * rail, files pane, and chat to the agents living there. With nothing but the main directory
+ * it degrades to the plain dimmed path the header always showed.
+ */
+function WorkspaceSwitcher({
+  workspaces,
+  selected,
+  onSelect,
+}: {
+  workspaces: WorkspaceEntry[]
+  selected: WorkspaceEntry
+  onSelect: (key: string) => void
+}) {
+  const kindLabel: Record<WorkspaceKind, string> = {
+    main: 'main',
+    subdir: 'subdirectory',
+    worktree: 'worktree',
+  }
+  if (workspaces.length <= 1) {
+    return (
+      <Group gap={6} wrap="nowrap" visibleFrom="md" style={{ minWidth: 0 }}>
+        <Text size="xs" c="dimmed" truncate style={{ maxWidth: 380 }}>
+          {selected.path}
+        </Text>
+        {selected.branch && <BranchBadge branch={selected.branch} />}
+      </Group>
+    )
+  }
+  return (
+    <Menu shadow="md" position="bottom-start" width={440}>
+      <Menu.Target>
+        <UnstyledButton aria-label="Switch workspace" data-testid="workspace-switcher" visibleFrom="md">
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" truncate style={{ maxWidth: 340 }}>
+              {selected.path}
+            </Text>
+            {selected.branch && <BranchBadge branch={selected.branch} />}
+            <Badge size="xs" variant="default" style={{ flexShrink: 0, textTransform: 'none' }}>
+              {workspaces.length} dirs
+            </Badge>
+            <TbChevronDown size={12} style={{ flexShrink: 0 }} />
+          </Group>
+        </UnstyledButton>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Workspaces — main directory, subdirectories, worktrees</Menu.Label>
+        {workspaces.map((w) => (
+          <Menu.Item key={w.key} onClick={() => onSelect(w.key)}>
+            <Group gap="xs" wrap="nowrap" justify="space-between">
+              <Box style={{ minWidth: 0 }}>
+                <Group gap={6} wrap="nowrap">
+                  <Text size="sm" fw={w.key === selected.key ? 700 : 400} truncate>
+                    {w.label}
+                  </Text>
+                  {w.kind !== 'main' && (
+                    <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                      {kindLabel[w.kind]}
+                    </Text>
+                  )}
+                </Group>
+                <Text size="xs" c="dimmed" truncate>
+                  {w.path}
+                </Text>
+              </Box>
+              <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                {w.branch && <BranchBadge branch={w.branch} />}
+                {w.agents.length > 0 && (
+                  <Tooltip label={`${w.agents.length} agent${w.agents.length === 1 ? '' : 's'}`}>
+                    <Badge size="xs" variant="default">
+                      {w.agents.length}
+                    </Badge>
+                  </Tooltip>
+                )}
+                {w.activeTaskCount > 0 && (
+                  <Tooltip
+                    label={`${w.activeTaskCount} task${w.activeTaskCount === 1 ? '' : 's'} in flight`}
+                  >
+                    <Badge size="xs" variant="light" color="active">
+                      {w.activeTaskCount}
+                    </Badge>
+                  </Tooltip>
+                )}
+              </Group>
+            </Group>
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
+  )
+}
+
+/** Branch chip — casing preserved, git icon, capped width so feat/very-long-names behave. */
+function BranchBadge({ branch }: { branch: string }) {
+  return (
+    <Badge
+      size="xs"
+      variant="light"
+      color="teal"
+      leftSection={<TbGitBranch size={10} />}
+      style={{ textTransform: 'none', maxWidth: 180, flexShrink: 0 }}
+    >
+      {branch}
+    </Badge>
   )
 }
 
@@ -246,7 +421,7 @@ function ProjectSwitcher({
         </UnstyledButton>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>Projects — one per working directory</Menu.Label>
+        <Menu.Label>Projects — one per repo (worktrees fold in)</Menu.Label>
         {projects.length === 0 && (
           <Menu.Item disabled>No agent directories yet</Menu.Item>
         )}
@@ -262,6 +437,13 @@ function ProjectSwitcher({
                 </Text>
               </Box>
               <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                {p.workspaces.length > 1 && (
+                  <Tooltip label={`${p.workspaces.length} directories (worktrees/subdirs)`}>
+                    <Badge size="xs" variant="light" color="teal">
+                      {p.workspaces.length}
+                    </Badge>
+                  </Tooltip>
+                )}
                 <Tooltip label={`${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`}>
                   <Badge size="xs" variant="default">
                     {p.agents.length}

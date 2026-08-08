@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentSummaryDto } from '../../api/agents'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
-import { buildProjects, normalizeDir, pickAgent, taskProjectDir } from './projectGrouping'
+import type { WorkspaceGitInfo } from '../../api/filesystem'
+import {
+  buildProjects,
+  mergeWorktrees,
+  normalizeDir,
+  pickAgent,
+  pickWorkspace,
+  taskProjectDir,
+} from './projectGrouping'
 
 function agent(overrides: Partial<AgentSummaryDto>): AgentSummaryDto {
   return {
@@ -47,6 +55,8 @@ function task(overrides: Partial<AgentTaskSummaryDto>): AgentTaskSummaryDto {
     workspace: 'Shared',
     workingDirectory: 'C:\\src\\antiphon',
     repoPath: null,
+    worktreePath: null,
+    worktreeBranch: null,
     scopeGlob: null,
     agentId: null,
     agentName: null,
@@ -115,6 +125,139 @@ describe('buildProjects', () => {
       agent({ id: 'a2', workingDirectory: 'C:\\clients\\beta\\app' }),
     ])
     expect(projects.map((p) => p.label).sort()).toEqual(['alpha\\app', 'beta\\app'])
+  })
+})
+
+function info(overrides: Partial<WorkspaceGitInfo> & { path: string }): WorkspaceGitInfo {
+  return { isGitRepository: true, repoRoot: null, branch: null, isWorktree: false, ...overrides }
+}
+
+describe('buildProjects with git info', () => {
+  it('nests worktree- and subdirectory-scoped agents under their repo', () => {
+    const projects = buildProjects(
+      [
+        agent({ id: 'root', workingDirectory: 'C:\\src\\antiphon' }),
+        agent({ id: 'wt', workingDirectory: 'C:\\Antiphon\\worktrees\\card-1' }),
+        agent({ id: 'sub', workingDirectory: 'C:\\src\\antiphon\\client' }),
+      ],
+      [],
+      [
+        info({ path: 'C:\\src\\antiphon', repoRoot: 'C:\\src\\antiphon', branch: 'master' }),
+        info({
+          path: 'C:\\Antiphon\\worktrees\\card-1',
+          repoRoot: 'C:\\src\\antiphon',
+          branch: 'feat/card-1',
+          isWorktree: true,
+        }),
+        info({ path: 'C:\\src\\antiphon\\client', repoRoot: 'C:\\src\\antiphon' }),
+      ],
+    )
+
+    expect(projects).toHaveLength(1)
+    const p = projects[0]
+    expect(p.agents.map((a) => a.id).sort()).toEqual(['root', 'sub', 'wt'])
+    expect(p.branch).toBe('master')
+    // Main first, then subdirectories, then worktrees.
+    expect(p.workspaces.map((w) => `${w.kind}:${w.label}`)).toEqual([
+      'main:main',
+      'subdir:client',
+      'worktree:card-1',
+    ])
+    const worktree = p.workspaces[2]
+    expect(worktree.branch).toBe('feat/card-1')
+    expect(worktree.agents.map((a) => a.id)).toEqual(['wt'])
+  })
+
+  it('a worktree task lands on its checkout workspace, branch included', () => {
+    const projects = buildProjects(
+      [agent({})],
+      [
+        task({
+          workspace: 'Worktree',
+          workingDirectory: 'C:\\src\\antiphon',
+          repoPath: 'C:\\src\\antiphon',
+          worktreePath: 'C:\\wt\\task-1',
+          worktreeBranch: 'task/1',
+        }),
+      ],
+    )
+
+    expect(projects).toHaveLength(1)
+    expect(projects[0].activeTaskCount).toBe(1)
+    const wt = projects[0].workspaces.find((w) => w.kind === 'worktree')
+    expect(wt?.path).toBe('C:\\wt\\task-1')
+    expect(wt?.branch).toBe('task/1')
+    expect(wt?.activeTaskCount).toBe(1)
+    // The main workspace carries no share of the worktree task.
+    expect(projects[0].workspaces.find((w) => w.kind === 'main')?.activeTaskCount).toBe(0)
+  })
+
+  it('without git info every directory stays its own project (graceful degrade)', () => {
+    const projects = buildProjects([
+      agent({ id: 'root', workingDirectory: 'C:\\src\\antiphon' }),
+      agent({ id: 'wt', workingDirectory: 'C:\\Antiphon\\worktrees\\card-1' }),
+    ])
+    expect(projects).toHaveLength(2)
+    expect(projects.every((p) => p.workspaces.length === 1)).toBe(true)
+    expect(projects.every((p) => p.workspaces[0].kind === 'main')).toBe(true)
+  })
+})
+
+describe('mergeWorktrees', () => {
+  const listing = (worktrees: Array<Partial<import('../../api/filesystem').WorktreeEntry> & { path: string }>) => ({
+    path: 'C:\\src\\antiphon',
+    isGitRepository: true,
+    repoRoot: 'C:\\src\\antiphon',
+    worktrees: worktrees.map((w) => ({
+      branch: null,
+      isMain: false,
+      isLocked: false,
+      isDetached: false,
+      ...w,
+    })),
+  })
+
+  it('adds unclaimed worktrees and refreshes the main branch from git truth', () => {
+    const project = buildProjects([agent({})])[0]
+    const merged = mergeWorktrees(
+      project,
+      listing([
+        { path: 'C:\\src\\antiphon', branch: 'master', isMain: true },
+        { path: 'C:\\Antiphon\\worktrees\\card-2', branch: 'feat/card-2' },
+      ]),
+    )
+
+    expect(merged.branch).toBe('master')
+    expect(merged.workspaces.map((w) => w.label)).toEqual(['main', 'card-2'])
+    expect(merged.workspaces[1].kind).toBe('worktree')
+    expect(merged.workspaces[1].branch).toBe('feat/card-2')
+    expect(merged.workspaces[1].agents).toHaveLength(0)
+    // Pure: the input project was not mutated.
+    expect(project.workspaces).toHaveLength(1)
+    expect(project.branch).toBeNull()
+  })
+
+  it('returns the project untouched for an absent or empty listing', () => {
+    const project = buildProjects([agent({})])[0]
+    expect(mergeWorktrees(project, undefined)).toBe(project)
+    expect(mergeWorktrees(project, listing([]))).toBe(project)
+  })
+})
+
+describe('pickWorkspace', () => {
+  it('honours the remembered workspace, else falls back to main', () => {
+    const project = buildProjects(
+      [
+        agent({ id: 'root', workingDirectory: 'C:\\src\\antiphon' }),
+        agent({ id: 'wt', workingDirectory: 'C:\\wt\\card-1' }),
+      ],
+      [],
+      [info({ path: 'C:\\wt\\card-1', repoRoot: 'C:\\src\\antiphon', isWorktree: true })],
+    )[0]
+
+    expect(pickWorkspace(project, 'c:\\wt\\card-1')?.kind).toBe('worktree')
+    expect(pickWorkspace(project, 'c:\\gone')?.kind).toBe('main')
+    expect(pickWorkspace(null, null)).toBeNull()
   })
 })
 

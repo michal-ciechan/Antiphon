@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -224,6 +225,100 @@ public sealed class GitWorkspaceService
         if (code != 0)
             return [];
         return stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Which repo the directory belongs to and what is checked out there. RepoRoot is the MAIN
+    /// checkout's root: a linked worktree's --git-common-dir lives under the primary repo, so
+    /// resolving its parent maps any worktree (or subdirectory) back to the repo it came from.
+    /// Non-repos degrade to IsGitRepository=false, never an error.
+    /// </summary>
+    public async Task<WorkspaceGitInfoDto> GetWorkspaceInfoAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir");
+        string[] lines = code == 0
+            ? stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+        if (lines.Length < 2)
+            return new WorkspaceGitInfoDto(workingDirectory, false, null, null, false);
+
+        var toplevel = Path.GetFullPath(lines[0]);
+        var commonDir = Path.GetFullPath(lines[1]);
+
+        // Bare/odd layouts (common dir not named ".git") fall back to the local toplevel.
+        var repoRoot = string.Equals(Path.GetFileName(commonDir), ".git", StringComparison.OrdinalIgnoreCase)
+            ? Path.GetDirectoryName(commonDir) ?? toplevel
+            : toplevel;
+        var isWorktree = !string.Equals(toplevel, repoRoot, StringComparison.OrdinalIgnoreCase);
+
+        // `branch --show-current` is empty on detached HEAD and survives an unborn branch,
+        // unlike `rev-parse --abbrev-ref HEAD` which hard-fails before the first commit.
+        var (branchCode, branchOut, _) = await RunAsync(workingDirectory, ct, "branch", "--show-current");
+        var branch = branchCode == 0 ? branchOut.Trim() : "";
+
+        return new WorkspaceGitInfoDto(
+            workingDirectory, true, repoRoot, branch.Length > 0 ? branch : null, isWorktree);
+    }
+
+    /// <summary>All worktrees of the repo containing the directory — main checkout first.</summary>
+    public async Task<IReadOnlyList<WorktreeEntryDto>> ListWorktreesAsync(
+        string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunAsync(workingDirectory, ct, "worktree", "list", "--porcelain");
+        if (code != 0)
+        {
+            _logger.LogDebug("git worktree list failed in {Dir}: {Err}", workingDirectory, stderr);
+            return [];
+        }
+        return ParseWorktreeList(stdout);
+    }
+
+    /// <summary>
+    /// Parses `git worktree list --porcelain`: blocks of `worktree &lt;path&gt;` / `HEAD` /
+    /// `branch refs/heads/x`|`detached` / `locked` / `bare`, blank-line separated. The first
+    /// block is the main checkout; a bare main repo is skipped — it has no browsable tree.
+    /// </summary>
+    internal static IReadOnlyList<WorktreeEntryDto> ParseWorktreeList(string porcelain)
+    {
+        var entries = new List<WorktreeEntryDto>();
+        string? path = null;
+        string? branch = null;
+        bool detached = false, locked = false, bare = false;
+        var blockIndex = 0;
+
+        void Flush()
+        {
+            if (path is not null && !bare)
+                entries.Add(new WorktreeEntryDto(
+                    Path.GetFullPath(path), branch, IsMain: blockIndex == 0, locked, detached));
+            if (path is not null)
+                blockIndex++;
+            path = branch = null;
+            detached = locked = bare = false;
+        }
+
+        foreach (var raw in porcelain.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("worktree ", StringComparison.Ordinal))
+            {
+                Flush();
+                path = line["worktree ".Length..];
+            }
+            else if (line.StartsWith("branch ", StringComparison.Ordinal))
+            {
+                branch = line["branch ".Length..];
+                const string heads = "refs/heads/";
+                if (branch.StartsWith(heads, StringComparison.Ordinal))
+                    branch = branch[heads.Length..];
+            }
+            else if (line == "detached") detached = true;
+            else if (line == "bare") bare = true;
+            else if (line == "locked" || line.StartsWith("locked ", StringComparison.Ordinal)) locked = true;
+        }
+        Flush();
+        return entries;
     }
 
     private static GitFileStatus Classify(char index, char work)

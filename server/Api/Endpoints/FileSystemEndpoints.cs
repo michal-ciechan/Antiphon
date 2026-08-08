@@ -21,5 +21,31 @@ public static class FileSystemEndpoints
         {
             return Results.Ok(await service.BrowseAsync(path, cancellationToken));
         });
+
+        // Git identity for a set of directories (repeat ?path=a&path=b). Feeds the home
+        // screen's project/workspace grouping; a non-repo directory comes back with
+        // isGitRepository=false rather than erroring. Same localhost-only trust model
+        // as /browse above.
+        fs.MapGet("/workspaces", async (
+            HttpContext http,
+            WorkspaceInfoService service,
+            CancellationToken cancellationToken) =>
+        {
+            var paths = http.Request.Query["path"]
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(p => p!.ToString())
+                .ToList();
+            return Results.Ok(await service.GetWorkspacesAsync(paths, cancellationToken));
+        });
+
+        // Every git worktree of the repo containing `path`, branch names included — the
+        // workspace switcher's source for worktrees nobody has an agent in yet.
+        fs.MapGet("/worktrees", async (
+            string path,
+            WorkspaceInfoService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetWorktreesAsync(path, cancellationToken));
+        });
     }
 }

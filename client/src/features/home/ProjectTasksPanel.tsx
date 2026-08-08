@@ -3,21 +3,24 @@ import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useAgentTasks, type AgentTaskSummaryDto } from '../../api/agentTasks'
 import { STATUS_COLOR, formatCost, shortId } from '../delegations/taskVisuals'
-import { isActiveTask, normalizeDir, taskProjectDir } from './projectGrouping'
+import { isActiveTask, normalizeDir, taskProjectDir, taskRunDir } from './projectGrouping'
 
 const DONE_LIMIT = 12
 
 /**
  * The project's delegations at a glance: everything in flight first (Blocked on top — it needs
  * you), then what recently finished. Each row deep-links into the full board's drawer.
+ * `dirKeys` is every normalised directory the project spans (main, subdirectories, worktrees) —
+ * a task belongs here when either the repo it came from or the checkout it runs in matches.
  */
-export function ProjectTasksPanel({ projectKey }: { projectKey: string }) {
+export function ProjectTasksPanel({ dirKeys }: { dirKeys: string[] }) {
   const tasks = useAgentTasks()
   const navigate = useNavigate()
 
   const { active, done } = useMemo(() => {
+    const keys = new Set(dirKeys)
     const mine = (tasks.data ?? []).filter(
-      (t) => normalizeDir(taskProjectDir(t)) === projectKey,
+      (t) => keys.has(normalizeDir(taskProjectDir(t))) || keys.has(normalizeDir(taskRunDir(t))),
     )
     const active = mine
       .filter(isActiveTask)
@@ -27,7 +30,7 @@ export function ProjectTasksPanel({ projectKey }: { projectKey: string }) {
       .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt))
       .slice(0, DONE_LIMIT)
     return { active, done }
-  }, [tasks.data, projectKey])
+  }, [tasks.data, dirKeys])
 
   if (tasks.error) {
     return (

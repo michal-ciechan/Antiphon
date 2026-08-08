@@ -693,7 +693,7 @@ public sealed class AgentTaskService
         return new AgentTaskSummaryDto(
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
-            task.RepoPath, task.ScopeGlob, task.AgentId,
+            task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.ScopeGlob, task.AgentId,
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
             task.AgentName,
             task.AgentSessionId, task.Attempt,

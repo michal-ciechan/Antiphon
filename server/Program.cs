@@ -236,6 +236,9 @@ try
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
     builder.Services.AddSingleton<GitWorkspaceService>();
+    // Workspace switcher lookups (repo root / branch / worktree list), TTL-cached.
+    builder.Services.AddSingleton<WorkspaceInfoService>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<WorkspaceInfoService>());
     builder.Services.AddScoped<AgentFilesService>();
     builder.Services.AddScoped<AgentReviewCheckpointService>();
     builder.Services.AddScoped<ReviewThreadService>();

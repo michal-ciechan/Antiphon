@@ -64,6 +64,8 @@ function task(overrides: Record<string, unknown>) {
     workspace: 'Shared',
     workingDirectory: 'C:\\src\\antiphon',
     repoPath: null,
+    worktreePath: null,
+    worktreeBranch: null,
     scopeGlob: null,
     agentId: null,
     agentName: 'pool-1',
@@ -84,10 +86,34 @@ function task(overrides: Record<string, unknown>) {
 function seed({
   agents = [agent({})],
   tasks = [] as unknown[],
+  gitInfos = {} as Record<string, unknown>,
+  worktrees = {} as Record<string, unknown>,
 } = {}) {
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    // Directories not seeded read as plain non-git folders — grouping degrades gracefully.
+    http.get('/api/filesystem/workspaces', ({ request }) => {
+      const paths = new URL(request.url).searchParams.getAll('path')
+      return HttpResponse.json(
+        paths.map(
+          (p) =>
+            gitInfos[p] ?? {
+              path: p,
+              isGitRepository: false,
+              repoRoot: null,
+              branch: null,
+              isWorktree: false,
+            },
+        ),
+      )
+    }),
+    http.get('/api/filesystem/worktrees', ({ request }) => {
+      const p = new URL(request.url).searchParams.get('path') ?? ''
+      return HttpResponse.json(
+        worktrees[p] ?? { path: p, isGitRepository: false, repoRoot: null, worktrees: [] },
+      )
+    }),
   )
 }
 
@@ -171,6 +197,81 @@ describe('HomePage', () => {
     expect(screen.getAllByText('Delegate work').length).toBeGreaterThan(0)
     // The rail and the files pane both point at agent creation — either is fine, both expected.
     expect(screen.getAllByRole('link', { name: 'create an agent' }).length).toBeGreaterThan(0)
+  })
+
+  it('a worktree agent folds under its repo and the workspace switcher scopes the rail', async () => {
+    seed({
+      agents: [
+        agent({ id: 'a1', name: 'axc' }),
+        agent({ id: 'wt-agent', name: 'card-runner', workingDirectory: 'C:\\wt\\card-1' }),
+      ],
+      gitInfos: {
+        'C:\\src\\antiphon': {
+          path: 'C:\\src\\antiphon',
+          isGitRepository: true,
+          repoRoot: 'C:\\src\\antiphon',
+          branch: 'master',
+          isWorktree: false,
+        },
+        'C:\\wt\\card-1': {
+          path: 'C:\\wt\\card-1',
+          isGitRepository: true,
+          repoRoot: 'C:\\src\\antiphon',
+          branch: 'feat/card-1',
+          isWorktree: true,
+        },
+      },
+    })
+    renderWithProviders(<HomePage />)
+
+    // One project, not two — the worktree directory folded into the repo it belongs to.
+    await waitFor(() => expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument())
+    expect(screen.getByTestId('project-switcher')).toHaveTextContent('antiphon')
+    expect(screen.getByRole('button', { name: 'Select agent axc' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Select agent card-runner' })).not.toBeInTheDocument()
+
+    // Switch to the worktree: rail, files pane, and branch badge follow.
+    await userEvent.click(screen.getByTestId('workspace-switcher'))
+    await userEvent.click(await screen.findByText('card-1'))
+    expect(await screen.findByRole('button', { name: 'Select agent card-runner' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Select agent axc' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('files-panel')).toHaveTextContent('wt-agent')
+    expect(screen.getByTestId('workspace-switcher')).toHaveTextContent('feat/card-1')
+  })
+
+  it('a git worktree nobody works in is still switchable and reads as empty', async () => {
+    seed({
+      agents: [agent({})],
+      gitInfos: {
+        'C:\\src\\antiphon': {
+          path: 'C:\\src\\antiphon',
+          isGitRepository: true,
+          repoRoot: 'C:\\src\\antiphon',
+          branch: 'master',
+          isWorktree: false,
+        },
+      },
+      worktrees: {
+        'C:\\src\\antiphon': {
+          path: 'C:\\src\\antiphon',
+          isGitRepository: true,
+          repoRoot: 'C:\\src\\antiphon',
+          worktrees: [
+            { path: 'C:\\src\\antiphon', branch: 'master', isMain: true, isLocked: false, isDetached: false },
+            { path: 'C:\\wt\\spare', branch: 'feat/spare', isMain: false, isLocked: false, isDetached: false },
+          ],
+        },
+      },
+    })
+    renderWithProviders(<HomePage />)
+
+    await waitFor(() => expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('workspace-switcher'))
+    await userEvent.click(await screen.findByText('spare'))
+
+    expect(
+      await screen.findByText('No agent is scoped to this worktree yet.'),
+    ).toBeInTheDocument()
   })
 
   it('remembers the chosen project across mounts', async () => {

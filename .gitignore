@@ -40,6 +40,7 @@ bin-ptyhost/
 # Alternate build output dirs used while daemons lock bin/ (see CLAUDE.md gotchas)
 bin-verify/
 bin-fix/
+bin-check/
 bin-profile*/
 bin-deleg*/
 bin-ui*/
