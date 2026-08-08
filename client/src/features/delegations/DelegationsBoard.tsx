@@ -17,6 +17,7 @@ import {
 } from '@mantine/core'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbPlus, TbRefresh } from 'react-icons/tb'
+import { useSearchParams } from 'react-router'
 import { useAgentTasks, type AgentTaskSummaryDto } from '../../api/agentTasks'
 import { DelegateModal } from './DelegateModal'
 import { TaskChip } from './TaskChip'
@@ -33,8 +34,10 @@ import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode }
  */
 export function DelegationsBoard() {
   const tasks = useAgentTasks()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [drawerId, setDrawerId] = useState<string | null>(null)
+  // ?task=<id> opens the drawer on arrival — how the home page's task rows land here.
+  const [searchParams] = useSearchParams()
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('task'))
+  const [drawerId, setDrawerId] = useState<string | null>(searchParams.get('task'))
   const [onlyThisRun, setOnlyThisRun] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   // null = nothing toggled yet, so the default applies. Once the user has opened or closed

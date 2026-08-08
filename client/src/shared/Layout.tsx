@@ -67,7 +67,8 @@ function ConnectionIndicator() {
 }
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Workflows', end: true },
+  { to: '/', label: 'Home', end: true },
+  { to: '/workflows', label: 'Workflows' },
   { to: '/boards', label: 'Boards' },
   { to: '/agents', label: 'Agents' },
   { to: '/channels', label: 'Channels' },

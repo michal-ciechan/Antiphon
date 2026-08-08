@@ -36,6 +36,7 @@ import {
   TbUserShare,
 } from 'react-icons/tb'
 import { DelegateModal } from '../delegations/DelegateModal'
+import { SelectionComposer, SelectionDelegate } from './SelectionDelegate'
 import {
   useAddReviewComment,
   useAgentCommits,
@@ -718,12 +719,18 @@ function FileViewer({
   viewerHeight: number | string
   onMark: (level: 'Viewed' | 'Reviewed' | null) => void
 }) {
-  const [mode, setMode] = useState<string>(file.gitStatus !== 'None' ? 'diff' : file.isMarkdown ? 'rendered' : 'raw')
+  // Markdown opens Rendered even when the file changed (feature 008): the home page is a reading
+  // surface first, and Diff stays one click away. Non-markdown keeps diff-first for review.
+  const [mode, setMode] = useState<string>(
+    file.isMarkdown ? 'rendered' : file.gitStatus !== 'None' ? 'diff' : 'raw',
+  )
   const work = useAgentFileContent(agentId, file.path, 'work', since)
   const head = useAgentFileContent(agentId, file.path, 'head', since)
   const [commentLine, setCommentLine] = useState<number | null>(null)
   const [commentBody, setCommentBody] = useState('')
   const [delegateOpen, setDelegateOpen] = useState(false)
+  // A passage highlighted in the rendered view, waiting for its instruction (feature 008).
+  const [selectionText, setSelectionText] = useState<string | null>(null)
   const createThread = useCreateReviewThread(agentId)
 
   const language = useMemo(() => languageFor(file.path), [file.path])
@@ -834,7 +841,12 @@ function FileViewer({
           />
         ) : mode === 'rendered' ? (
           <ScrollArea.Autosize mah={viewerHeight} p="md">
-            <Markdown remarkPlugins={[remarkGfm]}>{work.data?.text ?? ''}</Markdown>
+            {/* Highlight a passage → "Send to agents" queues a delegation for the pool. The
+                composer renders below the viewer — inside this (horizontally scrollable) box its
+                buttons would ride off-screen with wide code blocks. */}
+            <SelectionDelegate onCompose={setSelectionText}>
+              <Markdown remarkPlugins={[remarkGfm]}>{work.data?.text ?? ''}</Markdown>
+            </SelectionDelegate>
           </ScrollArea.Autosize>
         ) : (
           <Editor
@@ -860,6 +872,16 @@ function FileViewer({
         <Text size="xs" c="dimmed">
           File truncated for display (2 MB cap).
         </Text>
+      )}
+
+      {selectionText !== null && (
+        <SelectionComposer
+          filePath={file.path}
+          workingDirectory={workspaceRoot}
+          selection={selectionText}
+          defaultRole={file.isMarkdown ? 'Docs' : 'Code'}
+          onClose={() => setSelectionText(null)}
+        />
       )}
 
       <Group gap="xs">

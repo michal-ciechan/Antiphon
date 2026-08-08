@@ -14,6 +14,7 @@ import { Layout } from './shared/Layout'
 import { ErrorBoundary } from './shared/ErrorBoundary'
 import { SuspenseBoundary } from './shared/SuspenseBoundary'
 import { DashboardPage } from './features/dashboard/DashboardPage'
+import { HomePage } from './features/home/HomePage'
 import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
 import { SettingsPage } from './features/settings/SettingsPage'
 import { BoardPage } from './features/board/BoardPage'
@@ -55,6 +56,16 @@ export default function App() {
               <Route element={<Layout />}>
                 <Route
                   index
+                  element={
+                    <ErrorBoundary fallbackTitle="Home error">
+                      <SuspenseBoundary variant="page">
+                        <HomePage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="workflows"
                   element={
                     <ErrorBoundary fallbackTitle="Dashboard error">
                       <SuspenseBoundary variant="page">

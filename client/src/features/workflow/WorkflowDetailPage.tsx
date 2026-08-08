@@ -472,7 +472,7 @@ export function WorkflowDetailPage() {
         workflowId={id!}
         opened={confirmDeleteOpen}
         onClose={() => setConfirmDeleteOpen(false)}
-        onDeleted={() => navigate('/')}
+        onDeleted={() => navigate('/workflows')}
       />
 
       {/* Artifact viewer modal — opened when clicking an output in the Outputs tab */}
