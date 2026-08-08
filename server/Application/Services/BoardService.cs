@@ -89,6 +89,33 @@ public sealed class BoardService
         return await GetByIdAsync(board.Id, ct);
     }
 
+    /// <summary>
+    /// Deletes a board and everything beneath it. If that leaves its project with nothing at all —
+    /// no other boards, no workflows — the project goes too: a board and its project are usually
+    /// created together and named the same, so an empty project left behind is just litter.
+    /// </summary>
+    public async Task<DeleteBoardResultDto> DeleteAsync(Guid id, CancellationToken ct)
+    {
+        var board = await _db.Boards
+            .AsNoTracking()
+            .FirstOrDefaultAsync(b => b.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Board), id);
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await ProjectCascade.DeleteBoardsAsync(_db, [id], ct);
+
+        var projectIsEmpty = !await _db.Boards.AnyAsync(b => b.ProjectId == board.ProjectId, ct)
+            && !await _db.Workflows.AnyAsync(w => w.ProjectId == board.ProjectId, ct);
+        if (projectIsEmpty)
+            await _db.Projects.Where(p => p.Id == board.ProjectId).ExecuteDeleteAsync(ct);
+
+        await transaction.CommitAsync(ct);
+
+        await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = id, deleted = true }, ct);
+
+        return new DeleteBoardResultDto(id, board.ProjectId, projectIsEmpty);
+    }
+
     internal static BoardDetailDto ToDetailDto(Board board)
     {
         var cardsByColumn = board.Cards

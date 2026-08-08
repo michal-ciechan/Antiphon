@@ -33,12 +33,13 @@ import {
   useProjects,
   useCreateProject,
   useUpdateProject,
-  useDeleteProject,
   useTestGitConnectivity,
   useGitHubRepos,
   useRefreshGitHubRepos,
   type ProjectDto,
 } from '../../api/projects'
+import { useBoards, useDeleteBoard, type BoardSummaryDto } from '../../api/boards'
+import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 
 export function ProjectConfig() {
   const { data: projects, isLoading, error } = useProjects()
@@ -65,13 +66,12 @@ export function ProjectConfig() {
 function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const createMutation = useCreateProject()
   const updateMutation = useUpdateProject()
-  const deleteMutation = useDeleteProject()
   const testMutation = useTestGitConnectivity()
+  const { data: boards } = useBoards()
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
 
   const [editModalOpen, setEditModalOpen] = useState(false)
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
   const [deletingProject, setDeletingProject] = useState<ProjectDto | null>(null)
   const [testResult, setTestResult] = useState<{
@@ -129,10 +129,15 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setEditModalOpen(true)
   }
 
-  const openDeleteModal = (project: ProjectDto) => {
-    setDeletingProject(project)
-    setDeleteModalOpen(true)
-  }
+  const boardsByProject = useMemo(() => {
+    const grouped = new Map<string, BoardSummaryDto[]>()
+    for (const board of boards ?? []) {
+      const existing = grouped.get(board.projectId)
+      if (existing) existing.push(board)
+      else grouped.set(board.projectId, [board])
+    }
+    return grouped
+  }, [boards])
 
   const handleTestConnectivity = async () => {
     setTestResult(null)
@@ -190,17 +195,6 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     }
   }
 
-  const handleDelete = async () => {
-    if (!deletingProject) return
-    try {
-      await deleteMutation.mutateAsync(deletingProject.id)
-      setDeleteModalOpen(false)
-      setDeletingProject(null)
-    } catch {
-      setDeleteModalOpen(false)
-    }
-  }
-
   const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
@@ -222,6 +216,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
                 <Table.Th>Repository</Table.Th>
+                <Table.Th>Boards</Table.Th>
                 <Table.Th>Default Context</Table.Th>
                 <Table.Th>Features</Table.Th>
                 <Table.Th w={100}>Actions</Table.Th>
@@ -235,6 +230,9 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                     <Text size="sm" c="dimmed" lineClamp={1} maw={250}>
                       {project.gitRepositoryUrl}
                     </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <ProjectBoardsCell boards={boardsByProject.get(project.id) ?? []} />
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" c="dimmed">
@@ -263,7 +261,11 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                   <Table.Td>
                     <Group gap="xs">
                       <Tooltip label="Edit">
-                        <ActionIcon variant="subtle" onClick={() => openEditModal(project)}>
+                        <ActionIcon
+                          variant="subtle"
+                          aria-label="Edit project"
+                          onClick={() => openEditModal(project)}
+                        >
                           <TbEdit />
                         </ActionIcon>
                       </Tooltip>
@@ -271,7 +273,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                         <ActionIcon
                           variant="subtle"
                           color="red"
-                          onClick={() => openDeleteModal(project)}
+                          aria-label="Delete project"
+                          onClick={() => setDeletingProject(project)}
                         >
                           <TbTrash />
                         </ActionIcon>
@@ -450,28 +453,93 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
         </Stack>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
+      <ProjectDeleteDialog project={deletingProject} onClose={() => setDeletingProject(null)} />
+    </Stack>
+  )
+}
+
+/**
+ * The boards attached to a project, each removable from here — the issue's "currently cannot
+ * delete items from project screen". Deleting the last board also deletes this project, so the
+ * confirmation says so rather than surprising anyone.
+ */
+function ProjectBoardsCell({ boards }: { boards: BoardSummaryDto[] }) {
+  const deleteBoard = useDeleteBoard()
+  const [confirming, setConfirming] = useState<BoardSummaryDto | null>(null)
+  const isLastBoard = boards.length === 1
+
+  if (boards.length === 0) {
+    return (
+      <Text size="sm" c="dimmed">
+        --
+      </Text>
+    )
+  }
+
+  return (
+    <>
+      <Stack gap={4}>
+        {boards.map((board) => (
+          <Group key={board.id} gap={4} wrap="nowrap">
+            <Text size="sm" lineClamp={1} maw={160}>
+              {board.name}
+            </Text>
+            <Badge variant="light" size="xs" color="gray">
+              {board.cardCount}
+            </Badge>
+            <Tooltip label="Delete board">
+              <ActionIcon
+                variant="subtle"
+                color="red"
+                size="sm"
+                aria-label={`Delete board ${board.name}`}
+                onClick={() => setConfirming(board)}
+              >
+                <TbTrash size={14} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        ))}
+      </Stack>
+
       <Modal
-        opened={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
-        title="Delete Project"
-        size="sm"
+        opened={!!confirming}
+        onClose={() => setConfirming(null)}
+        title="Delete Board"
+        size="md"
       >
         <Stack>
           <Text>
-            Are you sure you want to delete the project "{deletingProject?.name}"? This action
-            cannot be undone.
+            Delete the board "{confirming?.name}"? Its columns and{' '}
+            {confirming?.cardCount ?? 0} card{confirming?.cardCount === 1 ? '' : 's'} go with it.
+            This cannot be undone.
           </Text>
+          {isLastBoard && (
+            <Alert color="orange" icon={<TbAlertCircle />}>
+              This is the project's last board, so the project will be deleted too.
+            </Alert>
+          )}
           <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setDeleteModalOpen(false)}>
+            <Button variant="subtle" onClick={() => setConfirming(null)}>
               Cancel
             </Button>
-            <Button color="red" onClick={handleDelete} loading={deleteMutation.isPending}>
+            <Button
+              color="red"
+              loading={deleteBoard.isPending}
+              onClick={async () => {
+                if (!confirming) return
+                try {
+                  await deleteBoard.mutateAsync(confirming.id)
+                } finally {
+                  setConfirming(null)
+                }
+              }}
+            >
               Delete
             </Button>
           </Group>
         </Stack>
       </Modal>
-    </Stack>
+    </>
   )
 }

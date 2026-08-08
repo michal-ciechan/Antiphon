@@ -34,6 +34,16 @@ public static class BoardEndpoints
             return Results.Created($"/api/boards/{board.Id}", board);
         });
 
+        // Returns the result rather than 204: the caller needs to know whether the project went
+        // with it, so the UI can navigate somewhere that still exists.
+        boards.MapDelete("/{id:guid}", async (
+            Guid id,
+            BoardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.DeleteAsync(id, cancellationToken));
+        });
+
         boards.MapPost("/{id:guid}/cards", async (
             Guid id,
             CreateCardRequest request,

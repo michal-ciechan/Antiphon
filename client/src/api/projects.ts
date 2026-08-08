@@ -41,6 +41,24 @@ export interface TestGitConnectivityResult {
   message: string
 }
 
+/** What deleting a project would destroy or detach — read before the confirm dialog unlocks. */
+export interface ProjectDeletionImpactDto {
+  projectId: string
+  projectName: string
+  boardCount: number
+  cardCount: number
+  /** Cards that are neither Done nor Canceled — the "outstanding items" warning. */
+  openCardCount: number
+  runningSessionCount: number
+  /** Agents unpinned from the board/card. Never deleted. */
+  detachedAgentCount: number
+  workflowCount: number
+  /** Non-empty means the delete is impossible, force or not. */
+  blockers: string[]
+  requiresConfirmation: boolean
+  canDelete: boolean
+}
+
 // --- Project hooks ---
 
 const PROJECTS_KEY = ['projects'] as const
@@ -82,12 +100,32 @@ export function useUpdateProject() {
   })
 }
 
+/**
+ * Fetched when the delete dialog opens (never cached — the counts have to be current at the
+ * moment someone confirms them).
+ */
+export function useProjectDeletionImpact(id: string | null) {
+  return useQuery({
+    queryKey: [...PROJECTS_KEY, id, 'deletion-impact'],
+    queryFn: () => apiGet<ProjectDeletionImpactDto>(`/projects/${id}/deletion-impact`),
+    enabled: !!id,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+/**
+ * `force` is the caller confirming the impact report. Without it the server refuses (409) rather
+ * than destroying attached boards and cards.
+ */
 export function useDeleteProject() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => apiDelete(`/projects/${id}`),
+    mutationFn: ({ id, force = false }: { id: string; force?: boolean }) =>
+      apiDelete(`/projects/${id}${force ? '?force=true' : ''}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PROJECTS_KEY })
+      queryClient.invalidateQueries({ queryKey: ['boards'] })
     },
   })
 }

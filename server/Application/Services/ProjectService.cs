@@ -104,17 +104,113 @@ public class ProjectService
         return ToDto(project);
     }
 
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reports what deleting this project would destroy or detach, without touching anything.
+    /// </summary>
+    public async Task<ProjectDeletionImpactDto> GetDeletionImpactAsync(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var project = await _db.Projects
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Project), id);
+
+        var counts = await ProjectCascade.MeasureAsync(_db, id, cancellationToken);
+        return ToImpactDto(project, counts);
+    }
+
+    /// <summary>
+    /// Deletes a project. A project that owns boards or cards refuses unless
+    /// <paramref name="force"/> is set, and then takes the whole board subtree with it; agents are
+    /// detached rather than deleted. Orchestrator workflows block the delete outright — see
+    /// <see cref="BlockersFor"/>.
+    /// </summary>
+    public async Task DeleteAsync(Guid id, bool force, CancellationToken cancellationToken)
     {
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
 
-        _db.Projects.Remove(project);
-        await _db.SaveChangesAsync(cancellationToken);
+        var counts = await ProjectCascade.MeasureAsync(_db, id, cancellationToken);
+        var impact = ToImpactDto(project, counts);
 
-        _logger.LogInformation("Deleted project {ProjectName} ({ProjectId})", project.Name, project.Id);
+        if (!impact.CanDelete)
+            throw new ConflictException($"'{project.Name}' cannot be deleted: {string.Join(" ", impact.Blockers)}");
+
+        if (impact.RequiresConfirmation && !force)
+        {
+            throw new ConflictException(
+                $"'{project.Name}' still has {Describe(counts)}. "
+                + "Deleting it removes all of that. Re-send with force=true to confirm.");
+        }
+
+        var boardIds = await _db.Boards
+            .Where(b => b.ProjectId == id)
+            .Select(b => b.Id)
+            .ToListAsync(cancellationToken);
+
+        // One transaction: the cascade is a dozen separate statements, and a project half-deleted
+        // is worse than one not deleted at all.
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        await ProjectCascade.DeleteBoardsAsync(_db, boardIds, cancellationToken);
+        await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Deleted project {ProjectName} ({ProjectId}) with {BoardCount} board(s) and {CardCount} card(s)",
+            project.Name, project.Id, counts.BoardCount, counts.CardCount);
     }
+
+    private static ProjectDeletionImpactDto ToImpactDto(Project project, ProjectImpactCounts counts) =>
+        new(
+            project.Id,
+            project.Name,
+            counts.BoardCount,
+            counts.CardCount,
+            counts.OpenCardCount,
+            counts.RunningSessionCount,
+            counts.AgentCount,
+            counts.WorkflowCount,
+            BlockersFor(counts));
+
+    /// <summary>
+    /// Orchestrator workflows anchor cost-ledger entries through a Restrict FK — financial records
+    /// that must not disappear behind a confirmation checkbox. They have their own delete screen,
+    /// which knows how to unwind them; until they are gone the project stays.
+    /// </summary>
+    private static IReadOnlyList<string> BlockersFor(ProjectImpactCounts counts)
+    {
+        var blockers = new List<string>();
+        if (counts.WorkflowCount > 0)
+        {
+            blockers.Add(
+                $"{Plural(counts.WorkflowCount, "workflow")} still reference it — delete those first.");
+        }
+
+        return blockers;
+    }
+
+    private static string Describe(ProjectImpactCounts counts)
+    {
+        var parts = new List<string>();
+        if (counts.BoardCount > 0)
+            parts.Add(Plural(counts.BoardCount, "board"));
+        if (counts.CardCount > 0)
+        {
+            parts.Add(counts.OpenCardCount > 0
+                ? $"{Plural(counts.CardCount, "card")} ({counts.OpenCardCount} still open)"
+                : Plural(counts.CardCount, "card"));
+        }
+        if (counts.RunningSessionCount > 0)
+            parts.Add($"{Plural(counts.RunningSessionCount, "running session")}");
+        if (counts.AgentCount > 0)
+            parts.Add($"{Plural(counts.AgentCount, "agent")} attached (they will be detached, not deleted)");
+
+        return parts.Count == 0 ? "attached work" : string.Join(", ", parts);
+    }
+
+    private static string Plural(int count, string noun) =>
+        count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
     /// <summary>
     /// Validates git repository connectivity by attempting an HTTP HEAD request to the URL.

@@ -46,12 +46,24 @@ public static class ProjectEndpoints
             return Results.Ok(project);
         });
 
-        projects.MapDelete("/{id:guid}", async (
+        projects.MapGet("/{id:guid}/deletion-impact", async (
             Guid id,
             ProjectService service,
             CancellationToken cancellationToken) =>
         {
-            await service.DeleteAsync(id, cancellationToken);
+            var impact = await service.GetDeletionImpactAsync(id, cancellationToken);
+            return Results.Ok(impact);
+        });
+
+        // force=true is the caller confirming the impact report. Without it a project that owns
+        // boards or cards answers 409 rather than destroying them (or, as it once did, 500).
+        projects.MapDelete("/{id:guid}", async (
+            Guid id,
+            ProjectService service,
+            CancellationToken cancellationToken,
+            bool force = false) =>
+        {
+            await service.DeleteAsync(id, force, cancellationToken);
             return Results.NoContent();
         });
 

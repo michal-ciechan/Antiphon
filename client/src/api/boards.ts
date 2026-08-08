@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiGet, apiPatch, apiPost, apiPut } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
 export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled'
@@ -222,6 +222,26 @@ export function useCreateBoard() {
     onSuccess: (board) => {
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.setQueryData(boardKeys.detail(board.id), board)
+    },
+  })
+}
+
+export interface DeleteBoardResultDto {
+  boardId: string
+  projectId: string
+  /** True when this was the project's last board and the empty project went with it. */
+  projectDeleted: boolean
+}
+
+export function useDeleteBoard() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (boardId: string) => apiDelete<DeleteBoardResultDto>(`/boards/${boardId}`),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.removeQueries({ queryKey: boardKeys.detail(result.boardId) })
+      // The board may have taken its project with it.
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
   })
 }
