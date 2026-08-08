@@ -288,8 +288,8 @@ export function HomePage() {
 /**
  * The directory scope WITHIN the selected project: its main checkout, agent-scoped
  * subdirectories, and git worktrees — branch names included. Selecting one narrows the agent
- * rail, files pane, and chat to the agents living there. With nothing but the main directory
- * it degrades to the plain dimmed path the header always showed.
+ * rail, files pane, and chat to the agents living there. Always rendered as a dropdown — even
+ * with just the main directory — so the control stays discoverable; the badge counts the dirs.
  */
 function WorkspaceSwitcher({
   workspaces,
@@ -305,16 +305,6 @@ function WorkspaceSwitcher({
     subdir: 'subdirectory',
     worktree: 'worktree',
   }
-  if (workspaces.length <= 1) {
-    return (
-      <Group gap={6} wrap="nowrap" visibleFrom="md" style={{ minWidth: 0 }}>
-        <Text size="xs" c="dimmed" truncate style={{ maxWidth: 380 }}>
-          {selected.path}
-        </Text>
-        {selected.branch && <BranchBadge branch={selected.branch} />}
-      </Group>
-    )
-  }
   return (
     <Menu shadow="md" position="bottom-start" width={440}>
       <Menu.Target>
@@ -325,7 +315,7 @@ function WorkspaceSwitcher({
             </Text>
             {selected.branch && <BranchBadge branch={selected.branch} />}
             <Badge size="xs" variant="default" style={{ flexShrink: 0, textTransform: 'none' }}>
-              {workspaces.length} dirs
+              {workspaces.length} {workspaces.length === 1 ? 'dir' : 'dirs'}
             </Badge>
             <TbChevronDown size={12} style={{ flexShrink: 0 }} />
           </Group>

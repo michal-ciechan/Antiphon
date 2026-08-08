@@ -240,15 +240,23 @@ export function mergeWorktrees(
   return { ...project, branch, workspaces }
 }
 
-/** The workspace to preselect: the remembered one when it still exists, else main. */
+/**
+ * The workspace to preselect: the remembered one when it still exists, else main — unless main
+ * is agent-less while a sibling has agents (a repo whose agents all live in subdirectories or
+ * worktrees), in which case landing on the first workspace WITH agents beats an empty rail.
+ */
 export function pickWorkspace(
   project: ProjectGroup | null,
   rememberedKey: string | null,
 ): WorkspaceEntry | null {
   if (!project) return null
+  const remembered = project.workspaces.find((w) => w.key === rememberedKey)
+  if (remembered) return remembered
+  const main = project.workspaces.find((w) => w.kind === 'main')
+  if (main && main.agents.length > 0) return main
   return (
-    project.workspaces.find((w) => w.key === rememberedKey) ??
-    project.workspaces.find((w) => w.kind === 'main') ??
+    project.workspaces.find((w) => w.agents.length > 0) ??
+    main ??
     project.workspaces[0] ??
     null
   )

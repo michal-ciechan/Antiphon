@@ -259,6 +259,26 @@ describe('pickWorkspace', () => {
     expect(pickWorkspace(project, 'c:\\gone')?.kind).toBe('main')
     expect(pickWorkspace(null, null)).toBeNull()
   })
+
+  it('an agent-less main loses the default to the first workspace with agents', () => {
+    // A repo whose agents all live in subdirectories (ClaudeBot's agents/* layout) —
+    // landing on empty main would show a bare rail for no reason.
+    const project = buildProjects(
+      [
+        agent({ id: 'care', workingDirectory: 'C:\\src\\claudebot\\agents\\az-care' }),
+        agent({ id: 'fam', workingDirectory: 'C:\\src\\claudebot\\agents\\family' }),
+      ],
+      [],
+      [
+        info({ path: 'C:\\src\\claudebot\\agents\\az-care', repoRoot: 'C:\\src\\claudebot' }),
+        info({ path: 'C:\\src\\claudebot\\agents\\family', repoRoot: 'C:\\src\\claudebot' }),
+      ],
+    )[0]
+
+    const picked = pickWorkspace(project, null)
+    expect(picked?.kind).toBe('subdir')
+    expect(picked?.agents[0]?.id).toBe('care')
+  })
 })
 
 describe('taskProjectDir', () => {
