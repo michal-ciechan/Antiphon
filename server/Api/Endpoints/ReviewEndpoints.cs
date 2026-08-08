@@ -63,6 +63,20 @@ public static class ReviewEndpoints
             return Results.Ok(new { marked = count });
         });
 
+        agents.MapGet("/review/sections", async (
+            Guid agentId, string path, AgentFilesService files, CancellationToken ct) =>
+        {
+            var result = await files.GetSectionReviewsAsync(agentId, path, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
+        agents.MapPost("/review/sections", async (
+            Guid agentId, MarkSectionReviewsRequest request, AgentFilesService files, CancellationToken ct) =>
+        {
+            var count = await files.MarkSectionsAsync(agentId, request, ct);
+            return Results.Ok(new { marked = count });
+        });
+
         agents.MapPost("/review/checkpoint", async (
             Guid agentId, SetReviewCheckpointRequest? request,
             AgentReviewCheckpointService checkpoints, CancellationToken ct) =>

@@ -98,6 +98,92 @@ public class ReviewLoopTests
         listing.Files.Single(f => f.Path == "top.md").ReviewLevel.ShouldBeNull();
     }
 
+    // ---------- section marks (feature 009): hash-anchored, client-derived keys ----------
+
+    [Test]
+    public async Task Section_marks_round_trip_and_upsert_on_remark()
+    {
+        await using var h = await HarnessAsync(withGitRepo: false);
+
+        var marked = await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest("docs/plan.md", [
+                new SectionMarkRequest("__intro", "hash-intro-1"),
+                new SectionMarkRequest("setup", "hash-setup-1"),
+            ]),
+            CancellationToken.None);
+        marked.ShouldBe(2);
+
+        var stored = await h.Files.GetSectionReviewsAsync(h.AgentId, "docs/plan.md", CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Count.ShouldBe(2);
+        stored.Single(s => s.Key == "setup").ContentHash.ShouldBe("hash-setup-1");
+
+        // Re-marking the same section replaces the hash — one row per section, not a history.
+        await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest("docs/plan.md", [new SectionMarkRequest("setup", "hash-setup-2")]),
+            CancellationToken.None);
+        stored = await h.Files.GetSectionReviewsAsync(h.AgentId, "docs/plan.md", CancellationToken.None);
+        stored!.Count.ShouldBe(2);
+        stored.Single(s => s.Key == "setup").ContentHash.ShouldBe("hash-setup-2");
+    }
+
+    [Test]
+    public async Task Section_marks_clear_with_a_null_hash()
+    {
+        await using var h = await HarnessAsync(withGitRepo: false);
+        await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest("docs/plan.md", [
+                new SectionMarkRequest("setup", "h1"),
+                new SectionMarkRequest("deploy", "h2"),
+            ]),
+            CancellationToken.None);
+
+        var cleared = await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest("docs/plan.md", [new SectionMarkRequest("setup", null)]),
+            CancellationToken.None);
+        cleared.ShouldBe(1);
+
+        var stored = await h.Files.GetSectionReviewsAsync(h.AgentId, "docs/plan.md", CancellationToken.None);
+        stored!.Select(s => s.Key).ShouldBe(["deploy"]);
+    }
+
+    [Test]
+    public async Task Section_marks_are_scoped_per_path_and_normalize_backslashes()
+    {
+        await using var h = await HarnessAsync(withGitRepo: false);
+        // Backslash path in, forward-slash identity stored — the same normal form the files API serves.
+        await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest(@"docs\plan.md", [new SectionMarkRequest("setup", "h1")]),
+            CancellationToken.None);
+        await h.Files.MarkSectionsAsync(
+            h.AgentId,
+            new MarkSectionReviewsRequest("docs/other.md", [new SectionMarkRequest("setup", "h9")]),
+            CancellationToken.None);
+
+        var plan = await h.Files.GetSectionReviewsAsync(h.AgentId, "docs/plan.md", CancellationToken.None);
+        plan!.Single().ContentHash.ShouldBe("h1");
+        var other = await h.Files.GetSectionReviewsAsync(h.AgentId, "docs/other.md", CancellationToken.None);
+        other!.Single().ContentHash.ShouldBe("h9");
+    }
+
+    [Test]
+    public async Task Section_marks_for_an_unknown_agent_return_not_found_shape()
+    {
+        await using var h = await HarnessAsync(withGitRepo: false);
+        (await h.Files.GetSectionReviewsAsync(Guid.NewGuid(), "docs/plan.md", CancellationToken.None))
+            .ShouldBeNull();
+        (await h.Files.MarkSectionsAsync(
+                Guid.NewGuid(),
+                new MarkSectionReviewsRequest("docs/plan.md", [new SectionMarkRequest("setup", "h1")]),
+                CancellationToken.None))
+            .ShouldBe(0);
+    }
+
     // ---------- baselines: "changes since the last completed work" ----------
 
     // A self-committing agent leaves the tree clean, so diff-vs-HEAD is empty moments after every
@@ -441,6 +527,7 @@ public class ReviewLoopTests
             {
                 await db.ReviewThreads.Where(t => t.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.FileReviewStates.Where(f => f.AgentId == AgentId).ExecuteDeleteAsync();
+                await db.FileSectionReviews.Where(s => s.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.AgentReviewCheckpoints.Where(c => c.AgentId == AgentId).ExecuteDeleteAsync();
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();

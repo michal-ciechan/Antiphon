@@ -36,6 +36,7 @@ import {
   TbUserShare,
 } from 'react-icons/tb'
 import { DelegateModal } from '../delegations/DelegateModal'
+import { RenderedMarkdownReview } from './RenderedMarkdownReview'
 import { SelectionComposer, SelectionDelegate } from './SelectionDelegate'
 import {
   useAddReviewComment,
@@ -845,7 +846,21 @@ function FileViewer({
                 composer renders below the viewer — inside this (horizontally scrollable) box its
                 buttons would ride off-screen with wide code blocks. */}
             <SelectionDelegate onCompose={setSelectionText}>
-              <Markdown remarkPlugins={[remarkGfm]}>{work.data?.text ?? ''}</Markdown>
+              {file.isMarkdown ? (
+                <RenderedMarkdownReview
+                  agentId={agentId}
+                  path={file.path}
+                  workText={work.data?.text ?? ''}
+                  baseText={
+                    file.gitStatus !== 'None' && !file.external ? (head.data?.text ?? null) : null
+                  }
+                  threads={threads}
+                  readOnly={!!file.contextOnly}
+                  onCommentAtLine={setCommentLine}
+                />
+              ) : (
+                <Markdown remarkPlugins={[remarkGfm]}>{work.data?.text ?? ''}</Markdown>
+              )}
             </SelectionDelegate>
           </ScrollArea.Autosize>
         ) : (

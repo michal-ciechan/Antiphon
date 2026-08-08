@@ -71,6 +71,21 @@ public sealed record SetReviewCheckpointRequest(
     string? CommitSha = null,
     string? Reason = null);
 
+/// <summary>One stored section mark; the client compares ContentHash to the live hash for staleness.</summary>
+public sealed record SectionReviewDto(
+    string Key,
+    string ContentHash,
+    DateTime UpdatedAt);
+
+/// <summary>Batch section mark/clear for one file. ContentHash null clears that section's mark.</summary>
+public sealed record MarkSectionReviewsRequest(
+    string Path,
+    IReadOnlyList<SectionMarkRequest> Sections);
+
+public sealed record SectionMarkRequest(
+    string Key,
+    string? ContentHash);
+
 public sealed record ReviewThreadDto(
     Guid Id,
     Guid AgentId,

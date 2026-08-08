@@ -345,6 +345,72 @@ public sealed class AgentFilesService
         return targets.Count;
     }
 
+    /// <summary>Section marks for one file — the client compares hashes to derive fresh/stale.</summary>
+    public async Task<IReadOnlyList<SectionReviewDto>?> GetSectionReviewsAsync(
+        Guid agentId, string path, CancellationToken ct)
+    {
+        if (!await _db.Agents.AnyAsync(a => a.Id == agentId, ct))
+            return null;
+
+        var normalized = path.Replace('\\', '/');
+        return await _db.FileSectionReviews.AsNoTracking()
+            .Where(s => s.AgentId == agentId && s.Path == normalized)
+            .OrderBy(s => s.SectionKey)
+            .Select(s => new SectionReviewDto(s.SectionKey, s.ContentHash, s.UpdatedAt))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Batch upsert/clear of section marks for one file — one round-trip for "mark this subtree"
+    /// and "mark all sections". A null hash clears that section's mark. Hashes and keys are
+    /// client-derived and opaque here (see <see cref="FileSectionReview"/>).
+    /// </summary>
+    public async Task<int> MarkSectionsAsync(
+        Guid agentId, MarkSectionReviewsRequest request, CancellationToken ct)
+    {
+        if (request.Sections.Count == 0 || !await _db.Agents.AnyAsync(a => a.Id == agentId, ct))
+            return 0;
+
+        var normalized = request.Path.Replace('\\', '/');
+        var existing = await _db.FileSectionReviews
+            .Where(s => s.AgentId == agentId && s.Path == normalized)
+            .ToDictionaryAsync(s => s.SectionKey, StringComparer.Ordinal, ct);
+
+        var now = DateTime.UtcNow;
+        var touched = 0;
+        foreach (var section in request.Sections)
+        {
+            if (string.IsNullOrWhiteSpace(section.Key))
+                continue;
+            existing.TryGetValue(section.Key, out var row);
+            if (section.ContentHash is null)
+            {
+                if (row is not null)
+                {
+                    _db.FileSectionReviews.Remove(row);
+                    touched++;
+                }
+                continue;
+            }
+            if (row is null)
+            {
+                row = new FileSectionReview
+                {
+                    Id = Guid.NewGuid(),
+                    AgentId = agentId,
+                    Path = normalized,
+                    SectionKey = section.Key,
+                };
+                _db.FileSectionReviews.Add(row);
+            }
+            row.ContentHash = section.ContentHash;
+            row.UpdatedAt = now;
+            touched++;
+        }
+        await _db.SaveChangesAsync(ct);
+        return touched;
+    }
+
     private sealed record ActivityInfo(int Edits, DateTime LastEditAt, bool External);
 
     private async Task<Dictionary<string, ActivityInfo>> GetAgentActivityAsync(

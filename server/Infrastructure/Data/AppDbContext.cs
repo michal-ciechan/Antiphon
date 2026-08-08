@@ -43,6 +43,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<FileReviewState> FileReviewStates => Set<FileReviewState>();
+    public DbSet<FileSectionReview> FileSectionReviews => Set<FileSectionReview>();
     public DbSet<AgentReviewCheckpoint> AgentReviewCheckpoints => Set<AgentReviewCheckpoint>();
     public DbSet<ReviewThread> ReviewThreads => Set<ReviewThread>();
     public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
@@ -66,6 +67,22 @@ public class AppDbContext : DbContext
             entity.HasOne(f => f.Agent)
                 .WithMany()
                 .HasForeignKey(f => f.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<FileSectionReview>(entity =>
+        {
+            entity.ToTable("FileSectionReviews");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.Path).IsRequired().HasMaxLength(1024);
+            entity.Property(s => s.SectionKey).IsRequired().HasMaxLength(300);
+            entity.Property(s => s.ContentHash).IsRequired().HasMaxLength(64);
+            entity.Property(s => s.UpdatedAt).IsRequired();
+            entity.HasIndex(s => new { s.AgentId, s.Path, s.SectionKey }).IsUnique()
+                .HasDatabaseName("IX_FileSectionReviews_AgentId_Path_SectionKey");
+            entity.HasOne(s => s.Agent)
+                .WithMany()
+                .HasForeignKey(s => s.AgentId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

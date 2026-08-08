@@ -76,6 +76,7 @@ export const reviewKeys = {
   content: (agentId: string, path: string, rev: string, since: string) =>
     ['agents', agentId, 'files', 'content', path, rev, since] as const,
   threads: (agentId: string) => ['agents', agentId, 'review-threads'] as const,
+  sections: (agentId: string, path: string) => ['agents', agentId, 'section-reviews', path] as const,
 }
 
 /**
@@ -159,6 +160,41 @@ export function useSetReviewCheckpoint(agentId: string) {
         reason: request?.reason ?? null,
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: reviewKeys.filesRoot(agentId) }),
+  })
+}
+
+// ---- Section review marks (feature 009) ----
+
+/**
+ * One stored section mark. Keys and hashes are client-derived (markdownSections.ts) — the client
+ * compares contentHash to the live section hash: equal = fresh (auto-collapse), different = stale
+ * ("changed since review").
+ */
+export interface SectionReviewDto {
+  key: string
+  contentHash: string
+  updatedAt: string
+}
+
+export function useSectionReviews(agentId: string | null, path: string | null) {
+  return useQuery({
+    queryKey: reviewKeys.sections(agentId ?? '', path ?? ''),
+    queryFn: () =>
+      apiGet<SectionReviewDto[]>(
+        `/agents/${agentId}/review/sections?path=${encodeURIComponent(path!)}`,
+      ),
+    enabled: agentId !== null && path !== null,
+  })
+}
+
+/** Batch mark/clear: contentHash null clears that section's mark. */
+export function useMarkSectionReviews(agentId: string, path: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (sections: Array<{ key: string; contentHash: string | null }>) =>
+      apiPost(`/agents/${agentId}/review/sections`, { path, sections }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: reviewKeys.sections(agentId, path) }),
   })
 }
 
