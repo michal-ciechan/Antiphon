@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -216,6 +217,67 @@ public sealed class AgentFilesService
             (truncated ? paths.Take(MaxTreePaths) : paths)
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList(),
             truncated);
+    }
+
+    /// <summary>
+    /// What adding <paramref name="pattern"/> to .gitignore would hide, without writing anything.
+    /// The dialog shows this before the user commits to the line.
+    /// </summary>
+    public async Task<IgnorePreviewDto?> PreviewIgnoreAsync(
+        Guid agentId, IgnorePreviewRequest request, CancellationToken ct)
+    {
+        var root = await ResolveRepoWorkspaceAsync(agentId, ct);
+        if (root is null)
+            return null;
+
+        var sets = await _git.PreviewIgnoreAsync(root, request.Pattern, ct);
+        var limit = Math.Clamp(request.Limit, 1, 1000);
+        var ordered = sets.Disappears.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+        return new IgnorePreviewDto(
+            request.Pattern.Trim(),
+            ordered.Take(limit).ToList(),
+            ordered.Count > limit,
+            sets.TrackedMatches.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(limit).ToList());
+    }
+
+    /// <summary>
+    /// Appends the pattern to the workspace .gitignore. Reports how many paths actually left the
+    /// listing, measured before the write, so the caller can confirm what happened.
+    /// </summary>
+    public async Task<AddIgnoreResultDto?> AddIgnoreAsync(
+        Guid agentId, AddIgnoreRequest request, CancellationToken ct)
+    {
+        var root = await ResolveRepoWorkspaceAsync(agentId, ct);
+        if (root is null)
+            return null;
+
+        var pattern = request.Pattern.Trim();
+        if (string.IsNullOrWhiteSpace(pattern))
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["pattern"] = ["An ignore pattern is required."],
+            });
+
+        var sets = await _git.PreviewIgnoreAsync(root, pattern, ct);
+        var gitignore = await _git.AppendIgnoreAsync(root, pattern, ct);
+        if (gitignore is null)
+            return null;
+
+        _logger.LogInformation(
+            "Agent {AgentId}: ignored {Pattern} ({Count} path(s) leave the file view)",
+            agentId, pattern, sets.Disappears.Count);
+        return new AddIgnoreResultDto(pattern, gitignore, sets.Disappears.Count);
+    }
+
+    /// <summary>The agent's workspace, but only when it is a git repository (gitignore needs one).</summary>
+    private async Task<string?> ResolveRepoWorkspaceAsync(Guid agentId, CancellationToken ct)
+    {
+        var agent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null || string.IsNullOrWhiteSpace(agent.WorkingDirectory))
+            return null;
+
+        var root = Path.GetFullPath(agent.WorkingDirectory);
+        return await _git.IsRepositoryAsync(root, ct) ? root : null;
     }
 
     private static void WalkTree(string root, string dir, List<string> paths)

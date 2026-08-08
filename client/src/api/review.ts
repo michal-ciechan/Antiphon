@@ -59,6 +59,24 @@ export interface WorkspaceTreeDto {
   truncated: boolean
 }
 
+export interface IgnorePreviewDto {
+  pattern: string
+  /** Paths that would leave the file view. */
+  matches: string[]
+  truncated: boolean
+  /**
+   * Paths the pattern covers that git TRACKS. Gitignore has no effect on tracked files, so these
+   * stay visible — shown separately so the dialog never promises something git won't do.
+   */
+  trackedMatches: string[]
+}
+
+export interface AddIgnoreResultDto {
+  pattern: string
+  gitIgnorePath: string
+  removed: number
+}
+
 export interface AgentFileContentDto {
   path: string
   rev: 'work' | 'head'
@@ -109,6 +127,33 @@ export function useAgentFilesTree(agentId: string | null, enabled: boolean) {
     queryFn: () => apiGet<WorkspaceTreeDto>(`/agents/${agentId}/files/tree`),
     enabled: agentId !== null && enabled,
     refetchInterval: 60_000,
+  })
+}
+
+/**
+ * Live preview of a candidate .gitignore line. Debounced by the dialog, never cached — the answer
+ * depends on the workspace as it is right now.
+ */
+export function useIgnorePreview(agentId: string | null, pattern: string) {
+  return useQuery({
+    queryKey: ['agents', agentId ?? '', 'files', 'ignore-preview', pattern],
+    queryFn: () =>
+      apiPost<IgnorePreviewDto>(`/agents/${agentId}/files/ignore/preview`, { pattern }),
+    enabled: agentId !== null && pattern.trim().length > 0,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+export function useAddIgnore(agentId: string | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (pattern: string) =>
+      apiPost<AddIgnoreResultDto>(`/agents/${agentId}/files/ignore`, { pattern }),
+    onSuccess: () => {
+      // The listing is built from git, so the newly-ignored paths only vanish on a refetch.
+      queryClient.invalidateQueries({ queryKey: ['agents', agentId ?? '', 'files'] })
+    },
   })
 }
 

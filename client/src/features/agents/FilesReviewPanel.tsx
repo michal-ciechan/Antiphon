@@ -26,6 +26,7 @@ import {
   TbCheck,
   TbChecks,
   TbEye,
+  TbEyeOff,
   TbFile,
   TbFlag,
   TbFolder,
@@ -36,6 +37,7 @@ import {
   TbUserShare,
 } from 'react-icons/tb'
 import { DelegateModal } from '../delegations/DelegateModal'
+import { IgnorePathModal } from './IgnorePathModal'
 import { RenderedMarkdownReview } from './RenderedMarkdownReview'
 import { SelectionComposer, SelectionDelegate } from './SelectionDelegate'
 import {
@@ -231,7 +233,10 @@ export function FilesReviewPanel({
   const local = useLocalFilesViewSelection(initialSelectedPath)
   const { selectedPath, view, select, setView } = selection ?? local
   const [onlyUnviewed, setOnlyUnviewed] = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; prefix: string } | null>(null)
+  const [contextMenu, setContextMenu] = useState<
+    { x: number; y: number; prefix: string; isFolder: boolean } | null
+  >(null)
+  const [ignoreTarget, setIgnoreTarget] = useState<{ path: string; isFolder: boolean } | null>(null)
 
   const mergedFiles = useMemo(() => {
     const base = files.data?.files ?? []
@@ -302,9 +307,9 @@ export function FilesReviewPanel({
         selectedPath={selectedPath}
         threadsByPath={threadsByPath}
         onSelect={select}
-        onContextMenu={(e, prefix) => {
+        onContextMenu={(e, prefix, isFolder) => {
           e.preventDefault()
-          setContextMenu({ x: e.clientX, y: e.clientY, prefix })
+          setContextMenu({ x: e.clientX, y: e.clientY, prefix, isFolder })
         }}
       />
       {externals.length > 0 && (
@@ -390,8 +395,26 @@ export function FilesReviewPanel({
         >
           Clear marks
         </Menu.Item>
+        {contextMenu.prefix && (
+          <>
+            <Menu.Divider />
+            <Menu.Item
+              leftSection={<TbEyeOff size={14} />}
+              onClick={() => {
+                setIgnoreTarget({ path: contextMenu.prefix, isFolder: contextMenu.isFolder })
+                setContextMenu(null)
+              }}
+            >
+              Ignore in git…
+            </Menu.Item>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
+  )
+
+  const ignoreModalEl = (
+    <IgnorePathModal agentId={agentId} target={ignoreTarget} onClose={() => setIgnoreTarget(null)} />
   )
 
   if (layout === 'sidebar') {
@@ -433,6 +456,7 @@ export function FilesReviewPanel({
 
         <Box style={{ flexGrow: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>{viewer}</Box>
         {contextMenuEl}
+        {ignoreModalEl}
       </Group>
     )
   }
@@ -488,6 +512,7 @@ export function FilesReviewPanel({
       </Group>
 
       {contextMenuEl}
+      {ignoreModalEl}
     </Stack>
   )
 }
@@ -644,7 +669,7 @@ function TreeLevel({
   selectedPath: string | null
   threadsByPath: Map<string, ReviewThreadDto[]>
   onSelect: (path: string) => void
-  onContextMenu: (e: ReactMouseEvent, prefix: string) => void
+  onContextMenu: (e: ReactMouseEvent, prefix: string, isFolder: boolean) => void
 }) {
   const folders = [...node.children.values()].filter((c) => !c.file)
   const leaves = [...node.children.values()].filter((c) => c.file)
@@ -657,7 +682,7 @@ function TreeLevel({
             pl={depth * 14 + 4}
             py={2}
             style={{ cursor: 'default' }}
-            onContextMenu={(e) => onContextMenu(e, folder.path)}
+            onContextMenu={(e) => onContextMenu(e, folder.path, true)}
           >
             <TbFolder size={14} />
             <Text size="sm" fw={500}>
@@ -682,7 +707,7 @@ function TreeLevel({
           selected={selectedPath === leaf.path.replace(/\\/g, '/')}
           threadCount={threadsByPath.get(leaf.file!.path)?.length ?? 0}
           onSelect={onSelect}
-          onContextMenu={(e) => onContextMenu(e, leaf.file!.path)}
+          onContextMenu={(e) => onContextMenu(e, leaf.file!.path, false)}
         />
       ))}
     </>

@@ -37,6 +37,30 @@ public sealed record WorkspaceTreeDto(
     IReadOnlyList<string> Paths,
     bool Truncated);
 
+/// <param name="Pattern">The .gitignore line as it would be written.</param>
+/// <param name="Matches">Workspace-relative paths that would leave the file view.</param>
+/// <param name="Truncated">More matched than <see cref="IgnorePreviewRequest"/> asked to list.</param>
+/// <param name="TrackedMatches">
+/// Paths the pattern covers that are TRACKED by git. Gitignore does not apply to tracked files, so
+/// these will NOT disappear — surfaced so the dialog can say so rather than silently doing nothing.
+/// </param>
+public sealed record IgnorePreviewDto(
+    string Pattern,
+    IReadOnlyList<string> Matches,
+    bool Truncated,
+    IReadOnlyList<string> TrackedMatches);
+
+public sealed record IgnorePreviewRequest(string Pattern, int Limit = 200);
+
+public sealed record AddIgnoreRequest(string Pattern);
+
+/// <param name="GitIgnorePath">Absolute path of the file that was written.</param>
+/// <param name="Removed">How many paths left the file view as a result.</param>
+public sealed record AddIgnoreResultDto(
+    string Pattern,
+    string GitIgnorePath,
+    int Removed);
+
 public sealed record AgentFileDto(
     string Path,
     string GitStatus,

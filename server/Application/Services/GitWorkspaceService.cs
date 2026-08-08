@@ -228,6 +228,112 @@ public sealed class GitWorkspaceService
     }
 
     /// <summary>
+    /// Which workspace-relative paths would disappear from <see cref="ListFilesAsync"/> if
+    /// <paramref name="pattern"/> were added to .gitignore.
+    ///
+    /// Git does the matching, not us: the pattern goes into a temporary excludes file that is fed
+    /// in via <c>-c core.excludesFile=</c>, and the listing is re-run. Whatever vanished is what
+    /// the pattern catches. Reimplementing gitignore glob semantics (negation, anchoring,
+    /// directory-only, precedence) would give a preview that disagrees with reality, which is
+    /// worse than no preview.
+    ///
+    /// TRACKED files never disappear — gitignore does not apply to them — so an attempt to ignore
+    /// something already committed truthfully previews as "nothing", which is exactly what adding
+    /// the line would achieve.
+    /// </summary>
+    public async Task<IgnoreMatchSets> PreviewIgnoreAsync(
+        string workingDirectory, string pattern, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+            return IgnoreMatchSets.Empty;
+
+        var tempExcludes = Path.Combine(
+            Path.GetTempPath(), $"antiphon-ignore-preview-{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllTextAsync(tempExcludes, pattern.Trim() + "\n", ct);
+
+            // Untracked: what leaves the listing the file view is built from.
+            var listedBefore = await ListFilesAsync(workingDirectory, ct);
+            var listedAfter = await ReadPathsAsync(
+                workingDirectory, ct,
+                "-c", $"core.excludesFile={tempExcludes}",
+                "ls-files", "-z", "--cached", "--others", "--exclude-standard");
+            var stillListed = listedAfter.ToHashSet(StringComparer.Ordinal);
+            var disappears = listedBefore.Where(p => !stillListed.Contains(p)).ToList();
+
+            // Tracked: files the pattern covers that git will keep tracking anyway. Diffed against
+            // the baseline so only the NEW pattern's effect shows.
+            var trackedBefore = (await ReadPathsAsync(
+                workingDirectory, ct, "ls-files", "-z", "--cached", "--ignored", "--exclude-standard"))
+                .ToHashSet(StringComparer.Ordinal);
+            var trackedAfter = await ReadPathsAsync(
+                workingDirectory, ct,
+                "-c", $"core.excludesFile={tempExcludes}",
+                "ls-files", "-z", "--cached", "--ignored", "--exclude-standard");
+            var trackedMatches = trackedAfter.Where(p => !trackedBefore.Contains(p)).ToList();
+
+            return new IgnoreMatchSets(disappears, trackedMatches);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "Ignore preview failed in {Root}", workingDirectory);
+            return IgnoreMatchSets.Empty;
+        }
+        finally
+        {
+            try { File.Delete(tempExcludes); } catch { /* temp file */ }
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> ReadPathsAsync(
+        string workingDirectory, CancellationToken ct, params string[] args)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, args);
+        return code != 0 ? [] : stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Appends a pattern to the workspace's top-level .gitignore, creating the file if needed.
+    /// Returns the file written, or null when the directory is not a repository. Idempotent — a
+    /// pattern already present is not added twice.
+    /// </summary>
+    public async Task<string?> AppendIgnoreAsync(
+        string workingDirectory, string pattern, CancellationToken ct)
+    {
+        var trimmed = pattern.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return null;
+
+        // The .gitignore belongs at the toplevel of THIS checkout — for a linked worktree that is
+        // the worktree's own root, not the primary repo's.
+        var (code, stdout, _) = await RunAsync(
+            workingDirectory, ct, "rev-parse", "--path-format=absolute", "--show-toplevel");
+        if (code != 0)
+            return null;
+
+        var toplevel = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(toplevel))
+            return null;
+
+        var gitignore = Path.Combine(Path.GetFullPath(toplevel), ".gitignore");
+        var existing = File.Exists(gitignore) ? await File.ReadAllTextAsync(gitignore, ct) : string.Empty;
+
+        var alreadyPresent = existing
+            .Split('\n')
+            .Select(l => l.Trim())
+            .Any(l => string.Equals(l, trimmed, StringComparison.Ordinal));
+        if (alreadyPresent)
+            return gitignore;
+
+        var needsNewline = existing.Length > 0 && !existing.EndsWith('\n');
+        await File.AppendAllTextAsync(gitignore, (needsNewline ? "\n" : "") + trimmed + "\n", ct);
+        _logger.LogInformation("Added ignore pattern {Pattern} to {GitIgnore}", trimmed, gitignore);
+        return gitignore;
+    }
+
+    /// <summary>
     /// Which repo the directory belongs to and what is checked out there. RepoRoot is the MAIN
     /// checkout's root: a linked worktree's --git-common-dir lives under the primary repo, so
     /// resolving its parent maps any worktree (or subdirectory) back to the repo it came from.
@@ -381,4 +487,19 @@ public enum GitFileStatus
     Deleted = 3,
     Renamed = 4,
     Untracked = 5,
+}
+
+/// <summary>
+/// What a candidate .gitignore pattern would catch, split by what git will actually do about it.
+/// </summary>
+/// <param name="Disappears">Untracked paths that would leave the file listing.</param>
+/// <param name="TrackedMatches">
+/// Tracked paths the pattern covers. These do NOT disappear — gitignore has no effect on tracked
+/// files — so a dialog that lumped them in with the rest would promise something git will not do.
+/// </param>
+public sealed record IgnoreMatchSets(
+    IReadOnlyList<string> Disappears,
+    IReadOnlyList<string> TrackedMatches)
+{
+    public static readonly IgnoreMatchSets Empty = new([], []);
 }

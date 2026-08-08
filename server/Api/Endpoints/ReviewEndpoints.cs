@@ -29,6 +29,22 @@ public static class ReviewEndpoints
             return result is null ? Results.NotFound() : Results.Ok(result);
         });
 
+        // Preview before writing: the dialog shows exactly which paths the line would hide, and
+        // separately which tracked files it would NOT hide, before anything touches .gitignore.
+        agents.MapPost("/files/ignore/preview", async (
+            Guid agentId, IgnorePreviewRequest request, AgentFilesService files, CancellationToken ct) =>
+        {
+            var result = await files.PreviewIgnoreAsync(agentId, request, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
+        agents.MapPost("/files/ignore", async (
+            Guid agentId, AddIgnoreRequest request, AgentFilesService files, CancellationToken ct) =>
+        {
+            var result = await files.AddIgnoreAsync(agentId, request, ct);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        });
+
         agents.MapGet("/files/tree", async (
             Guid agentId, AgentFilesService files, CancellationToken ct) =>
         {
