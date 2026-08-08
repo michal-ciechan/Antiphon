@@ -366,6 +366,36 @@ public class FakeClaudeContractTests
         }
     }
 
+    // The 2026-08-08 live miss: SendLineAsync used to write its body RAW, so a CRLF prompt (a C#
+    // raw-string literal in a CRLF source file — the card work prompt) either fragmented at each
+    // mid-body \r or stranded whole in the composer when the CRs fell inside the paste window.
+    // The agent's supervised relaunch typed its prompt and then sat "never came back" for half an
+    // hour. SendLineAsync now routes through PtyInputEncoding (LF-normalize + bracketed paste), so
+    // the same CRLF body must land as ONE intact submitted turn.
+    [Test]
+    public async Task SendLineAsync_with_CRLF_multiline_body_submits_as_one_intact_turn()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var body = "HEAD work on card CARD-0001\r\n\r\nDescription:\r\nreview the doc and TAIL write the spec";
+        await runner.SendLineAsync(body);
+
+        var intact = await runner.WaitForOutputAsync(
+            s =>
+            {
+                var flat = s.Replace("\r", "").Replace("\n", "");
+                return System.Text.RegularExpressions.Regex.IsMatch(
+                    flat, @"SUBMITTED:(?:(?!FAKE response).)*HEAD work on card(?:(?!FAKE response).)*TAIL write the spec");
+            },
+            TimeSpan.FromSeconds(5));
+        intact.ShouldBeTrue(
+            "a CRLF multi-line body sent via SendLineAsync must submit whole, as one turn. Raw output:\n"
+            + runner.SnapshotText());
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,
     // so each must round-trip independently when delivered the correct (two-write) way.
     [Test]

@@ -401,8 +401,9 @@ public sealed class SessionMessageQueueService
         // composer, while a \r MID-body acts as Enter and SUBMITS the fragment before it — and
         // current conhost builds strip the bracketed-paste markers from written input, so the wrap
         // alone cannot protect a CR-carrying body. CRLF bodies (Windows/Telegram sources) would
-        // fragment exactly like the 2026-07-29 live miss.
-        var trimmed = body.ReplaceLineEndings("\n").TrimEnd();
+        // fragment exactly like the 2026-07-29 live miss. Shared with every other typing path via
+        // PtyInputEncoding (SendLineAsync callers were the 2026-08-08 miss).
+        var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
 
         var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;
@@ -421,9 +422,7 @@ public sealed class SessionMessageQueueService
         // fragments the body at line breaks — live miss 2026-07-29, where a 2.4 KB calendar message
         // reached the agent as only its final fragment. The markers delimit the paste regardless of
         // read chunking; the submitting CR below stays a separate, unbracketed write.
-        var payload = trimmed.Contains('\n') || trimmed.Contains('\r')
-            ? "\x1b[200~" + trimmed + "\x1b[201~"
-            : trimmed;
+        var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
         await _runtime.SendInputAsync(sessionId, payload, ct);
 
         if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))

@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
@@ -46,7 +47,12 @@ internal sealed class RunnerTerminalSession
     public async Task SendLineAsync(string line, CancellationToken ct)
     {
         EnsureStarted();
-        await _client.SendInputAsync(_sessionId, line, ct);
+        // LF-normalized and bracket-wrapped when multi-line (PtyInputEncoding REQUIREMENT). This
+        // path delivered the interactive/card boot prompts RAW: a CRLF prompt's trailing CR fell
+        // inside the TUI's paste window, folded to a newline, and the whole prompt sat stranded
+        // unsubmitted in the composer (live miss 2026-08-08 — "agent never came back" after a
+        // supervised restart). The submitting CR stays a separate, delayed, unbracketed write.
+        await _client.SendInputAsync(_sessionId, PtyInputEncoding.EncodeBody(line), ct);
         await Task.Delay(20, ct);
         await _client.SendInputAsync(_sessionId, "\r", ct);
     }

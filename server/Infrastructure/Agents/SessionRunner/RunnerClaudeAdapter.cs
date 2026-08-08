@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -15,13 +16,21 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter
 
     private readonly RunnerTerminalSession _terminal;
     private readonly AgentRegistrySettings _settings;
+    private readonly DeliveryVerificationSettings _verification;
+    private readonly ILogger? _logger;
     private long _promptStartSequence;
     private bool _started;
 
-    public RunnerClaudeAdapter(ISessionRunnerClient client, IOptions<AgentRegistrySettings> options)
+    public RunnerClaudeAdapter(
+        ISessionRunnerClient client,
+        IOptions<AgentRegistrySettings> options,
+        IOptions<SupervisionSettings>? supervisionSettings = null,
+        ILogger? logger = null)
     {
         _terminal = new RunnerTerminalSession(client);
         _settings = options.Value;
+        _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
+        _logger = logger;
     }
 
     public Task<int> Exited => _terminal.Exited;
@@ -50,7 +59,39 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter
         EnsureStarted();
         await _terminal.ClearLiveBufferAsync(ct);
         _promptStartSequence = await _terminal.GetLastSequenceAsync(ct);
-        await _terminal.SendLineAsync(prompt, ct);
+
+        if (!_verification.Enabled)
+        {
+            await _terminal.SendLineAsync(prompt, ct);
+            return;
+        }
+
+        // Verified delivery, same contract as the queue's DeliverAsync: composer evidence before
+        // the Enter, output advance after it, swallowed Enters re-pressed. Boot prompts used to go
+        // blind here — on 2026-08-08 a relaunched agent's card prompt sat unsubmitted in the
+        // composer for half an hour with nothing logged. A verification failure now throws, which
+        // fails the launch loudly and lets the supervisor retry it.
+        try
+        {
+            await VerifiedPromptSubmitter.SubmitAsync(
+                prompt,
+                _terminal.SnapshotScreenAsync,
+                _terminal.GetLastSequenceAsync,
+                _terminal.WriteAsync,
+                new VerifiedSubmitOptions(
+                    TimeSpan.FromSeconds(_verification.EvidenceTimeoutSeconds),
+                    TimeSpan.FromMilliseconds(_verification.PollIntervalMs),
+                    TimeSpan.FromSeconds(_verification.PostSubmitAdvanceTimeoutSeconds)),
+                message => _logger?.LogWarning(
+                    "Session {SessionId} prompt delivery: {Message}", _terminal.SessionId, message),
+                ct);
+        }
+        catch (PromptDeliveryException ex)
+        {
+            _logger?.LogWarning(
+                "Session {SessionId} prompt delivery failed: {Message}", _terminal.SessionId, ex.Message);
+            throw;
+        }
     }
 
     public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)

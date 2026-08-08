@@ -135,7 +135,11 @@ public sealed class PtyAgentRunner : IAsyncDisposable
         await _writeGate.WaitAsync(ct);
         try
         {
-            await WriteCoreAsync(line, ct);
+            // LF-normalized and bracket-wrapped when multi-line (PtyInputEncoding REQUIREMENT):
+            // a raw CR/CRLF body either fragments at each mid-body \r or — when the trailing CR
+            // lands inside the TUI's paste window — strands the whole body unsubmitted in the
+            // composer (live miss 2026-08-08: a CRLF card prompt sat there for half an hour).
+            await WriteCoreAsync(PtyInputEncoding.EncodeBody(line), ct);
             // Flush the message text first, then send Enter in a separate write.
             // ConPTY may drop the trailing \r if the entire line + Enter is sent as one
             // large chunk that exceeds its internal input-record queue capacity.
