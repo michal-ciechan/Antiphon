@@ -68,14 +68,22 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Orchestrator` | make it a sub-orchestrator instead of a worker |
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
-| `-Worktree` | isolate in a fresh git worktree, merged back when it finishes |
+| `-Worktree` | isolate a worker in a fresh git worktree, merged back when it finishes |
+| `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
 | `-ReadOnly` | shared directory, but the brief says don't write |
+| `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
 | `-Scope "<glob>"` | declare the files this task owns; intersecting scopes are serialised |
 | `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
 
-**Workspace defaults to shared** — the delegate runs right in the directory, like you would
-yourself. Pass `-Worktree` when several delegates will write the same files at once, or when you
-want the change reviewable before it lands.
+**Workers default to shared** — the delegate runs right in the directory, like you would yourself.
+Pass `-Worktree` when several delegates will write the same files at once, or when you want the
+change reviewable before it lands.
+
+**A sub-orchestrator defaults to its own worktree** (or just its own `-Dir` when you point it
+elsewhere) — it fans out writers, so it must own something. Its workers land on ITS branch and it
+merges one level up when the subtree is done. Forcing `-Shared` is allowed but the server will warn:
+its delegates and its caller can overwrite each other. Inside its worktree a PreToolUse hook refuses
+direct Edit/Write ("delegate this instead") — pass `-AllowDirectEdits` if it genuinely must write.
 
 ## Working across repos
 

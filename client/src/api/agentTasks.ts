@@ -48,6 +48,8 @@ export type AgentTaskEventType =
   | 'Failed'
   | 'Canceled'
   | 'Rejected'
+  /** Something legal but risky — an orchestrator sharing its caller's directory. */
+  | 'Warning'
 
 export interface AgentTaskSummaryDto {
   id: string
@@ -105,9 +107,19 @@ export interface CreateAgentTaskRequest {
   role?: AgentTaskRole
   /** Null takes the role policy's tier — which is the whole point of picking a role. */
   modelLevel?: AgentModelLevel | null
-  workspace?: WorkspaceMode
+  /**
+   * Null lets the server decide: workers run Shared; an orchestrator gets its own worktree unless
+   * it already has its own location. An explicit value is honoured — with a warning when it puts
+   * an orchestrator in its caller's directory.
+   */
+  workspace?: WorkspaceMode | null
   workingDirectory?: string | null
   scopeGlob?: string | null
+  /**
+   * Arm the PreToolUse deny hook in an orchestrator's worktree (blocks direct Edit/Write —
+   * "delegate this instead"). Null follows the server's config default.
+   */
+  denyDirectEdits?: boolean | null
 }
 
 export interface AgentTaskCreatedDto {
@@ -115,6 +127,8 @@ export interface AgentTaskCreatedDto {
   shortId: string
   status: AgentTaskStatus
   modelLevel: AgentModelLevel
+  /** Set when the creation was legal but risky — surface it, the caller can still reconsider. */
+  warning: string | null
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */

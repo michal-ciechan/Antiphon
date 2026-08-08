@@ -74,6 +74,13 @@ public sealed class DelegationSettings
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 
+    /// <summary>
+    /// Arm the PreToolUse deny hook (block Edit/Write — "delegate this instead") in each
+    /// orchestrator's worktree by default. Per-task <c>DenyDirectEdits</c> overrides this either
+    /// way. The hook is only ever written into a task's OWN worktree, never a shared directory.
+    /// </summary>
+    public bool OrchestratorDenyHookEnabled { get; set; } = true;
+
     public sealed class RolePolicyEntry
     {
         public AgentModelLevel Level { get; set; } = AgentModelLevel.High;

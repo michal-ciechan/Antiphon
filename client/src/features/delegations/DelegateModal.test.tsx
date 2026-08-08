@@ -15,14 +15,21 @@ interface CreateBody {
   workspace: string
   workingDirectory: string | null
   scopeGlob: string | null
+  denyDirectEdits: boolean | null
 }
 
-function captureCreate(): { body: CreateBody | null } {
+function captureCreate(warning: string | null = null): { body: CreateBody | null } {
   const captured: { body: CreateBody | null } = { body: null }
   server.use(
     http.post('/api/agent-tasks', async ({ request }) => {
       captured.body = (await request.json()) as CreateBody
-      return HttpResponse.json({ id: 'task-1', shortId: '1a2b3c4d', status: 'Queued', modelLevel: 'Medium' })
+      return HttpResponse.json({
+        id: 'task-1',
+        shortId: '1a2b3c4d',
+        status: 'Queued',
+        modelLevel: 'Medium',
+        warning,
+      })
     }),
   )
   return captured
@@ -69,19 +76,69 @@ describe('DelegateModal', () => {
     expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
   })
 
-  it('makes a sub-orchestrator a Plan by default, and sends the kind it was told', async () => {
-    // Its job is to decompose, which is what Plan means. The role stays overridable.
+  it('makes a sub-orchestrator a Plan in its own worktree, with the deny hook armed', async () => {
+    // It decomposes (Plan) and fans out writers (worktree + deny hook). All three overridable.
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
     expect(screen.getByRole('radio', { name: 'Plan' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Worktree' })).toBeChecked()
 
     await userEvent.type(screen.getByLabelText('Goal'), 'get the Postgres 18 upgrade shipped')
     await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
 
     await waitFor(() => expect(captured.body).not.toBeNull())
-    expect(captured.body).toMatchObject({ kind: 'Orchestrator', role: 'Plan' })
+    expect(captured.body).toMatchObject({
+      kind: 'Orchestrator',
+      role: 'Plan',
+      workspace: 'Worktree',
+      denyDirectEdits: true,
+    })
+  })
+
+  it('lets the deny hook be turned off for an orchestrator that must write its plan', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+    await userEvent.click(screen.getByRole('switch', { name: /Block direct edits/ }))
+
+    await userEvent.type(screen.getByLabelText('Goal'), 'plan then run the migration')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body?.denyDirectEdits).toBe(false)
+  })
+
+  it('never sends the deny flag for a worker — its whole job is to edit', async () => {
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect(screen.queryByRole('switch', { name: /Block direct edits/ })).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Goal'), 'fix the typo')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body?.denyDirectEdits).toBeNull()
+  })
+
+  it('surfaces the server’s warning — legal but risky needs saying at creation', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    captureCreate('This orchestrator runs directly in its caller’s directory.')
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Shared' }))
+    await userEvent.type(screen.getByLabelText('Goal'), 'orchestrate in place')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'yellow', message: expect.stringContaining('caller’s directory') }),
+      ),
+    )
   })
 
   it('sends an explicit tier only when it was overridden', async () => {

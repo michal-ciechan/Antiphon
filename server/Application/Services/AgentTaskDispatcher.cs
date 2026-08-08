@@ -228,13 +228,21 @@ public sealed class AgentTaskDispatcher
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
             await _worktrees.CreateForTaskAsync(claimed, ct);
+
+            // The hard version of the orchestrator contract: a PreToolUse hook that refuses
+            // Edit/Write with "delegate this instead". Only ever written into the task's OWN
+            // worktree — a settings file in a shared directory changes every session there.
+            var armed = ShouldArmDenyHook(claimed, _settings)
+                && await _worktrees.ArmDenyHookAsync(claimed, ct);
+
             _db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
                 AgentTaskId = claimed.Id,
                 Type = AgentTaskEventType.Dispatched,
                 Detail = $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}"
-                    + (claimed.MergeTargetRef is { } t ? $" (merges into {t})" : " (no merge target — branch left for review)"),
+                    + (claimed.MergeTargetRef is { } t ? $" (merges into {t})" : " (no merge target — branch left for review)")
+                    + (armed ? "; PreToolUse deny hook armed — direct edits are refused" : string.Empty),
                 At = now,
             });
         }
@@ -444,6 +452,15 @@ public sealed class AgentTaskDispatcher
         });
         await _db.SaveChangesAsync(ct);
     }
+
+    /// <summary>
+    /// Whether an orchestrator's worktree gets the PreToolUse deny hook. The per-task choice wins;
+    /// otherwise config. Workers never get it — their whole job is to edit.
+    /// </summary>
+    internal static bool ShouldArmDenyHook(AgentTask task, DelegationSettings settings) =>
+        task.Kind == AgentTaskKind.Orchestrator
+        && task.Workspace == WorkspaceMode.Worktree
+        && (task.DenyDirectEdits ?? settings.OrchestratorDenyHookEnabled);
 
     /// <summary>
     /// Advisory lease check: same directory and overlapping globs. Deliberately coarse — a prefix

@@ -1,7 +1,6 @@
 # Feature 007 — Multi-agent orchestration: delegated tasks, model tiers, task board
 
-**Status:** shipped through P3 (see [§3 Phasing](#3-phasing)); the only open item is the optional
-`PreToolUse` deny hook
+**Status:** shipped through P3, including the `PreToolUse` deny hook (see [§3 Phasing](#3-phasing))
 **Date:** 2026-08-06
 **Supersedes the unbuilt parts of:** [002-agent-orchestrator.md](../002-agent-orchestrator.md) (2026-05-15 draft; its
 long-poll/`wt.exe`/SQLite branch is dead — Antiphon went the PTY + xterm.js + Postgres route)
@@ -266,11 +265,18 @@ messages — set `ConversationKey = "task:{rootTaskId}"`, add `Delegation` to th
 add the one new rule: stop batching when the combined body would cross `ReplyInlineMaxChars`. The
 remainder rides the next turn-end, which the queue already does naturally.
 
-### 2.5 Workspaces — Shared by default
+### 2.5 Workspaces — Shared by default for workers; an orchestrator owns something
 
-**`Shared` is the default.** A delegate runs in the working directory it was pointed at, with no
-isolation, exactly as if you had opened a terminal there yourself. `-Worktree` opts in to isolation
-when you want it.
+**`Shared` is the default for workers.** A delegate runs in the working directory it was pointed
+at, with no isolation, exactly as if you had opened a terminal there yourself. `-Worktree` opts in
+to isolation when you want it.
+
+> **As built (2026-08-08):** a **sub-orchestrator defaults to its own worktree** — it fans out
+> writers, so it must own either a worktree or a location. A distinct `-Dir` counts as isolation
+> (no worktree on top). Forcing `-Shared` is honoured but **warned**, at creation, in the
+> `AgentTaskCreatedDto.Warning` the caller sees (and a `Warning` event on the timeline) — same for
+> an orchestrator in a non-git directory that cannot be isolated. Inside its worktree the
+> orchestrator gets the `PreToolUse` deny hook (§2.8) unless opted out.
 
 That's the right default because most delegated work either *must* see live state (deploys, test
 runs, log reads, anything touching the running stack) or is small enough that isolation is pure
@@ -500,11 +506,18 @@ reports — you read them so the caller doesn't have to.
 That sentence is the load-bearing one for context economy: without it a sub-orchestrator forwards
 everything it received and the nesting saves nothing.
 
-Instruction alone is soft. The hard version is a **`PreToolUse` hook** in the orchestrator's
-`.claude/settings.json` that denies `Edit`/`Write`/`MultiEdit` and build-shaped `Bash` calls with the
-message "delegate this instead" — Claude Code hooks can refuse a tool call outright, which turns the
-rule into an invariant. Worth shipping as opt-in in P2; some orchestrators legitimately need to write
-a plan file.
+Instruction alone is soft. The hard version is a **`PreToolUse` hook** that denies
+`Edit`/`Write`/`MultiEdit`/`NotebookEdit` with the message "delegate this instead" — Claude Code
+hooks can refuse a tool call outright, which turns the rule into an invariant.
+
+> **As built (2026-08-08):** the hook is written to `.claude/settings.local.json` **in the
+> orchestrator's own worktree only** — the worktree default (§2.5) is what makes this safe, since a
+> settings file in a shared directory would change every session running there. The file is added
+> to the repo's shared `info/exclude` so merge-back's commit-all can never sweep it onto the target
+> branch. Toggles: `Delegation:OrchestratorDenyHookEnabled` (config, default on), overridden
+> per-task by `DenyDirectEdits` — the modal's "Block direct edits" switch, the script's
+> `-AllowDirectEdits`. Workers never get it; build-shaped `Bash` denial was deliberately dropped
+> (parsing command intent is guesswork, and the edit tools are where the rule bites).
 
 ### 2.9 UI
 
@@ -561,7 +574,9 @@ targeting, the reporting contract,
 of P1 the orchestrator delegates, stays small, and gets real reports back. Everything after is
 leverage.
 
-**P2 — the ladder. ✅ shipped**, except the optional `PreToolUse` deny hook. Role policy ✅,
+**P2 — the ladder. ✅ shipped**, including the `PreToolUse` deny hook (armed by default in each
+orchestrator's worktree; `Delegation:OrchestratorDenyHookEnabled` / per-task `DenyDirectEdits`
+toggle it). Role policy ✅,
 escalation with handoff ✅ (manual via the drawer/API **and** automatic — the dispatcher tick bumps
 a task with no transcript progress for its policy's `escalateAfterMinutes`; progress resets the
 clock), ephemeral agents ✅ (spawned at dispatch, session stopped and row deleted when the task

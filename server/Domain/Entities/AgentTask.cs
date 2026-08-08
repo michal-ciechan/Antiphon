@@ -44,8 +44,17 @@ public class AgentTask
     public int Attempt { get; set; } = 1;
     public int MaxAttempts { get; set; } = 2;
 
-    /// <summary>Shared by default — isolation is opt-in (see <see cref="WorkspaceMode"/>).</summary>
+    /// <summary>
+    /// Workers default to Shared; an orchestrator defaults to its own worktree unless it already
+    /// has its own location (see <see cref="WorkspaceMode"/>).
+    /// </summary>
     public WorkspaceMode Workspace { get; set; } = WorkspaceMode.Shared;
+
+    /// <summary>
+    /// Arm the PreToolUse deny hook in this orchestrator's worktree at dispatch. Null follows
+    /// <c>Delegation:OrchestratorDenyHookEnabled</c>; workers never get the hook.
+    /// </summary>
+    public bool? DenyDirectEdits { get; set; }
 
     /// <summary>
     /// Absolute directory the delegate runs in. A property of the TASK, not inherited from the

@@ -68,7 +68,9 @@ public sealed class AgentTaskService
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.TokenHash == hash, ct)
             ?? throw new ForbiddenException("Delegation token is not recognised.");
 
-        return new Caller(task, task.AgentSessionId, task.WorkingDirectory);
+        // A worktree caller's directory IS its worktree — children it spawns without -Dir must
+        // land where it actually works, or their edits bypass its branch entirely.
+        return new Caller(task, task.AgentSessionId, task.WorktreePath ?? task.WorkingDirectory);
     }
 
     /// <summary>
@@ -134,6 +136,8 @@ public sealed class AgentTaskService
                 + "Use the default shared workspace instead.");
         }
 
+        var (workspace, warning) = ResolveWorkspace(request, caller, resolved);
+
         var id = Guid.NewGuid();
         var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
         var now = UtcNow();
@@ -153,7 +157,8 @@ public sealed class AgentTaskService
             Kind = request.Kind,
             Role = request.Role,
             ModelLevel = level,
-            Workspace = request.Workspace,
+            Workspace = workspace,
+            DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = resolved.WorkingDirectory,
             RepoPath = resolved.RepoPath,
             ScopeGlob = string.IsNullOrWhiteSpace(request.ScopeGlob) ? null : request.ScopeGlob.Trim(),
@@ -186,6 +191,8 @@ public sealed class AgentTaskService
                 : $"{request.Kind}/{request.Role} at {level} (role policy) in {resolved.WorkingDirectory}",
             At = now,
         });
+        if (warning is not null)
+            AddEvent(id, AgentTaskEventType.Warning, null, warning, now);
         await _db.SaveChangesAsync(ct);
 
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
@@ -196,7 +203,64 @@ public sealed class AgentTaskService
         // The raw token is returned ONCE, to be injected into the delegate's environment. It is
         // never persisted and never readable again.
         RawTokens[id] = token;
-        return new AgentTaskCreatedDto(id, DelegationReportFormatter.Short(id), task.Status, level);
+        return new AgentTaskCreatedDto(id, DelegationReportFormatter.Short(id), task.Status, level, warning);
+    }
+
+    /// <summary>
+    /// The workspace an unspecified request gets, and the warning a risky explicit one earns.
+    ///
+    /// The principle: an orchestrator should always have something of its own — its own worktree,
+    /// or its own location. It fans out writers; running it directly in its caller's directory
+    /// means its delegates and its caller silently overwrite each other. So unspecified
+    /// orchestrators isolate by default, and an explicit choice that shares anyway is honoured
+    /// but WARNED — at creation, to the caller, not just in a timeline nobody reads in time.
+    /// </summary>
+    internal (WorkspaceMode Workspace, string? Warning) ResolveWorkspace(
+        CreateAgentTaskRequest request,
+        Caller caller,
+        DelegationWorkspaceResolver.Resolution resolved)
+    {
+        var sharesCallersDirectory = PathsEqual(resolved.WorkingDirectory, caller.WorkingDirectory);
+
+        if (request.Workspace is { } explicitMode)
+        {
+            var warned = request.Kind == AgentTaskKind.Orchestrator
+                && explicitMode == WorkspaceMode.Shared
+                && sharesCallersDirectory
+                    ? "This orchestrator runs directly in its caller's directory. Its delegates and "
+                      + "its caller can overwrite each other's files; prefer the default worktree, "
+                      + "or give it its own -Dir."
+                    : null;
+            return (explicitMode, warned);
+        }
+
+        if (request.Kind != AgentTaskKind.Orchestrator)
+            return (WorkspaceMode.Shared, null);
+
+        // Its own location IS isolation — a second worktree on top would be pure overhead.
+        if (!sharesCallersDirectory)
+            return (WorkspaceMode.Shared, null);
+
+        if (resolved.RepoPath is not null)
+            return (WorkspaceMode.Worktree, null);
+
+        return (WorkspaceMode.Shared,
+            $"'{resolved.WorkingDirectory}' is not a git repository, so this orchestrator cannot "
+            + "be isolated in a worktree and will share its caller's directory. Its delegates and "
+            + "its caller can overwrite each other's files.");
+    }
+
+    private static bool PathsEqual(string a, string b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+            return false;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(
+            DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(a)),
+            DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(b)),
+            comparison);
     }
 
     /// <summary>
@@ -541,9 +605,13 @@ public sealed class AgentTaskService
         status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
 
     private static bool SharesRepoWith(AgentTask? parent, string? repoPath) =>
-        parent?.RepoPath is not null
+        parent is not null
         && repoPath is not null
-        && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.RepoPath);
+        // The parent's WORKTREE counts as its repo: a child created inside it resolves the
+        // worktree path as its toplevel, and worktrees share refs with the main checkout — so
+        // targeting the parent's branch from there works exactly as it does from the repo.
+        && ((parent.RepoPath is not null && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.RepoPath))
+            || (parent.WorktreePath is not null && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.WorktreePath)));
 
     private static AgentTaskSummaryDto ToSummary(AgentTask task, IReadOnlyList<AgentTask> family)
     {

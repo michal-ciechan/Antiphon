@@ -4,6 +4,7 @@ import {
   Group,
   Modal,
   SegmentedControl,
+  Switch,
   Stack,
   Text,
   TextInput,
@@ -67,6 +68,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const [directory, setDirectory] = useState(prefill?.workingDirectory ?? '')
   const [scope, setScope] = useState(prefill?.scopeGlob ?? '')
   const [level, setLevel] = useState<AgentModelLevel | null>(null)
+  const [denyEdits, setDenyEdits] = useState(true)
 
   // A sub-orchestrator decomposes, which is the expensive kind of thinking — the server floors it
   // at High, so showing anything cheaper here would be a lie.
@@ -85,6 +87,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         workspace,
         workingDirectory: directory.trim() || null,
         scopeGlob: scope.trim() || null,
+        denyDirectEdits: kind === 'Orchestrator' ? denyEdits : null,
       },
       {
         onSuccess: (task) => {
@@ -92,6 +95,10 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
             color: 'green',
             message: `Task ${task.shortId} queued at ${task.modelLevel.toLowerCase()} tier`,
           })
+          // A warning means "legal but risky" — the one moment the caller can still reconsider.
+          if (task.warning) {
+            notifications.show({ color: 'yellow', message: task.warning, autoClose: 10_000 })
+          }
           onClose()
         },
         onError: (error) =>
@@ -111,9 +118,10 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
           onChange={(value) => {
             const next = value as AgentTaskKind
             setKind(next)
-            // A sub-orchestrator's job is to decompose, so Plan is its default role — and a worker
-            // that was going to write code still is. Both are defaults the user can override.
+            // A sub-orchestrator's job is to decompose, so Plan is its default role — and it fans
+            // out writers, so it defaults to its own worktree. Both stay overridable.
             setRole(next === 'Orchestrator' ? 'Plan' : 'Code')
+            setWorkspace(next === 'Orchestrator' ? 'Worktree' : 'Shared')
           }}
           data={[
             { label: 'Worker', value: 'Worker' },
@@ -201,14 +209,26 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
             { label: 'Read-only', value: 'ReadOnly' },
           ]}
         />
-        <Text size="xs" c="dimmed">
-          {workspace === 'Shared'
-            ? 'Runs directly in the directory, like you would yourself. The right default for almost everything.'
-            : workspace === 'Worktree'
-              ? 'Isolated on its own branch and merged back when it finishes. Use it when several delegates would write the same files at once.'
-              : 'Shared directory, but the brief says don’t write. For reviews and coverage audits.'}
+        <Text size="xs" c={kind === 'Orchestrator' && workspace === 'Shared' ? 'warning.5' : 'dimmed'}>
+          {kind === 'Orchestrator' && workspace === 'Shared'
+            ? 'An orchestrator fans out writers — sharing its caller’s directory means its delegates and its caller can overwrite each other. The server will warn.'
+            : workspace === 'Shared'
+              ? 'Runs directly in the directory, like you would yourself. The right default for a worker.'
+              : workspace === 'Worktree'
+                ? 'Isolated on its own branch and merged back when it finishes. The default for a sub-orchestrator — it fans out writers, so it owns its integration branch.'
+                : 'Shared directory, but the brief says don’t write. For reviews and coverage audits.'}
         </Text>
       </Stack>
+
+      {kind === 'Orchestrator' && (
+        <Switch
+          label="Block direct edits"
+          description="Arms a PreToolUse hook in its worktree: Edit/Write are refused with “delegate this instead”. Turn off if the orchestrator must write a plan file itself."
+          checked={denyEdits}
+          disabled={workspace !== 'Worktree'}
+          onChange={(event) => setDenyEdits(event.currentTarget.checked)}
+        />
+      )}
 
       <TextInput
         label="Directory"

@@ -98,6 +98,96 @@ public sealed class DelegationWorktreeService
     }
 
     /// <summary>
+    /// The PreToolUse deny hook, verbatim. Blocks the edit tools with exit code 2 — Claude Code
+    /// feeds the stderr message back to the model — so "you are an orchestrator, delegate this"
+    /// becomes an invariant instead of advice. powershell.exe (5.1) on purpose: always present on
+    /// Windows and invocable identically from cmd or sh, whichever shell runs the hook.
+    /// </summary>
+    internal const string DenyHookSettingsJson = """
+        {
+          "hooks": {
+            "PreToolUse": [
+              {
+                "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "powershell -NoProfile -Command \"[Console]::Error.WriteLine('This session is an orchestrator: do not edit files yourself. Delegate the change with the antiphon-delegate skill (pwsh -NoProfile -File scripts/delegate.ps1 ...) and end your turn; the report will reach you.'); exit 2\""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """;
+
+    private const string DenyHookRelativePath = ".claude/settings.local.json";
+
+    /// <summary>
+    /// Arm the deny hook in a task's OWN worktree — the only place it is ever written, because a
+    /// settings file in a shared directory changes every session that runs there. The file is also
+    /// added to the repo's shared git exclude so the merge-back's commit-all can never sweep the
+    /// hook onto the target branch. Returns false (with a log) rather than failing the dispatch:
+    /// an orchestrator without its guardrail still beats no orchestrator.
+    /// </summary>
+    public async Task<bool> ArmDenyHookAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.WorktreePath is not { } worktree || !Directory.Exists(worktree))
+            return false;
+
+        try
+        {
+            var settingsPath = Path.Combine(worktree, DenyHookRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(settingsPath))
+            {
+                // A tracked settings.local.json shouldn't exist (it's the personal-override file),
+                // but clobbering whatever put it there is worse than skipping the hook.
+                _logger.LogWarning(
+                    "Task {ShortId}: {Path} already exists — deny hook NOT armed",
+                    DelegationReportFormatter.Short(task.Id), settingsPath);
+                return false;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+            await File.WriteAllTextAsync(settingsPath, DenyHookSettingsJson, ct);
+            await EnsureGitExcludeAsync(worktree, DenyHookRelativePath, ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Task {ShortId}: could not arm the deny hook",
+                DelegationReportFormatter.Short(task.Id));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Add <paramref name="relativePath"/> to the repo's shared info/exclude (worktrees share it
+    /// via the common git dir). Without this, merge-back's `git add -A` commits the hook file onto
+    /// the parent's branch — a settings file escaping its sandbox is exactly the failure the
+    /// worktree placement exists to prevent.
+    /// </summary>
+    private static async Task EnsureGitExcludeAsync(string worktree, string relativePath, CancellationToken ct)
+    {
+        var common = await GitAsync(worktree, ct, "rev-parse", "--git-common-dir");
+        if (!common.Ok)
+            return;
+
+        var commonDir = common.StdOut.Trim();
+        if (!Path.IsPathRooted(commonDir))
+            commonDir = Path.GetFullPath(Path.Combine(worktree, commonDir));
+
+        var excludePath = Path.Combine(commonDir, "info", "exclude");
+        Directory.CreateDirectory(Path.GetDirectoryName(excludePath)!);
+        var existing = File.Exists(excludePath) ? await File.ReadAllTextAsync(excludePath, ct) : string.Empty;
+        if (existing.Split('\n').Any(l => l.Trim() == relativePath))
+            return;
+
+        var newline = existing.Length == 0 || existing.EndsWith('\n') ? string.Empty : "\n";
+        await File.AppendAllTextAsync(excludePath, $"{newline}{relativePath}\n", ct);
+    }
+
+    /// <summary>
     /// Land the task's work on its merge target. Commit-all → rebase onto the target → fast-forward
     /// the target — and remove the worktree only when the target actually moved.
     /// </summary>

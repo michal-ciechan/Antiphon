@@ -173,6 +173,71 @@ public class DelegationWorktreeTests
         Directory.Exists(task.WorktreePath).ShouldBeFalse("an empty branch is only clutter");
     }
 
+    // ---- the PreToolUse deny hook ----------------------------------------------------------
+
+    [Test]
+    public async Task arming_the_deny_hook_writes_valid_settings_into_the_worktree()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        (await service.ArmDenyHookAsync(task, CancellationToken.None)).ShouldBeTrue();
+
+        var settingsPath = Path.Combine(task.WorktreePath!, ".claude", "settings.local.json");
+        File.Exists(settingsPath).ShouldBeTrue();
+        // Malformed JSON would make Claude Code ignore the file SILENTLY — the guardrail would
+        // just not exist, which is the worst failure mode a guardrail can have.
+        var parsed = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(settingsPath));
+        parsed.RootElement.GetProperty("hooks").GetProperty("PreToolUse")[0]
+            .GetProperty("matcher").GetString().ShouldContain("Edit");
+    }
+
+    [Test]
+    public async Task the_hook_file_never_reaches_the_merge_target()
+    {
+        // The merge-back sweeps the worktree with `git add -A`. Without the git exclude, the
+        // settings file would land on the parent's branch — a sandbox file escaping its sandbox.
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        (await service.ArmDenyHookAsync(task, CancellationToken.None)).ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.Merged);
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show", "feat/parent:.claude/settings.local.json"))
+            .Ok.ShouldBeFalse("the hook must stay out of the branch history");
+        (await repo.GitReadAsync("show", "feat/parent:feature.md")).ShouldBe("the work\n");
+    }
+
+    [Test]
+    public async Task an_existing_settings_file_is_never_clobbered()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        var settingsPath = Path.Combine(task.WorktreePath!, ".claude", "settings.local.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+        await File.WriteAllTextAsync(settingsPath, "{ \"theirs\": true }");
+
+        (await service.ArmDenyHookAsync(task, CancellationToken.None))
+            .ShouldBeFalse("whatever put that file there outranks the hook");
+        (await File.ReadAllTextAsync(settingsPath)).ShouldContain("theirs");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static AgentTask NewTask(string repoPath, string? mergeTarget) => new()

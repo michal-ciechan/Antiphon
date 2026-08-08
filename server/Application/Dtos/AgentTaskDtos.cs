@@ -14,13 +14,22 @@ public sealed record CreateAgentTaskRequest(
     AgentTaskRole Role = AgentTaskRole.Custom,
     /// <summary>Explicit tier override; null takes the role policy's tier.</summary>
     AgentModelLevel? ModelLevel = null,
-    /// <summary>Shared unless the caller opts into isolation.</summary>
-    WorkspaceMode Workspace = WorkspaceMode.Shared,
+    /// <summary>
+    /// Null = let the server decide: workers run Shared; an orchestrator gets its own worktree
+    /// unless it already has its own location. An explicit value is always honoured — with a
+    /// warning when it puts an orchestrator in its caller's directory.
+    /// </summary>
+    WorkspaceMode? Workspace = null,
     /// <summary>Run somewhere else — another repo, another checkout. Null inherits the caller's.</summary>
     string? WorkingDirectory = null,
     string? ScopeGlob = null,
     string? MergeTargetRef = null,
-    Guid? AgentId = null);
+    Guid? AgentId = null,
+    /// <summary>
+    /// Arm the PreToolUse deny hook in an orchestrator's worktree (blocks direct Edit/Write —
+    /// "delegate this instead"). Null follows <c>Delegation:OrchestratorDenyHookEnabled</c>.
+    /// </summary>
+    bool? DenyDirectEdits = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -68,8 +77,14 @@ public sealed record AgentTaskEventDto(
     string Detail,
     DateTime At);
 
-/// <summary>What the delegate script gets back — enough to print, not enough to poll with.</summary>
-public sealed record AgentTaskCreatedDto(Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel);
+/// <summary>
+/// What the delegate script gets back — enough to print, not enough to poll with. The warning is
+/// shown to the CALLER at the moment of creation (an orchestrator sharing its caller's directory,
+/// a directory that can't be isolated) — the timeline records it too, but nobody reads a timeline
+/// before the collision happens.
+/// </summary>
+public sealed record AgentTaskCreatedDto(
+    Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel, string? Warning = null);
 
 public sealed record ReplyToAgentTaskRequest(string Message);
 

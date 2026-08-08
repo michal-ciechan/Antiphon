@@ -28,13 +28,23 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Dir,
 
-    # Isolate in a fresh git worktree, merged back when it finishes. Default is to run right in
-    # the directory, like you would yourself.
+    # Isolate in a fresh git worktree, merged back when it finishes. Workers default to running
+    # right in the directory; a sub-orchestrator gets a worktree by default already.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$Worktree,
 
+    # Force the shared directory - opts a sub-orchestrator OUT of its default worktree. The server
+    # will warn: its delegates and its caller can overwrite each other.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$Shared,
+
     [Parameter(ParameterSetName = 'Create')]
     [switch]$ReadOnly,
+
+    # Do not arm the PreToolUse deny hook in a sub-orchestrator's worktree (it blocks direct
+    # Edit/Write with "delegate this instead"). Use when the orchestrator must write a plan file.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$AllowDirectEdits,
 
     # Declare the files this task owns; intersecting scopes are serialised.
     [Parameter(ParameterSetName = 'Create')]
@@ -109,16 +119,17 @@ switch ($PSCmdlet.ParameterSetName) {
             exit 1
         }
 
-        $workspace = 'Shared'
-        if ($Worktree) { $workspace = 'Worktree' }
-        elseif ($ReadOnly) { $workspace = 'ReadOnly' }
-
         $body = @{
-            goal      = $Goal
-            kind      = if ($Orchestrator) { 'Orchestrator' } else { 'Worker' }
-            role      = if ($Orchestrator -and $Role -eq 'Custom') { 'Plan' } else { $Role }
-            workspace = $workspace
+            goal = $Goal
+            kind = if ($Orchestrator) { 'Orchestrator' } else { 'Worker' }
+            role = if ($Orchestrator -and $Role -eq 'Custom') { 'Plan' } else { $Role }
         }
+        # Workspace is sent only when chosen - omitted, the server decides: workers run shared,
+        # a sub-orchestrator gets its own worktree unless it already has its own -Dir.
+        if ($Worktree) { $body['workspace'] = 'Worktree' }
+        elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
+        elseif ($Shared) { $body['workspace'] = 'Shared' }
+        if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
         if ($Title) { $body['title'] = $Title }
         if ($Level) { $body['modelLevel'] = $Level }
         if ($Dir) { $body['workingDirectory'] = $Dir }
@@ -127,6 +138,8 @@ switch ($PSCmdlet.ParameterSetName) {
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
         Write-Output ("queued task {0} ({1} {2} on {3}) - its report will arrive in your session" -f `
                 $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel)
+        # A warning at creation is the caller's one chance to reconsider before the collision.
+        if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
         return
     }
 }

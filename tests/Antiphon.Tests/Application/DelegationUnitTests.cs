@@ -373,6 +373,70 @@ public class DelegationScopeLeaseTests
 }
 
 /// <summary>
+/// Who gets the PreToolUse deny hook. Exactly one shape qualifies — an orchestrator in its OWN
+/// worktree — because the hook is a settings file, and a settings file in a shared directory
+/// changes every session that runs there.
+/// </summary>
+[Category("Unit")]
+public class DelegationDenyHookPolicyTests
+{
+    private static AgentTask Task(
+        AgentTaskKind kind, WorkspaceMode workspace, bool? denyDirectEdits = null) => new()
+    {
+        Id = Guid.NewGuid(),
+        Kind = kind,
+        Workspace = workspace,
+        DenyDirectEdits = denyDirectEdits,
+    };
+
+    private static readonly DelegationSettings Enabled = new() { OrchestratorDenyHookEnabled = true };
+    private static readonly DelegationSettings Disabled = new() { OrchestratorDenyHookEnabled = false };
+
+    [Test]
+    public void an_orchestrator_in_its_own_worktree_gets_the_hook_by_default()
+    {
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Orchestrator, WorkspaceMode.Worktree), Enabled).ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_worker_never_gets_the_hook()
+    {
+        // Its whole job is to edit — even a worker that opted into a worktree.
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Worker, WorkspaceMode.Worktree), Enabled).ShouldBeFalse();
+    }
+
+    [Test]
+    public void a_shared_orchestrator_never_gets_the_hook()
+    {
+        // No worktree means no safe place to put the settings file.
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Orchestrator, WorkspaceMode.Shared), Enabled).ShouldBeFalse();
+    }
+
+    [Test]
+    public void the_per_task_choice_beats_the_config_both_ways()
+    {
+        // -AllowDirectEdits on an enabled config: the orchestrator needs to write its plan file.
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Orchestrator, WorkspaceMode.Worktree, denyDirectEdits: false), Enabled)
+            .ShouldBeFalse();
+        // An explicit request on a disabled config: this run wants the guardrail anyway.
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Orchestrator, WorkspaceMode.Worktree, denyDirectEdits: true), Disabled)
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void config_off_means_no_hook_when_the_task_did_not_ask()
+    {
+        AgentTaskDispatcher.ShouldArmDenyHook(
+            Task(AgentTaskKind.Orchestrator, WorkspaceMode.Worktree), Disabled).ShouldBeFalse();
+    }
+}
+
+/// <summary>
 /// A delegate that ends its turn asking something needs an ANSWER, not a retry — so it comes back
 /// Blocked rather than Succeeded. Deliberately conservative: a report that merely mentions a
 /// question mid-text is still a finished report.

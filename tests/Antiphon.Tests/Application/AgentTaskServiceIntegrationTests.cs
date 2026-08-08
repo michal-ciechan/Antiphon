@@ -393,6 +393,102 @@ public class AgentTaskServiceIntegrationTests
         summary.Status.ShouldBe(AgentTaskStatus.Canceled);
     }
 
+    // ---- workspace defaults: an orchestrator owns something ---------------------------------
+
+    [Test]
+    public async Task an_unspecified_orchestrator_gets_its_own_worktree()
+    {
+        // It fans out writers, so it must own something — here, a worktree in the caller's repo.
+        using var repo = new ScratchGitRepo("antiphon-task-ws");
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("own the upgrade", kind: AgentTaskKind.Orchestrator),
+            ManualCaller(repo.Path),
+            CancellationToken.None);
+
+        created.Warning.ShouldBeNull();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Worktree);
+    }
+
+    [Test]
+    public async Task an_orchestrator_with_its_own_location_stays_shared()
+    {
+        // Its own -Dir IS the isolation — a worktree on top would be pure overhead.
+        using var callerDir = new TempWorkspace();
+        using var ownDir = new TempWorkspace();
+
+        await using var db = CreateContext();
+        var created = await CreateService(db, allowedRoots: [ownDir.Path]).CreateAsync(
+            NewRequest("own the other repo", kind: AgentTaskKind.Orchestrator) with
+            {
+                WorkingDirectory = ownDir.Path,
+            },
+            ManualCaller(callerDir.Path),
+            CancellationToken.None);
+
+        created.Warning.ShouldBeNull();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared);
+    }
+
+    [Test]
+    public async Task a_worker_still_defaults_to_shared()
+    {
+        using var repo = new ScratchGitRepo("antiphon-task-ws-worker");
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("fix the typo"), ManualCaller(repo.Path), CancellationToken.None);
+
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared, "workers run where the work is — that default stands");
+    }
+
+    [Test]
+    public async Task forcing_an_orchestrator_into_its_callers_directory_is_honoured_but_warned()
+    {
+        // Explicit choices win — but the caller hears about the risk AT CREATION, when it can
+        // still reconsider, not from a timeline after the collision.
+        using var workspace = new TempWorkspace();
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("orchestrate in place", kind: AgentTaskKind.Orchestrator) with
+            {
+                Workspace = WorkspaceMode.Shared,
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.Warning.ShouldNotBeNull();
+        created.Warning!.ShouldContain("overwrite each other");
+        (await db.AgentTaskEvents.AsNoTracking()
+                .AnyAsync(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Warning))
+            .ShouldBeTrue("the timeline records what the caller was told");
+    }
+
+    [Test]
+    public async Task an_orchestrator_in_a_non_git_directory_falls_back_to_shared_with_a_warning()
+    {
+        // Nothing to branch, so isolation is impossible — say so instead of failing the creation.
+        using var workspace = new TempWorkspace();
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            NewRequest("orchestrate the notes", kind: AgentTaskKind.Orchestrator),
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.Warning.ShouldNotBeNull();
+        created.Warning!.ShouldContain("not a git repository");
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared);
+    }
+
     [Test]
     public async Task a_child_of_a_worktree_parent_merges_into_the_parents_task_branch()
     {

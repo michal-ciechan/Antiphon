@@ -89,4 +89,6 @@ public enum AgentTaskEventType
     Failed = 9,
     Canceled = 10,
     Rejected = 11,
+    /// <summary>Something legal but risky — an orchestrator sharing its caller's directory.</summary>
+    Warning = 12,
 }
