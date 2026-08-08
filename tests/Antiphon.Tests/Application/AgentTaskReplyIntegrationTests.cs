@@ -237,17 +237,50 @@ public class AgentTaskReplyIntegrationTests
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
     }
 
-    // ---- ephemeral cleanup -----------------------------------------------------------------
+    // ---- delegate release: pool or retire ----------------------------------------------------
 
     [Test]
-    public async Task a_succeeded_ephemeral_delegate_is_stopped_and_its_agent_row_deleted()
+    public async Task a_settled_shared_delegate_goes_warm_instead_of_dying()
     {
-        // The delegate is spent: leaving the session running spends memory on nothing, and the
-        // agent row would pile onto the agents page one settled task at a time.
+        // The whole point of the pool: the next task in this directory takes over a live Claude
+        // instead of paying a cold start - so settle must NOT kill it.
         using var workspace = new TempWorkspace();
-        var agentId = await SeedAgentAsync(workspace.Path, "task-cleanup");
+        var agentId = await SeedAgentAsync(workspace.Path, "task-warm");
         var (task, sessionId) = await SeedDispatchedTaskAsync(
-            workspace.Path, configure: t => { t.Ephemeral = true; t.AgentId = agentId; t.AgentName = "task-cleanup"; });
+            workspace.Path,
+            configure: t => { t.Ephemeral = true; t.AgentId = agentId; t.AgentName = "task-warm"; });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBeEmpty("a warm delegate's session is the asset being kept");
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.PoolIdleSince.ShouldNotBeNull();
+        agent.PoolReservedForRootTaskId.ShouldBe(
+            task.RootTaskId, "reserved for its own run first, so follow-ups keep their context");
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).AgentName
+            .ShouldBe("task-warm", "the snapshot keeps naming who ran the work");
+    }
+
+    [Test]
+    public async Task a_settled_worktree_delegate_still_retires()
+    {
+        // Its directory dies with the merge - there is nothing for a warm session to sit in.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, "task-wt");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.Ephemeral = true;
+            t.AgentId = agentId;
+            t.Workspace = WorkspaceMode.Worktree;
+            // No WorktreePath on purpose: merge-back reports Failed (nothing recorded), the task
+            // still settles, and release must retire rather than pool.
+        });
+        await BindAgentSessionAsync(agentId, sessionId);
 
         var factory = new TestScopeFactory();
         await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
@@ -255,21 +288,39 @@ public class AgentTaskReplyIntegrationTests
 
         factory.Stopper.Killed.ShouldBe([sessionId]);
         await using var verify = CreateContext();
-        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse("the throwaway row must go");
-        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        settled.AgentName.ShouldBe("task-cleanup", "the snapshot keeps naming who ran the work");
+        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task a_users_standing_agent_is_never_pooled_or_deleted()
+    {
+        // Pinning a task to your own agent must not hand that agent to the pool's lifecycle.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, "my-agent", poolDelegate: false);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.Ephemeral = false; t.AgentId = agentId; });
+        await BindAgentSessionAsync(agentId, sessionId);
+
+        var factory = new TestScopeFactory();
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.");
+        await CreateService(factory).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        factory.Stopper.Killed.ShouldBeEmpty();
+        await using var verify = CreateContext();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.PoolIdleSince.ShouldBeNull("a standing agent has no pool state");
     }
 
     [Test]
     public async Task a_blocked_delegate_keeps_its_session_and_agent()
     {
-        // Blocked means the conversation continues — killing the session here would orphan the
+        // Blocked means the conversation continues - killing the session here would orphan the
         // -Reply path and force a cold retry of work that only needed an answer.
         using var workspace = new TempWorkspace();
         var agentId = await SeedAgentAsync(workspace.Path, "task-blocked");
         var (task, sessionId) = await SeedDispatchedTaskAsync(
             workspace.Path, configure: t => { t.Ephemeral = true; t.AgentId = agentId; });
+        await BindAgentSessionAsync(agentId, sessionId);
 
         var factory = new TestScopeFactory();
         await SeedTurnAsync(
@@ -278,8 +329,18 @@ public class AgentTaskReplyIntegrationTests
 
         factory.Stopper.Killed.ShouldBeEmpty();
         await using var verify = CreateContext();
-        (await verify.Agents.AnyAsync(a => a.Id == agentId)).ShouldBeTrue();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == agentId);
+        agent.PoolIdleSince.ShouldBeNull("a Blocked delegate is still MID-conversation, not warm");
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked);
+    }
+
+    /// <summary>The pool checks the agent's session pointer - bind it like dispatch would have.</summary>
+    private static async Task BindAgentSessionAsync(Guid agentId, Guid sessionId)
+    {
+        await using var db = CreateContext();
+        var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+        agent.PersistentSessionId = sessionId.ToString("D");
+        await db.SaveChangesAsync();
     }
 
     // ---- worktree merge-back on settle -----------------------------------------------------
@@ -459,7 +520,7 @@ public class AgentTaskReplyIntegrationTests
         return (task, sessionId);
     }
 
-    private static async Task<Guid> SeedAgentAsync(string workingDirectory, string name)
+    private static async Task<Guid> SeedAgentAsync(string workingDirectory, string name, bool poolDelegate = true)
     {
         var agent = new Agent
         {
@@ -467,9 +528,10 @@ public class AgentTaskReplyIntegrationTests
             Name = name,
             Slug = name,
             WorkingDirectory = workingDirectory,
-            Details = "Ephemeral delegate.",
+            Details = "Pool delegate.",
             Status = AgentStatus.Running,
             ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = poolDelegate,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };

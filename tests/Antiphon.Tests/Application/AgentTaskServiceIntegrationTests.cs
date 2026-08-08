@@ -519,6 +519,120 @@ public class AgentTaskServiceIntegrationTests
         child.MergeTargetRef.ShouldBe("feat/card-task-parent", "children integrate into the parent's branch, not past it");
     }
 
+    // ---- follow-up: same agent, same context -------------------------------------------------
+
+    [Test]
+    public async Task a_follow_up_pins_the_prior_tasks_agent_and_inherits_its_context()
+    {
+        // The point of a follow-up is the agent's CONTEXT — so it must land on that agent, in
+        // that agent's directory, at that agent's tier (the model is already running; a role
+        // policy cannot change it mid-session).
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedPoolAgentAsync(workspace.Path, AgentModelLevel.Low);
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(prior.Id, agentId);
+
+        await using var db = CreateContext();
+        var created = await CreateService(db).CreateAsync(
+            // Role says Code (fable by policy) — the agent's tier must win anyway.
+            NewRequest("now add the edge cases", role: AgentTaskRole.Code) with
+            {
+                FollowUpOnTask = DelegationReportFormatter.Short(prior.Id),
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        task.AgentId.ShouldBe(agentId);
+        task.WorkingDirectory.ShouldBe(workspace.Path);
+        task.ModelLevel.ShouldBe(AgentModelLevel.Low, "the running model IS the tier");
+        task.Workspace.ShouldBe(WorkspaceMode.Shared);
+        task.Ephemeral.ShouldBeFalse("pinned — a requeue must go back to the same agent");
+    }
+
+    [Test]
+    public async Task a_follow_up_on_a_retired_agent_is_refused_with_guidance()
+    {
+        using var workspace = new TempWorkspace();
+        var prior = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded);
+        await PinTaskAgentAsync(prior.Id, Guid.NewGuid()); // an agent that no longer exists
+
+        await using var db = CreateContext();
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => CreateService(db).CreateAsync(
+                NewRequest("follow up") with { FollowUpOnTask = prior.Id.ToString("D") },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+
+        ex.Message.ShouldContain("retired");
+        ex.Message.ShouldContain("delegate normally", customMessage: "refusals must say what to do instead");
+    }
+
+    // ---- short ids: the id the caller actually has -------------------------------------------
+
+    [Test]
+    public async Task a_short_id_resolves_to_its_task()
+    {
+        // The completion note says "[task 7f3a2b91 done]" — that 8-char short id is the ONLY id
+        // the calling agent ever sees, so -Reply and -OnAgent must accept it.
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(AgentTaskKind.Worker, workspace.Path);
+
+        await using var db = CreateContext();
+        var resolved = await CreateService(db).ResolveTaskIdAsync(
+            DelegationReportFormatter.Short(task.Id), CancellationToken.None);
+
+        resolved.ShouldBe(task.Id);
+    }
+
+    [Test]
+    public async Task an_unknown_short_id_is_a_clean_not_found()
+    {
+        await using var db = CreateContext();
+        await Should.ThrowAsync<NotFoundException>(
+            () => CreateService(db).ResolveTaskIdAsync("ffffffff", CancellationToken.None));
+    }
+
+    [Test]
+    public async Task garbage_is_rejected_as_neither_kind_of_id()
+    {
+        await using var db = CreateContext();
+        await Should.ThrowAsync<ValidationException>(
+            () => CreateService(db).ResolveTaskIdAsync("not-an-id", CancellationToken.None));
+    }
+
+    private static async Task<Guid> SeedPoolAgentAsync(string directory, AgentModelLevel level)
+    {
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = $"task-{Guid.NewGuid():N}"[..13],
+            Slug = $"pool-{Guid.NewGuid():N}"[..13],
+            WorkingDirectory = directory,
+            Details = "Warm pool delegate.",
+            Status = AgentStatus.Idle,
+            ModelLevel = level,
+            IsPoolDelegate = true,
+            PoolIdleSince = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        await using var db = CreateContext();
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+        return agent.Id;
+    }
+
+    private static async Task PinTaskAgentAsync(Guid taskId, Guid agentId)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.AgentId = agentId;
+        await db.SaveChangesAsync();
+    }
+
     // ---- retry and escalation --------------------------------------------------------------
 
     [Test]

@@ -44,6 +44,23 @@ public class Agent
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>
+    /// A delegate spawned by the task dispatcher, eligible for the warm pool: after its task
+    /// settles it stays alive for follow-up work in its directory instead of dying, until the
+    /// pool janitor retires it. Never true for user-created agents — the pool must not adopt them.
+    /// </summary>
+    public bool IsPoolDelegate { get; set; }
+
+    /// <summary>Set while the delegate sits warm in the pool; null while it is working (or not pooled).</summary>
+    public DateTime? PoolIdleSince { get; set; }
+
+    /// <summary>
+    /// For a reservation window after each task, the warm delegate answers only to the run that
+    /// just used it — follow-ups keep their context. The window expiring releases it to anyone;
+    /// that is a pure time comparison, so release needs no state change.
+    /// </summary>
+    public Guid? PoolReservedForRootTaskId { get; set; }
+
     public WorkflowTemplate? DefaultWorkflowTemplate { get; set; }
     public Card? CurrentCard { get; set; }
     public Board? Board { get; set; }

@@ -81,6 +81,30 @@ public sealed class DelegationSettings
     /// </summary>
     public bool OrchestratorDenyHookEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Reuse settled delegates instead of spawning a fresh Claude per task. A Shared task's agent
+    /// goes warm on settle and the next task in the same directory (at the same tier) takes it
+    /// over — with a focused /compact first when the work is unrelated. Worktree delegates are
+    /// never pooled: their directory dies with the merge.
+    /// </summary>
+    public bool PoolEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How long after settling a warm delegate answers ONLY to the run that just used it, so a
+    /// caller can send follow-up work to the same agent (same context) without racing the rest of
+    /// the queue for it.
+    /// </summary>
+    public int PoolReservedForCallerMinutes { get; set; } = 2;
+
+    /// <summary>Idle this long and the warm delegate is retired — session stopped, row deleted.</summary>
+    public int PoolIdleRetireMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// At most this many warm delegates per directory; the oldest surplus is retired immediately.
+    /// This is the knob that scales how many workers stay ready for a directory's queue.
+    /// </summary>
+    public int PoolMaxIdlePerDirectory { get; set; } = 3;
+
     public sealed class RolePolicyEntry
     {
         public AgentModelLevel Level { get; set; } = AgentModelLevel.High;

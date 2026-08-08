@@ -29,7 +29,13 @@ public sealed record CreateAgentTaskRequest(
     /// Arm the PreToolUse deny hook in an orchestrator's worktree (blocks direct Edit/Write —
     /// "delegate this instead"). Null follows <c>Delegation:OrchestratorDenyHookEnabled</c>.
     /// </summary>
-    bool? DenyDirectEdits = null);
+    bool? DenyDirectEdits = null,
+    /// <summary>
+    /// Follow-up: run this on the SAME agent that ran the given task (full guid or 8-char short
+    /// id), keeping its context. The task inherits that agent's directory and tier; it waits in
+    /// the queue while the agent is still busy.
+    /// </summary>
+    string? FollowUpOnTask = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

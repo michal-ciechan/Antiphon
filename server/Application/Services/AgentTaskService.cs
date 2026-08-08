@@ -85,6 +85,31 @@ public sealed class AgentTaskService
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
 
+        // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
+        // task inherits that agent's directory (that is where the context lives) and its TIER —
+        // the model is already running; a role policy cannot change it mid-session.
+        if (!string.IsNullOrWhiteSpace(request.FollowUpOnTask))
+        {
+            var priorId = await ResolveTaskIdAsync(request.FollowUpOnTask, ct);
+            var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
+            if (prior.AgentId is not Guid followAgentId)
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(priorId)} never ran on an agent — there is nothing to follow up on.");
+
+            var followAgent = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == followAgentId, ct)
+                ?? throw new ConflictException(
+                    $"The agent that ran task {DelegationReportFormatter.Short(priorId)} has been retired "
+                    + "from the pool — delegate normally instead; the report is still on the task.");
+
+            request = request with
+            {
+                WorkingDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory,
+                Workspace = WorkspaceMode.Shared,
+                ModelLevel = followAgent.ModelLevel,
+                AgentId = followAgent.Id,
+            };
+        }
+
         // THE recursion boundary. A worker's token carries no create scope, so a worker cannot start
         // a fan-out even if it decides it wants to — this is what keeps nesting bounded, not MaxDepth.
         if (!caller.MayDelegate)
@@ -452,18 +477,57 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// Delete an ephemeral delegate's Agent row (dependents cascade). The task's snapshotted
-    /// <see cref="AgentTask.AgentName"/> keeps the board naming who ran the work; the row itself is
-    /// throwaway by design and would otherwise pile up on the agents page one task at a time.
+    /// Delete a pool delegate's Agent row (dependents cascade). Keyed off the AGENT's
+    /// IsPoolDelegate, not the task's Ephemeral flag: a follow-up task pins a pool agent (so it is
+    /// not "ephemeral"), but cancelling it must still retire that agent — while a user's standing
+    /// agent must never be deleted by any task action. The task's snapshotted
+    /// <see cref="AgentTask.AgentName"/> keeps the board naming who ran the work.
     /// </summary>
     internal async Task RemoveEphemeralAgentAsync(AgentTask task, Guid? agentId, CancellationToken ct)
     {
-        if (!task.Ephemeral || agentId is not Guid id)
+        if (agentId is not Guid id)
             return;
 
         var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (agent is not null)
+        if (agent is { IsPoolDelegate: true })
             _db.Agents.Remove(agent);
+    }
+
+    /// <summary>
+    /// A task id as the caller knows it: the full guid, or the 8-char short id every report and
+    /// board chip shows. The completion note says "[task 7f3a2b91 done]" — telling the caller to
+    /// then produce a full guid it has never seen would make -Reply and -OnAgent unusable.
+    /// </summary>
+    public async Task<Guid> ResolveTaskIdAsync(string idOrShortId, CancellationToken ct)
+    {
+        var value = idOrShortId.Trim();
+        if (Guid.TryParse(value, out var full))
+        {
+            if (!await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id == full, ct))
+                throw new NotFoundException(nameof(AgentTask), full);
+            return full;
+        }
+
+        if (value.Length != 8 || !value.All(Uri.IsHexDigit))
+            throw new ValidationException(
+                nameof(idOrShortId), $"'{value}' is neither a task id nor an 8-character short id.");
+
+        // The short id is the first 8 hex digits — which are also the first 8 chars of the guid's
+        // canonical text (the first dash falls at index 8), so a text prefix match finds it.
+        var prefix = value.ToLowerInvariant();
+        var matches = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id.ToString().StartsWith(prefix))
+            .Select(t => t.Id)
+            .Take(2)
+            .ToListAsync(ct);
+
+        return matches.Count switch
+        {
+            0 => throw new NotFoundException(nameof(AgentTask), prefix),
+            1 => matches[0],
+            _ => throw new ConflictException(
+                $"Short id '{prefix}' matches more than one task — use the full id."),
+        };
     }
 
     /// <summary>

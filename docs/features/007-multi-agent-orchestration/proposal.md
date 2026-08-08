@@ -210,6 +210,31 @@ entire economy of the design, and `--model` is a launch arg, so a fresh process 
 pick a tier per task. Pooled long-lived agents stay the right answer for standing roles — a deploy
 runner, an always-on assistant — which `Agent.AlwaysOn` already models.
 
+> **As built (2026-08-08): the warm-agent pool.** A fresh Claude per task proved wasteful for
+> queued work, so a settled `Shared` delegate now goes WARM instead of dying
+> (`Agent.IsPoolDelegate` / `PoolIdleSince`), and dispatch reuses before it spawns:
+>
+> - **Selection**: same directory, same tier, live session. For
+>   `Delegation:PoolReservedForCallerMinutes` (default 2) after settling, the agent answers only
+>   to the run that just used it — so `-OnAgent <shortTaskId>` follow-ups keep their context
+>   without racing the queue. After the window it serves anyone; release is a pure time
+>   comparison, no state change.
+> - **Unrelated reuse compacts first**: the server sends `/compact` focused on the incoming
+>   goal, then the brief — old context shrinks to whatever could still help. Same-run follow-ups
+>   skip the compact; their old context is the value.
+> - **Token rebind**: a live process's env can't change, so the session keeps presenting the
+>   previous task's bearer — dispatch moves that token's hash onto the new task (and nulls the
+>   old row's) so the bearer always resolves to the CURRENT work. Without this, a reused
+>   orchestrator's children would parent to a settled task.
+> - **A busy pinned agent is waited for**, not interrupted: delivering a follow-up mid-task
+>   would land between the running task's turns and corrupt both correlations.
+> - **The janitor bounds the trade**: idle past `PoolIdleRetireMinutes` (default 5) → retired;
+>   more than `PoolMaxIdlePerDirectory` (default 3) warm in one directory → oldest retired. That
+>   cap is the worker-scaling knob per directory; `MaxConcurrentTasks` stays the global one.
+> - Worktree delegates are never pooled (their directory dies with the merge); a user's standing
+>   agents are never adopted by the pool lifecycle. `Delegation:PoolEnabled=false` restores
+>   spawn-and-kill.
+
 ### 2.4 The reply path — the heart of it
 
 `ChannelReplyDispatcher` already does the hard half: it registers a correlation when a message is

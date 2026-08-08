@@ -66,6 +66,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | | |
 |---|---|
 | `-Orchestrator` | make it a sub-orchestrator instead of a worker |
+| `-OnAgent <taskId>` | follow-up on the SAME agent that ran that task — it keeps its context. Use the short id from its report |
 | `-Level <tier>` | override the role's tier — `Frontier`/`High`/`Medium`/`Low`. Say why in `-Goal` |
 | `-Dir <path>` | run somewhere else — another repo, another checkout. Defaults to yours |
 | `-Worktree` | isolate a worker in a fresh git worktree, merged back when it finishes |
@@ -97,6 +98,19 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Dir C:\src\antiphon -Orchestrator -G
 
 A directory outside the configured allowed roots is refused — that is a guard, not a bug. Ask for
 the root to be added rather than working around it.
+
+## Follow-up work: same agent, same context
+
+A delegate stays WARM for a few minutes after it reports — its session, and everything it just
+read, is still alive. Work that builds on a task's result should go back to that agent:
+
+```powershell
+pwsh -NoProfile -File scripts/delegate.ps1 -OnAgent 7f3a2b91 -Goal "now add the edge-case tests for what you just wrote"
+```
+
+Unrelated new work needs nothing special — the pool handles it: an idle warm agent in the same
+directory is reused automatically (compacted first, focused on the new task), and a fresh one is
+spawned only when none fits.
 
 ## Rules
 

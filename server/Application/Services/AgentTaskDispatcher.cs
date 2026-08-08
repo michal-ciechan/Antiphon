@@ -25,6 +25,7 @@ public sealed class AgentTaskDispatcher
     private readonly SessionMessageQueueService _queue;
     private readonly DelegationWorktreeService _worktrees;
     private readonly AgentTaskService _tasks;
+    private readonly IDelegateSessionStopper _sessions;
     private readonly DelegationSettings _settings;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
@@ -37,6 +38,7 @@ public sealed class AgentTaskDispatcher
         SessionMessageQueueService queue,
         DelegationWorktreeService worktrees,
         AgentTaskService tasks,
+        IDelegateSessionStopper sessions,
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
@@ -48,6 +50,7 @@ public sealed class AgentTaskDispatcher
         _queue = queue;
         _worktrees = worktrees;
         _tasks = tasks;
+        _sessions = sessions;
         _settings = settings.Value;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
@@ -64,6 +67,10 @@ public sealed class AgentTaskDispatcher
         // Before dispatching new work, deal with running work that has gone quiet — a stalled
         // opus Debug task escalating to fable IS the tier ladder working, not an error path.
         await AutoEscalateStalledAsync(ct);
+
+        // And with warm delegates that have sat idle too long — the pool trades memory for
+        // startup latency, and the janitor is what keeps that trade bounded.
+        await RetireIdleWarmAgentsAsync(ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -221,6 +228,29 @@ public sealed class AgentTaskDispatcher
         }
 
         var now = UtcNow();
+
+        // Reuse before spawn: a warm delegate already sitting in this directory takes the task
+        // without a cold start. Shared tasks only — a worktree task's directory doesn't exist yet.
+        if (claimed.Workspace == WorkspaceMode.Shared)
+        {
+            switch (await TryReuseWarmAgentAsync(claimed, now, ct))
+            {
+                case ReuseOutcome.Reused:
+                    await _db.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    await DeliverReuseMessagesAsync(claimed, ct);
+                    await _eventBus.PublishToAllAsync(
+                        "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
+                    return true;
+
+                case ReuseOutcome.WaitForAgent:
+                    // The pinned agent is mid-task. Delivering the follow-up now would land it
+                    // BETWEEN the running task's turns and corrupt both correlations — wait for
+                    // the settle → pool handshake instead; the task stays queued.
+                    await transaction.RollbackAsync(ct);
+                    return false;
+            }
+        }
 
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
@@ -387,9 +417,9 @@ public sealed class AgentTaskDispatcher
                 return existing;
         }
 
-        // Ephemeral is the right default for delegated work: clean context is the entire economy of
-        // the design, and --model is a launch arg, so a fresh process is the only way to pick a tier
-        // per task.
+        // A fresh delegate when no warm one fits: clean context, and --model is a launch arg so a
+        // new process is the only way to START a tier. It is born pool-eligible — when its task
+        // settles it goes warm instead of dying, until the janitor retires it.
         var shortId = DelegationReportFormatter.Short(task.Id);
         var name = $"task-{shortId}";
         var agent = new Agent
@@ -398,11 +428,12 @@ public sealed class AgentTaskDispatcher
             Name = name,
             Slug = name,
             WorkingDirectory = task.WorktreePath ?? task.WorkingDirectory,
-            Details = $"Ephemeral delegate for {task.Kind}/{task.Role} task {shortId}.",
+            Details = $"Pool delegate for {task.Kind}/{task.Role} task {shortId}.",
             Status = AgentStatus.Idle,
             ModelLevel = task.ModelLevel,
             AlwaysOn = false,
             RemoteControlEnabled = false,
+            IsPoolDelegate = true,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -451,6 +482,238 @@ public sealed class AgentTaskDispatcher
             At = now,
         });
         await _db.SaveChangesAsync(ct);
+    }
+
+    internal enum ReuseOutcome
+    {
+        /// <summary>No warm agent fits — spawn a fresh delegate (the pre-pool path).</summary>
+        SpawnFresh = 0,
+
+        /// <summary>A warm delegate took the task; its session gets the brief, no launch.</summary>
+        Reused = 1,
+
+        /// <summary>The pinned agent is mid-task; leave the task queued until it goes warm.</summary>
+        WaitForAgent = 2,
+    }
+
+    /// <summary>
+    /// Try to place the task on an agent that already exists. Pinned first (a follow-up, or a
+    /// retried pin): a warm pool delegate is taken over, a busy one is waited for. Unpinned Shared
+    /// tasks then shop the pool: same directory, same tier, live session — honouring each warm
+    /// agent's reservation window, during which it answers only to the run that just used it.
+    /// </summary>
+    internal async Task<ReuseOutcome> TryReuseWarmAgentAsync(AgentTask claimed, DateTime now, CancellationToken ct)
+    {
+        Agent? agent = null;
+
+        if (claimed.AgentId is Guid pinnedId)
+        {
+            var pinned = await _db.Agents.FirstOrDefaultAsync(a => a.Id == pinnedId, ct);
+            // Retired between create and dispatch, or a user's standing agent — the spawn path
+            // owns both cases (it falls back to a fresh delegate / a fresh session respectively).
+            if (pinned is null || !pinned.IsPoolDelegate)
+                return ReuseOutcome.SpawnFresh;
+
+            if (await LiveSessionIdOfAsync(pinned, ct) is null)
+                return ReuseOutcome.SpawnFresh;
+
+            if (pinned.Status != AgentStatus.Idle || pinned.PoolIdleSince is null)
+                return ReuseOutcome.WaitForAgent;
+
+            agent = pinned;
+        }
+        else if (_settings.PoolEnabled)
+        {
+            var reservationCutoff = now.AddMinutes(-Math.Max(0, _settings.PoolReservedForCallerMinutes));
+            var warm = await _db.Agents
+                .Where(a => a.IsPoolDelegate
+                    && a.Status == AgentStatus.Idle
+                    && a.PoolIdleSince != null
+                    && a.ModelLevel == claimed.ModelLevel)
+                .ToListAsync(ct);
+
+            agent = warm
+                .Where(a => SameDirectory(a.WorkingDirectory, claimed.WorkingDirectory))
+                .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
+                    || a.PoolIdleSince <= reservationCutoff)
+                // Same-run context first — that agent has just read the code this run cares
+                // about; then the freshest context.
+                .OrderByDescending(a => a.PoolReservedForRootTaskId == claimed.RootTaskId)
+                .ThenByDescending(a => a.PoolIdleSince)
+                .FirstOrDefault();
+        }
+
+        if (agent is null)
+            return ReuseOutcome.SpawnFresh;
+
+        var sessionId = await LiveSessionIdOfAsync(agent, ct);
+        if (sessionId is not Guid session)
+            return ReuseOutcome.SpawnFresh;
+
+        agent.Status = AgentStatus.Running;
+        agent.PoolIdleSince = null;
+        agent.PoolReservedForRootTaskId = null;
+        agent.UpdatedAt = now;
+
+        claimed.AgentId = agent.Id;
+        claimed.AgentName = agent.Name;
+        claimed.AgentSessionId = session;
+        claimed.Status = AgentTaskStatus.Dispatched;
+        claimed.DispatchedAt = now;
+        claimed.ConcurrencyToken = Guid.NewGuid();
+
+        // The session's environment still holds the PREVIOUS task's raw token — env can't change
+        // on a live process. So the previous task's hash moves to THIS task: the delegate keeps
+        // presenting the same bearer, and the server now resolves it to the work it is actually
+        // doing. The task's own unused token is discarded.
+        var previous = await _db.AgentTasks
+            .Where(t => t.AgentSessionId == session && t.Id != claimed.Id && t.TokenHash != null)
+            .OrderByDescending(t => t.DispatchedAt)
+            .FirstOrDefaultAsync(ct);
+        if (previous is not null)
+        {
+            claimed.TokenHash = previous.TokenHash;
+            previous.TokenHash = null;
+        }
+        AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
+
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = claimed.Id,
+            Type = AgentTaskEventType.Dispatched,
+            ModelLevel = claimed.ModelLevel,
+            Detail = $"Reused warm delegate '{agent.Name}' ({ModelLevelAliases.ForClaude(claimed.ModelLevel)}) "
+                + $"in {claimed.WorkingDirectory} — no cold start"
+                + (previous is not null && previous.RootTaskId != claimed.RootTaskId
+                    ? "; unrelated to its last task, focused /compact first"
+                    : string.Empty),
+            At = now,
+        });
+
+        _logger.LogInformation(
+            "Task {ShortId} reusing warm delegate '{Agent}' (session {SessionId})",
+            DelegationReportFormatter.Short(claimed.Id), agent.Name, session);
+        return ReuseOutcome.Reused;
+    }
+
+    /// <summary>
+    /// The brief for a reused session — preceded, when the new work is UNRELATED to what the
+    /// session last did, by a focused /compact: shrink the old context down to whatever could help
+    /// the new task before the task arrives. Same-run follow-ups skip it — their old context is
+    /// exactly the value being reused.
+    /// </summary>
+    private async Task DeliverReuseMessagesAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.AgentSessionId is not Guid session)
+            return;
+
+        try
+        {
+            var previousRoot = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentSessionId == session
+                    && t.Id != task.Id
+                    && t.DispatchedAt != null
+                    && t.DispatchedAt < task.DispatchedAt)
+                .OrderByDescending(t => t.DispatchedAt)
+                .Select(t => (Guid?)t.RootTaskId)
+                .FirstOrDefaultAsync(ct);
+
+            if (previousRoot is not null && previousRoot != task.RootTaskId)
+            {
+                // One line: a slash command is parsed from the submitted composer text, and the
+                // focus argument tells the summariser what the surviving context must serve.
+                var focus = task.Goal.ReplaceLineEndings(" ").Trim();
+                if (focus.Length > 300) focus = focus[..300];
+                await _queue.EnqueueAsync(
+                    session,
+                    $"/compact This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
+                    MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+            }
+
+            var brief = DelegationReportFormatter.BuildBrief(task, _settings);
+            await _queue.EnqueueAsync(
+                session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Same contract as the spawn path: rows are persisted before the runner is probed, so
+            // a transient transport failure delays delivery rather than losing the brief.
+            _logger.LogWarning(
+                ex, "Task {ShortId}: reuse messages are queued but could not be delivered yet",
+                DelegationReportFormatter.Short(task.Id));
+        }
+    }
+
+    /// <summary>
+    /// Retire warm delegates that outstayed their welcome: idle past the TTL, or beyond the
+    /// per-directory cap (oldest first). This bound is what makes "keep Claudes warm" a trade
+    /// instead of a leak.
+    /// </summary>
+    internal async Task<int> RetireIdleWarmAgentsAsync(CancellationToken ct)
+    {
+        var warm = await _db.Agents
+            .Where(a => a.IsPoolDelegate && a.Status == AgentStatus.Idle && a.PoolIdleSince != null)
+            .ToListAsync(ct);
+        if (warm.Count == 0)
+            return 0;
+
+        var now = UtcNow();
+        var cutoff = now.AddMinutes(-Math.Max(1, _settings.PoolIdleRetireMinutes));
+        var retire = new HashSet<Agent>(warm.Where(a => !_settings.PoolEnabled || a.PoolIdleSince <= cutoff));
+
+        foreach (var surplus in warm
+            .GroupBy(a => DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant())
+            .SelectMany(g => g.OrderByDescending(a => a.PoolIdleSince)
+                .Skip(Math.Max(0, _settings.PoolMaxIdlePerDirectory))))
+        {
+            retire.Add(surplus);
+        }
+
+        foreach (var agent in retire)
+        {
+            if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            {
+                try
+                {
+                    await _sessions.KillAsync(sessionId, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Could not stop pooled session {SessionId}", sessionId);
+                }
+            }
+            _db.Agents.Remove(agent);
+            _logger.LogInformation(
+                "Retired warm delegate '{Name}' from {Dir} (idle since {Since:O})",
+                agent.Name, agent.WorkingDirectory, agent.PoolIdleSince);
+        }
+
+        if (retire.Count > 0)
+            await _db.SaveChangesAsync(ct);
+        return retire.Count;
+    }
+
+    private async Task<Guid?> LiveSessionIdOfAsync(Agent agent, CancellationToken ct)
+    {
+        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            return null;
+
+        var alive = await _db.AgentSessions.AsNoTracking().AnyAsync(
+            s => s.Id == sessionId
+                && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
+        return alive ? sessionId : null;
+    }
+
+    private static bool SameDirectory(string a, string b)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(
+            DelegationWorkspaceResolver.NormalizeSeparators(a),
+            DelegationWorkspaceResolver.NormalizeSeparators(b),
+            comparison);
     }
 
     /// <summary>

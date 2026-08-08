@@ -164,10 +164,12 @@ public sealed class AgentTaskReplyService
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
             await ResolveConflictedParentAsync(services, db, task, now, ct);
 
-        // A settled ephemeral delegate is spent: stop the session, drop the agent row. Blocked
-        // tasks keep both — the session is how the conversation continues.
+        // A settled delegate is not spent — it is WARM. A Shared task's agent goes into the pool
+        // for follow-ups and unrelated work in its directory; only worktree delegates retire on
+        // the spot (their directory dies with the merge). Blocked tasks keep everything — the
+        // session is how the conversation continues.
         if (task.Status == AgentTaskStatus.Succeeded)
-            await CleanupEphemeralAsync(services, db, task, ct);
+            await ReleaseDelegateAsync(services, db, task, now, ct);
 
         await db.SaveChangesAsync(ct);
 
@@ -261,16 +263,44 @@ public sealed class AgentTaskReplyService
         db.AgentTaskEvents.Add(NewEvent(
             conflicted.Id, AgentTaskEventType.Merged,
             $"Conflict resolved by merge task {DelegationReportFormatter.Short(merge.Id)}.", now));
-        await CleanupEphemeralAsync(services, db, conflicted, ct);
+        await ReleaseDelegateAsync(services, db, conflicted, now, ct);
         await PublishAsync(conflicted, ct);
     }
 
-    /// <summary>Stop the delegate's session and delete its throwaway agent row, best-effort.</summary>
-    private async Task CleanupEphemeralAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
+    /// <summary>
+    /// What happens to the delegate when its task settles: a Shared pool delegate with a live
+    /// session goes WARM — reserved for its own run for a window, then open to any work in its
+    /// directory, until the pool janitor retires it. Everything else pool-spawned (worktree
+    /// delegates, dead sessions) retires now. A user's standing agent is never touched.
+    /// </summary>
+    private async Task ReleaseDelegateAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
     {
-        if (!task.Ephemeral)
+        if (task.AgentId is not Guid agentId)
             return;
+
+        var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
+        if (agent is null || !agent.IsPoolDelegate)
+            return;
+
+        var sessionAlive = task.AgentSessionId is Guid sid
+            && await db.AgentSessions.AsNoTracking().AnyAsync(
+                s => s.Id == sid
+                    && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
+
+        if (_settings.PoolEnabled && task.Workspace == WorkspaceMode.Shared && sessionAlive)
+        {
+            agent.Status = AgentStatus.Idle;
+            agent.PoolIdleSince = now;
+            // Reserved for ITS run first: the caller that just used it can send follow-up work to
+            // the same context without racing the rest of the queue for the agent.
+            agent.PoolReservedForRootTaskId = task.RootTaskId;
+            agent.UpdatedAt = now;
+            _logger.LogInformation(
+                "Delegate '{Name}' pooled warm in {Dir} (reserved for run {Root} first)",
+                agent.Name, agent.WorkingDirectory, DelegationReportFormatter.Short(task.RootTaskId));
+            return;
+        }
 
         if (task.AgentSessionId is Guid sessionId)
         {
@@ -284,12 +314,7 @@ public sealed class AgentTaskReplyService
             }
         }
 
-        if (task.AgentId is Guid agentId)
-        {
-            var agent = await db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
-            if (agent is not null)
-                db.Agents.Remove(agent);
-        }
+        db.Agents.Remove(agent);
     }
 
     /// <summary>

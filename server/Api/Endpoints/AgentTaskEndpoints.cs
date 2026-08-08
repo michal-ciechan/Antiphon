@@ -32,10 +32,16 @@ public static class AgentTaskEndpoints
             AgentTaskService service,
             CancellationToken ct) => Results.Ok(await service.ListAsync(rootId, status, ct)));
 
-        tasks.MapGet("/{id:guid}", async (
-            Guid id,
+        // {id} is a string, not :guid — a delegate only ever SEES 8-char short ids (the completion
+        // note, the board chip), so -Status and -Reply must accept them or they are unusable.
+        tasks.MapGet("/{id}", async (
+            string id,
             AgentTaskService service,
-            CancellationToken ct) => Results.Ok(await service.GetAsync(id, ct)));
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await service.GetAsync(taskId, ct));
+        });
 
         tasks.MapPost("/{id:guid}/cancel", async (
             Guid id,
@@ -53,11 +59,16 @@ public static class AgentTaskEndpoints
             AgentTaskService service,
             CancellationToken ct) => Results.Ok(await service.EscalateAsync(id, request?.ModelLevel, ct)));
 
-        tasks.MapPost("/{id:guid}/reply", async (
-            Guid id,
+        tasks.MapPost("/{id}/reply", async (
+            string id,
             ReplyToAgentTaskRequest request,
+            AgentTaskService service,
             AgentTaskReplyService replies,
-            CancellationToken ct) => Results.Ok(await replies.AnswerAsync(id, request.Message, ct)));
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await replies.AnswerAsync(taskId, request.Message, ct));
+        });
     }
 
     /// <summary>

@@ -28,6 +28,11 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Dir,
 
+    # Follow-up: run this on the SAME agent that ran the given task (short id from its report),
+    # keeping that agent's context. Waits if the agent is still busy; inherits its directory+tier.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$OnAgent,
+
     # Isolate in a fresh git worktree, merged back when it finishes. Workers default to running
     # right in the directory; a sub-orchestrator gets a worktree by default already.
     [Parameter(ParameterSetName = 'Create')]
@@ -130,6 +135,7 @@ switch ($PSCmdlet.ParameterSetName) {
         elseif ($ReadOnly) { $body['workspace'] = 'ReadOnly' }
         elseif ($Shared) { $body['workspace'] = 'Shared' }
         if ($AllowDirectEdits) { $body['denyDirectEdits'] = $false }
+        if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($Title) { $body['title'] = $Title }
         if ($Level) { $body['modelLevel'] = $Level }
         if ($Dir) { $body['workingDirectory'] = $Dir }
