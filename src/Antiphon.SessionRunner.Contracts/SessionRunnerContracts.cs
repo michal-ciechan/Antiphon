@@ -159,6 +159,22 @@ public static class TranscriptKinds
     }
 }
 
+/// <summary>
+/// Exit reason strings the RUNNER synthesises (as opposed to the pty-host's PtyExitReason values,
+/// which pass through verbatim). The server maps these onto its AgentExitReason enum by name, so
+/// any string added here needs a matching enum member server-side to survive the parse.
+/// </summary>
+public static class RunnerExitReasons
+{
+    /// <summary>
+    /// The CPU watchdog killed the session: its process was burning a core while the transcript
+    /// said the turn had ended (idle TUI busy-loop, live incident 2026-08-08 — claude.exe pegged
+    /// at ~110% of a core for 80+ CPU-minutes at an idle prompt). The work itself completed, so
+    /// the server treats this as a clean stop and the session stays resumable.
+    /// </summary>
+    public const string CpuSpinKilled = "CpuSpinKilled";
+}
+
 public static class SessionRunnerEventNames
 {
     public const string SessionStarted = "SessionStarted";

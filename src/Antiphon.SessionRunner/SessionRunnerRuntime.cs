@@ -106,10 +106,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         return GetSession(sessionId).ResizeAsync(cols, rows, ct);
     }
 
-    public async Task<RunnerSessionDto> KillAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
+    /// <param name="exitReasonOverride">When set, replaces the host's KilledByRequest exit reason
+    /// so the server can distinguish WHY the runner killed the session (e.g. the CPU spin
+    /// watchdog's <c>CpuSpinKilled</c>). A natural exit that wins the race keeps its own reason.</param>
+    public async Task<RunnerSessionDto> KillAsync(
+        Guid sessionId, TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
     {
         var session = GetSession(sessionId);
-        await session.KillAsync(timeout, ct);
+        await session.KillAsync(timeout, ct, exitReasonOverride);
         return session.ToDto();
     }
 
@@ -344,6 +348,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string _status = "Starting";
         private int? _exitCode;
         private string _exitReason = PtyExitReason.Unknown.ToString();
+        private string? _exitReasonOverride;
         private bool _adopted;
 
         public RunnerSession(
@@ -624,10 +629,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         public Task ResizeAsync(int cols, int rows, CancellationToken ct) =>
             RequireClient().ResizeAsync(cols, rows, ct);
 
-        public async Task KillAsync(TimeSpan timeout, CancellationToken ct)
+        public async Task KillAsync(TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
         {
             if (HasExited || _client is not { } client)
                 return;
+
+            if (exitReasonOverride is not null)
+            {
+                lock (_gate)
+                    _exitReasonOverride = exitReasonOverride;
+            }
 
             await client.KillAsync(timeout, ct);
             // Parity with the old in-proc KillAsync: wait for the exit (with a grace margin for
@@ -716,14 +727,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private void HandleExited(ExitedMessage exited)
         {
             bool transitioned;
+            string exitReason;
             lock (_gate)
             {
                 transitioned = _status != "Exited";
+                // The override only applies when OUR kill is what ended the child (the host says
+                // KilledByRequest) — a natural exit that races the kill keeps its real reason.
+                exitReason = _exitReasonOverride is { } requested
+                    && exited.ExitReason == PtyExitReason.KilledByRequest.ToString()
+                        ? requested
+                        : exited.ExitReason;
                 if (transitioned)
                 {
                     _status = "Exited";
                     _exitCode = exited.ExitCode;
-                    _exitReason = exited.ExitReason;
+                    _exitReason = exitReason;
                     _lastSequence = Math.Max(_lastSequence, exited.LastSeq);
                 }
             }
@@ -732,7 +750,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
-                    new RunnerSessionExitedEvent(_sessionId, exited.ExitCode, exited.ExitReason, exited.LastSeq));
+                    new RunnerSessionExitedEvent(_sessionId, exited.ExitCode, exitReason, exited.LastSeq));
             }
 
             _exited.TrySetResult();

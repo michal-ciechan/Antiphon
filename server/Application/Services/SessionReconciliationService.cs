@@ -133,7 +133,11 @@ public sealed class SessionReconciliationService
             }
             else if (string.Equals(runnerSession.Status, "Exited", StringComparison.OrdinalIgnoreCase))
             {
-                session.Status = runnerSession.ExitCode == 0 ? SessionStatus.Stopped : SessionStatus.Failed;
+                // Same mapping as AgentSessionRuntime.CloseSessionOnExitAsync: a CPU-spin watchdog
+                // kill is a clean, resumable stop despite the kill's non-zero exit code.
+                session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
+                    ? SessionStatus.Stopped
+                    : SessionStatus.Failed;
                 session.ExitCode = runnerSession.ExitCode;
                 if (session.Status == SessionStatus.Failed)
                 {

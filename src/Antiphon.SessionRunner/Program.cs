@@ -33,6 +33,13 @@ builder.Services.AddHostedService<AuditCleanupService>();
 // never observed — the sweep catches vanished processes and emits the missed SessionExited.
 builder.Services.AddSingleton<IProcessLivenessProbe, SystemProcessLivenessProbe>();
 builder.Services.AddHostedService<SessionLivenessSweepService>();
+// CPU spin watchdog: an idle-at-the-prompt claude.exe can busy-loop a full core forever (stuck
+// render/SSE retry; live incident 2026-08-08). When the transcript says the turn ended but the
+// process stays hot for the whole sustained window, the session is killed with reason
+// CpuSpinKilled, which the server maps to a clean, resumable stop.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
+builder.Services.AddHostedService<SessionCpuWatchdogService>();
 
 var app = builder.Build();
 

@@ -151,9 +151,13 @@ public sealed class AgentSessionRuntime
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var changed = false;
+            // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a
+            // core after its turn completed — the non-zero exit code is just the kill's. It must
+            // land as Stopped, not Failed, so the next message resumes the session by id.
+            var cleanStop = exitCode == 0 || exitReason == AgentExitReason.CpuSpinKilled;
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
-                session.Status = exitCode == 0 ? SessionStatus.Stopped : SessionStatus.Failed;
+                session.Status = cleanStop ? SessionStatus.Stopped : SessionStatus.Failed;
                 session.ExitCode = exitCode;
                 if (session.Status == SessionStatus.Failed)
                     session.FailureReason = $"Process exited ({exitReason}, code {exitCode?.ToString() ?? "unknown"}).";
@@ -167,7 +171,7 @@ public sealed class AgentSessionRuntime
             var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
             if (agent is not null && agent.Status == AgentStatus.Running && agent.CurrentCardId is null)
             {
-                agent.Status = exitCode == 0 ? AgentStatus.Stopped : AgentStatus.Failed;
+                agent.Status = cleanStop ? AgentStatus.Stopped : AgentStatus.Failed;
                 agent.UpdatedAt = now;
                 changed = true;
                 changedAgentId = agent.Id;

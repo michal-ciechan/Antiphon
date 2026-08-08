@@ -208,6 +208,62 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    // The runner's CPU spin watchdog kills an IDLE session whose process was busy-looping a core
+    // (incident 2026-08-08). The kill's exit code is non-zero, but it must land as a CLEAN stop —
+    // session and agent Stopped, not Failed — and the next start must RESUME the same session id,
+    // so a message sent to the agent afterwards picks the conversation back up.
+    [Test]
+    public async Task Cpu_spin_watchdog_kill_lands_as_clean_stop_and_next_start_resumes_the_same_session()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Spinning Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var sessionId = Guid.Parse(first.PersistentSessionId!);
+
+            // The watchdog's exit event arrives via the event pump: non-zero code, CpuSpinKilled.
+            var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
+            await runtime.ObserveExitAsync(sessionId, -1, AgentExitReason.CpuSpinKilled, CancellationToken.None);
+
+            await using (var verify = CreateContext())
+            {
+                var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+                session.Status.ShouldBe(SessionStatus.Stopped, "a spin kill is a clean stop, not a failure");
+                session.ExitCode.ShouldBe(-1);
+                session.EndedAt.ShouldNotBeNull();
+
+                var dbAgent = await verify.Agents.SingleAsync(a => a.Id == agent.Id);
+                dbAgent.Status.ShouldBe(AgentStatus.Stopped);
+            }
+
+            // Sending the agent back to work resumes the SAME conversation by id.
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+            resumeAdapter.StartedArgs.ShouldContain("--resume");
+            resumeAdapter.StartedArgs.ShouldContain(first.PersistentSessionId);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task Start_interactive_falls_back_to_fresh_session_when_claude_conversation_is_missing()
     {
