@@ -2,11 +2,20 @@ namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
 /// Result of probing a Claude process for remote-control bridge health.
-/// Calibration (2026-07-20, 57 consecutive 30s samples on two idle sessions): an idle session
+/// Calibration (2026-07-20, 57 consecutive 30s samples on two idle sessions): an IDLE session
 /// with a live bridge holds 2-3 established Anthropic connections continuously and NEVER dipped
 /// to zero, while `.claude/sessions/&lt;pid&gt;.json` `updatedAt` never changes during idleness (it
-/// is a status-transition stamp, not a heartbeat). Connection count is therefore the liveness
-/// signal; the session file's bridgeSessionId is only the "was armed" indicator.
+/// is a status-transition stamp, not a heartbeat).
+///
+/// The two fields answer different questions and neither substitutes for the other:
+/// <list type="bullet">
+/// <item><see cref="Armed"/> — was the bridge EVER armed. A fact, written by the bridge itself.
+/// Valid whether the session is busy or idle.</item>
+/// <item><see cref="BridgeConnections"/> — is an armed bridge still alive. An inference, and only
+/// on a quiet session: a busy session holds Anthropic connections for its own API calls, so a
+/// non-zero count says nothing about the bridge (2026-08-08: a working agent showed 2 connections
+/// while never armed at all).</item>
+/// </list>
 /// </summary>
 public sealed record RcProbeResult(
     /// <summary>Claude's per-process state file exists and records a bridgeSessionId.</summary>

@@ -109,6 +109,139 @@ public class SessionHealthTests
         }
     }
 
+    // ── Never-armed bridge (live miss 2026-08-08) ──────────────────────────────────────────
+    // An agent restarted by supervision came up with the rename half of arming done and
+    // /remote-control never delivered, then worked for 3.5h. Two independent guards each hid it:
+    // the idle gate meant a busy session was never probed, and the connection count was non-zero
+    // the whole time because a working session talks to Anthropic for its own API calls. It sat
+    // NO-RC until a human noticed.
+
+    [Test]
+    public async Task A_session_that_was_never_armed_is_repaired_even_while_busy()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, idleQuietMinutes: 5);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            // Exactly the live incident: never armed, busy every tick, and holding connections
+            // for its own API calls.
+            harness.Probe.Armed = false;
+            harness.Probe.Connections = 2;
+
+            var actions = 0;
+            for (var seq = 1; seq <= 3; seq++)
+            {
+                harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: seq)];
+                actions += await harness.Health().TickAsync(CancellationToken.None);
+            }
+
+            actions.ShouldBeGreaterThanOrEqualTo(1);
+            harness.Actions.EnqueuedWhenIdle
+                .ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
+            // Repaired in place — a never-armed bridge is not a reason to kill a working session.
+            harness.Actions.KilledSessions.ShouldBeEmpty();
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents
+                .Where(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcReArmed)
+                .OrderBy(i => i.CreatedAt)
+                .FirstAsync();
+            incident.Message.ShouldContain("never armed");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Connections_do_not_excuse_a_missing_bridge()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            // Idle AND holding connections — the old code's definition of healthy. It is not
+            // healthy if the bridge was never armed.
+            await using var harness = BuildHarness(tempRoot, idleQuietMinutes: 0);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = false;
+            harness.Probe.Connections = 4;
+
+            for (var i = 0; i < 3; i++)
+                await harness.Health().TickAsync(CancellationToken.None);
+
+            harness.Actions.EnqueuedWhenIdle
+                .ShouldContain(x => x.SessionId == sessionId && x.Text == "/remote-control");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task A_freshly_launched_session_is_given_time_to_arm_before_being_repaired()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, idleQuietMinutes: 0);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = false;
+            harness.Probe.Connections = 2;
+
+            // Arming takes a few seconds; one unarmed probe must not trigger a repair
+            // (threshold is 2 in this harness).
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+
+            // It armed on its own before the threshold — no repair, and the streak resets.
+            harness.Probe.Armed = true;
+            for (var i = 0; i < 3; i++)
+                (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+            await using var verify = CreateContext();
+            (await verify.AgentIncidents.AnyAsync(i => i.AgentId == agent.Id)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_unreadable_session_file_is_not_treated_as_unarmed()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            // StateFileFound=false means the probe knows nothing. Guessing "unarmed" would
+            // re-arm healthy sessions every probe interval on any filesystem hiccup.
+            await using var harness = BuildHarness(tempRoot, idleQuietMinutes: 5);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Probe.Armed = false;
+            harness.Probe.StateFileFound = false;
+            harness.Probe.Connections = 2;
+
+            for (var seq = 1; seq <= 5; seq++)
+            {
+                harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: seq)];
+                (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            }
+
+            harness.Actions.EnqueuedWhenIdle.ShouldBeEmpty();
+            harness.Actions.KilledSessions.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
     // NOTE: there are deliberately NO periodic liveness probes here. The TUI echo probe was
     // removed 2026-07-21 (false-positive-killed healthy idle sessions) and the round-trip "pong"
     // probe was removed 2026-07-23 (spent model turns on healthy idle sessions). Deadness is only
@@ -337,7 +470,13 @@ public class SessionHealthTests
     {
         public int Connections { get; set; } = 2;
 
-        public RcProbeResult Probe(int pid) => new(Armed: true, Connections, StateFileFound: true);
+        /// <summary>Whether the session file records a bridgeSessionId. False = never armed.</summary>
+        public bool Armed { get; set; } = true;
+
+        /// <summary>False models an unreadable/absent session file — the probe knows nothing.</summary>
+        public bool StateFileFound { get; set; } = true;
+
+        public RcProbeResult Probe(int pid) => new(Armed, Connections, StateFileFound);
     }
 
     private sealed class RecordingHealthActions : ISessionHealthActions

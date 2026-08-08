@@ -22,6 +22,15 @@ public sealed class SessionHealthStateStore
         public long LastSequence;
         public DateTime LastSequenceChangeUtc;
         public int ConsecutiveZeroConnProbes;
+
+        /// <summary>
+        /// Probes in a row that found no bridgeSessionId. Tracked apart from
+        /// <see cref="ConsecutiveZeroConnProbes"/> because the two signals mean different things:
+        /// zero connections is an inference about a bridge that WAS armed, this is the fact that
+        /// one never was.
+        /// </summary>
+        public int ConsecutiveUnarmedProbes;
+
         public int ReArmAttempts;
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
@@ -32,8 +41,11 @@ public sealed class SessionHealthStateStore
 
 /// <summary>
 /// Session health for always-on agents (spec slice 3): the RC bridge watch (re-arm in place,
-/// then restart-when-idle). Everything is idle-gated: a session showing fresh output is never
-/// touched. Wedge/deadness detection is DELIVERY-TIME ONLY (SessionMessageQueueService +
+/// then restart-when-idle). Connection-based repair is idle-gated — a session showing fresh
+/// output is never judged on its connection count, because a busy session holds Anthropic
+/// connections for its own API calls. The ONE exception is a session that was never armed at all
+/// (no bridgeSessionId): that is a fact rather than an inference, so it is repaired whether the
+/// session is busy or idle. Wedge/deadness detection is DELIVERY-TIME ONLY (SessionMessageQueueService +
 /// ComposerDeliveryEvidence): a session is only probed when a real message we sent doesn't
 /// behave as expected. The periodic round-trip "pong" probe was removed 2026-07-23 — it spent
 /// model turns on healthy idle sessions and its restart-reset in-memory clock made it spammy.
@@ -128,8 +140,10 @@ public sealed class SessionHealthService
 
             try
             {
-                if (_settings.RcWatch.Enabled && agent.RemoteControlEnabled && isIdle)
-                    actions += await WatchRcAsync(agent, session, childPid, entry, now, ct) ? 1 : 0;
+                // Note isIdle is passed in rather than gating the call: a session that was NEVER
+                // armed has to be repairable while busy. See WatchRcAsync.
+                if (_settings.RcWatch.Enabled && agent.RemoteControlEnabled)
+                    actions += await WatchRcAsync(agent, session, childPid, entry, now, isIdle, ct) ? 1 : 0;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -148,12 +162,51 @@ public sealed class SessionHealthService
 
     private async Task<bool> WatchRcAsync(
         Agent agent, AgentSession session, int childPid,
-        SessionHealthStateStore.Entry entry, DateTime now, CancellationToken ct)
+        SessionHealthStateStore.Entry entry, DateTime now, bool isIdle, CancellationToken ct)
     {
         if (entry.ReArmSettleUntilUtc is { } settle && now < settle)
             return false;
 
         var probe = _probe.Probe(childPid);
+
+        // ── Never armed ────────────────────────────────────────────────────────────────────
+        // Checked BEFORE the idle gate and BEFORE the connection count, because it is a fact
+        // rather than an inference: bridgeSessionId is written by the bridge itself, so its
+        // absence means /remote-control never took. Connection count cannot see this — a working
+        // session holds Anthropic connections for its OWN api calls whether or not the bridge is
+        // armed — and the idle gate cannot see it either, which is how a live agent sat NO-RC for
+        // 3.5h on 2026-08-08: arming half-succeeded (the rename landed, /remote-control did not),
+        // the agent then worked continuously, so it was never idle enough to probe and its own
+        // API traffic made it look healthy anyway.
+        if (probe.StateFileFound && !probe.Armed)
+        {
+            entry.ConsecutiveUnarmedProbes++;
+            if (entry.ConsecutiveUnarmedProbes < _settings.RcWatch.ConsecutiveFailedProbesBeforeAction)
+                return false;
+
+            entry.ConsecutiveUnarmedProbes = 0;
+            entry.ReArmAttempts++;
+            entry.ReArmSettleUntilUtc = now.AddMinutes(_settings.RcWatch.ReArmSettleMinutes);
+            // WhenIdle, not immediate: arming must not interrupt the turn in flight. The point is
+            // that the REPAIR is scheduled while busy, not that it is delivered while busy.
+            await _actions.EnqueueWhenIdleAsync(session.Id, "/remote-control", ct);
+            await RecordAsync(agent.Id, session.Id, AgentIncidentKind.RcReArmed, AlertSeverity.Warning,
+                "Remote control was never armed on this session (no bridgeSessionId); "
+                + $"queued /remote-control (attempt {entry.ReArmAttempts}).",
+                ct);
+            _logger.LogWarning(
+                "Agent {AgentName}: session {SessionId} was never armed for remote control; queued /remote-control",
+                agent.Name, session.Id);
+            return true;
+        }
+
+        entry.ConsecutiveUnarmedProbes = 0;
+
+        // Everything below infers liveness from connection count, which is only meaningful on a
+        // quiet session — a busy one holds connections regardless.
+        if (!isIdle)
+            return false;
+
         if (probe.BridgeConnections > 0)
         {
             if (entry.ConsecutiveZeroConnProbes > 0 || entry.ReArmAttempts > 0 || entry.DegradedAlerted)
