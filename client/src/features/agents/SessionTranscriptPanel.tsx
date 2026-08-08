@@ -108,16 +108,30 @@ function isLocalCommandRecord(e: TranscriptEntryDto): boolean {
 // CompactBoundary is idle-time housekeeping, not activity (mirror of the server's IsWorkingAsync —
 // counting it would show a phantom "working" agent after every compaction). Interrupt markers are
 // turn ENDS — counting them as activity showed a phantom "working" agent forever after an interrupt.
+// SessionRestartBoundary (server-synthesized on relaunch of a mid-turn transcript) is a turn END too.
 // Exported for tests: the exclusion list must stay in lockstep with the server.
 export function isWorking(entries: TranscriptEntryDto[]): boolean {
-  let lastActivity = 0
-  let lastEnd = 0
+  let lastActivitySeq = 0
+  let lastEndSeq = 0
+  let lastActivityTs: number | null = null
+  let lastEndTs: number | null = null
   for (const e of entries) {
-    if (e.kind === 'TurnEnd' || isInterruptPrompt(e)) lastEnd = Math.max(lastEnd, e.sequence)
-    else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary' && !isLocalCommandRecord(e))
-      lastActivity = Math.max(lastActivity, e.sequence)
+    const t = e.timestamp ? Date.parse(e.timestamp) : null
+    if (e.kind === 'TurnEnd' || e.kind === 'SessionRestartBoundary' || isInterruptPrompt(e)) {
+      lastEndSeq = Math.max(lastEndSeq, e.sequence)
+      if (t !== null) lastEndTs = lastEndTs === null ? t : Math.max(lastEndTs, t)
+    } else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary' && !isLocalCommandRecord(e)) {
+      lastActivitySeq = Math.max(lastActivitySeq, e.sequence)
+      if (t !== null) lastActivityTs = lastActivityTs === null ? t : Math.max(lastActivityTs, t)
+    }
   }
-  return lastActivity > lastEnd
+  if (lastActivitySeq <= lastEndSeq) return false
+  // Sequences are ARRIVAL-ordered: a catch-up sync can backfill stale pre-gap activity ABOVE an
+  // already-persisted TurnEnd (mirror of the server's IsWorkingAsync; live miss 2026-08-08).
+  // Record timestamps survive that reordering — when they prove all activity predates the last
+  // end, the session is idle. Equal timestamps keep the sequence verdict.
+  if (lastActivityTs !== null && lastEndTs !== null && lastActivityTs < lastEndTs) return false
+  return true
 }
 
 /** Token totals + wall-clock for one turn, plus the idle gap since the previous turn ended. */

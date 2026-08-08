@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -262,6 +263,126 @@ public class AgentControlServiceIntegrationTests
             await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
+    }
+
+    // A resumed session whose previous process died MID-TURN (reboot/crash/kill — no TurnEnd, no
+    // interrupt marker, and none ever coming) must not come back reading "Working" forever: the
+    // relaunch writes a SessionRestartBoundary so the transcript reads idle again, and queues the
+    // auto-continue prompt so the interrupted work resumes itself (live miss 2026-08-08).
+    [Test]
+    public async Task Resume_of_a_mid_turn_session_writes_a_restart_boundary_and_queues_the_auto_continue()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Interrupted Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var sessionId = Guid.Parse(first.PersistentSessionId!);
+
+            // The turn that never ended: activity with nothing ending it.
+            await SeedTranscriptEntryAsync(sessionId, 1, TranscriptKinds.AssistantText, "half-finished work");
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+
+            await using var verify = CreateContext();
+            var boundary = await verify.TranscriptEntries
+                .SingleAsync(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.SessionRestartBoundary);
+            boundary.Sequence.ShouldBe(2, "the boundary ends the interrupted turn, right after its last record");
+            boundary.Timestamp.ShouldNotBeNull("the working rule's timestamp override must rank it newest");
+
+            // The auto-continue rode the queue (WhenIdle; possibly already delivered) — what
+            // matters is that it exists and targets this session.
+            var queued = await verify.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId)
+                .ToListAsync();
+            queued.ShouldContain(
+                m => m.Body.Contains("interrupted by a restart"),
+                "the interrupted work must be told to continue");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // The negative twin: a resumed session whose transcript ended cleanly gets NO boundary and NO
+    // auto-continue — resuming an idle agent must not invent work for it.
+    [Test]
+    public async Task Resume_of_a_cleanly_ended_session_writes_no_boundary_and_queues_nothing()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Settled Claude", workspace), CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            var sessionId = Guid.Parse(first.PersistentSessionId!);
+
+            await SeedTranscriptEntryAsync(sessionId, 1, TranscriptKinds.AssistantText, "finished work");
+            await SeedTranscriptEntryAsync(sessionId, 2, TranscriptKinds.TurnEnd, null);
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.TranscriptEntries.AnyAsync(
+                    t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.SessionRestartBoundary))
+                .ShouldBeFalse("a cleanly ended transcript needs no restart boundary");
+            (await verify.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId))
+                .ShouldBeFalse("no auto-continue for an agent that was not mid-turn");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static async Task SeedTranscriptEntryAsync(Guid sessionId, long sequence, string kind, string? text)
+    {
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = sequence,
+            Kind = kind,
+            Text = text,
+            Timestamp = DateTime.UtcNow.AddMinutes(-5).AddSeconds(sequence),
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
     }
 
     [Test]

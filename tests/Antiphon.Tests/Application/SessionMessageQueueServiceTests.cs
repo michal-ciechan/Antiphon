@@ -321,7 +321,82 @@ public class SessionMessageQueueServiceTests
         }
     }
 
-    private static async Task InsertEntryAsync(Harness h, string kind, string? text)
+    // The 2026-08-08 stranding: entries lost during a server restart were backfilled by a later
+    // catch-up sync, and the sequence rebase landed them ABOVE the already-persisted TurnEnd.
+    // Their record timestamps prove they predate the end — the session must read idle, or the
+    // agent badges "Working" forever and every WhenIdle delivery strands.
+    [Test]
+    public async Task Backfilled_stale_activity_above_a_turn_end_does_not_read_as_working()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            var t0 = DateTime.UtcNow.AddMinutes(-10);
+            await InsertEntryAsync(h, TranscriptKinds.AssistantText, "turn output", timestamp: t0);
+            await InsertEntryAsync(h, TranscriptKinds.TurnEnd, null, timestamp: t0.AddMinutes(1));
+            // The backfill: records from BEFORE the end arrive later, so they hold higher sequences.
+            await InsertEntryAsync(h, TranscriptKinds.ToolCall, "backfilled tool call", timestamp: t0.AddSeconds(10));
+            await InsertEntryAsync(h, TranscriptKinds.ToolResult, "backfilled tool result", timestamp: t0.AddSeconds(11));
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeFalse("backfilled records that predate the turn end are history, not live activity");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    // Guard for the timestamp override's direction: genuinely NEW activity after the last end
+    // (later timestamp AND later sequence) must still read as working.
+    [Test]
+    public async Task Activity_newer_than_the_last_turn_end_still_reads_as_working()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            var t0 = DateTime.UtcNow.AddMinutes(-10);
+            await InsertEntryAsync(h, TranscriptKinds.AssistantText, "turn output", timestamp: t0);
+            await InsertEntryAsync(h, TranscriptKinds.TurnEnd, null, timestamp: t0.AddMinutes(1));
+            await InsertEntryAsync(h, TranscriptKinds.UserPrompt, "next piece of work", timestamp: t0.AddMinutes(2));
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("a prompt after the last turn end is a new turn");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    // A relaunch of a session whose process died mid-turn writes a SessionRestartBoundary (there
+    // is no TurnEnd and never will be) — it must end the phantom turn exactly like an interrupt
+    // marker does, or the relaunched agent reads "Working" forever (live miss 2026-08-08).
+    [Test]
+    public async Task Session_restart_boundary_ends_an_interrupted_turn()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeTrue("sanity: the seeded transcript reads mid-turn");
+
+            await InsertEntryAsync(
+                h, TranscriptKinds.SessionRestartBoundary,
+                "Session relaunched; the previous turn had been interrupted mid-flight.",
+                timestamp: DateTime.UtcNow);
+
+            (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working
+                .ShouldBeFalse("the relaunch proved the interrupted turn's process is gone");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    private static async Task InsertEntryAsync(Harness h, string kind, string? text, DateTime? timestamp = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var baseSeq = (await db.TranscriptEntries
@@ -334,6 +409,7 @@ public class SessionMessageQueueServiceTests
             Sequence = baseSeq + 1,
             Kind = kind,
             Text = text,
+            Timestamp = timestamp,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();

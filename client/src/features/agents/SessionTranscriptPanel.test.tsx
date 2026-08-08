@@ -105,6 +105,42 @@ describe('isWorking', () => {
       ]),
     ).toBe(true)
   })
+
+  // Live miss 2026-08-08: entries lost during a server restart were backfilled later and
+  // sequence-rebased ABOVE the already-persisted TurnEnd — record timestamps prove they predate
+  // it, so the session is idle. Must stay in lockstep with the server's IsWorkingAsync.
+  it('reads idle when higher-sequence activity is older by timestamp than the last turn end', () => {
+    expect(
+      isWorking([
+        entry(1, 'AssistantText', 'turn output', { timestamp: at(0) }),
+        entry(2, 'TurnEnd', null, { timestamp: at(30) }),
+        entry(3, 'ToolCall', 'backfilled', { timestamp: at(10) }),
+        entry(4, 'ToolResult', 'backfilled', { timestamp: at(11) }),
+      ]),
+    ).toBe(false)
+  })
+
+  it('keeps reading working when the newest activity is genuinely newer than the last end', () => {
+    expect(
+      isWorking([
+        entry(1, 'AssistantText', 'turn output', { timestamp: at(0) }),
+        entry(2, 'TurnEnd', null, { timestamp: at(30) }),
+        entry(3, 'UserPrompt', 'next piece of work', { timestamp: at(60) }),
+      ]),
+    ).toBe(true)
+  })
+
+  // A relaunch of a session whose process died mid-turn writes this server-synthesized record —
+  // there is no TurnEnd and never will be, so the boundary IS the turn's end.
+  it('reads idle after a session restart boundary', () => {
+    expect(
+      isWorking([
+        entry(1, 'UserPrompt', 'do the thing', { timestamp: at(0) }),
+        entry(2, 'ToolCall', null, { timestamp: at(1) }),
+        entry(3, 'SessionRestartBoundary', 'Session relaunched', { timestamp: at(120) }),
+      ]),
+    ).toBe(false)
+  })
 })
 
 describe('buildTurns', () => {

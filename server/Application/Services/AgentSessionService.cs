@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -328,6 +329,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
 
+            // Before anything types into the session: if the reused transcript still reads
+            // mid-turn, the old process died before its TurnEnd — state the truth (boundary
+            // record) so working/idle, the queue and the cards all read idle, not "Working"
+            // forever (live miss 2026-08-08).
+            var interruptedTurn = await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(session.Id),
                 "SessionStarted",
@@ -345,6 +352,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // restart note on a successful resume. This branch point is where the truth lives —
             // AgentControlService cannot know whether a resume will fall back.
             await DeliverLaunchNoteAsync(session.Id, resumeMode, notes, ct);
+
+            // LAST, and only on a genuine --resume (a fresh conversation has nothing to continue):
+            // queue the auto-continue for the interrupted turn. WhenIdle deliberately serialises it
+            // AFTER the launch note's turn — enqueued any earlier it would race the remote-control
+            // commands and the note into one garbled composer.
+            if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume)
+                await EnqueueResumeContinueAsync(session.Id, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -501,6 +515,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
+
+            // Same truth-telling as the interactive relaunch path: a mid-turn transcript on a
+            // freshly resumed process means the old turn died — record its end. No auto-continue
+            // here: a human resumed this card session deliberately and will say what they want.
+            await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
 
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(session.Id),
@@ -809,6 +828,76 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 _logger.LogWarning(fallbackEx,
                     "Launch note fallback enqueue failed for session {SessionId}; giving up (note lost)", sessionId);
             }
+        }
+    }
+
+    /// <summary>
+    /// A relaunched session row can carry a transcript whose last turn never ended — the previous
+    /// process died mid-turn (reboot, crash, kill) and no TurnEnd (nor interrupt marker) was ever
+    /// written. Without intervention IsWorkingAsync reads true forever: the agent card badges
+    /// "Working", WhenIdle deliveries strand, and the interrupted work silently never resumes
+    /// (live miss 2026-08-08). The relaunch itself is proof nothing is running, so persist a
+    /// SessionRestartBoundary — a turn END for the working rule — stating exactly that.
+    /// Returns whether a boundary was written. Failures are logged, never fatal to the launch.
+    /// </summary>
+    private async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            if (!await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+                return false;
+
+            var now = UtcNow();
+            var maxSeq = await _db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+            _db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = maxSeq + 1,
+                Kind = TranscriptKinds.SessionRestartBoundary,
+                // Synthetic uuid so the (uuid, kind) dedup in PersistTranscriptAsync can never
+                // collide it with a real JSONL line.
+                Uuid = Guid.NewGuid().ToString("D"),
+                Timestamp = now,
+                Role = "system",
+                Text = "Session relaunched; the previous turn had been interrupted mid-flight.",
+                CreatedAt = now,
+            });
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "Session {SessionId} relaunched with a mid-turn transcript; wrote a restart boundary so it reads idle",
+                sessionId);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Restart-boundary check failed for session {SessionId}", sessionId);
+            return false;
+        }
+    }
+
+    // Queues the interrupted-turn continue prompt (see AgentSessionSettings.ResumeAutoContinue).
+    // WhenIdle: the restart boundary already makes the session read idle, so this flushes
+    // immediately when nothing else is talking — and waits its turn when a launch note is.
+    private async Task EnqueueResumeContinueAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!_settings.ResumeAutoContinue || string.IsNullOrWhiteSpace(_settings.ResumeContinuePrompt))
+            return;
+
+        try
+        {
+            await _messageQueue.EnqueueAsync(
+                sessionId, _settings.ResumeContinuePrompt, MessageSendMode.WhenIdle, ct,
+                origin: QueuedMessageOrigin.System);
+            _logger.LogInformation(
+                "Session {SessionId} resumed an interrupted turn; queued the auto-continue prompt", sessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Auto-continue enqueue failed for session {SessionId}", sessionId);
         }
     }
 

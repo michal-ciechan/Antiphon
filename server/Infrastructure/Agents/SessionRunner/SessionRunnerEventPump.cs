@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -33,6 +34,14 @@ public sealed class SessionRunnerEventPump : BackgroundService
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var client = scope.ServiceProvider.GetRequiredService<ISessionRunnerClient>();
                 var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
+
+                // Backfill BEFORE consuming live events: anything that streamed while this server
+                // was down (restart) or the stream was severed lands first, so stored order tracks
+                // runner order. Left lazy (first GET /transcript, 30 min later), the 2026-08-08
+                // restart backfilled a turn's tail ABOVE its already-persisted TurnEnd and the
+                // agent read "Working" forever. SyncTranscriptAsync also fires the turn-end
+                // actions for any boundary that only ever arrived via this backfill.
+                await CatchUpTranscriptsAsync(client, runtime, stoppingToken);
 
                 await foreach (var evt in client.StreamEventsAsync(stoppingToken))
                 {
@@ -72,5 +81,31 @@ public sealed class SessionRunnerEventPump : BackgroundService
                     stoppingToken);
             }
         }
+    }
+
+    private async Task CatchUpTranscriptsAsync(
+        ISessionRunnerClient client, AgentSessionRuntime runtime, CancellationToken ct)
+    {
+        IReadOnlyList<SessionRunnerSessionDto> sessions;
+        try
+        {
+            sessions = await client.ListAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Runner not up (yet) — the reconnect loop retries and the next pass catches up.
+            _logger.LogDebug(ex, "Session runner unreachable; transcript catch-up skipped");
+            return;
+        }
+
+        foreach (var session in sessions)
+        {
+            ct.ThrowIfCancellationRequested();
+            // Per-session failures are swallowed (logged) inside SyncTranscriptAsync.
+            await runtime.SyncTranscriptAsync(session.SessionId, ct);
+        }
+
+        if (sessions.Count > 0)
+            _logger.LogInformation("Transcript catch-up completed for {Count} runner session(s)", sessions.Count);
     }
 }

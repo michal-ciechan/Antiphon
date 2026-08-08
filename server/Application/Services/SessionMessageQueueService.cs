@@ -568,17 +568,23 @@ public sealed class SessionMessageQueueService
         // turn-end. An interrupt marker ("[Request interrupted...") counts as a turn END, not
         // activity — an aborted turn writes NO TurnEnd, and counting the marker as activity left
         // the session permanently "working" and stranded every WhenIdle delivery (2026-07-29).
-        var lastEnd = await db.TranscriptEntries
+        // A SessionRestartBoundary is a turn end for the same reason: the relaunch proved the old
+        // turn's process is gone (2026-08-08).
+        var end = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.TurnEnd
+                    || t.Kind == TranscriptKinds.SessionRestartBoundary
                     || (t.Kind == TranscriptKinds.UserPrompt
                         && t.Text != null
                         && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
-            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
-        var lastActivity = await db.TranscriptEntries
+            .GroupBy(t => t.AgentSessionId)
+            .Select(g => new { Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
+            .FirstOrDefaultAsync(ct);
+        var activity = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind != TranscriptKinds.TurnEnd
                 && t.Kind != TranscriptKinds.TurnTitle
+                && t.Kind != TranscriptKinds.SessionRestartBoundary
                 // Local slash-command records (/model, /status …) are housekeeping with NO
                 // TurnEnd — counting them as activity stranded WhenIdle deliveries (2026-07-31).
                 && !(t.Kind == TranscriptKinds.UserPrompt
@@ -592,8 +598,26 @@ public sealed class SessionMessageQueueService
                 && !(t.Kind == TranscriptKinds.UserPrompt
                     && t.Text != null
                     && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))
-            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
-        return lastActivity > lastEnd;
+            .GroupBy(t => t.AgentSessionId)
+            .Select(g => new { Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
+            .FirstOrDefaultAsync(ct);
+
+        if ((activity?.Seq ?? 0) <= (end?.Seq ?? 0))
+            return false;
+
+        // Sequence says working — but stored sequences are ARRIVAL-ordered: a catch-up sync that
+        // backfills entries missed during a stream gap rebases them past the session's max, so
+        // stale pre-gap activity can leapfrog an already-persisted TurnEnd. That exact shape left
+        // Antiphon-Opus badged "Working" forever after a server restart (2026-08-08): 8 backfilled
+        // tool records landed ABOVE the turn's end. Record timestamps come from the transcript
+        // itself and survive reordering — when they PROVE all activity predates the last end, the
+        // session is idle. Equal timestamps stay with the sequence verdict (same-line record pairs
+        // share one timestamp), and missing ones (TurnTitle-only in practice, excluded anyway)
+        // never override.
+        if (activity?.Ts is DateTime activityTs && end?.Ts is DateTime endTs && activityTs < endTs)
+            return false;
+
+        return true;
     }
 
     private static async Task<SessionQueueDto> BuildQueueDtoAsync(

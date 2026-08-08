@@ -201,7 +201,7 @@ public sealed class AgentSessionRuntime
         // persisting first would make every entry look like one we had already acted on.
         var actOnTurnBoundary = IsTurnBoundary(entry) && await IsUnseenTurnBoundaryAsync(entry, ct);
 
-        var storedSeq = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
+        var persisted = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
 
         // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
@@ -225,7 +225,7 @@ public sealed class AgentSessionRuntime
         // Uses the STORED (session-monotonic) sequence, not the raw tailer one: the persisted
         // recovery watermark must stay comparable across tailer generations, and a boundary that
         // deduped away (replay) was already handled.
-        if (entry.Kind == TranscriptKinds.CompactBoundary && storedSeq is long boundarySeq)
+        if (entry.Kind == TranscriptKinds.CompactBoundary && persisted.LastStoredSeq is long boundarySeq)
             await DispatchCompactionRecoveryAsync(entry.SessionId, boundarySeq, ct);
     }
 
@@ -372,24 +372,42 @@ public sealed class AgentSessionRuntime
     /// </summary>
     public async Task SyncTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
+        PersistResult persisted;
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
-            await PersistTranscriptAsync(sessionId, snapshot.Entries);
+            persisted = await PersistTranscriptAsync(sessionId, snapshot.Entries);
         }
         catch (Exception ex)
         {
             // Session is not live in the runner (or runner unavailable) — the DB still holds whatever streamed.
             _logger.LogDebug(ex, "Transcript sync skipped for session {SessionId}", sessionId);
+            return;
         }
+
+        // A boundary that arrives via SYNC must trigger the same turn-end actions a live one does.
+        // The live path won't cover it: when the synced row lands first, the later live re-emission
+        // (if any) dedups as "seen" and never flushes — a TurnEnd missed during a server restart
+        // then strands every WhenIdle delivery until the next real turn (live miss 2026-08-08).
+        // FlushQueueOnIdleAsync re-checks IsWorkingAsync itself, so a mid-turn sync stays a no-op.
+        if (persisted.AddedTurnBoundary)
+            await FlushQueueOnIdleAsync(sessionId, ct);
+        else if (persisted.AddedAssistantText)
+            await DispatchChannelRepliesAsync(sessionId, ct);
     }
 
-    // Returns the stored (session-monotonic) sequence of the last NEWLY persisted entry, or null
-    // when everything deduped away or persistence failed.
-    private async Task<long?> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    // What one persist call actually changed — LastStoredSeq is the stored (session-monotonic)
+    // sequence of the last NEWLY persisted entry, or null when everything deduped away or
+    // persistence failed.
+    private sealed record PersistResult(long? LastStoredSeq, bool AddedTurnBoundary, bool AddedAssistantText)
+    {
+        public static PersistResult Empty { get; } = new(null, false, false);
+    }
+
+    private async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
     {
         if (entries.Count == 0)
-            return null;
+            return PersistResult.Empty;
 
         try
         {
@@ -398,7 +416,7 @@ public sealed class AgentSessionRuntime
 
             // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
             if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId))
-                return null;
+                return PersistResult.Empty;
 
             // Dedup by transcript line uuid, NOT by sequence: the runner tailer numbers entries per
             // tailer LIFETIME, restarting from 1 after a session relaunch or fork re-discovery. A
@@ -433,6 +451,8 @@ public sealed class AgentSessionRuntime
 
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var added = false;
+            var addedTurnBoundary = false;
+            var addedAssistantText = false;
             foreach (var e in entries)
             {
                 if (e.Uuid is not null)
@@ -444,6 +464,9 @@ public sealed class AgentSessionRuntime
                 {
                     continue;
                 }
+
+                addedTurnBoundary |= IsTurnBoundary(e);
+                addedAssistantText |= e.Kind == TranscriptKinds.AssistantText;
 
                 var storedSeq = e.Sequence > maxSeq ? e.Sequence : maxSeq + 1;
                 maxSeq = storedSeq;
@@ -477,12 +500,14 @@ public sealed class AgentSessionRuntime
             if (added)
                 await db.SaveChangesAsync();
 
-            return added ? maxSeq : null;
+            return added
+                ? new PersistResult(maxSeq, addedTurnBoundary, addedAssistantText)
+                : PersistResult.Empty;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
-            return null;
+            return PersistResult.Empty;
         }
     }
 

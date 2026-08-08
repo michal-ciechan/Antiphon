@@ -123,6 +123,16 @@ public static class TranscriptKinds
     public const string CompactBoundary = "CompactBoundary";
 
     /// <summary>
+    /// SERVER-SYNTHESIZED (never read from a JSONL): written when a session is relaunched and its
+    /// persisted transcript still reads mid-turn — the old process died (reboot, crash, kill)
+    /// before its TurnEnd could land, and nothing is running any more. Counts as a turn END for
+    /// working/idle purposes, exactly like the interrupt marker: without it the relaunched
+    /// session reads "working" forever and every WhenIdle delivery strands (live miss 2026-08-08,
+    /// Antiphon-Opus stuck "Working" across a restart).
+    /// </summary>
+    public const string SessionRestartBoundary = "SessionRestartBoundary";
+
+    /// <summary>
     /// The marker Claude Code writes into its JSONL as a USER message when a turn is aborted —
     /// "[Request interrupted by user]" (Esc) or "[Request interrupted by user for tool use]"
     /// (tool call rejected). An interrupted turn produces NO TurnEnd, so this marker IS the

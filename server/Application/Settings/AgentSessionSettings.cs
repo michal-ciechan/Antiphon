@@ -19,4 +19,18 @@ public sealed class AgentSessionSettings
     /// many seconds, and typing into a busy composer jams commands into one submission.
     /// </summary>
     public int RemoteControlArmTimeoutMs { get; set; } = 20_000;
+
+    /// <summary>
+    /// When a session is relaunched with --resume and its persisted transcript shows the previous
+    /// turn was cut off mid-flight (process died before its TurnEnd), automatically queue
+    /// <see cref="ResumeContinuePrompt"/> so the interrupted work picks itself back up instead of
+    /// sitting silently at the prompt (live miss 2026-08-08). The restart boundary record is
+    /// written regardless — only the continue prompt is gated.
+    /// </summary>
+    public bool ResumeAutoContinue { get; set; } = true;
+
+    /// <summary>Queued (WhenIdle) after a resume that interrupted a mid-flight turn.</summary>
+    public string ResumeContinuePrompt { get; set; } =
+        "Your previous turn was interrupted by a restart. Review where you got to and continue the "
+        + "work you were doing; if it was already complete, briefly confirm that instead.";
 }
