@@ -1,7 +1,8 @@
 # Feature 004 — Implementation spec: agents-screen "Working" means mid-turn
 
-**Status:** ready for implementation
-**Date:** 2026-08-06
+**Status:** implemented — R1 landed in `89f1262`, R2 in `e1a46d1` (server) + `e72d6c8` (client);
+R3 deliberately skipped (optional perf nit, revisit only with the shared-predicate refactor)
+**Date:** 2026-08-06 (status updated 2026-08-08)
 **Card:** CARD-0001
 **Based on:** [initial-investigation.md](initial-investigation.md)
 **Companion:** [test-spec.md](test-spec.md)

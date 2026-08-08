@@ -1,7 +1,9 @@
 # Feature 004 — Test spec: agents-screen "Working" means mid-turn
 
-**Status:** ready for implementation
-**Date:** 2026-08-06
+**Status:** implemented — S1–S6 landed in `e1a46d1`
+(`AgentServiceIntegrationTests.cs:528-652`), C1–C6 in `e72d6c8` (`AgentsPage.test.tsx:192-291`);
+S7 n/a (R3 skipped)
+**Date:** 2026-08-06 (status updated 2026-08-08)
 **Card:** CARD-0001
 **Companion:** [implementation-spec.md](implementation-spec.md)
 
