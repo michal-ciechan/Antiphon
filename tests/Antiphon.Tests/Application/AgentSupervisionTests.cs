@@ -38,10 +38,12 @@ public class AgentSupervisionTests
             var agent = await CreateAlwaysOnAgentAsync(harness, tempRoot);
 
             // Tick 1: schedules the boot start (attempt 1, base backoff).
-            // TickAsync counts every agent it acted on across the whole database, so an exact count
-            // asserts "no other test's always-on agent needed work" — which is not this test's
-            // subject and fails whenever one does. The per-agent checks below are the real assertion.
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
+            // The return value is NOT asserted. It counts every agent the sweep acted on across the
+            // whole shared database, which is wrong in both directions: another test's always-on
+            // agent inflates it, and another suite's supervisor (SessionHealthTests and
+            // BridgeQueueHarness both register one) can schedule this agent first and leave this
+            // tick with nothing to do, making it 0. The per-agent checks below are the assertion.
+            await harness.Supervisor().TickAsync(CancellationToken.None);
             await using (var verify = CreateContext())
             {
                 var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
@@ -52,7 +54,7 @@ public class AgentSupervisionTests
 
             // Tick 2 (past the due time): actually starts the agent.
             harness.Clock.Advance(TimeSpan.FromSeconds(10));
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
             var detail = await harness.Scope.ServiceProvider.GetRequiredService<AgentService>()
