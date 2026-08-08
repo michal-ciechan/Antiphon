@@ -533,10 +533,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private void RebuildInterpretationFromAnsiLog(long lastSeq)
         {
+            // ReadAnsiLog already bounds itself to ReplayBufferMaxChars.
             var replay = ReadAnsiLog();
-            var cap = Math.Max(1, _settings.ReplayBufferMaxChars);
-            if (replay.Length > cap)
-                replay = replay[^cap..];
 
             lock (_gate)
             {
@@ -545,6 +543,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _screen?.Feed(replay);
                 _lastSequence = Math.Max(_lastSequence, lastSeq);
             }
+        }
+
+        /// <summary>
+        /// Evict from the front so the runner's mirror of the session stays bounded — the pty-host
+        /// bounds its own ring the same way and to the same cap (see <c>HostSession</c>). Without
+        /// this the mirror grew for the life of the session, and every snapshot payload built from
+        /// it grew with it. Trimming only once the buffer is over twice the cap amortises the
+        /// memmove to roughly one per <c>cap</c> chars appended instead of one per chunk.
+        /// Caller must hold <see cref="_gate"/>.
+        /// </summary>
+        private void TrimLiveBuffer()
+        {
+            var cap = Math.Max(1, _settings.ReplayBufferMaxChars);
+            if (_liveBuffer.Length > cap * 2L)
+                _liveBuffer.Remove(0, _liveBuffer.Length - cap);
         }
 
         public bool HasExited
@@ -691,6 +704,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 _lastSequence = Math.Max(_lastSequence, seq);
                 _liveBuffer.Append(chunk);
+                TrimLiveBuffer();
                 _screen?.Feed(chunk);
             }
 
@@ -774,16 +788,53 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private PtyHostClient RequireClient() =>
             _client ?? throw new InvalidOperationException("Session has no live pty-host connection.");
 
+        /// <summary>
+        /// The tail of the ANSI log, bounded to <see cref="SessionRunnerSettings.ReplayBufferMaxChars"/>.
+        /// Never reads the whole file: these logs reach tens of MB, and both callers (replay-on-adopt
+        /// and the /buffer endpoint the server polls every 50ms) only ever wanted the tail. Reading
+        /// the lot each time churned the LOH hard enough to strand multi-GB ArrayPool buckets for the
+        /// life of the process.
+        /// </summary>
         private string ReadAnsiLog()
         {
             if (_ansiLogPath is null || !File.Exists(_ansiLogPath))
                 return "";
 
+            var cap = Math.Max(1, _settings.ReplayBufferMaxChars);
+
             // The host appends concurrently; open shared so reads never fail or block it.
             using var stream = new FileStream(
                 _ansiLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
-            return reader.ReadToEnd();
+
+            // UTF-8 is at most 4 bytes/char, so this window always yields at least `cap` chars.
+            var window = cap * 4L;
+            if (stream.Length > window)
+            {
+                stream.Seek(-window, SeekOrigin.End);
+
+                // That lands mid-file and possibly mid-character. Continuation bytes are 10xxxxxx:
+                // skip them so the decoder starts on a real character boundary.
+                for (var i = 0; i < 3; i++)
+                {
+                    var b = stream.ReadByte();
+                    if (b < 0)
+                        break;
+                    if ((b & 0xC0) != 0x80)
+                    {
+                        stream.Seek(-1, SeekOrigin.Current);
+                        break;
+                    }
+                }
+            }
+
+            // The host writes UTF-8 with no BOM (File.AppendAllText), and we may be mid-file, so
+            // don't let a stray byte triple be mistaken for one.
+            using var reader = new StreamReader(
+                stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                detectEncodingFromByteOrderMarks: false);
+            var text = reader.ReadToEnd();
+
+            return text.Length > cap ? text[^cap..] : text;
         }
     }
 }

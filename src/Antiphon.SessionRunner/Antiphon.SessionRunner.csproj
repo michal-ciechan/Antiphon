@@ -6,6 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Antiphon.SessionRunner</RootNamespace>
     <AssemblyName>Antiphon.SessionRunner</AssemblyName>
+
+    <!--
+      Sdk.Web defaults to server GC: one heap per core (8 here), collected rarely, and slow to
+      hand memory back. This daemon is I/O-bound plumbing, not a throughput server - it proxies
+      pty bytes for a handful of sessions. Server GC cost it several GB of committed memory and
+      made gen2 (and therefore LOH) collections almost never run. Workstation GC suits the shape
+      of the work and releases promptly.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
