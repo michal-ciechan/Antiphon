@@ -90,9 +90,7 @@ public class AgentSupervisionTests
             await harness.Supervisor().TickAsync(CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
-            var sessionId = Guid.Parse((await harness.Scope.ServiceProvider
-                .GetRequiredService<AgentService>().GetByIdAsync(agent.Id, CancellationToken.None))
-                .PersistentSessionId!);
+            var sessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
             var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
             await runtime.ObserveExitAsync(sessionId, 1, AgentExitReason.ProcessExited, CancellationToken.None);
 
@@ -364,6 +362,32 @@ public class AgentSupervisionTests
     }
 
     // ---------- helpers ----------
+
+    /// <summary>
+    /// Waits for supervision to have actually booted the agent, rather than assuming two ticks and
+    /// an idle launch queue guarantee it. The supervisor sweeps the whole shared database, and
+    /// other suites register their own (SessionHealthTests, BridgeQueueHarness) — one of them can
+    /// consume this agent's scheduled restart, so this harness's queue launches nothing and the
+    /// session id is still null. That surfaced as an ArgumentNullException from Guid.Parse with
+    /// nothing to say why.
+    /// </summary>
+    private static async Task<Guid> WaitForPersistentSessionAsync(Harness harness, Guid agentId)
+    {
+        var service = harness.Scope.ServiceProvider.GetRequiredService<AgentService>();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        string? sessionId = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            sessionId = (await service.GetByIdAsync(agentId, CancellationToken.None)).PersistentSessionId;
+            if (!string.IsNullOrWhiteSpace(sessionId))
+                return Guid.Parse(sessionId);
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException(
+            $"Agent {agentId} never got a persistent session: supervision did not boot it within 15s.");
+    }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
