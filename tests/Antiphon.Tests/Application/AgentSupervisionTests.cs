@@ -23,7 +23,13 @@ namespace Antiphon.Tests.Application;
 /// never touch healthy or non-always-on agents.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("AgentSupervision")]
+// Ungrouped on purpose: these tests drive AgentSupervisorService, which sweeps EVERY always-on
+// agent in the assembly-wide test database. A group key only serialises this class against itself,
+// so any other suite that registers a supervisor (SessionHealthTests, BridgeQueueHarness) can tick
+// one concurrently and start, reschedule or reset this test's agent underneath it — seen as an
+// inflated tick count, a zero tick count, a missing AgentSupervisionStates row, and a null
+// PersistentSessionId. Exclusive execution is the only thing that actually removes the race.
+[NotInParallel]
 public class AgentSupervisionTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
