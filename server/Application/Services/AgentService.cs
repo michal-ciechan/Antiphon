@@ -6,6 +6,8 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -14,24 +16,36 @@ public sealed class AgentService
     private static readonly SessionStatus[] LiveSessionStatuses =
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
 
+    private const string CreateFailedMessage =
+        "Agent could not be created because another operation changed agent data.";
+
+    /// <summary>
+    /// Attempts at deriving a free slug/board/project name before giving up. Each retry sees one
+    /// more committed row, so contention would have to be extreme to exhaust this.
+    /// </summary>
+    private const int GeneratedNameAttempts = 5;
+
     private readonly AppDbContext _db;
     private readonly CardWorkflowRunFactory _workflowRunFactory;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly IDirectoryWriter _directoryWriter;
+    private readonly ILogger<AgentService> _logger;
 
     public AgentService(
         AppDbContext db,
         CardWorkflowRunFactory workflowRunFactory,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        IDirectoryWriter directoryWriter)
+        IDirectoryWriter directoryWriter,
+        ILogger<AgentService> logger)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _directoryWriter = directoryWriter;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -159,37 +173,68 @@ public sealed class AgentService
         if (request.CreateWorkingDirectory)
             _directoryWriter.CreateDirectory(workingDirectory);
 
-        var now = UtcNow();
         var agentName = request.Name.Trim();
 
-        // Every agent gets its own board to organise its work. Boards belong to a project, so
-        // find-or-create a project keyed on the agent's working directory and hang the board off it.
-        var project = await ResolveProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
-        var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agentName, ct), now);
-        _db.Boards.Add(board);
-
-        var agent = new Agent
+        // The slug, board name and project name are each picked by asking "is this taken?" and then
+        // inserting, which races their unique indexes: two agents created with the same name at the
+        // same moment both see it free and both insert. The loser retries, and by then the winner's
+        // row is visible, so the retry derives the "-2" variant instead of failing the request.
+        for (var attempt = 1; ; attempt++)
         {
-            Id = Guid.NewGuid(),
-            Name = agentName,
-            Slug = await UniqueSlugAsync(Slugify(request.Name), excludeAgentId: null, ct),
-            WorkingDirectory = workingDirectory,
-            Details = request.Details?.Trim() ?? string.Empty,
-            DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId,
-            AssignmentPolicy = request.AssignmentPolicy,
-            Status = AgentStatus.Idle,
-            ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
-            BoardId = board.Id,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
+            var now = UtcNow();
 
-        _db.Agents.Add(agent);
-        await SaveChangesOrConflictAsync("Agent could not be created because another operation changed agent data.", ct);
-        await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
-        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+            // Every agent gets its own board to organise its work. Boards belong to a project, so
+            // find-or-create a project keyed on the agent's working directory and hang the board off it.
+            var project = await ResolveProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
+            var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agentName, ct), now);
+            _db.Boards.Add(board);
 
-        return await GetByIdAsync(agent.Id, ct);
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = agentName,
+                Slug = await UniqueSlugAsync(Slugify(request.Name), excludeAgentId: null, ct),
+                WorkingDirectory = workingDirectory,
+                Details = request.Details?.Trim() ?? string.Empty,
+                DefaultWorkflowTemplateId = request.DefaultWorkflowTemplateId,
+                AssignmentPolicy = request.AssignmentPolicy,
+                Status = AgentStatus.Idle,
+                ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
+                BoardId = board.Id,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            _db.Agents.Add(agent);
+
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (attempt < GeneratedNameAttempts && IsGeneratedNameCollision(ex))
+            {
+                // SaveChanges is transactional, so nothing landed. Drop the whole attempt and
+                // re-derive every generated name against the rows that are now visible.
+                _logger.LogDebug(
+                    ex,
+                    "Generated-name collision creating agent {AgentName} on attempt {Attempt}; retrying",
+                    agentName, attempt);
+                _db.ChangeTracker.Clear();
+                continue;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                throw ConflictFrom(CreateFailedMessage, ex);
+            }
+            catch (DbUpdateException ex)
+            {
+                throw ConflictFrom(CreateFailedMessage, ex);
+            }
+
+            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+
+            return await GetByIdAsync(agent.Id, ct);
+        }
     }
 
     public async Task<AgentDetailDto> UpdateAsync(Guid id, UpdateAgentRequest request, CancellationToken ct)
@@ -240,38 +285,66 @@ public sealed class AgentService
     /// </summary>
     public async Task<int> EnsureAgentBoardsAsync(CancellationToken ct)
     {
-        var orphans = await _db.Agents.Where(a => a.BoardId == null).ToListAsync(ct);
-        foreach (var agent in orphans)
+        // Work from ids and re-read each agent: this is a global sweep over every boardless agent,
+        // and the rows can move under it. One agent that cannot be linked — its project deleted
+        // between the resolve and the insert, say — is logged and skipped rather than aborting the
+        // backfill for everyone behind it. This runs during startup; failing the whole sweep on one
+        // bad row is the worst available outcome.
+        var orphanIds = await _db.Agents
+            .Where(a => a.BoardId == null)
+            .Select(a => a.Id)
+            .ToListAsync(ct);
+
+        var linked = 0;
+        foreach (var agentId in orphanIds)
         {
-            var now = UtcNow();
-            var project = await ResolveProjectForWorkingDirectoryAsync(agent.WorkingDirectory, agent.Name, now, ct);
-
-            var claimedBoardIds = await _db.Agents
-                .Where(a => a.BoardId != null)
-                .Select(a => a.BoardId!.Value)
-                .ToListAsync(ct);
-            var adopted = await _db.Boards
-                .Where(b => b.ProjectId == project.Id && b.Name == agent.Name && !claimedBoardIds.Contains(b.Id))
-                .OrderBy(b => b.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-
-            var boardId = adopted?.Id;
-            if (boardId is null)
+            try
             {
-                var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agent.Name, ct), now);
-                _db.Boards.Add(board);
-                boardId = board.Id;
-            }
+                var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct);
+                // Deleted, or linked by someone else, since the sweep began.
+                if (agent is null || agent.BoardId is not null)
+                    continue;
 
-            agent.BoardId = boardId;
-            agent.UpdatedAt = now;
-            await SaveChangesOrConflictAsync(
-                $"A default board for agent '{agent.Name}' could not be created because another operation changed agent data.",
-                ct);
-            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId }, ct);
-            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+                var now = UtcNow();
+                var project = await ResolveProjectForWorkingDirectoryAsync(agent.WorkingDirectory, agent.Name, now, ct);
+
+                var claimedBoardIds = await _db.Agents
+                    .Where(a => a.BoardId != null)
+                    .Select(a => a.BoardId!.Value)
+                    .ToListAsync(ct);
+                var adopted = await _db.Boards
+                    .Where(b => b.ProjectId == project.Id && b.Name == agent.Name && !claimedBoardIds.Contains(b.Id))
+                    .OrderBy(b => b.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                var boardId = adopted?.Id;
+                if (boardId is null)
+                {
+                    var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agent.Name, ct), now);
+                    _db.Boards.Add(board);
+                    boardId = board.Id;
+                }
+
+                agent.BoardId = boardId;
+                agent.UpdatedAt = now;
+                await SaveChangesOrConflictAsync(
+                    $"A default board for agent '{agent.Name}' could not be created because another operation changed agent data.",
+                    ct);
+                linked++;
+                await _eventBus.PublishToAllAsync("BoardChanged", new { boardId }, ct);
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+            }
+            catch (ConflictException ex)
+            {
+                // ConflictException now carries the real database error, so this line says which
+                // constraint broke instead of "something changed".
+                _logger.LogWarning(ex, "Skipped board backfill for agent {AgentId}", agentId);
+                // Drop the failed attempt; the next agent re-reads from a clean tracker.
+                _db.ChangeTracker.Clear();
+            }
         }
-        return orphans.Count;
+
+        return linked;
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)
@@ -739,20 +812,86 @@ public sealed class AgentService
             throw new ValidationException(nameof(request.CardIds), "Card ids are required.");
     }
 
+    /// <summary>
+    /// Turns a failed save into a 409. Both the inner exception and a log line are kept: this used
+    /// to swallow the exception whole and report every failure as "another operation changed agent
+    /// data", which is only true for a genuine concurrency conflict. A unique-index violation from
+    /// the check-then-insert in <see cref="UniqueSlugAsync"/> reported the same sentence, so an
+    /// intermittent test failure looked like a race on the row it had just created rather than a
+    /// collision on a name.
+    /// </summary>
     private async Task SaveChangesOrConflictAsync(string message, CancellationToken ct)
     {
         try
         {
             await _db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException ex)
         {
-            throw new ConflictException(message);
+            throw ConflictFrom(message, ex);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex)
         {
-            throw new ConflictException(message);
+            throw ConflictFrom(message, ex);
         }
+    }
+
+    /// <summary>
+    /// Builds the 409 for a failed save, logging the real error and keeping it attached.
+    /// A genuine concurrency conflict keeps the caller's wording; anything else appends what the
+    /// database actually said, because the two are not the same failure and used to be reported
+    /// identically.
+    /// </summary>
+    private ConflictException ConflictFrom(string message, DbUpdateException ex)
+    {
+        if (ex is DbUpdateConcurrencyException)
+        {
+            _logger.LogWarning(ex, "Concurrency conflict saving agent data: {Message}", message);
+            return new ConflictException(message, ex);
+        }
+
+        var detail = DescribeDbFailure(ex);
+        _logger.LogWarning(ex, "Save failed changing agent data ({Detail}): {Message}", detail, message);
+        return new ConflictException($"{message} ({detail})", ex);
+    }
+
+    /// <summary>
+    /// True when the save failed because a name this service generates was taken between the
+    /// "is it free?" check and the insert — the only failure worth retrying, since retrying
+    /// re-derives the name. Enumerated deliberately: retrying any other duplicate would loop on a
+    /// collision the retry cannot resolve.
+    /// </summary>
+    private static bool IsGeneratedNameCollision(DbUpdateException ex) =>
+        ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_Agents_Slug" or "IX_Boards_ProjectId_Name" or "IX_Projects_Name"
+        };
+
+    /// <summary>
+    /// Names the actual database failure so a 409 says which constraint broke rather than
+    /// paraphrasing. Falls back to the innermost exception message for non-Postgres providers.
+    /// </summary>
+    internal static string DescribeDbFailure(DbUpdateException ex)
+    {
+        if (ex.InnerException is PostgresException pg)
+        {
+            var constraint = string.IsNullOrEmpty(pg.ConstraintName) ? pg.TableName : pg.ConstraintName;
+            var kind = pg.SqlState switch
+            {
+                PostgresErrorCodes.UniqueViolation => "duplicate value",
+                PostgresErrorCodes.ForeignKeyViolation => "referenced row missing or still referenced",
+                PostgresErrorCodes.NotNullViolation => "required value missing",
+                PostgresErrorCodes.CheckViolation => "check constraint failed",
+                PostgresErrorCodes.SerializationFailure => "serialization failure",
+                PostgresErrorCodes.DeadlockDetected => "deadlock",
+                _ => $"database error {pg.SqlState}"
+            };
+            return string.IsNullOrEmpty(constraint) ? kind : $"{kind} on {constraint}";
+        }
+
+        var innermost = ex.GetBaseException();
+        return innermost.Message;
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

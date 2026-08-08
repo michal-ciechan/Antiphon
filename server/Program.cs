@@ -39,11 +39,20 @@ try
     builder.Host.UseSerilog((ctx, lc) =>
     {
         var logPath = ctx.Configuration["Serilog:LogPath"] ?? "logs";
+        // Console verbosity is separable from the file's. Test hosts turn this down to Warning so a
+        // failing assertion isn't buried under the run's own log, while the file keeps everything.
+        var consoleLevel =
+            Enum.TryParse<Serilog.Events.LogEventLevel>(
+                ctx.Configuration["Serilog:ConsoleMinimumLevel"], ignoreCase: true, out var parsed)
+                ? parsed
+                : Serilog.Events.LogEventLevel.Verbose;
         lc
             .ReadFrom.Configuration(ctx.Configuration)
             .Enrich.FromLogContext()
-            .WriteTo.Console(outputTemplate:
-                "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+            .WriteTo.Console(
+                restrictedToMinimumLevel: consoleLevel,
+                outputTemplate:
+                    "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
             .WriteTo.File(
                 Path.Combine(logPath, "antiphon-.log"),
                 rollingInterval: RollingInterval.Day,

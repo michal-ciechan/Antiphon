@@ -33,10 +33,14 @@ public class ProjectDeleteE2ETests
 
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly PlaywrightFixture _playwrightFixture = new();
+    private TestDiagnostics _diagnostics = null!;
 
     [Before(Test)]
-    public async Task SetupAsync()
+    public async Task SetupAsync(TestContext context)
     {
+        // Server log, browser log and any page dump land under TestOutput/Logs/<test>/.
+        _diagnostics = TestDiagnostics.For(context.Metadata.TestName);
+        _appFixture.DiagnosticsDirectory = _diagnostics.ServerLogDirectory;
         _appFixture.UsePrebuiltFrontend = true;
         await _appFixture.InitializeAsync();
         await _playwrightFixture.InitializeAsync();
@@ -163,6 +167,7 @@ public class ProjectDeleteE2ETests
         await CreateCardAsync(boardId, $"Outstanding work {suffix}");
 
         var (page, context) = await _playwrightFixture.NewPageAsync();
+        _diagnostics.Attach(page);
         var passed = false;
         try
         {
@@ -206,6 +211,7 @@ public class ProjectDeleteE2ETests
         finally
         {
             await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await _diagnostics.CompleteAsync(page, passed);
             await context.DisposeAsync();
         }
     }
@@ -225,6 +231,7 @@ public class ProjectDeleteE2ETests
         var boardId = await CreateBoardAsync(projectId, boardName);
 
         var (page, context) = await _playwrightFixture.NewPageAsync();
+        _diagnostics.Attach(page);
         var passed = false;
         try
         {
@@ -261,6 +268,7 @@ public class ProjectDeleteE2ETests
         finally
         {
             await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await _diagnostics.CompleteAsync(page, passed);
             await context.DisposeAsync();
         }
     }

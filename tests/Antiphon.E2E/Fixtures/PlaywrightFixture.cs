@@ -278,12 +278,15 @@ public class PlaywrightFixture
         var dir = AppContext.BaseDirectory;
         while (dir is not null)
         {
-            if (Directory.Exists(Path.Combine(dir, ".git")))
+            // Anchor on the solution file, not on `.git` being a directory: in a git worktree
+            // `.git` is a FILE, so the old check walked past the root and dumped screenshots
+            // relative to the CWD instead — artefacts you cannot find are artefacts you do not have.
+            if (File.Exists(Path.Combine(dir, "Antiphon.sln")))
                 return dir;
             dir = Directory.GetParent(dir)?.FullName;
         }
 
-        // Fall back to CWD if .git not found (e.g., in Docker)
+        // Fall back to CWD if the solution isn't found (e.g., in Docker)
         return Directory.GetCurrentDirectory();
     }
 

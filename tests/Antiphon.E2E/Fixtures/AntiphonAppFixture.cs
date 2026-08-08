@@ -48,6 +48,14 @@ public class AntiphonAppFixture
     public bool UseMockExecutor { get; set; }
 
     /// <summary>
+    /// Where the app should write its Serilog file sink. Set to a <see cref="TestDiagnostics"/>
+    /// directory to get this test's server log on its own, instead of every test's log interleaved
+    /// on stdout. Setting it also turns the console sink down to Warning so a failing assertion
+    /// stays visible; leave it null to keep the previous behaviour.
+    /// </summary>
+    public string? DiagnosticsDirectory { get; set; }
+
+    /// <summary>
     /// The real TCP address that both HttpClient and Playwright can use.
     /// </summary>
     public string BaseAddress { get; private set; } = null!;
@@ -73,7 +81,8 @@ public class AntiphonAppFixture
             connectionString,
             port,
             UseMockExecutor,
-            _workspacePath
+            _workspacePath,
+            DiagnosticsDirectory
         );
 
         // Trigger host creation (WAF builds host on first access)
@@ -142,6 +151,7 @@ public class AntiphonAppFixture
             var clientPath = Path.Combine(dir, "client");
             if (Directory.Exists(clientPath))
             {
+                EnsureClientBundleIsCurrent(clientPath);
                 return clientPath;
             }
             dir = Directory.GetParent(dir)?.FullName;
@@ -149,6 +159,49 @@ public class AntiphonAppFixture
 
         throw new DirectoryNotFoundException(
             "Could not find client/ directory. Ensure the frontend has been built with 'npm run build'.");
+    }
+
+    /// <summary>
+    /// Refuses to run browser tests against a stale bundle.
+    ///
+    /// These tests serve <c>client/dist</c>, which is a build artefact nothing rebuilds
+    /// automatically — so a browser test silently asserted against whatever frontend was last
+    /// built. A month-old bundle made new UI tests fail for no visible reason, and, far worse,
+    /// would let a test of REMOVED UI keep passing. Failing loudly with the offending file is the
+    /// only honest option: a green browser suite has to mean the current frontend is green.
+    /// </summary>
+    private static void EnsureClientBundleIsCurrent(string clientPath)
+    {
+        var indexHtml = Path.Combine(clientPath, "dist", "index.html");
+        if (!File.Exists(indexHtml))
+        {
+            throw new InvalidOperationException(
+                $"client/dist has not been built ({indexHtml} is missing). Run 'npm run build' in client/ "
+                + "before the E2E suite — browser tests serve this bundle.");
+        }
+
+        var builtAt = File.GetLastWriteTimeUtc(indexHtml);
+        var sourceRoot = Path.Combine(clientPath, "src");
+        if (!Directory.Exists(sourceRoot))
+            return;
+
+        var newer = Directory
+            .EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
+            .Where(f => !f.EndsWith(".test.ts", StringComparison.OrdinalIgnoreCase)
+                && !f.EndsWith(".test.tsx", StringComparison.OrdinalIgnoreCase)
+                && !f.EndsWith(".stories.tsx", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new { Path = f, Modified = File.GetLastWriteTimeUtc(f) })
+            .Where(f => f.Modified > builtAt)
+            .OrderByDescending(f => f.Modified)
+            .FirstOrDefault();
+
+        if (newer is not null)
+        {
+            throw new InvalidOperationException(
+                $"client/dist is stale: built {builtAt:u}, but {Path.GetRelativePath(clientPath, newer.Path)} "
+                + $"changed {newer.Modified:u}. Run 'npm run build' in client/ — otherwise these browser "
+                + "tests assert against an old frontend and their result means nothing.");
+        }
     }
 
     private static int GetRandomAvailablePort()
@@ -196,6 +249,7 @@ public class AntiphonAppFixture
         private readonly int _port;
         private readonly bool _useMockExecutor;
         private readonly string _workspacePath;
+        private readonly string? _diagnosticsDirectory;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -204,7 +258,8 @@ public class AntiphonAppFixture
             string connectionString,
             int port,
             bool useMockExecutor,
-            string workspacePath
+            string workspacePath,
+            string? diagnosticsDirectory
         )
         {
             _clientDistPath = clientDistPath;
@@ -212,6 +267,7 @@ public class AntiphonAppFixture
             _port = port;
             _useMockExecutor = useMockExecutor;
             _workspacePath = workspacePath;
+            _diagnosticsDirectory = diagnosticsDirectory;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -223,7 +279,7 @@ public class AntiphonAppFixture
 
             builder.ConfigureAppConfiguration((_, config) =>
             {
-                config.AddInMemoryCollection(new Dictionary<string, string?>
+                var settings = new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:DefaultConnection"] = _connectionString,
                     ["Git:WorkspacePath"] = _workspacePath,
@@ -232,7 +288,17 @@ public class AntiphonAppFixture
                     ["Agents:DefaultDefinition"] = "e2e-raw",
                     ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
                     ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe")
-                });
+                };
+
+                if (_diagnosticsDirectory is not null)
+                {
+                    // Full detail to this test's own file; only warnings and worse to stdout, so the
+                    // assertion that failed is not buried under the run's own log.
+                    settings["Serilog:LogPath"] = _diagnosticsDirectory;
+                    settings["Serilog:ConsoleMinimumLevel"] = "Warning";
+                }
+
+                config.AddInMemoryCollection(settings);
             });
 
             builder.ConfigureServices(services =>

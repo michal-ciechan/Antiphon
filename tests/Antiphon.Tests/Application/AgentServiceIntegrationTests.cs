@@ -9,6 +9,7 @@ using Antiphon.Server.Infrastructure.FileSystem;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -747,7 +748,8 @@ public class AgentServiceIntegrationTests
             new CardWorkflowRunFactory(db, TimeProvider.System),
             eventBus,
             TimeProvider.System,
-            directoryWriter ?? new NoOpDirectoryWriter());
+            directoryWriter ?? new NoOpDirectoryWriter(),
+            NullLogger<AgentService>.Instance);
     }
 
     private sealed class NoOpDirectoryWriter : IDirectoryWriter

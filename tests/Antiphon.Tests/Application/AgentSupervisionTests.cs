@@ -38,7 +38,10 @@ public class AgentSupervisionTests
             var agent = await CreateAlwaysOnAgentAsync(harness, tempRoot);
 
             // Tick 1: schedules the boot start (attempt 1, base backoff).
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBe(1);
+            // TickAsync counts every agent it acted on across the whole database, so an exact count
+            // asserts "no other test's always-on agent needed work" — which is not this test's
+            // subject and fails whenever one does. The per-agent checks below are the real assertion.
+            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
             await using (var verify = CreateContext())
             {
                 var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
@@ -49,7 +52,7 @@ public class AgentSupervisionTests
 
             // Tick 2 (past the due time): actually starts the agent.
             harness.Clock.Advance(TimeSpan.FromSeconds(10));
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBe(1);
+            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
             var detail = await harness.Scope.ServiceProvider.GetRequiredService<AgentService>()
@@ -136,9 +139,18 @@ public class AgentSupervisionTests
                     i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.SuspendedByUser)).ShouldBeTrue();
             }
 
-            // Suspended: ticks do nothing, forever.
+            // Suspended: ticks do nothing to THIS agent, forever. Asserted per-agent rather than on
+            // the global tick count, which also counts other tests' always-on agents.
             harness.Clock.Advance(TimeSpan.FromDays(2));
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBe(0);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
+            await using (var verify = CreateContext())
+            {
+                var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == agent.Id);
+                state.Suspended.ShouldBeTrue();
+                state.NextRestartAt.ShouldBeNull();
+                (await verify.AgentIncidents.CountAsync(
+                    i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RestartScheduled)).ShouldBe(0);
+            }
 
             // Manual start lifts the latch.
             await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
@@ -335,8 +347,10 @@ public class AgentSupervisionTests
             var plain = await harness.Scope.ServiceProvider.GetRequiredService<AgentService>()
                 .CreateAsync(new CreateAgentRequest("Plain", workspace), CancellationToken.None);
 
-            (await harness.Supervisor().TickAsync(CancellationToken.None)).ShouldBe(0);
+            await harness.Supervisor().TickAsync(CancellationToken.None);
 
+            // "Ignored entirely" is asserted against this agent, not the global tick count: another
+            // test's always-on agent legitimately makes that count non-zero.
             await using var verify = CreateContext();
             (await verify.AgentSupervisionStates.AnyAsync(s => s.AgentId == plain.Id)).ShouldBeFalse();
             (await verify.AgentIncidents.AnyAsync(i => i.AgentId == plain.Id)).ShouldBeFalse();
