@@ -129,6 +129,60 @@ const threadStatusColor: Record<ReviewThreadStatus, string> = {
   Resolved: 'green',
 }
 
+export type FileViewMode = 'diff' | 'raw' | 'rendered'
+
+/** The modes offered for a file, in tab order. Rendered is markdown-only; diff needs a baseline. */
+export function viewModesFor(file: AgentFileDto): { label: string; value: FileViewMode }[] {
+  return [
+    ...(file.gitStatus !== 'None' && !file.external
+      ? [{ label: 'Diff', value: 'diff' as const }]
+      : []),
+    { label: 'Raw', value: 'raw' as const },
+    ...(file.isMarkdown ? [{ label: 'Rendered', value: 'rendered' as const }] : []),
+  ]
+}
+
+/**
+ * Rendered wins whenever the file can render — reading a doc is the common case, and the diff is
+ * one click away. Falls back to the diff for changed code, then raw. Derived from
+ * {@link viewModesFor} so the default is always a mode that is actually offered (an external
+ * changed file has no Diff tab, and used to default to it).
+ */
+export function defaultViewMode(file: AgentFileDto): FileViewMode {
+  const modes = viewModesFor(file)
+  for (const preferred of ['rendered', 'diff', 'raw'] as const)
+    if (modes.some((m) => m.value === preferred)) return preferred
+  return 'raw'
+}
+
+/**
+ * Which file the files view has open, and in which mode — hoistable so a caller can back it with
+ * the URL. `view` is null whenever the file is showing its DEFAULT mode: only a deliberate,
+ * non-default choice is worth remembering (and worth the query-string noise).
+ */
+export interface FilesViewSelection {
+  selectedPath: string | null
+  view: FileViewMode | null
+  /** Open a file (null closes it). Clears the view — a different file gets its own default. */
+  select: (path: string | null) => void
+  /** null = back to the file's default. */
+  setView: (view: FileViewMode | null) => void
+}
+
+function useLocalFilesViewSelection(initialSelectedPath: string | null): FilesViewSelection {
+  const [selectedPath, setSelectedPath] = useState<string | null>(initialSelectedPath)
+  const [view, setView] = useState<FileViewMode | null>(null)
+  return {
+    selectedPath,
+    view,
+    select: (path) => {
+      setSelectedPath(path)
+      setView(null)
+    },
+    setView,
+  }
+}
+
 /** Tree/viewer heights — CSS values; the defaults suit the embedded AgentsPage panel. */
 export interface FilesPanelHeights {
   /** Tree scroll cap — embedded layout only (the sidebar layout flex-fills the tree). */
@@ -144,6 +198,7 @@ export function FilesReviewPanel({
   heights = EMBEDDED_HEIGHTS,
   showExpand = false,
   layout = 'embedded',
+  selection,
 }: {
   agentId: string
   /** Storybook/screenshot hook: pre-open a file without a click. */
@@ -158,6 +213,12 @@ export function FilesReviewPanel({
    * middle — its filename/mode/mark row sits at the very top (the full-screen files page).
    */
   layout?: 'embedded' | 'sidebar'
+  /**
+   * Hoist which file/view is open to the caller — the full-screen page passes the URL-backed store
+   * so a refresh reopens the same file (see useFilesViewUrlState). Omit and the panel keeps the
+   * selection in local state, which is all the embedded panel and the stories need.
+   */
+  selection?: FilesViewSelection
 }) {
   // Baseline defaults to the latest "work completed" checkpoint; the server degrades to HEAD
   // when none exists (the response's baseline.kind says which actually applied).
@@ -167,7 +228,8 @@ export function FilesReviewPanel({
   const workspaceTree = useAgentFilesTree(agentId, showAll)
   const threads = useReviewThreads(agentId)
   const mark = useMarkFilesReview(agentId)
-  const [selectedPath, setSelectedPath] = useState<string | null>(initialSelectedPath)
+  const local = useLocalFilesViewSelection(initialSelectedPath)
+  const { selectedPath, view, select, setView } = selection ?? local
   const [onlyUnviewed, setOnlyUnviewed] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; prefix: string } | null>(null)
 
@@ -239,7 +301,7 @@ export function FilesReviewPanel({
         depth={0}
         selectedPath={selectedPath}
         threadsByPath={threadsByPath}
-        onSelect={setSelectedPath}
+        onSelect={select}
         onContextMenu={(e, prefix) => {
           e.preventDefault()
           setContextMenu({ x: e.clientX, y: e.clientY, prefix })
@@ -257,7 +319,7 @@ export function FilesReviewPanel({
               depth={0}
               selected={selectedPath === f.path}
               threadCount={threadsByPath.get(f.path)?.length ?? 0}
-              onSelect={setSelectedPath}
+              onSelect={select}
               onContextMenu={(e) => e.preventDefault()}
             />
           ))}
@@ -282,6 +344,8 @@ export function FilesReviewPanel({
       since={since}
       threads={threadsByPath.get(selectedFile.path) ?? []}
       viewerHeight={heights.viewer}
+      view={view}
+      onViewChange={setView}
       onMark={(level) => doMark({ paths: [selectedFile.path], level })}
     />
   ) : (
@@ -708,6 +772,8 @@ function FileViewer({
   since,
   threads,
   viewerHeight,
+  view,
+  onViewChange,
   onMark,
 }: {
   agentId: string
@@ -718,13 +784,17 @@ function FileViewer({
   since: string
   threads: ReviewThreadDto[]
   viewerHeight: number | string
+  /** null = show the file's default mode. Owned by the panel so a URL can carry it. */
+  view: FileViewMode | null
+  onViewChange: (view: FileViewMode | null) => void
   onMark: (level: 'Viewed' | 'Reviewed' | null) => void
 }) {
-  // Markdown opens Rendered even when the file changed (feature 008): the home page is a reading
-  // surface first, and Diff stays one click away. Non-markdown keeps diff-first for review.
-  const [mode, setMode] = useState<string>(
-    file.isMarkdown ? 'rendered' : file.gitStatus !== 'None' ? 'diff' : 'raw',
-  )
+  const modes = useMemo(() => viewModesFor(file), [file])
+  // A view restored from a URL can name a mode this file does not offer (?view=rendered on a .ts):
+  // fall back rather than render a SegmentedControl with no matching option. The fallback is
+  // defaultViewMode, which already opens markdown in Rendered even when the file changed
+  // (feature 008): the home page is a reading surface first, and Diff stays one click away.
+  const mode = view && modes.some((m) => m.value === view) ? view : defaultViewMode(file)
   const work = useAgentFileContent(agentId, file.path, 'work', since)
   const head = useAgentFileContent(agentId, file.path, 'head', since)
   const [commentLine, setCommentLine] = useState<number | null>(null)
@@ -735,11 +805,6 @@ function FileViewer({
   const createThread = useCreateReviewThread(agentId)
 
   const language = useMemo(() => languageFor(file.path), [file.path])
-  const modes = [
-    ...(file.gitStatus !== 'None' && !file.external ? [{ label: 'Diff', value: 'diff' }] : []),
-    { label: 'Raw', value: 'raw' },
-    ...(file.isMarkdown ? [{ label: 'Rendered', value: 'rendered' }] : []),
-  ]
 
   const snippetFor = (line: number): string | null => {
     const lines = (work.data?.text ?? '').split('\n')
@@ -780,7 +845,14 @@ function FileViewer({
           </Text>
         </Group>
         <Group gap="xs">
-          <SegmentedControl size="xs" data={modes} value={mode} onChange={setMode} />
+          <SegmentedControl
+            size="xs"
+            data={modes}
+            value={mode}
+            // Only a NON-default choice is remembered — picking the default clears it again, so
+            // the URL never carries a redundant ?view=.
+            onChange={(next) => onViewChange(next === defaultViewMode(file) ? null : (next as FileViewMode))}
+          />
           {/* Hand this file to an agent from where you are reading it — the goal and the scope
               lease are prefilled with the path, and nothing else is inferred. */}
           <Button

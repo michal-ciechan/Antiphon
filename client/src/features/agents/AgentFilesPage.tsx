@@ -1,10 +1,12 @@
-import { Badge, Box, Group, Paper, SegmentedControl, Text, Title, Tooltip } from '@mantine/core'
+import { Box, Group, Paper, SegmentedControl, Text, Title, Tooltip } from '@mantine/core'
 import { useLocalStorage } from '@mantine/hooks'
 import { Link, useParams } from 'react-router'
 import { TbArrowLeft, TbLayoutBottombar, TbLayoutSidebarRight } from 'react-icons/tb'
 import { useAgent } from '../../api/agents'
+import { AgentActivityBadge } from './AgentActivityBadge'
 import { FilesReviewPanel, type FilesPanelHeights } from './FilesReviewPanel'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
+import { useFilesViewUrlState } from './useFilesViewUrlState'
 
 type DockSide = 'bottom' | 'right'
 
@@ -17,16 +19,6 @@ const DOCK_SIZE: Record<DockSide, number> = { bottom: 380, right: 520 }
 const HEIGHTS: Record<DockSide, FilesPanelHeights> = {
   bottom: { viewer: 'max(260px, calc(100vh - 545px))' },
   right: { viewer: 'max(260px, calc(100vh - 165px))' },
-}
-
-const statusColor: Record<string, string> = {
-  Working: 'yellow',
-  Ready: 'green',
-  Idle: 'green',
-  WaitingForHumanReview: 'orange',
-  Stopped: 'gray',
-  Disconnected: 'red',
-  Failed: 'red',
 }
 
 /**
@@ -43,6 +35,9 @@ export function AgentFilesPage() {
     key: 'antiphon-files-conversation-dock-v2',
     defaultValue: 'right',
   })
+  // The open file (and any non-default view) lives in the query string — refreshing this page,
+  // or sharing the link, reopens what you were reading.
+  const selection = useFilesViewUrlState()
 
   if (!id) return null
   const sessionId = agent.data?.liveSession?.id ?? agent.data?.persistentSessionId ?? null
@@ -62,11 +57,8 @@ export function AgentFilesPage() {
             </Link>
           </Tooltip>
           <Title order={4}>{agent.data?.name ?? 'Agent'} — files</Title>
-          {agent.data && (
-            <Badge size="sm" variant="light" color={statusColor[agent.data.status] ?? 'gray'}>
-              {agent.data.status}
-            </Badge>
-          )}
+          {/* showIdle: this header has no terminal icon, so the badge is the only status here. */}
+          {agent.data && <AgentActivityBadge agent={agent.data} showIdle />}
           <Text size="xs" c="dimmed" truncate style={{ maxWidth: 420 }}>
             {agent.data?.workingDirectory}
           </Text>
@@ -105,7 +97,7 @@ export function AgentFilesPage() {
         }}
       >
         <Box px="md" py="sm" style={{ flexGrow: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
-          <FilesReviewPanel agentId={id} heights={HEIGHTS[dock]} layout="sidebar" />
+          <FilesReviewPanel agentId={id} heights={HEIGHTS[dock]} layout="sidebar" selection={selection} />
         </Box>
 
         <Paper

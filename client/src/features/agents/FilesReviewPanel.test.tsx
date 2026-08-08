@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentFileDto } from '../../api/review'
-import { buildTree, isUnviewed, mergeTreePaths } from './FilesReviewPanel'
+import { buildTree, defaultViewMode, isUnviewed, mergeTreePaths, viewModesFor } from './FilesReviewPanel'
 
 function file(path: string, overrides: Partial<AgentFileDto> = {}): AgentFileDto {
   return {
@@ -36,6 +36,31 @@ describe('isUnviewed', () => {
   // "All files" context entries are browsable but outside the review set — never "unviewed".
   it('context-only files never need attention', () => {
     expect(isUnviewed(file('a.md', { contextOnly: true }))).toBe(false)
+  })
+})
+
+describe('defaultViewMode', () => {
+  it('prefers Rendered for markdown even when the file has changes', () => {
+    expect(defaultViewMode(file('docs/README.md', { gitStatus: 'Modified' }))).toBe('rendered')
+    expect(defaultViewMode(file('docs/README.md', { gitStatus: 'None' }))).toBe('rendered')
+  })
+
+  it('falls back to Diff for changed code, then Raw', () => {
+    expect(defaultViewMode(file('src/app.ts', { gitStatus: 'Modified' }))).toBe('diff')
+    expect(defaultViewMode(file('src/app.ts', { gitStatus: 'None' }))).toBe('raw')
+  })
+
+  // An external file has no Diff tab (no baseline to diff against), so defaulting to 'diff' would
+  // have selected a SegmentedControl option that is not rendered.
+  it('never defaults to a mode the file does not offer', () => {
+    const externalChange = file('C:/elsewhere/app.ts', { gitStatus: 'Modified', external: true })
+    expect(viewModesFor(externalChange).map((m) => m.value)).toEqual(['raw'])
+    expect(defaultViewMode(externalChange)).toBe('raw')
+  })
+
+  it('offers Rendered only for markdown', () => {
+    expect(viewModesFor(file('a.md')).map((m) => m.value)).toEqual(['diff', 'raw', 'rendered'])
+    expect(viewModesFor(file('a.ts')).map((m) => m.value)).toEqual(['diff', 'raw'])
   })
 })
 

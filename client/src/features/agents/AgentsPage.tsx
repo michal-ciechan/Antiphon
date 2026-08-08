@@ -39,6 +39,7 @@ import { Link, useSearchParams } from 'react-router'
 import type { AgentIncidentDto, AgentSummaryDto } from '../../api/agents'
 import { useAgent, useAgentIncidents, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
+import { AgentActivityBadge } from './AgentActivityBadge'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { FilesReviewPanel } from './FilesReviewPanel'
 import { AgentCliModal } from './AgentCliModal'
@@ -383,42 +384,6 @@ export function AgentsPage() {
       </Drawer>
     </Box>
   )
-}
-
-/**
- * The card's activity badge — shown only when it says something real: "Working" with a spinner
- * while the session is genuinely mid-turn (transcript-derived, not merely "started"), and the
- * attention states (review wanted / failed / disconnected). Quiet states show nothing — liveness
- * is the terminal icon's colour, not a badge.
- */
-function AgentActivityBadge({ agent }: { agent: AgentSummaryDto }) {
-  if (agent.working) {
-    return (
-      <Badge
-        color="yellow"
-        variant="light"
-        leftSection={<Loader size={10} color="yellow" type="dots" />}
-        data-testid={`agent-working-${agent.id}`}
-      >
-        Working
-      </Badge>
-    )
-  }
-  if (agent.status === 'WaitingForHumanReview') {
-    return (
-      <Badge color="orange" variant="light">
-        Review
-      </Badge>
-    )
-  }
-  if (agent.status === 'Failed' || agent.status === 'Disconnected') {
-    return (
-      <Badge color="red" variant="light">
-        {agent.status}
-      </Badge>
-    )
-  }
-  return null
 }
 
 const SEVERITY_COLORS: Record<string, string> = {
