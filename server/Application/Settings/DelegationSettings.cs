@@ -92,12 +92,12 @@ public sealed class DelegationSettings
     /// <summary>
     /// How long after settling a warm delegate answers ONLY to the run that just used it, so a
     /// caller can send follow-up work to the same agent (same context) without racing the rest of
-    /// the queue for it.
+    /// the queue for it. After this it is back in the general pool.
     /// </summary>
-    public int PoolReservedForCallerMinutes { get; set; } = 2;
+    public int PoolReservedForCallerMinutes { get; set; } = 5;
 
     /// <summary>Idle this long and the warm delegate is retired — session stopped, row deleted.</summary>
-    public int PoolIdleRetireMinutes { get; set; } = 5;
+    public int PoolIdleRetireMinutes { get; set; } = 60;
 
     /// <summary>
     /// At most this many warm delegates per directory; the oldest surplus is retired immediately.

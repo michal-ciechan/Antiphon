@@ -215,7 +215,7 @@ runner, an always-on assistant — which `Agent.AlwaysOn` already models.
 > (`Agent.IsPoolDelegate` / `PoolIdleSince`), and dispatch reuses before it spawns:
 >
 > - **Selection**: same directory, same tier, live session. For
->   `Delegation:PoolReservedForCallerMinutes` (default 2) after settling, the agent answers only
+>   `Delegation:PoolReservedForCallerMinutes` (default 5) after settling, the agent answers only
 >   to the run that just used it — so `-OnAgent <shortTaskId>` follow-ups keep their context
 >   without racing the queue. After the window it serves anyone; release is a pure time
 >   comparison, no state change.
@@ -228,7 +228,7 @@ runner, an always-on assistant — which `Agent.AlwaysOn` already models.
 >   orchestrator's children would parent to a settled task.
 > - **A busy pinned agent is waited for**, not interrupted: delivering a follow-up mid-task
 >   would land between the running task's turns and corrupt both correlations.
-> - **The janitor bounds the trade**: idle past `PoolIdleRetireMinutes` (default 5) → retired;
+> - **The janitor bounds the trade**: idle past `PoolIdleRetireMinutes` (default 60) → retired;
 >   more than `PoolMaxIdlePerDirectory` (default 3) warm in one directory → oldest retired. That
 >   cap is the worker-scaling knob per directory; `MaxConcurrentTasks` stays the global one.
 > - Worktree delegates are never pooled (their directory dies with the merge); a user's standing

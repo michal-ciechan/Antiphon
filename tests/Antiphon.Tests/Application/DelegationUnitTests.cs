@@ -437,6 +437,25 @@ public class DelegationDenyHookPolicyTests
 }
 
 /// <summary>
+/// The shipped pool timings are product decisions, not incidental values: reserved for the caller
+/// for FIVE minutes (follow-ups keep their context), back in the general pool after, retired after
+/// an HOUR idle. A refactor that silently shortens these turns warm reuse back into cold starts.
+/// </summary>
+[Category("Unit")]
+public class DelegationPoolDefaultsTests
+{
+    [Test]
+    public void the_shipped_pool_timings_are_five_minutes_reserved_and_an_hour_to_retire()
+    {
+        var settings = new DelegationSettings();
+        settings.PoolEnabled.ShouldBeTrue();
+        settings.PoolReservedForCallerMinutes.ShouldBe(5);
+        settings.PoolIdleRetireMinutes.ShouldBe(60);
+        settings.PoolMaxIdlePerDirectory.ShouldBe(3);
+    }
+}
+
+/// <summary>
 /// A delegate that ends its turn asking something needs an ANSWER, not a retry — so it comes back
 /// Blocked rather than Succeeded. Deliberately conservative: a report that merely mentions a
 /// question mid-text is still a finished report.

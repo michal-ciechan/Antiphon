@@ -101,8 +101,10 @@ the root to be added rather than working around it.
 
 ## Follow-up work: same agent, same context
 
-A delegate stays WARM for a few minutes after it reports — its session, and everything it just
-read, is still alive. Work that builds on a task's result should go back to that agent:
+A delegate stays WARM after it reports — its session, and everything it just read, is still alive.
+For the first five minutes it is reserved for YOUR run; after that it serves any work in its
+directory, until it retires after an hour idle. Work that builds on a task's result should go back
+to that agent:
 
 ```powershell
 pwsh -NoProfile -File scripts/delegate.ps1 -OnAgent 7f3a2b91 -Goal "now add the edge-case tests for what you just wrote"
