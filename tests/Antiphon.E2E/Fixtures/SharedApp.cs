@@ -24,7 +24,13 @@ public static class SharedApp
         {
             if (_fixture is null)
             {
-                var fixture = new AntiphonAppFixture();
+                var fixture = new AntiphonAppFixture
+                {
+                    // One host serves every test that opts in, so its log cannot be per-test. Name
+                    // it for what it is, rather than letting it land under whichever test happened
+                    // to start it first and read as that test's server log.
+                    DiagnosticsDirectory = TestDiagnostics.For("_shared-app").Directory
+                };
                 await fixture.InitializeAsync();
                 _fixture = fixture;
             }

@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Playwright;
+using TUnit.Core;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -29,7 +31,15 @@ public sealed class TestDiagnostics
     private static readonly string LogRoot = Path.Combine(
         FindRepoRoot(), "tests", "Antiphon.E2E", "TestOutput", "Logs");
 
+    /// <summary>
+    /// One instance per test per process run. Fixtures ask for "the current test's diagnostics"
+    /// independently — the app fixture for the server log, the browser fixture for the page — and
+    /// they must land in the same directory, and only clear it once.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, TestDiagnostics> Active = new();
+
     private readonly object _gate = new();
+    private int _completed;
 
     private TestDiagnostics(string testName, string directory)
     {
@@ -45,19 +55,41 @@ public sealed class TestDiagnostics
     public string ServerLogDirectory => Directory;
 
     /// <summary>
-    /// Opens (and clears) the artefact directory for the calling test. Clearing matters: a stale
-    /// log from the previous run is worse than none, because it looks current.
+    /// Diagnostics for the test TUnit is currently running. This is what the fixtures call, so
+    /// every E2E test gets its own server log, browser log and failure dump without opting in —
+    /// diagnostics you have to remember to switch on are diagnostics you do not have on the run
+    /// that needed them.
     /// </summary>
-    public static TestDiagnostics For([CallerMemberName] string testName = "")
+    public static TestDiagnostics ForCurrentTest()
     {
-        var directory = Path.Combine(LogRoot, Sanitize(testName));
+        var details = TestContext.Current?.Metadata.TestDetails;
+        return details is null
+            ? Get("_unattributed", "_unattributed")
+            : Get($"{details.ClassType.Name}.{details.TestName}", details.ClassType.Name, details.TestName);
+    }
+
+    /// <summary>Diagnostics for a named test. Prefer <see cref="ForCurrentTest"/>.</summary>
+    public static TestDiagnostics For([CallerMemberName] string testName = "") =>
+        Get(testName, testName);
+
+    private static TestDiagnostics Get(string key, params string[] pathSegments) =>
+        Active.GetOrAdd(key, _ => Create(pathSegments));
+
+    /// <summary>
+    /// Opens (and clears) the artefact directory. Clearing matters: a stale log from the previous
+    /// run is worse than none, because it looks current.
+    /// </summary>
+    private static TestDiagnostics Create(string[] pathSegments)
+    {
+        var segments = new[] { LogRoot }.Concat(pathSegments.Select(Sanitize)).ToArray();
+        var directory = Path.Combine(segments);
         if (System.IO.Directory.Exists(directory))
         {
             foreach (var file in System.IO.Directory.EnumerateFiles(directory))
                 TryDelete(file);
         }
         System.IO.Directory.CreateDirectory(directory);
-        return new TestDiagnostics(testName, directory);
+        return new TestDiagnostics(pathSegments[^1], directory);
     }
 
     /// <summary>Records a line in this test's own log, timestamped.</summary>
@@ -100,6 +132,11 @@ public sealed class TestDiagnostics
     /// </summary>
     public async Task CompleteAsync(IPage? page, bool passed)
     {
+        // Browser tests complete via CaptureOnCompletionAsync; the app fixture completes everything
+        // else on teardown. Whichever runs first wins, so the pointer is printed once.
+        if (Interlocked.Exchange(ref _completed, 1) == 1)
+            return;
+
         if (!passed && page is not null)
         {
             try
@@ -116,6 +153,21 @@ public sealed class TestDiagnostics
         Console.WriteLine(passed
             ? $"[diagnostics] {TestName} passed — artefacts: {Directory}"
             : $"[diagnostics] {TestName} FAILED — artefacts: {Directory}");
+    }
+
+    /// <summary>
+    /// Completes using TUnit's own verdict, for tests with no page to dump — the API-only E2E
+    /// tests, which previously left no trace of which log directory belonged to the failure.
+    /// The test's exception is recorded next to its server log.
+    /// </summary>
+    public Task CompleteFromContextAsync()
+    {
+        var result = TestContext.Current?.Execution.Result;
+        var failure = result?.Exception;
+        if (failure is not null)
+            Append("notes.log", $"[failure] {failure}");
+
+        return CompleteAsync(page: null, passed: failure is null);
     }
 
     private void Append(string fileName, string line)

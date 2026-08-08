@@ -34,6 +34,7 @@ public class AntiphonAppFixture
     private IHost? _kestrelHost;
     private WebApplicationFactory<Program>? _factory;
     private string? _workspacePath;
+    private TestDiagnostics? _diagnostics;
 
     /// <summary>
     /// When true, the app serves prebuilt React assets from wwwroot (client/dist).
@@ -48,10 +49,10 @@ public class AntiphonAppFixture
     public bool UseMockExecutor { get; set; }
 
     /// <summary>
-    /// Where the app should write its Serilog file sink. Set to a <see cref="TestDiagnostics"/>
-    /// directory to get this test's server log on its own, instead of every test's log interleaved
-    /// on stdout. Setting it also turns the console sink down to Warning so a failing assertion
-    /// stays visible; leave it null to keep the previous behaviour.
+    /// Where the app writes its Serilog file sink. Defaults to the running test's
+    /// <see cref="TestDiagnostics"/> directory, so every E2E test gets its own server log rather
+    /// than one interleaved stream on stdout, and the console sink drops to Warning so a failing
+    /// assertion stays visible. Set explicitly only to override the location.
     /// </summary>
     public string? DiagnosticsDirectory { get; set; }
 
@@ -69,6 +70,15 @@ public class AntiphonAppFixture
 
     public async Task InitializeAsync()
     {
+        // Opt-out, not opt-in: a test that never thought about diagnostics still gets them.
+        // Only adopt the running test when the caller did not choose a directory — a fixture shared
+        // across tests (SharedApp) must not file its log under whichever test happened to start it.
+        if (DiagnosticsDirectory is null)
+        {
+            _diagnostics = TestDiagnostics.ForCurrentTest();
+            DiagnosticsDirectory = _diagnostics.Directory;
+        }
+
         await _container.StartAsync();
 
         var connectionString = _container.GetConnectionString();
@@ -104,10 +114,58 @@ public class AntiphonAppFixture
 
         BaseAddress = $"http://127.0.0.1:{port}";
         HttpClient = CreateClient();
+
+        await RecordSessionRunnerReachabilityAsync();
+    }
+
+    /// <summary>
+    /// Records whether the configured session runner is actually there.
+    ///
+    /// This fixture does NOT start one — it uses the <c>SessionRunner:BaseUrl</c> from
+    /// appsettings.json and talks to whatever happens to be listening. When nothing is (or when an
+    /// unrelated process has taken the port — a stray node dev server was squatting it, answering
+    /// 404), every test that needs a live session fails 30-60s later with "did not reach Running
+    /// status" and no hint as to why. One line up front turns that into an obvious answer.
+    /// </summary>
+    private async Task RecordSessionRunnerReachabilityAsync()
+    {
+        if (_diagnostics is null || _kestrelHost is null)
+            return;
+
+        var baseUrl = _kestrelHost.Services
+            .GetRequiredService<IConfiguration>()["SessionRunner:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _diagnostics.Note("[session-runner] no SessionRunner:BaseUrl configured");
+            return;
+        }
+
+        using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        try
+        {
+            var response = await probe.GetAsync($"{baseUrl.TrimEnd('/')}/sessions");
+            _diagnostics.Note(response.IsSuccessStatusCode
+                ? $"[session-runner] {baseUrl} responding ({(int)response.StatusCode})"
+                : $"[session-runner] {baseUrl} answered {(int)response.StatusCode} for /sessions — "
+                    + "something is on that port but it is not a session runner. "
+                    + "Tests needing a live agent session will fail.");
+        }
+        catch (Exception ex)
+        {
+            _diagnostics.Note(
+                $"[session-runner] {baseUrl} unreachable ({ex.GetBaseException().Message}). "
+                + "Tests needing a live agent session will fail.");
+        }
     }
 
     public async Task DisposeAsync()
     {
+        // Covers the API-only tests, which have no page and so never called
+        // CaptureOnCompletionAsync; a no-op when they did. Skipped for a fixture with a
+        // caller-chosen directory, which is not tied to one test's pass/fail.
+        if (_diagnostics is not null)
+            await _diagnostics.CompleteFromContextAsync();
+
         HttpClient?.Dispose();
 
         if (_kestrelHost is not null)
@@ -296,6 +354,12 @@ public class AntiphonAppFixture
                     // assertion that failed is not buried under the run's own log.
                     settings["Serilog:LogPath"] = _diagnosticsDirectory;
                     settings["Serilog:ConsoleMinimumLevel"] = "Warning";
+                    // EF logs every command it runs; at Information the file is ~90% SQL and the
+                    // one line explaining the failure is impossible to find. Warning keeps command
+                    // ERRORS (which are the useful part) and drops the successful chatter.
+                    settings["Serilog:MinimumLevel:Override:Microsoft.EntityFrameworkCore.Database.Command"] = "Warning";
+                    settings["Serilog:MinimumLevel:Override:Microsoft.AspNetCore.Routing"] = "Warning";
+                    settings["Serilog:MinimumLevel:Override:Microsoft.AspNetCore.Http.Result"] = "Warning";
                 }
 
                 config.AddInMemoryCollection(settings);

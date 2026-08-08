@@ -22,6 +22,10 @@ internal sealed class TranscriptTailer : IAsyncDisposable
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
+
+    // ~30s of consecutive faults before the first report, then roughly every 2 minutes.
+    private const int LocateFaultFirstReportPolls = 120;
+    private const int LocateFaultRepeatPolls = 480;
     private static readonly TimeSpan DefaultForkScanInterval = TimeSpan.FromSeconds(10);
     private const int MaxReadChunkBytes = 1 << 20; // 1 MiB per poll
     private const int CwdProbeLines = 25; // how many leading lines to scan for the "cwd" field
@@ -217,12 +221,23 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         // transcripts of earlier sessions in the same cwd.
         var preexisting = SnapshotJsonlPaths(projectsRoot);
 
+        // Consecutive polls that could not even look. A transcript that simply has not been written
+        // yet is normal and stays silent; a root that is missing or unreadable is a fault, and
+        // without this the session would spend its entire life failing to ingest with NOTHING in
+        // the log to say so.
+        var faultPolls = 0;
+
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                if (Directory.Exists(projectsRoot))
+                if (!Directory.Exists(projectsRoot))
                 {
+                    ReportLocateFault(++faultPolls, projectsRoot, "the transcript root does not exist", null);
+                }
+                else
+                {
+                    faultPolls = 0;
                     // Fast path: Claude honoured --session-id.
                     foreach (var dir in Directory.EnumerateDirectories(projectsRoot))
                     {
@@ -250,14 +265,40 @@ internal sealed class TranscriptTailer : IAsyncDisposable
                     }
                 }
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Retry — a directory being written to can throw transiently. But a fault that
+                // never clears used to be invisible, so it is reported once it persists.
+                ReportLocateFault(++faultPolls, projectsRoot, ex.Message, ex);
+            }
 
             try { await Task.Delay(LocatePollInterval, ct); }
             catch (OperationCanceledException) { return null; }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Reports a persistent inability to look for the transcript at all. Deliberately NOT called
+    /// when the transcript merely has not appeared yet — Claude creates it lazily, so for an
+    /// interactive session that is the normal state for as long as the user takes to type. Only a
+    /// missing or unreadable root is a fault, and at four polls a second it has to be rate-limited:
+    /// once it has persisted ~30s, then every ~2 minutes.
+    /// </summary>
+    private void ReportLocateFault(int faultPolls, string projectsRoot, string reason, Exception? ex)
+    {
+        var firstReport = faultPolls == LocateFaultFirstReportPolls;
+        var repeatReport = faultPolls > LocateFaultFirstReportPolls
+            && faultPolls % LocateFaultRepeatPolls == 0;
+        if (!firstReport && !repeatReport)
+            return;
+
+        _logger.LogWarning(
+            ex,
+            "Session {SessionId}: cannot search for a transcript under {ProjectsRoot} after {Seconds:F0}s — {Reason}. "
+            + "Ingestion, working/idle and channel replies are all dead for this session until it clears.",
+            _sessionId, projectsRoot, faultPolls * LocatePollInterval.TotalSeconds, reason);
     }
 
     private static HashSet<string> SnapshotJsonlPaths(string projectsRoot)

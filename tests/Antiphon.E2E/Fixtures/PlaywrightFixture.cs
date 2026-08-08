@@ -68,17 +68,10 @@ public class PlaywrightFixture
 
         var page = await context.NewPageAsync();
 
-        // Record all browser console output so tests can inspect or assert on it
-        page.Console += (_, msg) =>
-        {
-            if (msg.Type is "error" or "warning")
-                Console.WriteLine($"[browser:{msg.Type}] {msg.Text}");
-        };
-
-        page.PageError += (_, err) =>
-        {
-            Console.WriteLine($"[browser:pageerror] {err}");
-        };
+        // Console output, page errors, failed requests and 4xx/5xx responses go to this test's
+        // browser.log; warnings and errors also reach stdout. Attached here so every browser test
+        // is covered, rather than only the ones that remembered to wire it up.
+        TestDiagnostics.ForCurrentTest().Attach(page);
 
         return (page, context);
     }
@@ -136,6 +129,9 @@ public class PlaywrightFixture
     /// <summary>
     /// Captures a screenshot and saves it on test failure. Call from a finally block.
     /// If the test succeeded, the screenshot is still saved but labelled as "pass".
+    /// Also closes out this test's <see cref="TestDiagnostics"/> — dumping the DOM on failure and
+    /// printing where the artefacts are — so browser tests get the whole set from the one call
+    /// they already make.
     /// </summary>
     public static async Task CaptureOnCompletionAsync(
         IPage page,
@@ -144,6 +140,7 @@ public class PlaywrightFixture
     {
         var label = passed ? "pass_final" : "FAIL_final";
         await CapturePageAsync(page, label, testName);
+        await TestDiagnostics.ForCurrentTest().CompleteAsync(page, passed);
     }
 
     /// <summary>

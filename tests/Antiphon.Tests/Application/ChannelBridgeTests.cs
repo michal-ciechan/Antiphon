@@ -37,8 +37,11 @@ public class ChannelBridgeTests
         var msg = TelegramText(chatId: h.ChatId, "hello there", title: "Family");
         await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
 
+        // Scoped to this harness's chat id, as the harness itself does: GetAllAsync returns every
+        // channel in the shared database, so a bare ShouldHaveSingleItem() also asserts that no
+        // other test left one behind — which is not what this test is about.
         var channels = await h.Channels().GetAllAsync(CancellationToken.None);
-        var channel = channels.ShouldHaveSingleItem();
+        var channel = channels.Where(c => c.ExternalId == h.ChatId).ShouldHaveSingleItem();
         channel.Provider.ShouldBe("telegram");
         channel.ExternalId.ShouldBe(h.ChatId);
         channel.Title.ShouldBe("Family");
@@ -230,7 +233,10 @@ public class ChannelBridgeTests
         };
         await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
 
-        (await h.Channels().GetAllAsync(CancellationToken.None)).ShouldBeEmpty();
+        // The bot's own echo must not create a channel for THIS chat; other tests' channels in the
+        // shared database are none of this test's business.
+        (await h.Channels().GetAllAsync(CancellationToken.None))
+            .ShouldNotContain(c => c.ExternalId == h.ChatId);
     }
 
     // PR 9: rapid-fire same-sender messages debounce into ONE routed prompt — single truthful
