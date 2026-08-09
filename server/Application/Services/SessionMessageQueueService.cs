@@ -71,6 +71,11 @@ public sealed class SessionMessageQueueService
         {
             if (!_runtime.ListLiveSessions().Contains(sessionId))
                 throw new ConflictException($"Agent session '{sessionId}' is not live; cannot send now.");
+            if (!await IsAcceptingInputAsync(sessionId, ct))
+            {
+                throw new ConflictException(
+                    $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
+            }
 
             var verdict = await DeliverAsync(sessionId, trimmed, ct);
             if (verdict != DeliveryVerdict.Delivered)
@@ -109,9 +114,19 @@ public sealed class SessionMessageQueueService
             await db.SaveChangesAsync(ct);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
-            // flush on — deliver right away so the message isn't stranded.
-            if (_runtime.ListLiveSessions().Contains(sessionId) && !await IsWorkingAsync(db, sessionId, ct))
+            // flush on — deliver right away so the message isn't stranded. But NEVER into a session
+            // still Starting: the write lands during TUI boot (the runner's write path now waits
+            // out the pty cold start), Claude takes the prompt and starts working, and the launch's
+            // ready probe — which waits for an IDLE composer — times out and KILLS a healthy,
+            // already-working delegate (live miss 2026-08-09, session 429445c3, died mid-task at
+            // 2m41s). A Starting session's messages stay Pending; the launch path flushes the
+            // queue itself the moment boot completes (FlushSessionAsync).
+            if (_runtime.ListLiveSessions().Contains(sessionId)
+                && await IsAcceptingInputAsync(sessionId, ct)
+                && !await IsWorkingAsync(db, sessionId, ct))
+            {
                 await DeliverNextLockedAsync(db, sessionId, ct);
+            }
         }
         finally
         {
@@ -298,7 +313,9 @@ public sealed class SessionMessageQueueService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                if (!await IsWorkingAsync(db, sessionId, ct))
+                // Same Starting-session guard as the enqueue path: redelivering into a booting
+                // TUI would re-create the ready-probe kill this watchdog exists to recover from.
+                if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
                     result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
             finally
@@ -316,6 +333,44 @@ public sealed class SessionMessageQueueService
         }
 
         return flushed;
+    }
+
+    /// <summary>
+    /// Deliver pending messages to a session that just finished booting. The launch paths call
+    /// this right after their boot typing completes, because the enqueue path deliberately
+    /// refuses to type into a Starting session — without this nudge a fresh delegate's brief
+    /// would wait for the stranded-queue watchdog's next sweep.
+    /// </summary>
+    public async Task FlushSessionAsync(Guid sessionId, CancellationToken ct)
+    {
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        FlushResult result;
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            result = !await IsWorkingAsync(db, sessionId, ct)
+                ? await DeliverNextLockedAsync(db, sessionId, ct)
+                : FlushResult.Nothing;
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (result != FlushResult.Nothing)
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+    }
+
+    // The DB session status is the ready gate: Starting means the launch's ready probe has not
+    // yet seen an idle composer, so nothing may type into the terminal (see EnqueueAsync).
+    private async Task<bool> IsAcceptingInputAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.AgentSessions.AsNoTracking()
+            .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
     }
 
     private enum FlushResult { Nothing, Delivered, Failed }

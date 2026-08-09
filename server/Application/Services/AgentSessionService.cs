@@ -359,6 +359,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // commands and the note into one garbled composer.
             if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume)
                 await EnqueueResumeContinueAsync(session.Id, ct);
+
+            // Boot is complete — deliver anything queued while the session was Starting. The
+            // enqueue path refuses to type into a booting TUI (the write would race the ready
+            // probe, which then kills a healthy delegate — live miss 2026-08-09), so a delegation
+            // brief enqueued at dispatch time is sitting Pending right now. If the launch note
+            // above started a turn, this no-ops and the turn-end flush takes over.
+            await _messageQueue.FlushSessionAsync(session.Id, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -520,6 +527,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // freshly resumed process means the old turn died — record its end. No auto-continue
             // here: a human resumed this card session deliberately and will say what they want.
             await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+
+            // Deliver anything queued while the session was Starting (the enqueue path refuses
+            // to type into a booting TUI — see LaunchInteractiveProcessAsync).
+            await _messageQueue.FlushSessionAsync(session.Id, ct);
 
             await _eventBus.PublishToGroupAsync(
                 AgentSessionGroups.Session(session.Id),
