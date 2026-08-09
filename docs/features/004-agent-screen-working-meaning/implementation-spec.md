@@ -1,8 +1,10 @@
 # Feature 004 — Implementation spec: agents-screen "Working" means mid-turn
 
-**Status:** implemented — R1 landed in `89f1262`, R2 in `e1a46d1` (server) + `e72d6c8` (client);
-R3 deliberately skipped (optional perf nit, revisit only with the shared-predicate refactor)
-**Date:** 2026-08-06 (status updated 2026-08-08)
+**Status:** implemented and re-verified — R1 landed in `89f1262`, R2 in `e1a46d1` (server) +
+`e72d6c8` (client); R3 deliberately skipped (optional perf nit, revisit only with the
+shared-predicate refactor). Suites re-run green on 2026-08-09:
+`AgentServiceIntegrationTests` 25/25, client `AgentsPage` 20/20.
+**Date:** 2026-08-06 (status + references refreshed 2026-08-09)
 **Card:** CARD-0001
 **Based on:** [initial-investigation.md](initial-investigation.md)
 **Companion:** [test-spec.md](test-spec.md)
@@ -22,13 +24,13 @@ design you must not regress, and (b) the three remaining work items.
 | Piece | Where |
 |---|---|
 | `Working` bool on both agent DTOs, doc'd as transcript-derived mid-turn | `server/Application/Dtos/AgentDtos.cs:41-43,69-70` |
-| Computed per agent in list + detail, gated on a **Running** live session | `AgentService.cs:46-76` (`IsSessionWorkingAsync`, `AgentService.cs:63`) |
-| The one shared rule — `SessionMessageQueueService.IsWorkingAsync`, made `internal static` so AgentService reuses it (no second implementation) | `SessionMessageQueueService.cs:547-579` |
-| Client `working` field + `AgentStatus` union | `client/src/api/agents.ts:53,89-92` |
-| `AgentActivityBadge`: Working spinner (transcript-working) / Review / Failed / Disconnected; **quiet states render nothing** — liveness is the terminal icon's colour (green/yellow/gray) | `AgentsPage.tsx:391-419,139-165` |
-| Detail header uses the same badge; Stop shows when `liveSession \|\| status === 'Working'` | `AgentsPage.tsx:225,242` |
-| List + detail poll at 5s so the spinner tracks turn *starts* (SignalR only covers turn end via `SessionFinished`) | `agents.ts:241-242,256-257` |
-| Client test: spinner only for the transcript-working agent | `AgentsPage.test.tsx:150-174` |
+| Computed per agent in list + detail, gated on a **Running** live session | `AgentService.cs:60-79` (`IsSessionWorkingAsync`, `:77`) |
+| The one shared rule — `SessionMessageQueueService.IsWorkingAsync`, made `internal static` so AgentService reuses it (no second implementation) | `SessionMessageQueueService.cs:563-565`ff |
+| Client `working` field + `AgentStatus` union | `client/src/api/agents.ts:53` (union), `:88-92` (field) |
+| `AgentActivityBadge`: Working spinner (transcript-working) / Review / Failed / Disconnected; **quiet states render nothing** — liveness is the terminal icon's colour (green/yellow/gray) | **Extracted since** — now `client/src/features/agents/AgentActivityBadge.tsx` (own file, `7fe8f5b`), shared with the files page via a `showIdle` opt-in; terminal icon colour stays at `AgentsPage.tsx:147,159` |
+| Detail header uses the same badge; Stop shows when `liveSession \|\| status === 'Running'` (post-R1 spelling) | `AgentsPage.tsx:229,246` |
+| List + detail poll at 5s so the spinner tracks turn *starts* (SignalR only covers turn end via `SessionFinished`) | `agents.ts:242,257` |
+| Client tests: spinner only for the transcript-working agent, + the badge's own unit suite | `AgentsPage.test.tsx:165-191`, `AgentActivityBadge.test.tsx` |
 
 Design decisions already made (deliberate, keep them):
 
@@ -38,6 +40,9 @@ Design decisions already made (deliberate, keep them):
   investigation's "second badge" sketch. The terminal icon's colour carries liveness.
 - The working check reuses the hardened queue-tier rule verbatim (interrupt markers, local
   slash-commands, compact boundary — each exclusion pins a real stranding incident; see CLAUDE.md).
+  This has already paid off once: `3c2c810` (2026-08-08) added `SessionRestartBoundary` as a turn
+  end, and the agent cards inherited it with **no** agent-tier change. Keep it that way — any
+  second copy of the predicate re-opens exactly the stranding class these exclusions closed.
 
 ---
 

@@ -1,9 +1,10 @@
 # Feature 004 — Test spec: agents-screen "Working" means mid-turn
 
-**Status:** implemented — S1–S6 landed in `e1a46d1`
-(`AgentServiceIntegrationTests.cs:528-652`), C1–C6 in `e72d6c8` (`AgentsPage.test.tsx:192-291`);
-S7 n/a (R3 skipped)
-**Date:** 2026-08-06 (status updated 2026-08-08)
+**Status:** implemented and re-verified — S1–S6 landed in `e1a46d1`
+(`AgentServiceIntegrationTests.cs:517-666`), C1–C6 in `e72d6c8` (`AgentsPage.test.tsx:192-320`);
+S7 n/a (R3 skipped). Re-run green on 2026-08-09: server `AgentServiceIntegrationTests` 25/25
+passed, client `AgentsPage` 20/20 passed. §4 live smoke still outstanding — see below.
+**Date:** 2026-08-06 (status updated 2026-08-09)
 **Card:** CARD-0001
 **Companion:** [implementation-spec.md](implementation-spec.md)
 
@@ -15,7 +16,8 @@ S7 n/a (R3 skipped)
 |---|---|
 | The working/idle *rule* itself: activity vs turn-end, interrupt marker = turn end, local slash-commands excluded, compact boundary excluded, WhenIdle hold/flush | `tests/Antiphon.Tests/Application/SessionMessageQueueServiceTests.cs` (via `GetQueueAsync().Working`) |
 | Real-Claude transcript shapes behind those exclusions | `ClaudeInterruptCanaryTests`, `ClaudeLocalCommandCanaryTests` (headed), `FakeClaudeContractTests` |
-| Client: spinner badge only for the transcript-working agent, not the merely-started one | `client/src/features/agents/AgentsPage.test.tsx:150-174` |
+| Client: spinner badge only for the transcript-working agent, not the merely-started one | `client/src/features/agents/AgentsPage.test.tsx:165-191` |
+| The badge's own branch matrix (Working / Review / Failed / Disconnected / `showIdle` fallback), since it was extracted to a shared component in `7fe8f5b` | `client/src/features/agents/AgentActivityBadge.test.tsx` — assert *page wiring* in `AgentsPage.test.tsx`, *branch logic* here |
 
 The rule's semantics live at the queue tier. **Agent-tier tests must test the projection, not
 re-litigate the rule** — one shared-rule canary (S5) is the only overlap allowed.
@@ -67,12 +69,22 @@ run through `GetAllAsync`, so they cover it automatically), and add:
 The always-on session-runner/dev server lock `bin/` — build to an alternate output:
 
 ```powershell
-dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-ptyhost\ `
-  --treenode-filter "/*/*/AgentServiceIntegrationTests/*"
+dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-card0001\ `
+  -- --treenode-filter "/*/*/AgentServiceIntegrationTests/*"
 ```
+
+The `--` is required: without it `dotnet run` eats `--treenode-filter` as its own argument.
 
 Needs the always-on Postgres (`antiphon-postgres`, port 17280) up. Some Antiphon.Tests are
 PTY-timing flaky under full parallel load — rerun failures in isolation before blaming a change.
+
+**Clean up after the run.** `OutputPath` applies to every project in the graph, so it drops an
+untracked `bin-<name>/` in ~12 directories, and those names are *not* gitignored — left behind they
+show up as untracked noise in a repo where other fleet agents are committing:
+
+```powershell
+Get-ChildItem C:\src\Antiphon -Recurse -Depth 2 -Directory -Filter bin-card0001 | Remove-Item -Recurse -Force
+```
 
 ---
 
@@ -117,12 +129,26 @@ Run once after all code lands (`.\dev-aspire.ps1` stack up):
 
 ```powershell
 # 1. Fleet at rest: idle always-on agents must NOT report working
-Invoke-RestMethod http://localhost:17202/api/agents |
-  Select-Object name, status, working, @{n='session';e={$_.liveSession.status}}
+#    (Format-Table renders these DTOs badly — build the line yourself)
+$r = Invoke-RestMethod http://localhost:17202/api/agents
+$r | Sort-Object name | ForEach-Object {
+  '{0,-22} status={1,-10} working={2,-6} session={3}' -f `
+    $_.name, $_.status, $_.working, $(if ($_.liveSession) { $_.liveSession.status } else { 'none' }) }
 
-# 2. Cross-check one agent against the session-tier signal (must agree)
-Invoke-RestMethod http://localhost:17202/api/sessions/<sessionId>/messages | Select-Object working
+# 2. Cross-check EVERY live agent against the session-tier signal (must all agree)
+$r | Where-Object { $_.liveSession } | ForEach-Object {
+  $q = Invoke-RestMethod "http://localhost:17202/api/sessions/$($_.liveSession.id)/messages"
+  '{0,-22} agent={1,-6} session={2}' -f $_.name, $_.working, $q.working }
 ```
+
+### Recorded run — 2026-08-09 ✅ (headless half)
+
+11 agents, 6 with a live Running session. **Exactly one** reported `working: true` — the
+`Antiphon` fleet agent, which was genuinely mid-turn (it was the session running this check).
+The other five read `status: Running` + `working: false`: the two fields disagreeing is the
+whole point, and the original bug report's "every agent is Working" symptom is gone. The five
+`Failed` agents had no live session and reported `working: false` (the S3/S4 gate, live).
+Step 2 agreed on all six — no drift between the agent tier and the session tier.
 
 Then in the browser (per `feedback_always_use_browser_harness` — CDP Edge on :9222, not the Chrome
 extension): open `/agents`, confirm idle agents show **no** badge and green terminal icons; send a
@@ -137,6 +163,13 @@ started-lifecycle value with `working: false` while idle, flipping `working: tru
 
 ## Done means
 
-- S1–S6 (S7 if R3) implemented and green; C1–C6 green.
-- Rename checks (§3) clean if R1 landed.
+- S1–S6 (S7 if R3) implemented and green; C1–C6 green. ✅ 2026-08-09 — 25/25 server, 20/20 client.
+- Rename checks (§3) clean if R1 landed. ✅ 2026-08-09 — repo-wide grep for `AgentStatus.Working`
+  and `status === 'Working'` returns hits only in `docs/` history and in the unrelated
+  **delegation-task** status union (`'Dispatched' | 'Working' | …`, `TaskDrawer.tsx`,
+  `DelegationsBoard.tsx`, the home-page fixtures) — a different enum, correctly left alone.
 - Live smoke (§4) performed and its observations recorded in the card/PR description.
+  🟡 **Half done** — the headless API half ran clean on 2026-08-09 (recorded in §4). The
+  **browser half is the one outstanding item**: open `/agents`, confirm idle agents show no badge
+  and green terminal icons, then watch a spinner appear/disappear within ~5s of a turn starting and
+  ending. Do it before calling the card closed.
