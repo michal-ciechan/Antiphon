@@ -1,11 +1,13 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -29,6 +31,7 @@ public sealed class AgentControlService
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    private readonly DelegationSettings _delegationSettings;
     private readonly ILogger<AgentControlService> _logger;
 
     public AgentControlService(
@@ -40,6 +43,7 @@ public sealed class AgentControlService
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider,
+        IOptions<DelegationSettings> delegationSettings,
         ILogger<AgentControlService> logger)
     {
         _db = db;
@@ -50,6 +54,7 @@ public sealed class AgentControlService
         _launchQueue = launchQueue;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _delegationSettings = delegationSettings.Value;
         _logger = logger;
     }
 
@@ -161,9 +166,26 @@ public sealed class AgentControlService
             }
         }
 
+        // Session-scoped delegation credential — the same env contract the task dispatcher gives
+        // delegates, so scripts/delegate.ps1 works unchanged from inside this session. The token
+        // authenticates the session to POST /api/agent-tasks as ITSELF: its delegates inherit ITS
+        // working directory (not the server process's cwd) and their reports return into THIS
+        // session (AgentTaskService.AuthenticateAsync, session fallback). Re-minted every launch;
+        // only the hash is stored.
+        var (delegationToken, delegationTokenHash) = AgentTaskService.NewToken();
+        var extraEnv = new Dictionary<string, string>
+        {
+            ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
+            ["ANTIPHON_AGENT_ID"] = agent.Id.ToString("D"),
+            ["ANTIPHON_TASK_TOKEN"] = delegationToken,
+        };
+
         var spec = _agentRegistry.Resolve(
             definitionName,
-            new AgentLaunchOptions(Cols: 120, Rows: 30, ExtraArgs: extraArgs.Count > 0 ? extraArgs : null));
+            new AgentLaunchOptions(
+                Cols: 120, Rows: 30,
+                ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
+                ExtraEnv: extraEnv));
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
         // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
@@ -189,6 +211,7 @@ public sealed class AgentControlService
                 previous.EndedAt = null;
                 previous.ExitCode = null;
                 previous.FailureReason = null;
+                previous.DelegationTokenHash = delegationTokenHash;
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(
@@ -211,7 +234,8 @@ public sealed class AgentControlService
             Rows = 30,
             CreatedAt = now,
             StartedAt = now,
-            LastSeenAt = now
+            LastSeenAt = now,
+            DelegationTokenHash = delegationTokenHash
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);

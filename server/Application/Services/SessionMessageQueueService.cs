@@ -259,16 +259,28 @@ public sealed class SessionMessageQueueService
             if (pendingSessionIds.Count == 0)
                 return 0;
 
-            // Only always-on agents' sessions: their composer is guaranteed fresh after a
+            // Always-on agents' sessions: their composer is guaranteed fresh after a
             // verification-failure restart, so re-typing cannot double up. Other sessions keep
-            // their pending messages visible for a human to resend.
+            // their pending messages visible for a human to resend — EXCEPT delegation briefs,
+            // which no human is watching: a delegate whose boot brief stranded sits at an idle
+            // prompt forever (live miss 2026-08-09, CARD-0003). A stranded-then-reverted brief is
+            // safe to re-type: a transport failure never reached the terminal, and a verification
+            // failure withheld the submitting Enter.
             var keys = pendingSessionIds.Select(id => id.ToString("D")).ToList();
             var alwaysOnKeys = await db.Agents
                 .AsNoTracking()
                 .Where(a => a.AlwaysOn && a.PersistentSessionId != null && keys.Contains(a.PersistentSessionId))
                 .Select(a => a.PersistentSessionId!)
                 .ToListAsync(ct);
-            candidates = alwaysOnKeys.Select(Guid.Parse).ToList();
+            var delegationSessionIds = await db.SessionQueuedMessages
+                .AsNoTracking()
+                .Where(m => m.Status == QueuedMessageStatus.Pending
+                    && m.CreatedAt <= cutoff
+                    && m.Origin == QueuedMessageOrigin.Delegation)
+                .Select(m => m.AgentSessionId)
+                .Distinct()
+                .ToListAsync(ct);
+            candidates = alwaysOnKeys.Select(Guid.Parse).Union(delegationSessionIds).ToList();
         }
 
         if (candidates.Count == 0)
@@ -365,12 +377,80 @@ public sealed class SessionMessageQueueService
         }
         await db.SaveChangesAsync(ct);
 
-        var verdict = await DeliverAsync(sessionId, body, ct);
+        DeliveryVerdict verdict;
+        try
+        {
+            verdict = await DeliverAsync(sessionId, body, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown — but the run is already marked Sent, and a Sent-but-never-delivered
+            // message is invisible to every retry path (live miss 2026-08-09: four delegated
+            // tasks' briefs stranded this way). Revert before propagating.
+            await RevertRunAsync(db, run);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Transport failure: the runner 500'd, was unreachable, or timed out (an HttpClient
+            // timeout is an OperationCanceledException with OUR token not cancelled — treat it as
+            // transport, never as shutdown). The terminal never saw the write, so reverting to
+            // Pending cannot double-type; redelivery comes via the stranded-queue watchdog or the
+            // next turn-end flush, and the incident makes the failure visible on the agent.
+            _logger.LogWarning(
+                ex,
+                "Delivery to session {SessionId} threw before the terminal accepted it; reverting {Count} message(s) to Pending",
+                sessionId, run.Count);
+            await RevertRunAsync(db, run);
+            await RecordTransportFailureAsync(sessionId, ex, ct);
+            return FlushResult.Failed;
+        }
+
         if (verdict == DeliveryVerdict.Delivered)
             return FlushResult.Delivered;
 
         await HandleDeliveryFailureAsync(sessionId, run.Select(m => m.Id).ToList(), verdict, ct);
         return FlushResult.Failed;
+    }
+
+    private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
+    {
+        foreach (var m in run)
+        {
+            m.Status = QueuedMessageStatus.Pending;
+            m.SentAt = null;
+        }
+        // Not the caller's token: when the revert is racing shutdown, completing it is the point.
+        await db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    // The transport-failure sibling of HandleDeliveryFailureAsync: records the incident (visible on
+    // the agent card + alert feed) but never kills the session — the terminal is not wedged, the
+    // path to it failed, and a kill issued over that same path would fail too.
+    private async Task RecordTransportFailureAsync(Guid sessionId, Exception failure, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agent = await db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+            if (agent is null)
+                return;
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                agent.Id, sessionId, AgentIncidentKind.DeliveryTransportFailed, AlertSeverity.Error,
+                $"Message delivery failed in transport before the terminal accepted it: {failure.Message} "
+                + "The message has been returned to the queue for redelivery.",
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to record delivery transport failure for session {SessionId}", sessionId);
+        }
     }
 
     private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput }

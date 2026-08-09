@@ -31,6 +31,17 @@ public class AgentSession
     /// </summary>
     public long? CompactionRecoveryWatermark { get; set; }
 
+    /// <summary>
+    /// SHA-256 of the session-scoped delegation token injected into the session's environment at
+    /// launch (as ANTIPHON_TASK_TOKEN, the name delegate.ps1 already sends). Lets a standing agent
+    /// session — an always-on orchestrator — authenticate to POST /api/agent-tasks as ITSELF, so
+    /// its delegates inherit ITS working directory and report back into ITS session. Without this,
+    /// a shell caller was treated as the manual UI path: it inherited the server process's cwd and
+    /// its reports landed on the board unseen (live miss 2026-08-09). Re-minted on every launch;
+    /// never stores the raw token.
+    /// </summary>
+    public string? DelegationTokenHash { get; set; }
+
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
     public ICollection<RunAttempt> RunAttempts { get; set; } = new List<RunAttempt>();

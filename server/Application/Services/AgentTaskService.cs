@@ -65,12 +65,22 @@ public sealed class AgentTaskService
             throw new ForbiddenException("A delegation token is required (ANTIPHON_TASK_TOKEN).");
 
         var hash = HashToken(token);
-        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.TokenHash == hash, ct)
-            ?? throw new ForbiddenException("Delegation token is not recognised.");
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
+        if (task is not null)
+        {
+            // A worktree caller's directory IS its worktree — children it spawns without -Dir must
+            // land where it actually works, or their edits bypass its branch entirely.
+            return new Caller(task, task.AgentSessionId, task.WorktreePath ?? task.WorkingDirectory);
+        }
 
-        // A worktree caller's directory IS its worktree — children it spawns without -Dir must
-        // land where it actually works, or their edits bypass its branch entirely.
-        return new Caller(task, task.AgentSessionId, task.WorktreePath ?? task.WorkingDirectory);
+        // Session-scoped token: a standing agent session (an always-on orchestrator) delegating on
+        // its own behalf. No parent task — Caller.MayDelegate is true via Task is null — and the
+        // session id makes ReplyTo=Session routing work, so reports return to the calling session
+        // instead of landing silently on the board.
+        var session = await _db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.DelegationTokenHash == hash, ct)
+            ?? throw new ForbiddenException("Delegation token is not recognised.");
+        return new Caller(null, session.Id, session.Cwd);
     }
 
     /// <summary>
@@ -750,7 +760,7 @@ public sealed class AgentTaskService
             At = at,
         });
 
-    private static (string Token, string Hash) NewToken()
+    internal static (string Token, string Hash) NewToken()
     {
         var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         return (raw, HashToken(raw));

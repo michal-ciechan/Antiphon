@@ -71,6 +71,15 @@ public sealed class DelegationSettings
 
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
 
+    /// <summary>
+    /// A Dispatched task whose session has ZERO transcript entries after this long never received
+    /// its brief — it fails loudly instead of sitting Dispatched forever (CARD-0003/CARD-0020).
+    /// Long enough for the stranded-queue watchdog (60s cadence) to redeliver a reverted brief
+    /// several times first; a genuinely slow FIRST TURN still counts as started the moment any
+    /// transcript entry lands, so this never fires on slow work.
+    /// </summary>
+    public int DeliveryFailTimeoutMinutes { get; set; } = 10;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 

@@ -48,4 +48,13 @@ public enum AgentIncidentKind
     /// operators can correlate behaviour changes with compactions.
     /// </summary>
     ContextCompacted = 12,
+
+    /// <summary>
+    /// A message delivery THREW before the terminal accepted it (runner 500/unreachable/timeout)
+    /// — distinct from <see cref="DeliveryVerificationFailed"/>, where the write landed but the
+    /// composer showed no evidence. The message is reverted to Pending for redelivery. Live miss
+    /// 2026-08-09: briefs marked Sent before a failed write stranded four delegated tasks
+    /// silently (CARD-0003/CARD-0018).
+    /// </summary>
+    DeliveryTransportFailed = 13,
 }

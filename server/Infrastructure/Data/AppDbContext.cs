@@ -579,7 +579,13 @@ public class AppDbContext : DbContext
             entity.Property(a => a.Details).IsRequired().HasMaxLength(4000);
             entity.Property(a => a.AssignmentPolicy).IsRequired();
             entity.Property(a => a.Status).IsRequired();
-            entity.Property(a => a.ModelLevel).IsRequired().HasDefaultValue(AgentModelLevel.High);
+            // NO HasDefaultValue here: a database default makes EF treat the property as
+            // value-generated-on-add, so a CLR value equal to default(enum) — which is Frontier=0 —
+            // is OMITTED from the INSERT and the database default silently wins. Frontier was the
+            // one tier an agent row could not be created with (CARD-0016, live miss 2026-08-09:
+            // every Frontier-dispatched delegate row read High). The entity's own initializer
+            // keeps High as the default for creators that don't set it.
+            entity.Property(a => a.ModelLevel).IsRequired();
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();
@@ -753,7 +759,10 @@ public class AppDbContext : DbContext
             entity.Property(s => s.StartedAt).IsRequired();
             entity.Property(s => s.LastSeenAt).IsRequired();
             entity.Property(s => s.FailureReason).HasMaxLength(2000);
+            entity.Property(s => s.DelegationTokenHash).HasMaxLength(64);
 
+            entity.HasIndex(s => s.DelegationTokenHash)
+                .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");
             entity.HasIndex(s => s.CardId).HasDatabaseName("IX_AgentSessions_CardId");
             entity.HasIndex(s => s.WorktreeId).HasDatabaseName("IX_AgentSessions_WorktreeId");
             entity.HasIndex(s => new { s.CardId, s.Status })

@@ -334,6 +334,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private readonly ILogger _logger;
         private readonly object _gate = new();
         private readonly StringBuilder _liveBuffer = new();
+        // Completes true once the pty-host pipe is connected and the child launched; false once
+        // the session is dead (failed start, exit, vanish, dispose). Input that arrives during
+        // the cold-start window waits on this instead of failing (live miss 2026-08-09: the boot
+        // prompt landed ~1s before the host process existed and was lost as an unhandled 500).
+        private readonly TaskCompletionSource<bool> _clientReady =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _exited =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -410,6 +416,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 {
                     _status = "Running";
                 }
+                _clientReady.TrySetResult(true);
 
                 _events.Publish(
                     SessionRunnerEventNames.SessionStarted,
@@ -434,6 +441,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             catch
             {
                 // Never leave an orphaned empty host behind a failed start.
+                _clientReady.TrySetResult(false);
                 KillHostBestEffort();
                 throw;
             }
@@ -492,6 +500,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 attachAt = resync.LastSeq;
             }
 
+            _clientReady.TrySetResult(true);
             _events.Publish(
                 SessionRunnerEventNames.SessionAdopted,
                 new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, status.LastSeq));
@@ -527,6 +536,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _exitCode = manifest.ExitCode ?? -1,
                 _exitReason = manifest.ExitReason ?? "ProcessVanished",
             };
+            session._clientReady.TrySetResult(false);
             session._exited.TrySetResult();
 
             events.Publish(
@@ -615,8 +625,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         public RunnerTranscriptDto GetTranscript() =>
             _tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0);
 
-        public Task WriteAsync(string input, CancellationToken ct) =>
-            RequireClient().InputAsync(input, ct);
+        public async Task WriteAsync(string input, CancellationToken ct)
+        {
+            var client = await AwaitClientAsync(ct);
+            await client.InputAsync(input, ct);
+        }
 
         public async Task ClearLiveBufferAsync(CancellationToken ct)
         {
@@ -626,8 +639,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 await client.ClearLiveBufferAsync(ct);
         }
 
-        public Task ResizeAsync(int cols, int rows, CancellationToken ct) =>
-            RequireClient().ResizeAsync(cols, rows, ct);
+        public async Task ResizeAsync(int cols, int rows, CancellationToken ct)
+        {
+            var client = await AwaitClientAsync(ct);
+            await client.ResizeAsync(cols, rows, ct);
+        }
 
         public async Task KillAsync(TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
         {
@@ -682,6 +698,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             _events.Publish(
                 SessionRunnerEventNames.SessionExited,
                 new RunnerSessionExitedEvent(_sessionId, exitCode, "ProcessVanished", lastSequence));
+            _clientReady.TrySetResult(false);
             _exited.TrySetResult();
 
             // The session is declared dead; the host (if any survives) has no further purpose.
@@ -691,6 +708,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
+            _clientReady.TrySetResult(false);
             // Dispose detaches from the host — it must NOT kill it: surviving the runner's own
             // teardown is the entire point of the pty-host split.
             if (_client is { } client)
@@ -753,6 +771,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     new RunnerSessionExitedEvent(_sessionId, exited.ExitCode, exitReason, exited.LastSeq));
             }
 
+            _clientReady.TrySetResult(false);
             _exited.TrySetResult();
             // Fate is recorded — ack so the host deletes its manifest and exits. Run outside the
             // client's read loop (this handler IS the read loop).
@@ -803,8 +822,34 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        private PtyHostClient RequireClient() =>
-            _client ?? throw new InvalidOperationException("Session has no live pty-host connection.");
+        /// <summary>
+        /// The connected client, waiting out the cold-start window when necessary. On a cold
+        /// launch the pty-host pipe takes ~a second to appear AFTER the session is registered, so
+        /// input that raced the launch used to die as "Session has no live pty-host connection"
+        /// and the boot prompt was silently lost (CARD-0018). Bounded by the same budget the
+        /// launch itself gets; a session that dies first fails fast with the reason.
+        /// </summary>
+        private async Task<PtyHostClient> AwaitClientAsync(CancellationToken ct)
+        {
+            if (_client is { } live)
+                return live;
+
+            var timeout = TimeSpan.FromSeconds(
+                _settings.PtyHostLaunchTimeoutSec + _settings.PtyHostConnectTimeoutSec + 5);
+            var completed = await Task.WhenAny(_clientReady.Task, Task.Delay(timeout, ct));
+            ct.ThrowIfCancellationRequested();
+
+            if (completed != _clientReady.Task)
+            {
+                throw new InvalidOperationException(
+                    $"Session has no live pty-host connection after waiting {timeout.TotalSeconds:0}s for the host to start.");
+            }
+
+            if (!await _clientReady.Task || _client is not { } client)
+                throw new InvalidOperationException("Session ended before its pty-host connection was ready.");
+
+            return client;
+        }
 
         /// <summary>
         /// The tail of the ANSI log, bounded to <see cref="SessionRunnerSettings.ReplayBufferMaxChars"/>.

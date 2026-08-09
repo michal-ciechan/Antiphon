@@ -68,6 +68,11 @@ public sealed class AgentTaskDispatcher
         // opus Debug task escalating to fable IS the tier ladder working, not an error path.
         await AutoEscalateStalledAsync(ct);
 
+        // And with work that never STARTED — zero transcript entries long after dispatch means the
+        // boot prompt was lost, which is categorically different from slow progress and must fail
+        // loudly, never escalate (a bigger model can't fix an undelivered brief).
+        await FailNeverStartedAsync(ct);
+
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
         await RetireIdleWarmAgentsAsync(ct);
@@ -210,6 +215,103 @@ public sealed class AgentTaskDispatcher
         }
 
         return escalated;
+    }
+
+    /// <summary>
+    /// The delivery backstop (CARD-0003/CARD-0020): a Dispatched task whose session has produced
+    /// ZERO transcript entries after <see cref="DelegationSettings.DeliveryFailTimeoutMinutes"/>
+    /// never received its brief. Four tasks sat like that for up to 26 minutes on 2026-08-09 while
+    /// every surface reported Running. Deliberately separate from the stall scan above: escalation
+    /// re-runs work on a bigger model, which would launder a lost prompt into a billed upgrade.
+    /// The stranded-queue watchdog gets the whole window to redeliver a reverted brief first; this
+    /// fires only when nothing ever landed, and it says WHY using the queue's own state.
+    /// </summary>
+    internal async Task<int> FailNeverStartedAsync(CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromMinutes(_settings.DeliveryFailTimeoutMinutes);
+        if (timeout <= TimeSpan.Zero)
+            return 0;
+
+        var cutoff = UtcNow() - timeout;
+        var suspects = await _db.AgentTasks
+            .Where(t => t.Status == AgentTaskStatus.Dispatched
+                && t.DispatchedAt != null && t.DispatchedAt < cutoff
+                && t.AgentSessionId != null)
+            .ToListAsync(ct);
+
+        var failed = 0;
+        foreach (var task in suspects)
+        {
+            ct.ThrowIfCancellationRequested();
+            var sessionId = task.AgentSessionId!.Value;
+
+            // Any transcript entry at all means the session started — slow work belongs to the
+            // stall scan, not here.
+            if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct))
+                continue;
+
+            var briefStatus = await _db.SessionQueuedMessages
+                .AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
+                .OrderBy(m => m.Sequence)
+                .Select(m => (QueuedMessageStatus?)m.Status)
+                .FirstOrDefaultAsync(ct);
+            var evidence = briefStatus switch
+            {
+                QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
+                QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a transcript",
+                null => "no brief was ever queued for the session",
+                _ => $"brief status: {briefStatus}",
+            };
+            var reason =
+                $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
+                + $"the session has zero transcript entries ({evidence}). "
+                + "See the agent's incidents for the delivery errors.";
+
+            await FailAsync(task, reason, ct);
+
+            try
+            {
+                await _sessions.KillAsync(sessionId, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    ex, "Could not stop never-started session {SessionId} for task {ShortId}",
+                    sessionId, DelegationReportFormatter.Short(task.Id));
+            }
+
+            await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
+            await _db.SaveChangesAsync(ct);
+
+            // The caller must HEAR about the death, not discover it: same note path as a normal
+            // completion, and the board sees the status flip.
+            if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
+            {
+                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+                try
+                {
+                    await _queue.EnqueueAsync(
+                        parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex, "Could not deliver never-started failure of task {ShortId} to parent session {SessionId}",
+                        DelegationReportFormatter.Short(task.Id), parentSession);
+                }
+            }
+
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+            _logger.LogWarning(
+                "Task {ShortId} failed: boot prompt never delivered (session {SessionId}, {Evidence})",
+                DelegationReportFormatter.Short(task.Id), sessionId, evidence);
+            failed++;
+        }
+
+        return failed;
     }
 
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
