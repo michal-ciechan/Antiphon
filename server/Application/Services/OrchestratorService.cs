@@ -371,6 +371,7 @@ public sealed class OrchestratorService
 
         var reconciled = 0;
         var changedCards = new List<CardChangedNotification>();
+        var queueRemovals = new List<AgentQueueRemoval>();
         foreach (var card in claimedCards)
         {
             ct.ThrowIfCancellationRequested();
@@ -386,6 +387,11 @@ public sealed class OrchestratorService
                 && CardLifecycleTransitions.TryMoveToReview(card, utcNow))
             {
                 changedCards.Add(new CardChangedNotification(card.BoardId, card.Id));
+                // Review ends the card's stay in its agent's queue — a finished card left
+                // enqueued re-spawns a session on the next agent start (CARD-0001 respawn loop).
+                var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, utcNow, ct);
+                if (queueRemoval is not null)
+                    queueRemovals.Add(queueRemoval);
                 if (!activeStatuses.Contains(card.OwnerSession.Status))
                 {
                     ClearCardClaim(card, utcNow);
@@ -450,6 +456,9 @@ public sealed class OrchestratorService
                     new { boardId = changedCard.BoardId, cardId = changedCard.CardId },
                     ct);
             }
+
+            foreach (var queueRemoval in queueRemovals)
+                await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         }
 
         return reconciled;

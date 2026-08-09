@@ -183,9 +183,10 @@ public sealed class AgentSessionLaunchQueue
             if (attempt.Phase == RunPhase.Succeeded)
             {
                 CardChangedNotification? notification = null;
+                AgentQueueRemoval? queueRemoval = null;
                 if (behavior.MoveToReviewOnSuccess)
                 {
-                    notification = await MoveCardToReviewAsync(
+                    (notification, queueRemoval) = await MoveCardToReviewAsync(
                         db,
                         request.CardId,
                         now,
@@ -209,6 +210,8 @@ public sealed class AgentSessionLaunchQueue
 
                 await db.SaveChangesAsync(CancellationToken.None);
                 await PublishCardChangedAsync(eventBus, notification, CancellationToken.None);
+                if (queueRemoval is not null)
+                    await CardLifecycleTransitions.PublishQueueRemovalAsync(eventBus, queueRemoval, CancellationToken.None);
                 return;
             }
             else if (RunAttemptStateMachine.IsTerminal(attempt.Phase))
@@ -248,7 +251,7 @@ public sealed class AgentSessionLaunchQueue
         }
     }
 
-    private static async Task<CardChangedNotification?> MoveCardToReviewAsync(
+    private static async Task<(CardChangedNotification? Notification, AgentQueueRemoval? QueueRemoval)> MoveCardToReviewAsync(
         AppDbContext db,
         Guid cardId,
         DateTime utcNow,
@@ -259,11 +262,15 @@ public sealed class AgentSessionLaunchQueue
             .Include(c => c.Board).ThenInclude(b => b.Columns)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct);
         if (card is null)
-            return null;
+            return (null, null);
 
-        return CardLifecycleTransitions.TryMoveToReview(card, utcNow)
-            ? new CardChangedNotification(card.BoardId, card.Id)
-            : null;
+        if (!CardLifecycleTransitions.TryMoveToReview(card, utcNow))
+            return (null, null);
+
+        // Reaching Review finishes the card's queue entry — leaving it enqueued makes the next
+        // agent start re-spawn a session onto it (CARD-0001 respawn loop).
+        var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(db, card, utcNow, ct);
+        return (new CardChangedNotification(card.BoardId, card.Id), queueRemoval);
     }
 
     private async Task StopCompletedSessionAsync(

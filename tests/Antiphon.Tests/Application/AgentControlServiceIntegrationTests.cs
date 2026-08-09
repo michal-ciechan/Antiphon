@@ -477,6 +477,238 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    // The agent queue reflects work REMAINING: reaching Review must remove the card from its
+    // agent's queue and compact the positions behind it, exactly like the explicit queue-remove
+    // endpoint. Left enqueued, the card re-spawns a session on every agent start (CARD-0001).
+    [Test]
+    public async Task Card_moved_to_review_is_dequeued_and_the_agent_queue_compacts()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
+            db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot, []);
+
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Dequeue Board"), CancellationToken.None);
+            var inProgressColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+            var reviewColumn = board.Columns.Single(c => c.StateKey == "review");
+            var reviewedCard = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Finished work"), CancellationToken.None);
+            var remainingCard = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Still queued"), CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Dequeue Claude", Path.Combine(tempRoot, "agent-workspace"), DefaultWorkflowTemplateId: template.Id),
+                CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(reviewedCard.Id), CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(remainingCard.Id), CancellationToken.None);
+
+            // Seed the card into In Progress directly (a service-level move into an active column
+            // would spawn a session); the transition under test is InProgress -> Review.
+            Guid concurrencyToken;
+            await using (var seed = CreateContext())
+            {
+                var card = await seed.Cards.SingleAsync(c => c.Id == reviewedCard.Id);
+                card.BoardColumnId = inProgressColumn.Id;
+                card.Status = CardStatus.InProgress;
+                await seed.SaveChangesAsync();
+                concurrencyToken = card.ConcurrencyToken;
+            }
+
+            // Fresh scope, as a real request would be — the harness scope has stale tracked entities.
+            using var scope = harness.Provider.CreateScope();
+            var cardService = scope.ServiceProvider.GetRequiredService<CardService>();
+            await cardService.MoveAsync(
+                reviewedCard.Id, new MoveCardRequest(reviewColumn.Id, concurrencyToken), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var finished = await verify.Cards.SingleAsync(c => c.Id == reviewedCard.Id);
+            finished.Status.ShouldBe(CardStatus.Review);
+            finished.AssignedAgentId.ShouldBeNull("a finished card must leave its agent's queue");
+            finished.AgentQueuePosition.ShouldBeNull();
+            finished.ActiveWorkflowRunId.ShouldBeNull();
+
+            var queued = await verify.Cards.SingleAsync(c => c.Id == remainingCard.Id);
+            queued.AssignedAgentId.ShouldBe(agent.Id);
+            queued.AgentQueuePosition.ShouldBe(1, "the queue compacts when the head leaves");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // Defense against rows written before the dequeue-on-transition policy existed (or racing past
+    // it): a Review card still sitting at queue head — the exact CARD-0001 shape — must not be
+    // spawned on. The start must fall through to a cardless interactive session and leave the
+    // stale row untouched.
+    [Test]
+    public async Task Start_with_only_a_review_card_queued_starts_a_cardless_session()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
+            db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
+            await db.SaveChangesAsync();
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "BOOTED" };
+            await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
+
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Stale Queue Board"), CancellationToken.None);
+            var reviewColumn = board.Columns.Single(c => c.StateKey == "review");
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Already reviewed"), CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Stale Queue Claude", workspace, DefaultWorkflowTemplateId: template.Id),
+                CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(card.Id), CancellationToken.None);
+
+            // Recreate the legacy state: status Review with the queue row (and CurrentCardId)
+            // still in place, as pre-policy data has it.
+            await using (var seed = CreateContext())
+            {
+                var staleCard = await seed.Cards.SingleAsync(c => c.Id == card.Id);
+                staleCard.BoardColumnId = reviewColumn.Id;
+                staleCard.Status = CardStatus.Review;
+                var staleAgent = await seed.Agents.SingleAsync(a => a.Id == agent.Id);
+                staleAgent.CurrentCardId = card.Id;
+                await seed.SaveChangesAsync();
+            }
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var detail = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.Status.ShouldBe(AgentStatus.Running);
+            detail.PersistentSessionId.ShouldNotBeNull();
+
+            await using var verify = CreateContext();
+            var cardSessions = await verify.AgentSessions.CountAsync(s => s.CardId == card.Id);
+            cardSessions.ShouldBe(0, "a Review card is finished work — starting the agent must not respawn on it");
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id.ToString() == detail.PersistentSessionId);
+            session.CardId.ShouldBeNull("the start falls through to a cardless interactive session");
+
+            var startedAgent = await verify.Agents.SingleAsync(a => a.Id == agent.Id);
+            startedAgent.CurrentCardId.ShouldBeNull();
+
+            // The defensive skip only refuses to spawn — cleaning the stale row stays the
+            // transition policy's job.
+            var staleRow = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            staleRow.AssignedAgentId.ShouldBe(agent.Id);
+            staleRow.AgentQueuePosition.ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // Two cards of the same agent can finish inside one unit of work (tracker sync sweep,
+    // orchestrator reconcile). The compaction query's SQL filter sees pre-save values, so the
+    // first dequeued card comes back as a candidate while dequeuing the second — it must not be
+    // handed a queue position back.
+    [Test]
+    public async Task Dequeuing_two_finished_cards_in_one_unit_of_work_leaves_neither_positioned()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var db = CreateContext();
+            var now = DateTime.UtcNow;
+            var project = NewProject(tempRoot);
+            var board = new Board
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                Name = $"Batch Dequeue Board {Guid.NewGuid():N}",
+                CreatedAt = now,
+                UpdatedAt = now,
+                Project = project
+            };
+            var columns = BoardService.CreateDefaultColumns(board, now);
+            var reviewColumn = columns.Single(c => c.StateKey == "review");
+            var inProgressColumn = columns.Single(c => c.StateKey == "in-progress");
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Batch Dequeue Claude {Guid.NewGuid():N}",
+                Slug = $"batch-dequeue-{Guid.NewGuid():N}",
+                WorkingDirectory = Path.Combine(tempRoot, "agent-workspace"),
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            Card NewCard(string title, BoardColumn column, CardStatus status, int position) => new()
+            {
+                Id = Guid.NewGuid(),
+                BoardId = board.Id,
+                BoardColumnId = column.Id,
+                Identifier = $"BATCH-{Guid.NewGuid():N}"[..12],
+                Title = title,
+                Status = status,
+                AssignedAgentId = agent.Id,
+                AgentQueuePosition = position,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var firstFinished = NewCard("First finished", reviewColumn, CardStatus.Review, 1);
+            var secondFinished = NewCard("Second finished", reviewColumn, CardStatus.Review, 2);
+            var stillQueued = NewCard("Still queued", inProgressColumn, CardStatus.InProgress, 3);
+            db.Projects.Add(project);
+            db.Boards.Add(board);
+            db.BoardColumns.AddRange(columns);
+            db.Agents.Add(agent);
+            db.Cards.AddRange(firstFinished, secondFinished, stillQueued);
+            await db.SaveChangesAsync();
+
+            var firstRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
+                db, firstFinished, now, CancellationToken.None);
+            var secondRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
+                db, secondFinished, now, CancellationToken.None);
+            await db.SaveChangesAsync();
+
+            firstRemoval.ShouldNotBeNull();
+            secondRemoval.ShouldNotBeNull();
+            secondRemoval.ShiftedCards.ShouldAllBe(
+                c => c.Id == stillQueued.Id,
+                "an already-dequeued card must not reappear as a compaction candidate");
+
+            await using var verify = CreateContext();
+            var first = await verify.Cards.SingleAsync(c => c.Id == firstFinished.Id);
+            first.AssignedAgentId.ShouldBeNull();
+            first.AgentQueuePosition.ShouldBeNull("the second dequeue's compaction must not re-position the first");
+            var second = await verify.Cards.SingleAsync(c => c.Id == secondFinished.Id);
+            second.AssignedAgentId.ShouldBeNull();
+            second.AgentQueuePosition.ShouldBeNull();
+            var queued = await verify.Cards.SingleAsync(c => c.Id == stillQueued.Id);
+            queued.AssignedAgentId.ShouldBe(agent.Id);
+            queued.AgentQueuePosition.ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
     {
         await using var db = CreateContext();

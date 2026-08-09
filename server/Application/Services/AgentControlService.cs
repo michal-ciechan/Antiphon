@@ -375,6 +375,10 @@ public sealed class AgentControlService
     }
 
     // Prefer the agent's current card while it's still runnable, otherwise the head of its queue.
+    // Cards whose work is finished (Review/Done/Canceled) are never spawnable: the queue policy
+    // dequeues them on transition, but rows written before that policy existed — or raced past
+    // it — must not re-trigger the restart respawn loop (CARD-0001: five sessions, one per
+    // agent restart, onto a card sitting in Review).
     private async Task<Card?> ResolveStartCardAsync(Agent agent, CancellationToken ct)
     {
         if (agent.CurrentCardId is Guid currentId)
@@ -383,16 +387,38 @@ public sealed class AgentControlService
                 .Include(c => c.BoardColumn)
                 .FirstOrDefaultAsync(c => c.Id == currentId, ct);
             if (current is not null && !current.BoardColumn.IsTerminal)
-                return current;
+            {
+                if (IsSpawnable(current))
+                    return current;
+
+                _logger.LogWarning(
+                    "Agent {AgentName} ({AgentId}): current card {CardIdentifier} ({CardId}) is in status {Status} — work is finished, not respawning on it",
+                    agent.Name, agent.Id, current.Identifier, current.Id, current.Status);
+            }
         }
 
-        return await _db.Cards
+        var queued = await _db.Cards
             .Include(c => c.BoardColumn)
             .Where(c => c.AssignedAgentId == agent.Id && c.AgentQueuePosition != null)
             .OrderBy(c => c.AgentQueuePosition)
             .ThenBy(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
+        foreach (var candidate in queued)
+        {
+            if (IsSpawnable(candidate))
+                return candidate;
+
+            _logger.LogWarning(
+                "Agent {AgentName} ({AgentId}): skipping queued card {CardIdentifier} ({CardId}) in status {Status} — finished cards should have been dequeued (stale queue row)",
+                agent.Name, agent.Id, candidate.Identifier, candidate.Id, candidate.Status);
+        }
+
+        return null;
     }
+
+    private static bool IsSpawnable(Card card) =>
+        !card.BoardColumn.IsTerminal
+        && card.Status is not (CardStatus.Review or CardStatus.Done or CardStatus.Canceled);
 
     private async Task<Agent> LockAgentAsync(Guid agentId, CancellationToken ct) =>
         await _db.Agents

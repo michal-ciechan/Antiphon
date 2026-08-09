@@ -14,6 +14,9 @@ public sealed class ExternalTrackerSyncService
     private readonly IEventBus _eventBus;
     private readonly ILogger<ExternalTrackerSyncService> _logger;
 
+    // Queue removals accumulated while reconciling boards; published after SyncAsync's save.
+    private readonly List<AgentQueueRemoval> _pendingQueueRemovals = [];
+
     public ExternalTrackerSyncService(
         AppDbContext db,
         IEnumerable<IIssueTracker> trackers,
@@ -41,6 +44,7 @@ public sealed class ExternalTrackerSyncService
         var cache = new TrackerCache();
         var changedBoardIds = new HashSet<Guid>();
         var syncedIssues = 0;
+        _pendingQueueRemovals.Clear();
 
         foreach (var board in boards)
         {
@@ -88,6 +92,8 @@ public sealed class ExternalTrackerSyncService
         await _db.SaveChangesAsync(ct);
         foreach (var boardId in changedBoardIds)
             await _eventBus.PublishToAllAsync("BoardChanged", new { boardId }, ct);
+        foreach (var queueRemoval in _pendingQueueRemovals)
+            await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
 
         return syncedIssues;
     }
@@ -148,7 +154,17 @@ public sealed class ExternalTrackerSyncService
                     continue;
                 }
 
-                changed |= UpdateExisting(existingRef, targetColumn, issue, isBlocked, utcNow);
+                if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, utcNow))
+                {
+                    changed = true;
+                    // Self-guarding: only acts if the tracker state landed the card in
+                    // Review/Done/Canceled (possible when a board maps its active column oddly).
+                    var upsertQueueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
+                        _db, existingRef.Card, utcNow, ct);
+                    if (upsertQueueRemoval is not null)
+                        _pendingQueueRemovals.Add(upsertQueueRemoval);
+                }
+
                 continue;
             }
 
@@ -400,7 +416,16 @@ public sealed class ExternalTrackerSyncService
                 continue;
             }
 
-            changed |= MarkInactive(staleRef, terminalColumn, current?.State, utcNow);
+            if (!MarkInactive(staleRef, terminalColumn, current?.State, utcNow))
+                continue;
+
+            changed = true;
+            // A terminal status ends the card's stay in its agent's queue (work remaining only) —
+            // otherwise the next agent start re-spawns a session onto the closed card.
+            var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(
+                _db, staleRef.Card, utcNow, ct);
+            if (queueRemoval is not null)
+                _pendingQueueRemovals.Add(queueRemoval);
         }
 
         if (changed)

@@ -98,18 +98,24 @@ public sealed class CardService
             throw new ValidationException(nameof(request.BoardColumnId), "Target column belongs to a different board.");
 
         var wasTerminal = card.BoardColumn.IsTerminal;
+        // The dequeue below clears AssignedAgentId — capture it first so the completion
+        // checkpoint still knows whose workspace to snapshot.
+        var assignedAgentId = card.AssignedAgentId;
         ApplyColumnMove(card, targetColumn);
+        var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
         await _db.SaveChangesAsync(ct);
 
         // Completing a card is the "work is done" sign-off — checkpoint the assigned agent's
         // workspace (HEAD sha + timestamp) so the Files review surface can show changes since
         // this point next time.
-        if (targetColumn.IsTerminal && !wasTerminal && card.AssignedAgentId is { } assignedAgentId)
-            await _reviewCheckpoints.CaptureAsync(assignedAgentId, $"Card {card.Identifier} completed", ct);
+        if (targetColumn.IsTerminal && !wasTerminal && assignedAgentId is { } checkpointAgentId)
+            await _reviewCheckpoints.CaptureAsync(checkpointAgentId, $"Card {card.Identifier} completed", ct);
 
         if (targetColumn.IsActive && card.OwnerSessionId is null)
             await SpawnAsync(card.Id, new SpawnCardRequest(), ct);
 
+        if (queueRemoval is not null)
+            await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return await GetByIdAsync(card.Id, ct);
     }
