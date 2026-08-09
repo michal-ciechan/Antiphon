@@ -225,6 +225,40 @@ public class ReviewLoopTests
             .Missing.ShouldBeTrue("raw.md did not exist at the checkpoint");
     }
 
+    /// <summary>
+    /// The listing is a UNION of git changes and files the agent touched, and only the git half was
+    /// ever scoped to the baseline. So "Complete work" on a clean tree left every file the agent had
+    /// EVER edited on screen — the new baseline looked like it had done nothing (live report
+    /// 2026-08-09: "files in file view still showing same as before").
+    /// </summary>
+    [Test]
+    public async Task Checkpoint_baseline_drops_agent_edits_made_before_the_sign_off()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        var checkpoint = await h.Checkpoints.CaptureAsync(h.AgentId, "Manual baseline", CancellationToken.None);
+        checkpoint.ShouldNotBeNull();
+
+        // The tree stays clean throughout, so git contributes nothing: whatever the listing shows
+        // is the agent-activity half on its own.
+        await h.InsertToolCallAsync("Edit", Path.Combine(h.Workspace, "before.md"),
+            checkpoint!.CreatedAt.AddMinutes(-5));
+
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: "checkpoint", CancellationToken.None);
+        listing!.Files.ShouldBeEmpty("nothing has changed since the sign-off");
+
+        // ...but work done after it must still surface, or a baseline would hide live edits.
+        await h.InsertToolCallAsync("Edit", Path.Combine(h.Workspace, "after.md"),
+            checkpoint.CreatedAt.AddMinutes(5));
+
+        var reworked = await h.Files.GetFilesAsync(h.AgentId, since: "checkpoint", CancellationToken.None);
+        reworked!.Files.Select(f => f.Path).ShouldBe(["after.md"]);
+
+        // A HEAD baseline has no sign-off instant, so it keeps showing the agent's whole history.
+        var headListing = await h.Files.GetFilesAsync(h.AgentId, since: "head", CancellationToken.None);
+        headListing!.Files.Select(f => f.Path).OrderBy(p => p).ShouldBe(["after.md", "before.md"]);
+    }
+
     // History rewritten (or no sha captured) → the checkpoint resolves by TIMESTAMP: the newest
     // commit at or before the checkpoint time becomes the diff base.
     [Test]
@@ -479,7 +513,8 @@ public class ReviewLoopTests
         public required Guid SessionId { get; init; }
         public required string Workspace { get; init; }
 
-        public async Task InsertToolCallAsync(string toolName, string filePath)
+        /// <param name="at">Explicit call time — baseline tests need to straddle a checkpoint.</param>
+        public async Task InsertToolCallAsync(string toolName, string filePath, DateTime? at = null)
         {
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
             var baseSeq = (await db.TranscriptEntries
@@ -490,7 +525,7 @@ public class ReviewLoopTests
                 Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
                 Kind = TranscriptKinds.ToolCall, ToolName = toolName,
                 ToolInput = System.Text.Json.JsonSerializer.Serialize(new { file_path = filePath }),
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = at ?? DateTime.UtcNow,
             });
             await db.SaveChangesAsync();
         }

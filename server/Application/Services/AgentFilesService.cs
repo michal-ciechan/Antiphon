@@ -93,7 +93,7 @@ public sealed class AgentFilesService
             : baseline.CommitSha is null
                 ? await _git.GetChangesAsync(root, ct)
                 : await _git.GetChangesSinceAsync(root, baseline.CommitSha, ct);
-        var activity = await GetAgentActivityAsync(agent, root, ct);
+        var activity = await GetAgentActivityAsync(agent, root, baseline.At, ct);
         var reviews = await _db.FileReviewStates.AsNoTracking()
             .Where(r => r.AgentId == agentId)
             .ToDictionaryAsync(r => r.Path, ct);
@@ -475,18 +475,27 @@ public sealed class AgentFilesService
 
     private sealed record ActivityInfo(int Edits, DateTime LastEditAt, bool External);
 
+    /// <param name="since">
+    /// Baseline instant. This half of the union has to be scoped too, or a sign-off leaves every
+    /// file the agent ever touched on screen and the new baseline appears to have done nothing.
+    /// Null (a HEAD baseline) means "no sign-off instant exists" — report the whole history.
+    /// </param>
     private async Task<Dictionary<string, ActivityInfo>> GetAgentActivityAsync(
-        Agent agent, string root, CancellationToken ct)
+        Agent agent, string root, DateTime? since, CancellationToken ct)
     {
         var result = new Dictionary<string, ActivityInfo>(StringComparer.OrdinalIgnoreCase);
         if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
             return result;
 
-        var calls = await _db.TranscriptEntries.AsNoTracking()
+        var query = _db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind == TranscriptKinds.ToolCall
                 && t.ToolName != null && FileToolNames.Contains(t.ToolName)
-                && t.ToolInput != null)
+                && t.ToolInput != null);
+        if (since is not null)
+            query = query.Where(t => t.CreatedAt > since.Value);
+
+        var calls = await query
             .Select(t => new { t.ToolInput, t.CreatedAt })
             .ToListAsync(ct);
 
