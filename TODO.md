@@ -25,6 +25,40 @@ freed up, so `CARD-0007` can refer to two different cards over time. Anything ke
 identifier rather than the id — links, comments, task files, agent prompts — silently points at the
 wrong card. Fix is max+1 over existing identifiers (parse and take the highest), not count+1.
 
+### A session can adopt ANOTHER session's transcript — including a human's own conversation
+Observed live 2026-08-09. `session-runner.log`:
+
+```
+WRN Session 18c04655-...: <session-id>.jsonl never appeared (Claude forked the id);
+    adopting discovered transcript C:\Users\lndco\.claude\projects\C--src-Antiphon\37512455-...jsonl
+INF Tailing transcript ...\37512455-....jsonl for session 18c04655-...
+```
+
+`37512455-…` was the **operator's own Claude Code conversation**, not the agent's. Claude's transcript
+directory is per working directory (`~/.claude/projects/<slugged-cwd>/`), so when an agent's own
+`<session-id>.jsonl` does not appear in the discovery window, the fallback picks another file from
+that folder — and the most-recently-written one belongs to whichever session is busiest, which is
+typically a human actively working in the same checkout.
+
+**Trigger:** launch an agent into a directory that already hosts another live Claude session, where
+the agent's own jsonl never lands. Here the launch 500'd (`ClearLiveBufferAsync` →
+`PtyHostClient.SendAsync`, `SessionRunnerRuntime.cs:626`) and the session died before writing it.
+Three Antiphon agents plus a human session all share `C:/src/Antiphon`, so the collision window is
+wide open in normal use.
+
+**What breaks if this is not fixed:** the agent ingests someone else's conversation as its own.
+Confirmed effects — the brand-new orchestrator immediately reported **65 agent-touched files** that
+were actually the operator's edits (including files in a worktree it had never opened); after a clean
+relaunch onto its own transcript the same query returns **0**. Working/idle is then computed from a
+stranger's turns, so WhenIdle deliveries fire at the wrong moments. Worst case is a channel-bound
+agent: reply dispatch relays the *other* session's turn text to Telegram, i.e. an unrelated private
+conversation gets sent to a chat. Nothing warns beyond one WRN line.
+
+**Fix direction:** never adopt a transcript another live session is already tailing, and reject any
+candidate whose first record predates this session's launch — a genuine transcript for a new session
+cannot start before the session did. Failing both checks, run without a transcript and raise an
+incident rather than silently binding to the wrong one.
+
 ### A numeric `modelLevel` is silently ignored on agent create
 `POST /api/agents` with `"modelLevel": 0` returns **200 with an agent on `High`**, not `Frontier`.
 `CreateAgentRequest.ModelLevel` is a nullable enum and the API serialises enums as *strings*, so a
