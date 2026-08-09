@@ -43,9 +43,18 @@ public sealed class AgentFilesService
         _logger = logger;
     }
 
-    private sealed record Baseline(string Kind, string? CommitSha, string? Reason, DateTime? At, bool TimestampFallback)
+    /// <param name="At">Checkpoint timestamp, surfaced to the UI caption. Checkpoints only.</param>
+    /// <param name="ActivitySince">
+    /// The instant the agent-activity half of the listing is cut at. Separate from <paramref name="At"/>
+    /// because a commit baseline has a cut (the commit's date) but no checkpoint to report — folding
+    /// the two together would populate "checkpointAt" for a baseline that has no checkpoint.
+    /// Null means "no cut exists" (a HEAD baseline), i.e. report the agent's whole history.
+    /// </param>
+    private sealed record Baseline(
+        string Kind, string? CommitSha, string? Reason, DateTime? At, bool TimestampFallback,
+        DateTime? ActivitySince)
     {
-        public static readonly Baseline Head = new("head", null, null, null, false);
+        public static readonly Baseline Head = new("head", null, null, null, false, null);
     }
 
     /// <summary>
@@ -62,7 +71,8 @@ public sealed class AgentFilesService
         if (!since.Equals("checkpoint", StringComparison.OrdinalIgnoreCase))
         {
             return await _git.IsInHistoryAsync(root, since, ct)
-                ? new Baseline("commit", since, null, null, false)
+                ? new Baseline("commit", since, null, null, false,
+                    ActivitySince: await _git.GetCommitDateAsync(root, since, ct))
                 : Baseline.Head;
         }
 
@@ -70,13 +80,17 @@ public sealed class AgentFilesService
         if (checkpoint is null)
             return Baseline.Head;
 
+        // A checkpoint cuts at the moment of SIGN-OFF, not at its commit's date: the user may have
+        // baselined at a historic commit, and what they mean is "since I said this was done".
         if (checkpoint.CommitSha is not null && await _git.IsInHistoryAsync(root, checkpoint.CommitSha, ct))
-            return new Baseline("checkpoint", checkpoint.CommitSha, checkpoint.Reason, checkpoint.CreatedAt, false);
+            return new Baseline("checkpoint", checkpoint.CommitSha, checkpoint.Reason, checkpoint.CreatedAt, false,
+                ActivitySince: checkpoint.CreatedAt);
 
         var fallback = await _git.GetLastCommitBeforeAsync(root, checkpoint.CreatedAt, ct);
         return fallback is null
             ? Baseline.Head
-            : new Baseline("checkpoint", fallback, checkpoint.Reason, checkpoint.CreatedAt, true);
+            : new Baseline("checkpoint", fallback, checkpoint.Reason, checkpoint.CreatedAt, true,
+                ActivitySince: checkpoint.CreatedAt);
     }
 
     public async Task<AgentFilesDto?> GetFilesAsync(Guid agentId, string? since, CancellationToken ct)
@@ -93,7 +107,7 @@ public sealed class AgentFilesService
             : baseline.CommitSha is null
                 ? await _git.GetChangesAsync(root, ct)
                 : await _git.GetChangesSinceAsync(root, baseline.CommitSha, ct);
-        var activity = await GetAgentActivityAsync(agent, root, baseline.At, ct);
+        var activity = await GetAgentActivityAsync(agent, root, baseline.ActivitySince, ct);
         var reviews = await _db.FileReviewStates.AsNoTracking()
             .Where(r => r.AgentId == agentId)
             .ToDictionaryAsync(r => r.Path, ct);

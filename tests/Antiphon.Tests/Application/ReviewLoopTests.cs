@@ -259,6 +259,34 @@ public class ReviewLoopTests
         headListing!.Files.Select(f => f.Path).OrderBy(p => p).ShouldBe(["after.md", "before.md"]);
     }
 
+    /// <summary>
+    /// Same defect as above, reached through the baseline picker instead of the sign-off button:
+    /// selecting a historic commit had no instant attached, so the agent half of the union went
+    /// unfiltered and the listing still showed the whole session.
+    /// </summary>
+    [Test]
+    public async Task Commit_baseline_drops_agent_edits_from_before_that_commit()
+    {
+        await using var h = await HarnessAsync(withGitRepo: true);
+
+        var commits = await h.Files.GetCommitsAsync(h.AgentId, 10, CancellationToken.None);
+        var seed = commits!.Commits[^1];
+
+        // The seed commit is backdated 2h, so these straddle it without racing the clock.
+        await h.InsertToolCallAsync("Edit", Path.Combine(h.Workspace, "before.md"),
+            h.SeedCommitAt.AddMinutes(-30));
+        await h.InsertToolCallAsync("Edit", Path.Combine(h.Workspace, "after.md"),
+            h.SeedCommitAt.AddMinutes(30));
+
+        var listing = await h.Files.GetFilesAsync(h.AgentId, since: seed.Sha, CancellationToken.None);
+        listing!.Baseline.Kind.ShouldBe("commit");
+        listing.Files.Select(f => f.Path).ShouldBe(["after.md"]);
+
+        // The cut is the commit's own date, so it must not leak out as a checkpoint timestamp —
+        // the caption renders that field only for checkpoints and would be lying here.
+        listing.Baseline.CheckpointAt.ShouldBeNull();
+    }
+
     // History rewritten (or no sha captured) → the checkpoint resolves by TIMESTAMP: the newest
     // commit at or before the checkpoint time becomes the diff base.
     [Test]

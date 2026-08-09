@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 
@@ -188,6 +189,23 @@ public sealed class GitWorkspaceService
             workingDirectory, ct, "rev-list", "-1", $"--before={utcTimestamp:yyyy-MM-ddTHH:mm:ssZ}", "HEAD");
         var sha = stdout.Trim();
         return code == 0 && sha.Length > 0 ? sha : null;
+    }
+
+    /// <summary>
+    /// Committer date of a commit, in UTC, or null when it doesn't exist. Committer rather than
+    /// author date: this answers "when did this land on the branch", which is what a baseline cuts
+    /// on, and it matches <see cref="GetLastCommitBeforeAsync"/> (git rev-list --before is
+    /// committer-dated too). On a rebase-always repo the two differ, so the choice is load-bearing.
+    /// </summary>
+    public async Task<DateTime?> GetCommitDateAsync(string workingDirectory, string sha, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "show", "-s", "--format=%cI", sha);
+        if (code != 0)
+            return null;
+        return DateTimeOffset.TryParse(
+            stdout.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var when)
+            ? when.UtcDateTime
+            : null;
     }
 
     public sealed record GitCommit(string Sha, string ShortSha, string Author, DateTime Date, string Subject);
