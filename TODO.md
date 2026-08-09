@@ -25,6 +25,31 @@ freed up, so `CARD-0007` can refer to two different cards over time. Anything ke
 identifier rather than the id — links, comments, task files, agent prompts — silently points at the
 wrong card. Fix is max+1 over existing identifiers (parse and take the highest), not count+1.
 
+### A numeric `modelLevel` is silently ignored on agent create
+`POST /api/agents` with `"modelLevel": 0` returns **200 with an agent on `High`**, not `Frontier`.
+`CreateAgentRequest.ModelLevel` is a nullable enum and the API serialises enums as *strings*, so a
+numeric value fails to bind, lands as null, and takes the `High` default. Confirmed live 2026-08-09.
+
+**What breaks if this is not fixed:** a script or integration that provisions agents believes it
+created a Frontier (fable) agent and gets an Opus one. Nothing errors, nothing logs, and the only
+symptom is the wrong model tier and the wrong bill — the response body reads `"modelLevel": "High"`
+and a caller that does not diff it against what it sent will never notice. It also makes the API
+inconsistent with itself, since `PATCH /api/agents/{id}` with `"modelLevel": "Frontier"` works fine.
+
+**Fix:** reject an unbindable `modelLevel` with a 400 rather than defaulting. Silent coercion of a
+value the caller explicitly supplied is the bug; the string-only enum is fine.
+
+### Always-on cannot be set when an agent is created
+`CreateAgentRequest` has no `alwaysOn` or `remoteControlEnabled` — only `UpdateAgentRequest` does. So
+every supervised agent is a two-step: create, then PATCH. In the UI that is New Agent → fill → Create
+→ kebab menu → Edit settings → toggle → Save, when the create dialog already collects model level and
+assignment policy and could collect these too.
+
+**What breaks if this is not fixed:** nothing corrupts, but there is a real window where the agent
+exists **unsupervised** — if the process dies between create and the always-on PATCH, nothing
+restarts it, which is precisely the failure always-on exists to prevent. Scripted provisioning needs
+two round-trips and has to handle the second one failing, leaving a half-configured agent.
+
 ### E2E: session-runner port is ambiguous, and E2E targets the one nothing runs on
 `Antiphon.AppHost/Program.cs` starts the runner on **17204** and overrides `SessionRunner__BaseUrl`
 to match. `server/appsettings.json` defaults `SessionRunner:BaseUrl` to **17283**, and so does
