@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Delete regenerable alternate build outputs (bin-verify/, bin-ptyhost/, bin-profile*/)
-    across the repo. These are created by "build while daemons lock bin/" workarounds
-    (dotnet build --property:OutputPath=bin-verify\) and are never referenced afterwards,
-    but they bloat the tree and slow MSBuild evaluation when left to accumulate.
+    Delete regenerable alternate build outputs (bin-verify/, bin-ptyhost/, bin-profile*/,
+    bin-alt*/) across the repo. These are created by "build while daemons lock bin/"
+    workarounds (dotnet build --property:OutputPath=bin-verify\) and are never referenced
+    afterwards, but they bloat the tree and slow MSBuild evaluation when left to accumulate.
 
     Deliberately NOT touched:
       - bin/ and obj/           (live build outputs; the running daemons lock them)
@@ -25,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*')
+$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*')
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
 
 $empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))
@@ -36,17 +36,27 @@ try {
     foreach ($pattern in $patterns) {
         $dirs = Get-ChildItem -Path $RepoRoot -Directory -Recurse -Filter $pattern -Depth 3 -ErrorAction SilentlyContinue
         foreach ($d in $dirs) {
-            if ($d.LastWriteTime -gt $cutoff) {
-                Write-Host "skip (recently modified): $($d.FullName)"
-                continue
-            }
-            & robocopy $empty $d.FullName /MIR /NFL /NDL /NJH /NJS /W:0 /R:0 | Out-Null
-            Remove-Item -LiteralPath $d.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-            if (-not (Test-Path -LiteralPath $d.FullName)) {
-                Write-Host "removed: $($d.FullName)"
-                $removed++
-            } else {
-                Write-Host "partial (locked?): $($d.FullName)"
+            try {
+                if (-not (Test-Path -LiteralPath $d.FullName)) {
+                    # Already removed as a nested match of a parent directory this same run.
+                    continue
+                }
+                if ($d.LastWriteTime -gt $cutoff) {
+                    Write-Host "skip (recently modified): $($d.FullName)"
+                    continue
+                }
+                & robocopy $empty $d.FullName /MIR /NFL /NDL /NJH /NJS /W:0 /R:0 | Out-Null
+                Remove-Item -LiteralPath $d.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+                if (-not (Test-Path -LiteralPath $d.FullName)) {
+                    Write-Host "removed: $($d.FullName)"
+                    $removed++
+                } else {
+                    Write-Host "partial (locked?): $($d.FullName)"
+                }
+            } catch {
+                # A single directory failing to delete (already-removed nested match, locked
+                # file, etc.) must not abort the whole sweep — later patterns still need to run.
+                Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
             }
         }
     }
