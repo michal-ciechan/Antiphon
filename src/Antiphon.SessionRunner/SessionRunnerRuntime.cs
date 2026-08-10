@@ -19,6 +19,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
     private readonly SessionRunnerEventHub _events = new();
+    // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
+    // the only thing that knows which sessions are live.
+    private readonly TranscriptClaimRegistry _transcriptClaims = new();
     private readonly SessionRunnerSettings _settings;
     private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
@@ -45,7 +48,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (request.MemoryLimitMb < 0)
             throw new ArgumentException("MemoryLimitMb must not be negative.", nameof(request));
 
-        var session = new RunnerSession(request.SessionId, _settings, _events, _logger);
+        var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims);
         if (!_sessions.TryAdd(request.SessionId, session))
         {
             // A session id can be relaunched once its process has exited (claude --resume reuses
@@ -119,6 +122,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public ChannelReader<RunnerServerSentEvent> Subscribe(CancellationToken ct) => _events.Subscribe(ct);
 
+    /// <summary>Transcript ownership, rule C1 (see <see cref="TranscriptClaimRegistry"/>). Test surface.</summary>
+    internal TranscriptClaimRegistry TranscriptClaims => _transcriptClaims;
+
     /// <summary>
     /// Kills every live session (and thereby its host, via the exit-&gt;Shutdown ack). The
     /// scorched-earth path behind <c>restart-session-runner.ps1 -KillSessions</c> and
@@ -179,13 +185,32 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (deleted > 0)
                 _logger.LogInformation("Pruned {Count} unreferenced pty-host shadow-copy dir(s)", deleted);
 
+            var cutoff = DateTime.UtcNow.AddDays(-14);
             if (Directory.Exists(_settings.PtyHostLogDir))
             {
-                var cutoff = DateTime.UtcNow.AddDays(-14);
                 foreach (var log in Directory.EnumerateFiles(_settings.PtyHostLogDir, "*.log"))
                 {
                     if (File.GetLastWriteTimeUtc(log) < cutoff)
                         TryDeleteFile(log);
+                }
+            }
+
+            // Transcript sidecars, same window — but only for sessions this runner no longer knows
+            // about, since a live session's sidecar is how the NEXT restart re-tails it.
+            var sidecarDir = TranscriptSidecar.DirectoryFor(_settings.SessionLogPath);
+            if (Directory.Exists(sidecarDir))
+            {
+                foreach (var sidecar in Directory.EnumerateFiles(sidecarDir, "*.json"))
+                {
+                    if (File.GetLastWriteTimeUtc(sidecar) >= cutoff)
+                        continue;
+                    if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(sidecar), "N", out var id)
+                        && _sessions.ContainsKey(id))
+                    {
+                        continue;
+                    }
+
+                    TryDeleteFile(sidecar);
                 }
             }
         }
@@ -206,6 +231,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async Task<int> AdoptOrphanedHostsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
+        // Rebuild transcript claims BEFORE any session is adopted. This sweep already has to
+        // complete before the HTTP API starts listening, so restoring here means a freshly launched
+        // session can never race the restore and discover a file a surviving session still owns.
+        RestoreTranscriptClaims();
+
         var manifestDir = _settings.PtyHostManifestDir;
         if (!Directory.Exists(manifestDir))
             return 0;
@@ -226,7 +256,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
-                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger);
+                var session = new RunnerSession(manifest.SessionId, _settings, _events, _logger, _transcriptClaims);
                 try
                 {
                     var running = await session.AdoptAsync(manifest, ct);
@@ -259,6 +289,25 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         return adopted;
+    }
+
+    /// <summary>
+    /// Re-asserts every transcript claim recorded in a sidecar. A claim that outlives its session
+    /// is deliberate: a previous session's transcript must never become adoptable by a new one, and
+    /// a relaunch of the SAME session id (which is what <c>--resume</c> does) re-claims it as the
+    /// same owner. Sidecars are pruned on the 14-day cleanup pass, so this cannot grow without bound.
+    /// </summary>
+    private void RestoreTranscriptClaims()
+    {
+        var restored = 0;
+        foreach (var sidecar in TranscriptSidecar.LoadAll(_settings.SessionLogPath))
+        {
+            if (sidecar.TranscriptPath is { } path && _transcriptClaims.TryClaim(path, sidecar.SessionId))
+                restored++;
+        }
+
+        if (restored > 0)
+            _logger.LogInformation("Restored {Count} transcript claim(s) from sidecars", restored);
     }
 
     private static void TryDeleteFile(string path)
@@ -343,6 +392,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private readonly TaskCompletionSource _exited =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        private readonly TranscriptClaimRegistry? _transcriptClaims;
+        // Everything typed into this session, normalized and bounded — the evidence rule C4 needs
+        // to prove a candidate transcript is ours (CARD-0006).
+        private readonly SessionInputLog _inputLog = new();
+
         private PtyHostClient? _client;
         private int _hostPid;
         private int? _childPid;
@@ -350,6 +404,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private TerminalScreen? _screen;
         private string? _ansiLogPath;
         private TranscriptTailer? _tailer;
+        private TranscriptSidecar? _sidecar;
         private long _lastSequence;
         private string _status = "Starting";
         private int? _exitCode;
@@ -361,12 +416,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Guid sessionId,
             SessionRunnerSettings settings,
             SessionRunnerEventHub events,
-            ILogger logger)
+            ILogger logger,
+            TranscriptClaimRegistry? transcriptClaims = null)
         {
             _sessionId = sessionId;
             _settings = settings;
             _events = events;
             _logger = logger;
+            _transcriptClaims = transcriptClaims;
         }
 
         public DateTime StartedAt => _startedAt;
@@ -434,7 +491,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 if (request.TranscriptEnabled)
                 {
-                    _tailer = new TranscriptTailer(_sessionId, request.Cwd, _events, _logger);
+                    // The sidecar is written BEFORE the tailer runs, so even a session that never
+                    // binds a transcript leaves behind the facts (cwd, agent name, child start) a
+                    // restart needs to judge candidates.
+                    var agentName = FindArgValue(request.Args, "--name");
+                    var resumeLaunch = IsResumeLaunch(request.Args);
+                    SaveSidecar(new TranscriptSidecar
+                    {
+                        SessionId = _sessionId,
+                        Cwd = request.Cwd,
+                        AgentName = agentName,
+                        ChildStartUtc = _startedAt,
+                        ResumeLaunch = resumeLaunch,
+                        TranscriptPath = null,
+                        How = null,
+                    });
+
+                    _tailer = new TranscriptTailer(
+                        _sessionId, request.Cwd, _events, _logger,
+                        claims: _transcriptClaims,
+                        inputLog: _inputLog,
+                        childStartUtc: _startedAt,
+                        agentName: agentName,
+                        resumeLaunch: resumeLaunch,
+                        onBound: RecordTranscriptBinding);
                     _tailer.Start();
                 }
             }
@@ -507,12 +587,79 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (manifest.TranscriptEnabled)
             {
-                _tailer = new TranscriptTailer(_sessionId, manifest.Cwd ?? "", _events, _logger);
+                // Re-tail the file we already knew about instead of re-running discovery: after a
+                // restart the input log is empty, so nothing could prove ownership of a candidate,
+                // and the heuristic that used to fill that gap is what bound an agent to the
+                // operator's own conversation (CARD-0006).
+                var sidecar = TranscriptSidecar.TryLoad(
+                    TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
+                var cwd = manifest.Cwd ?? sidecar?.Cwd ?? "";
+                // A session that predates sidecars has none to load; seed one from the manifest so
+                // this restart is the last one that has to fall back to the migration shim.
+                _sidecar = sidecar ?? new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = cwd,
+                    ChildStartUtc = manifest.ChildStartTimeUtc,
+                };
+
+                _tailer = new TranscriptTailer(
+                    _sessionId, cwd, _events, _logger,
+                    claims: _transcriptClaims,
+                    inputLog: _inputLog,
+                    childStartUtc: manifest.ChildStartTimeUtc ?? sidecar?.ChildStartUtc,
+                    agentName: sidecar?.AgentName,
+                    resumeLaunch: sidecar?.ResumeLaunch ?? false,
+                    knownTranscriptPath: sidecar?.TranscriptPath,
+                    restartAdopt: true,
+                    onBound: RecordTranscriptBinding);
                 _tailer.Start();
             }
 
             return true;
         }
+
+        /// <summary>Persists the transcript binding so the next runner re-tails it without guessing.</summary>
+        private void RecordTranscriptBinding(string transcriptPath, string how)
+        {
+            var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
+            SaveSidecar(current with { TranscriptPath = transcriptPath, How = how });
+        }
+
+        private void SaveSidecar(TranscriptSidecar sidecar)
+        {
+            _sidecar = sidecar with { UpdatedAtUtc = DateTime.UtcNow };
+            try
+            {
+                _sidecar.SaveAtomic(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort: losing the sidecar costs this session its no-guess restart path, not
+                // its transcript. It is never a reason to fail a launch.
+                _logger.LogWarning(ex, "Could not write the transcript sidecar for session {SessionId}", _sessionId);
+            }
+        }
+
+        private static string? FindArgValue(IReadOnlyList<string> args, string name)
+        {
+            for (var i = 0; i < args.Count; i++)
+            {
+                if (args[i] == name && i + 1 < args.Count)
+                    return args[i + 1];
+                if (args[i].StartsWith(name + "=", StringComparison.Ordinal))
+                    return args[i][(name.Length + 1)..];
+            }
+
+            return null;
+        }
+
+        // --resume/--continue replay a conversation whose records legitimately predate this launch,
+        // which is exactly what rule C3 would otherwise reject.
+        private static bool IsResumeLaunch(IReadOnlyList<string> args) =>
+            args.Any(a =>
+                a is "--resume" or "-r" or "--continue" or "-c"
+                || a.StartsWith("--resume=", StringComparison.Ordinal));
 
         /// <summary>
         /// Registers a session whose host is gone: the fate is whatever the manifest recorded
@@ -628,6 +775,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         public async Task WriteAsync(string input, CancellationToken ct)
         {
             var client = await AwaitClientAsync(ct);
+            // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
+            // the input log is always ahead of the transcript record that rule C4 matches it to.
+            _inputLog.Append(input);
             await client.InputAsync(input, ct);
         }
 
@@ -700,6 +850,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 new RunnerSessionExitedEvent(_sessionId, exitCode, "ProcessVanished", lastSequence));
             _clientReady.TrySetResult(false);
             _exited.TrySetResult();
+            _tailer?.NotifyChildExited();
 
             // The session is declared dead; the host (if any survives) has no further purpose.
             _ = Task.Run(ShutdownHostAsync);
@@ -773,6 +924,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             _clientReady.TrySetResult(false);
             _exited.TrySetResult();
+            // A dead child writes no more transcript: stop hunting for one (and say so if input was
+            // delivered and nothing ever bound).
+            _tailer?.NotifyChildExited();
             // Fate is recorded — ack so the host deletes its manifest and exits. Run outside the
             // client's read loop (this handler IS the read loop).
             _ = Task.Run(ShutdownHostAsync);

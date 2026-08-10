@@ -245,6 +245,30 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 : new SessionRunnerEvent(eventName, entry.SessionId, Transcript: MapTranscript(entry));
         }
 
+        if (eventName == SessionRunnerEventNames.SessionTranscriptFault)
+        {
+            var fault = JsonSerializer.Deserialize<RunnerTranscriptFaultEvent>(json, JsonOptions);
+            return fault is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName,
+                    fault.SessionId,
+                    TranscriptFault: new SessionRunnerTranscriptFaultEvent(
+                        fault.SessionId, fault.Kind, fault.Detail, fault.CandidatePath));
+        }
+
+        if (eventName == SessionRunnerEventNames.SessionTranscriptBound)
+        {
+            var bound = JsonSerializer.Deserialize<RunnerTranscriptBoundEvent>(json, JsonOptions);
+            return bound is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName,
+                    bound.SessionId,
+                    TranscriptBound: new SessionRunnerTranscriptBoundEvent(
+                        bound.SessionId, bound.TranscriptPath, bound.How));
+        }
+
         return null;
     }
 

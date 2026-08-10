@@ -51,6 +51,20 @@ public sealed class SessionRunnerEventPump : BackgroundService
                         await runtime.ObserveExitAsync(evt.Exited.SessionId, evt.Exited.ExitCode, evt.Exited.ExitReason, stoppingToken);
                     else if (evt.Transcript is not null)
                         await runtime.ObserveTranscriptAsync(evt.Transcript, stoppingToken);
+                    else if (evt.TranscriptFault is not null)
+                    {
+                        // The runner is running a session with NO transcript because it could not
+                        // prove any candidate was that session's (CARD-0006). Nothing is ingested,
+                        // working/idle reads permanently idle and channel replies cannot dispatch —
+                        // it fails safe, but it must not fail silently.
+                        await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
+                            .OnTranscriptFaultAsync(evt.TranscriptFault, stoppingToken);
+                    }
+                    else if (evt.TranscriptBound is not null)
+                    {
+                        await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
+                            .OnHeuristicBindAsync(evt.TranscriptBound, stoppingToken);
+                    }
                     else if (evt.Adopted is not null)
                     {
                         // The session survived a runner restart (pty-host split). No state change:
