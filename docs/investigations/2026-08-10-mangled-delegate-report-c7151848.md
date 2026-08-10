@@ -131,17 +131,33 @@ measured to arrive intact.
 `Antiphon.Tests`: 712 tests, all green except two pre-existing failures unrelated to this change,
 both verified red on a clean tree —
 `CodexAdapterLocalShellTests.Question_detection_ignores_question_mark_in_prompt_echo` and
-`PtyAgentRunnerTests.Stdin_large_write_64KB_does_not_truncate`.
+`PtyAgentRunnerTests.Stdin_large_write_64KB_does_not_truncate` (since restated, below).
+
+### The standing red test, restated
+
+`Stdin_large_write_64KB_does_not_truncate` asserted that 65 536 characters survive a single write
+to a child reading through the console's line-input path. The measurements above say the platform
+has never offered that contract, so the test encoded a wish and had been red since it was written —
+a standing reproduction of this exact mechanism that nobody read as a warning. It is now two green
+characterisation tests:
+
+- `Stdin_write_at_the_pty_inline_safe_size_arrives_whole` — 4 000 characters round-trip intact.
+  **This is the one that protects the product:** it fails the moment the real cap drops below
+  `DelegationSettings.PtyInlineSafeChars`, i.e. the moment that constant stops being safe.
+- `Stdin_write_past_the_console_input_cap_is_truncated_without_error` — 64 KB in, a short line out,
+  no error raised anywhere. Pins the silent-loss behaviour as an observed platform property rather
+  than folklore, and goes red if a future Windows build lifts the cap (at which point the
+  spill-to-file ceilings can be revisited).
+
+Verified on this machine: both pass; `JobObject_kills_session_when_memory_limit_exceeded` fails
+identically on a clean `master` and is unrelated.
 
 ## Still open
 
-1. **`Stdin_large_write_64KB_does_not_truncate` asserts something the platform does not provide.**
-   Left untouched — it is pre-existing and rewriting another test's meaning is the user's call —
-   but the measurement above says it should be restated as "documents the ~4 KB cap" or removed.
-2. **Only the delegation paths have a file fallback.** Channel and UI messages over 4 000
+1. **Only the delegation paths have a file fallback.** Channel and UI messages over 4 000
    characters now raise an incident but are still typed. A generic "spill to `.antiphon/inbox/` and
    type a pointer" helper would close that.
-3. **Verification still cannot detect truncation.** `ComposerDeliveryEvidence` matches head or
+2. **Verification still cannot detect truncation.** `ComposerDeliveryEvidence` matches head or
    tail by necessity (a large paste renders as `[Pasted text #N +X lines]`, so the middle is not on
    screen). The ground truth is the recipient's own transcript — comparing what was recorded
    against what was sent would make any future shortfall detectable rather than certifiable.

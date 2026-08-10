@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-    Delete regenerable alternate build outputs (bin-verify/, bin-ptyhost/, bin-profile*/,
-    bin-alt*/, bin-cost*/) across the repo. These are created by "build while daemons lock bin/"
-    workarounds (dotnet build --property:OutputPath=bin-verify\) and are never referenced
-    afterwards, but they bloat the tree and slow MSBuild evaluation when left to accumulate.
+    Delete regenerable alternate build outputs (any bin-*/ directory) across the repo. These
+    are created by "build while daemons lock bin/" workarounds (dotnet build
+    --property:OutputPath=bin-verify\) and are never referenced afterwards, but they bloat the
+    tree and slow MSBuild evaluation when left to accumulate. The pattern is a wildcard rather
+    than a list of known names so a new one-off output dir is covered the first time it is used.
 
     Deliberately NOT touched:
       - bin/ and obj/           (live build outputs; the running daemons lock them)
@@ -25,7 +26,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*', 'bin-cost*', 'bin-report*')
+$patterns = @('bin-*')
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
 
 $empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))
@@ -55,7 +56,7 @@ try {
                 }
             } catch {
                 # A single directory failing to delete (already-removed nested match, locked
-                # file, etc.) must not abort the whole sweep — later patterns still need to run.
+                # file, etc.) must not abort the whole sweep - later patterns still need to run.
                 Write-Host "error (skipped): $($d.FullName) - $($_.Exception.Message)"
             }
         }

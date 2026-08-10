@@ -36,14 +36,7 @@ tests/Antiphon.E2E/TestOutput/
 # local dotnet pack output
 out/
 
-bin-ptyhost/
-# Alternate build output dirs used while daemons lock bin/ (see CLAUDE.md gotchas)
-bin-verify/
-bin-fix/
-bin-check/
-bin-profile*/
-bin-deleg*/
-bin-ui*/
-bin-alt*/
-bin-cost*/
-bin-report*/
+# Alternate build output dirs used while daemons lock bin/ (see CLAUDE.md gotchas).
+# Deliberately a wildcard: this was an enumerated list of one-off names, and the first
+# --property:OutputPath=bin-orch/ that nobody had thought of got committed by a git add -A.
+bin-*/

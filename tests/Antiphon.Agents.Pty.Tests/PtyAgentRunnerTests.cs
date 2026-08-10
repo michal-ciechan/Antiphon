@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
@@ -9,7 +10,7 @@ namespace Antiphon.Agents.Pty.Tests;
 
 [NotInParallel("Headed")]
 [Category("Pty")]
-public class PtyAgentRunnerTests
+public partial class PtyAgentRunnerTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -296,10 +297,12 @@ public class PtyAgentRunnerTests
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    [Test]
-    public async Task Stdin_large_write_64KB_does_not_truncate()
+    /// <summary>
+    /// Writes <paramref name="chars"/> 'x' characters as one line and returns the length the child
+    /// actually read back through the console's line-input path.
+    /// </summary>
+    private static async Task<int> ReadLineLengthSeenByChildAsync(int chars)
     {
-        SkipIfNotWindows();
         await using var runner = new PtyAgentRunner();
         await runner.StartAsync(
             "pwsh.exe",
@@ -308,18 +311,80 @@ public class PtyAgentRunnerTests
                 "-NoProfile",
                 "-NoLogo",
                 "-Command",
-                "$line=[Console]::In.ReadLine(); Write-Output $line.Length"
+                "$line=[Console]::In.ReadLine(); Write-Output \"LEN:$($line.Length)\""
             });
 
-        var big = new string('x', 65_536);
         runner.ClearLiveBuffer();
-        await runner.WriteAsync($"{big}\r");
+        await runner.WriteAsync($"{new string('x', chars)}\r");
 
         var matched = await runner.WaitForOutputAsync(
-            s => s.Contains("65536"), TimeSpan.FromSeconds(30));
-        matched.ShouldBeTrue();
+            s => LenPattern().IsMatch(s), TimeSpan.FromSeconds(30));
+        matched.ShouldBeTrue($"the child should report a length within 30s after a {chars}-char write");
 
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+        return int.Parse(LenPattern().Match(runner.SnapshotText()).Groups[1].Value);
+    }
+
+    [GeneratedRegex(@"LEN:(\d+)")]
+    private static partial Regex LenPattern();
+
+    /// <summary>
+    /// The console's line-input path caps how much a single write can deliver to a child reading
+    /// through it, and discards the rest in silence — no error, no short write, no exception; the
+    /// child simply sees a shorter line as though that is all that was sent (measured 2026-08-10,
+    /// <c>docs/investigations/2026-08-10-mangled-delegate-report-c7151848.md</c>).
+    ///
+    /// <para>This is the half that protects the product. Wherever the cap sits, it must stay at or
+    /// above <c>DelegationSettings.PtyInlineSafeChars</c> (4 000) — the ceiling every delegation
+    /// body is squeezed under, chosen because bodies that size were observed to arrive intact. If
+    /// this goes red, that constant is no longer safe and the spill-to-file thresholds must come
+    /// down with it.</para>
+    /// </summary>
+    [Test]
+    public async Task Stdin_write_at_the_pty_inline_safe_size_arrives_whole()
+    {
+        SkipIfNotWindows();
+        SkipIfPwshUnavailable();
+
+        const int ptyInlineSafeChars = 4_000; // DelegationSettings.PtyInlineSafeChars
+
+        var seen = await ReadLineLengthSeenByChildAsync(ptyInlineSafeChars);
+
+        seen.ShouldBe(
+            ptyInlineSafeChars,
+            $"a {ptyInlineSafeChars}-char body is the size every delegation path is held under, so "
+            + "the console input path must carry it whole — if it no longer does, "
+            + "DelegationSettings.PtyInlineSafeChars is now above the real cap");
+    }
+
+    /// <summary>
+    /// The other half, as a characterisation test: past the cap the tail of the write is thrown
+    /// away and nothing anywhere reports it. Documented so the silent-loss behaviour is a pinned,
+    /// visible property of the platform rather than folklore — it is the entire reason large
+    /// delegation bodies spill to a file instead of being typed.
+    ///
+    /// <para>Was <c>Stdin_large_write_64KB_does_not_truncate</c>, which asserted 65 536 characters
+    /// arrive whole. The platform does not offer that contract and never did, so the test had been
+    /// standing red since it was written — an unnoticed reproduction of the exact mechanism that
+    /// later spliced a delegate's report. Restated 2026-08-10 to assert what actually happens.</para>
+    /// </summary>
+    [Test]
+    public async Task Stdin_write_past_the_console_input_cap_is_truncated_without_error()
+    {
+        SkipIfNotWindows();
+        SkipIfPwshUnavailable();
+
+        const int written = 65_536;
+
+        var seen = await ReadLineLengthSeenByChildAsync(written);
+
+        seen.ShouldBeLessThan(
+            written,
+            "the console input path is expected to cap a single line — if the whole 64 KB now "
+            + "arrives, the platform has changed and the spill-to-file ceilings can be revisited");
+        seen.ShouldBeGreaterThanOrEqualTo(
+            4_000,
+            "whatever the cap is, it must leave room for DelegationSettings.PtyInlineSafeChars");
     }
 
     [Test]
