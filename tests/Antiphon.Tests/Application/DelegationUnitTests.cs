@@ -215,7 +215,7 @@ public class DelegationReportFormatterTests
         excerpted.ShouldBeTrue();
         body.ShouldStartWith("OPENING-MARKER");
         body.ShouldEndWith("CLOSING-MARKER");
-        body.ShouldContain("characters omitted");
+        body.ShouldContain("missing from the middle");
         body.Length.ShouldBeLessThan(report.Length);
     }
 
@@ -333,6 +333,114 @@ public class DelegationReportFormatterTests
         task.Workspace = WorkspaceMode.ReadOnly;
 
         DelegationReportFormatter.BuildBrief(task, Settings).ShouldContain("Do NOT modify any files");
+    }
+
+    // ---- the 2026-08-10 live miss: a report reached its caller spliced, and looked complete ----
+
+    /// <summary>
+    /// The shipped default has to sit UNDER the size the pty has been measured to deliver intact,
+    /// or excerpting and spilling never engage and multi-KB bodies go straight to a lossy
+    /// transport. That is precisely what a 20 000-character ceiling did: nothing ever excerpted,
+    /// nothing ever spilled, and a 5 368-character report arrived as a head+tail splice.
+    /// </summary>
+    [Test]
+    public void the_shipped_ceiling_stays_below_the_measured_pty_cliff()
+    {
+        var shipped = new DelegationSettings();
+
+        shipped.ReplyInlineMaxChars.ShouldBeLessThanOrEqualTo(
+            shipped.PtyInlineSafeChars,
+            "a report we are willing to forward inline must be a size the terminal can actually carry");
+        // Measured 2026-08-10: 4 262 chars arrived intact, 5 185 did not.
+        shipped.PtyInlineSafeChars.ShouldBeLessThan(
+            5_185, "the safe ceiling must sit below the smallest body observed to be mangled");
+        // The excerpt itself is typed, so it must fit too.
+        (shipped.ReplyExcerptHeadChars + shipped.ReplyExcerptTailChars)
+            .ShouldBeLessThanOrEqualTo(shipped.ReplyInlineMaxChars);
+    }
+
+    /// <summary>
+    /// The live miss read as prose damage — "...cherry-pick co" welded onto "== a667cbcc, worktree
+    /// list..." — precisely because the seam fell mid-word. An excerpt that cuts on a word boundary
+    /// is distinguishable from a corruption; one that does not is indistinguishable.
+    /// </summary>
+    [Test]
+    public void an_excerpt_never_cuts_mid_word()
+    {
+        var settings = new DelegationSettings
+        {
+            ReplyInlineMaxChars = 200,
+            ReplyExcerptHeadChars = 100,
+            ReplyExcerptTailChars = 100,
+        };
+        // Uniform words, so any cut that lands inside one is unambiguous.
+        var report = string.Join(" ", Enumerable.Range(0, 400).Select(i => $"word{i:D4}"));
+
+        var (body, excerpted) = DelegationReportFormatter.FitReport(report, NewTask(), settings);
+
+        excerpted.ShouldBeTrue();
+        var lines = body.ReplaceLineEndings("\n").Split('\n');
+        var head = lines[0];
+        var tail = lines[^1];
+
+        head.ShouldEndWith(
+            head.Split(' ')[^1],
+            customMessage: "the head must end on a whole token");
+        head.Split(' ')[^1].ShouldMatch(@"^word\d{4}$", "the head's last token must not be a fragment");
+        tail.Split(' ')[0].ShouldMatch(@"^word\d{4}$", "the tail's first token must not be a fragment");
+    }
+
+    /// <summary>
+    /// An excerpt must be impossible to mistake for the whole thing. The old banner said
+    /// "characters omitted"; a reader skimming a wall of text can slide past that. It now states
+    /// outright that what follows is not the whole report, and names where the rest is.
+    /// </summary>
+    [Test]
+    public void an_excerpt_says_plainly_that_it_is_not_the_whole_report()
+    {
+        var settings = new DelegationSettings { ReplyInlineMaxChars = 200 };
+        var report = string.Join(" ", Enumerable.Range(0, 400).Select(i => $"word{i:D4}"));
+
+        var (body, _) = DelegationReportFormatter.FitReport(report, NewTask(), settings);
+
+        body.ShouldContain("EXCERPT");
+        body.ShouldContain("missing from the middle");
+        body.ShouldContain("Do not treat what you see as the whole report");
+        body.ShouldContain("/api/agent-tasks/", customMessage: "and it must always say where the rest is");
+    }
+
+    /// <summary>
+    /// The brief travels the same lossy path as the report — my own 5 203-character brief arrived
+    /// as 1 091 characters. Over the ceiling it becomes a POINTER, and the pointer still has to
+    /// carry the correlation marker or the delegate's report can never be matched back to the task.
+    /// </summary>
+    [Test]
+    public void an_oversized_brief_becomes_a_pointer_that_keeps_the_task_marker()
+    {
+        var task = NewTask();
+
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            task, Settings, spillPath: null, fullLength: 5_203);
+
+        pointer.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+        pointer.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+        pointer.ShouldContain("5,203 characters");
+        pointer.ShouldContain($"/api/agent-tasks/{task.Id}");
+        pointer.Length.ShouldBeLessThanOrEqualTo(
+            new DelegationSettings().PtyInlineSafeChars,
+            "the pointer itself must be small enough to type intact — otherwise it can be mangled too");
+    }
+
+    [Test]
+    public void a_brief_pointer_names_the_spill_file_when_one_was_written()
+    {
+        var spill = Path.Combine("C:", "src", "antiphon", ".antiphon", "task-7f3a2b91-brief.md");
+
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            NewTask(), Settings, spill, fullLength: 5_203);
+
+        pointer.ShouldContain(spill);
+        pointer.ShouldContain("Read it in full before you do anything else");
     }
 }
 

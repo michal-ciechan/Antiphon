@@ -190,6 +190,56 @@ public class AgentTaskReplyIntegrationTests
         queued[0].Body.Contains('\r').ShouldBeFalse("a CR mid-body would submit the fragment before it");
     }
 
+    /// <summary>
+    /// The 2026-08-10 live miss, at its exact size, through the SHIPPED settings.
+    ///
+    /// Task 0b0f558c stored a complete 5 368-character report and an EMPTY ResultFilePath, and its
+    /// caller received a head+tail splice joined mid-word. Nothing had excerpted it — with
+    /// ReplyInlineMaxChars at 20 000, FitReport returned the report untouched and
+    /// ResolveSpillFileAsync returned null before doing anything, so a 5.4 KB body went straight to
+    /// a pty that drops whole 1024-byte chunks out of the middle of anything much over 4 300
+    /// characters. The ceiling now sits under that cliff, so this size spills and the caller gets a
+    /// small, clearly-marked excerpt that names where the rest lives.
+    /// </summary>
+    [Test]
+    public async Task a_five_kilobyte_report_spills_and_the_caller_gets_a_marked_excerpt()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        var shipped = new DelegationSettings();
+
+        // The live-miss report: a recognisable opening and a recognisable conclusion.
+        var report = "Both commits confirmed on origin/master. "
+            + string.Join(" ", Enumerable.Range(0, 700).Select(i => $"detail{i:D4}"))
+            + " Final state: git status clean, HEAD == origin/master == a667cbcc.";
+        report.Length.ShouldBeGreaterThan(shipped.PtyInlineSafeChars, "this must be a body the pty could mangle");
+
+        await SeedTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), report);
+        await CreateService(settings: shipped).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+
+        settled.Result.ShouldBe(report, "the task row always keeps the untouched original");
+        settled.ResultFilePath.ShouldNotBeNull("a report this size must have somewhere real to point");
+        File.Exists(settled.ResultFilePath).ShouldBeTrue();
+        (await File.ReadAllTextAsync(settled.ResultFilePath!)).ShouldBe(report);
+
+        // Scoped to this task's parent session — the fixture's database is shared.
+        var note = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId)
+            .SingleAsync();
+
+        note.Body.Length.ShouldBeLessThanOrEqualTo(
+            shipped.PtyInlineSafeChars,
+            "what we actually type must be small enough for the terminal to carry intact");
+        note.Body.ShouldContain("EXCERPT", customMessage: "the caller must be told this is not the whole report");
+        note.Body.ShouldContain(settled.ResultFilePath!, customMessage: "and where the whole report is");
+        note.Body.ShouldContain("Both commits confirmed", customMessage: "the opening survives");
+        note.Body.ShouldContain("a667cbcc", customMessage: "and so does the conclusion");
+    }
+
     [Test]
     public async Task a_task_with_no_parent_session_settles_without_delivering_anywhere()
     {
@@ -568,9 +618,12 @@ public class AgentTaskReplyIntegrationTests
 
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static AgentTaskReplyService CreateService(TestScopeFactory? factory = null)
+    // Most cases pin the ceiling explicitly so they stay readable as the shipped default moves;
+    // pass `settings` to exercise what actually ships.
+    private static AgentTaskReplyService CreateService(
+        TestScopeFactory? factory = null, DelegationSettings? settings = null)
     {
-        var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000 };
+        settings ??= new DelegationSettings { ReplyInlineMaxChars = 20_000 };
         return new AgentTaskReplyService(
             factory ?? new TestScopeFactory(),
             Options.Create(settings),

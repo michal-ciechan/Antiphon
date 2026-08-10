@@ -39,11 +39,35 @@ public sealed class DelegationSettings
     /// A report at or under this size is forwarded whole — the report IS the deliverable. Above it
     /// the delegate is told to spill to a file (its own judgement about what matters), and the
     /// server backstops with a head+tail excerpt if it didn't.
+    ///
+    /// It is bounded by the transport, not by taste: see <see cref="PtyInlineSafeChars"/>. It was
+    /// 20 000 — which meant nothing ever excerpted, nothing ever spilled, and multi-KB reports went
+    /// straight to a pty that silently ate their middles (live miss 2026-08-10).
+    ///
+    /// It is not set lower than it needs to be, either: the report IS the deliverable, and pushing
+    /// an ordinary few-KB report through a file would cost the caller a read for no safety gain.
+    /// 3 000 keeps the whole note — header included — inside the largest body MEASURED to arrive
+    /// intact (4 262), so a report that fits is one we have evidence the terminal can carry.
     /// </summary>
-    public int ReplyInlineMaxChars { get; set; } = 20_000;
+    public int ReplyInlineMaxChars { get; set; } = 3_000;
 
-    public int ReplyExcerptHeadChars { get; set; } = 6_000;
-    public int ReplyExcerptTailChars { get; set; } = 6_000;
+    public int ReplyExcerptHeadChars { get; set; } = 1_800;
+    public int ReplyExcerptTailChars { get; set; } = 900;
+
+    /// <summary>
+    /// The largest body we are willing to type into a TUI in one go, from MEASURED behaviour — not
+    /// a guess. Aligning seven real deliveries against what the receiving Claude actually recorded
+    /// (2026-08-10) put the cliff between 4 262 characters (intact) and 5 185 (mangled): above it a
+    /// single write to the ConPTY input pipe loses whole 1024-byte chunks out of the MIDDLE, with
+    /// no error, no short write and no exception — the head and the tail always survive, which is
+    /// why it reads as a complete message and why a head-or-tail liveness check certifies it.
+    ///
+    /// 4 000 is under the largest body observed to arrive intact, so it is a size we have direct
+    /// evidence for rather than an extrapolation. <see cref="ReplyInlineMaxChars"/> sits below it
+    /// so delegation bodies never reach the cliff; anything that still crosses it raises an
+    /// incident rather than going quietly.
+    /// </summary>
+    public int PtyInlineSafeChars { get; set; } = 4_000;
 
     /// <summary>
     /// Directory prefixes a task may run in. A SECURITY BOUNDARY: without it an agent that can

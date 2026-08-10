@@ -508,6 +508,36 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    // Sibling of RecordTransportFailureAsync: surfaces an oversize delivery on the agent card and
+    // the alert feed. Best-effort by design — an unowned session (no agent row) still gets the log
+    // line above, and failing to record must never abort the delivery it is only annotating.
+    private async Task RecordOversizeAsync(Guid sessionId, int length, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agent = await db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+            if (agent is null)
+                return;
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                agent.Id, sessionId, AgentIncidentKind.OversizedTerminalDelivery, AlertSeverity.Warning,
+                $"A {length:N0}-character message was typed into this terminal, over the {_delegationSettings.PtyInlineSafeChars:N0}-character "
+                + "size the pty has been measured to deliver intact. The middle of it may be missing "
+                + "without any visible sign — treat what the agent read as unverified.",
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to record oversized delivery for session {SessionId}", sessionId);
+        }
+    }
+
     private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput }
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
@@ -539,6 +569,24 @@ public sealed class SessionMessageQueueService
         // fragment exactly like the 2026-07-29 live miss. Shared with every other typing path via
         // PtyInputEncoding (SendLineAsync callers were the 2026-08-08 miss).
         var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
+
+        // Size gate. Above the measured-safe ceiling the pty drops whole 1024-byte chunks out of
+        // the MIDDLE of the body and reports success — and because the head and the tail always
+        // survive, the composer-evidence check below (which matches on head OR tail) certifies the
+        // splice as Delivered. That is exactly how a 5 203-char brief and a 5 368-char report
+        // reached their readers as coherent-looking fragments on 2026-08-10. We still deliver —
+        // refusing would strand the message with no path forward — but never silently: the caller
+        // paths that produce multi-KB bodies (delegation briefs and reports) now spill to a file
+        // instead, so anything still arriving here is a case we have not yet given a file path to.
+        if (trimmed.Length > _delegationSettings.PtyInlineSafeChars)
+        {
+            _logger.LogError(
+                "Delivering an OVERSIZED body to session {SessionId}: {Length:N0} chars exceeds the "
+                + "pty-safe ceiling of {Ceiling:N0}. The terminal may drop 1024-byte chunks from the "
+                + "middle and the recipient cannot tell. Give this path a spill file.",
+                sessionId, trimmed.Length, _delegationSettings.PtyInlineSafeChars);
+            await RecordOversizeAsync(sessionId, trimmed.Length, ct);
+        }
 
         var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;

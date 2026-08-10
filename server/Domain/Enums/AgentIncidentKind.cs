@@ -57,4 +57,14 @@ public enum AgentIncidentKind
     /// silently (CARD-0003/CARD-0018).
     /// </summary>
     DeliveryTransportFailed = 13,
+
+    /// <summary>
+    /// A message larger than <c>DelegationSettings.PtyInlineSafeChars</c> was typed into a terminal.
+    /// Measured on 2026-08-10: above roughly 4 300 characters a single write to the ConPTY input
+    /// pipe silently loses whole 1024-byte chunks out of the MIDDLE of the body — head and tail
+    /// always survive, so the result reads as a complete message and passes a head-or-tail
+    /// liveness check. Delivery still proceeds (refusing would strand the message), but it is never
+    /// again invisible: this incident is the record that the recipient may have read a splice.
+    /// </summary>
+    OversizedTerminalDelivery = 14,
 }

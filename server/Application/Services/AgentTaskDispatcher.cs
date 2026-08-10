@@ -430,7 +430,7 @@ public sealed class AgentTaskDispatcher
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
         // that normalises line endings, wraps in a bracketed paste, and submits with a separate CR.
         // A raw multi-line write fragments into several turns (documented live miss).
-        var brief = DelegationReportFormatter.BuildBrief(claimed, _settings);
+        var brief = FitBriefForTyping(claimed);
         try
         {
             await _queue.EnqueueAsync(
@@ -454,6 +454,48 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
             ModelLevelAliases.ForClaude(claimed.ModelLevel), session.Id, claimed.WorkingDirectory);
         return true;
+    }
+
+    /// <summary>
+    /// The brief as it will actually be TYPED. A brief past the inline ceiling is written to a file
+    /// and replaced by a pointer, because handing a multi-KB body to a pty is how the 2026-08-10
+    /// live miss happened: a 5 203-character brief reached its delegate as 1 091 characters — the
+    /// first 1 018 and the last 73, spliced mid-word — because the transport dropped whole
+    /// 1024-byte chunks out of the middle without erroring. The full text is on the task row
+    /// either way, so if the file cannot be written the pointer names the API instead; what we
+    /// never do is type a body big enough to be silently mangled.
+    /// </summary>
+    private string FitBriefForTyping(AgentTask task)
+    {
+        var brief = DelegationReportFormatter.BuildBrief(task, _settings);
+        if (brief.Length <= _settings.ReplyInlineMaxChars)
+            return brief;
+
+        string? spillPath = null;
+        try
+        {
+            var absolute = Path.Combine(
+                task.WorkingDirectory,
+                ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+            File.WriteAllText(absolute, brief);
+            spillPath = absolute;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Not fatal: the API pointer needs no filesystem at all.
+            _logger.LogWarning(
+                ex, "Task {ShortId}: could not write the brief spill file; pointing at the API instead",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        _logger.LogInformation(
+            "Task {ShortId}: brief is {Chars:N0} chars (> {Ceiling:N0}); delivering a pointer to {Where}",
+            DelegationReportFormatter.Short(task.Id), brief.Length, _settings.ReplyInlineMaxChars,
+            spillPath ?? "the API");
+
+        return DelegationReportFormatter.BuildBriefPointer(task, _settings, spillPath, brief.Length);
     }
 
     /// <summary>
@@ -733,7 +775,7 @@ public sealed class AgentTaskDispatcher
                     MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
             }
 
-            var brief = DelegationReportFormatter.BuildBrief(task, _settings);
+            var brief = FitBriefForTyping(task);
             await _queue.EnqueueAsync(
                 session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
         }

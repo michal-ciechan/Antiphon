@@ -170,6 +170,10 @@ public static class DelegationReportFormatter
     /// <summary>
     /// Head + tail excerpt when a report exceeds the ceiling — never a plain truncation. A hard cut
     /// at the limit severs the conclusion, and the conclusion is the part the caller needed.
+    ///
+    /// Both cuts snap to a whitespace boundary. A mid-word seam is what made the 2026-08-10 live
+    /// miss so hard to see: "...cherry-pick co" welded onto "== a667cbcc, worktree list..." reads
+    /// as prose damage, not as a boundary, so nobody can tell an excerpt from a corruption.
     /// </summary>
     public static (string Body, bool Excerpted) FitReport(string report, AgentTask task, DelegationSettings settings)
     {
@@ -184,18 +188,90 @@ public static class DelegationReportFormatter
         if (head + tail >= trimmed.Length)
             return (trimmed[..Math.Min(trimmed.Length, settings.ReplyInlineMaxChars)], true);
 
-        var omitted = trimmed.Length - head - tail;
+        var headEnd = SnapBack(trimmed, head);
+        var tailStart = SnapForward(trimmed, trimmed.Length - tail);
+        var omitted = tailStart - headEnd;
         var pointer = string.IsNullOrWhiteSpace(task.ResultFilePath)
-            ? $"full report: /api/agent-tasks/{task.Id}"
-            : $"full report: {task.ResultFilePath}";
+            ? $"read it with: GET /api/agent-tasks/{task.Id}"
+            : $"read it at: {task.ResultFilePath}";
 
         return ($"""
-            {trimmed[..head]}
+            {trimmed[..headEnd].TrimEnd()}
 
-            [... {omitted:N0} characters omitted — {pointer} ...]
+            [... THIS REPORT IS AN EXCERPT: {omitted:N0} of {trimmed.Length:N0} characters are
+            missing from the middle. Do not treat what you see as the whole report — {pointer} ...]
 
-            {trimmed[^tail..]}
+            {trimmed[tailStart..].TrimStart()}
             """, true);
+    }
+
+    /// <summary>Nearest whitespace at or before <paramref name="index"/>, so a cut never lands mid-word.</summary>
+    private static int SnapBack(string text, int index)
+    {
+        // Bounded search: on text with no whitespace for a long stretch (a base64 blob, a minified
+        // line) there is no word boundary to find and the exact cut is the honest answer.
+        var floor = Math.Max(0, index - WordSnapWindow);
+        for (var i = Math.Min(index, text.Length); i > floor; i--)
+        {
+            if (char.IsWhiteSpace(text[i - 1]))
+                return i;
+        }
+        return index;
+    }
+
+    /// <summary>Nearest whitespace at or after <paramref name="index"/>, so a resume never lands mid-word.</summary>
+    private static int SnapForward(string text, int index)
+    {
+        var ceiling = Math.Min(text.Length, index + WordSnapWindow);
+        for (var i = Math.Max(0, index); i < ceiling; i++)
+        {
+            if (char.IsWhiteSpace(text[i]))
+                return i + 1;
+        }
+        return index;
+    }
+
+    private const int WordSnapWindow = 200;
+
+    /// <summary>
+    /// A brief too long to type into a terminal intact. The full text always survives on the task
+    /// row, so the delegate is pointed at it rather than handed a body the pty may splice.
+    /// <paramref name="spillPath"/> is the file the caller managed to write, or null to fall back
+    /// to the API (which needs no filesystem and is therefore always available).
+    /// </summary>
+    public static string BuildBriefPointer(
+        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength)
+    {
+        var where = string.IsNullOrWhiteSpace(spillPath)
+            ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the \"goal\" field"
+            : spillPath;
+
+        var sb = new StringBuilder();
+        sb.Append(TaskMarker(task.Id))
+          .Append(" role=").Append(task.Role)
+          .Append(" tier=").Append(task.ModelLevel)
+          .Append(" workspace=").Append(task.Workspace);
+        if (!string.IsNullOrWhiteSpace(task.ScopeGlob))
+            sb.Append(" scope=").Append(task.ScopeGlob);
+        sb.AppendLine().AppendLine();
+
+        sb.AppendLine($"""
+            {task.Title.Trim()}
+
+            YOUR BRIEF IS NOT IN THIS MESSAGE. It is {fullLength:N0} characters — too long to type
+            into a terminal without the transport dropping part of it, so it was written out
+            instead. Read it in full before you do anything else:
+
+                {where}
+
+            Everything you need is there. Do not start from this summary.
+            """).AppendLine();
+
+        if (task.Workspace == WorkspaceMode.ReadOnly)
+            sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
+
+        sb.Append(ReportingContract(task.Id, task.Kind, settings.ReplyInlineMaxChars));
+        return sb.ToString();
     }
 
     private static string StatusWord(AgentTaskStatus status) => status switch

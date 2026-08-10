@@ -25,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*', 'bin-cost*')
+$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*', 'bin-cost*', 'bin-report*')
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
 
 $empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))

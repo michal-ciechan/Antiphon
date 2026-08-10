@@ -96,6 +96,13 @@ internal static class Program
         long lastByteMs = 0;
         var eof = false;
 
+        // A REAL TUI does not sit in a tight read loop: it renders between reads, so it drains the
+        // pty input pipe in bursts with gaps. That drain rate is what decides whether a large
+        // written body survives — ANTIPHON_FAKE_STDIN_READ_DELAY_MS models a busy renderer so tests
+        // can reproduce the 2026-08-10 mid-body loss deterministically. Default 0 = tight loop.
+        var readDelayMs = int.TryParse(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_STDIN_READ_DELAY_MS"), out var rd) ? rd : 0;
+
         var stdin = Console.OpenStandardInput();
         var reader = new Thread(() =>
         {
@@ -103,6 +110,7 @@ internal static class Program
             while (true)
             {
                 int n;
+                if (readDelayMs > 0) Thread.Sleep(readDelayMs);
                 try { n = stdin.Read(buf, 0, buf.Length); }
                 catch { break; }
                 if (n <= 0) { lock (gate) eof = true; break; }
