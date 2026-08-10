@@ -44,7 +44,9 @@ import {
   elapsedSeconds,
   formatCost,
   formatDuration,
+  isLegacyCostEstimate,
   shortId,
+  totalTokens,
 } from './taskVisuals'
 
 /**
@@ -136,12 +138,21 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         <Group gap="xl" wrap="wrap">
           <Metric label="Agent" value={summary.agentName ?? '—'} />
           <Metric label="Elapsed" value={formatDuration(elapsedSeconds(summary))} />
-          <Metric label="Cost" value={formatCost(summary.costUsd)} />
+          <Metric
+            label={isLegacyCostEstimate(summary) ? 'Cost (legacy estimate)' : 'Cost'}
+            value={formatCost(summary.costUsd)}
+          />
           {summary.childCount > 0 && (
             <Metric label="Subtree" value={`${summary.childCount} children · ${formatCost(summary.subtreeCostUsd)}`} />
           )}
-          <Metric label="Tokens" value={(summary.tokensIn + summary.tokensOut).toLocaleString()} />
+          <Metric label="Tokens" value={totalTokens(summary).toLocaleString()} />
         </Group>
+        {isLegacyCostEstimate(summary) && (
+          <Text size="xs" c="dimmed" mt="xs">
+            Priced before the cache-read fix — cache reads were billed as fresh input against a stale
+            rate table, so this figure is roughly 10x high. The run's cost ceiling still counts it.
+          </Text>
+        )}
         <Text size="xs" c="dimmed" mt="xs" style={{ wordBreak: 'break-all' }}>
           {summary.workingDirectory}
           {summary.scopeGlob ? ` · scope ${summary.scopeGlob}` : ''}

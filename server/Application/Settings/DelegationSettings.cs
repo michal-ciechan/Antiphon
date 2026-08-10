@@ -30,6 +30,12 @@ public sealed class DelegationSettings
     public decimal MaxCostUsdPerRoot { get; set; } = 5.00m;
 
     /// <summary>
+    /// Per-tier list prices and cache multipliers, bound from <c>Delegation:Pricing</c>. The
+    /// ceiling above is only meaningful if these are right — see <see cref="DelegationPricingSettings"/>.
+    /// </summary>
+    public DelegationPricingSettings Pricing { get; set; } = new();
+
+    /// <summary>
     /// A report at or under this size is forwarded whole — the report IS the deliverable. Above it
     /// the delegate is told to spill to a file (its own judgement about what matters), and the
     /// server backstops with a head+tail excerpt if it didn't.

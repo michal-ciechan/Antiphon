@@ -122,9 +122,29 @@ public class AgentTask
     public DateTime? DispatchedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
 
+    /// <summary>
+    /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
+    /// apart — a cache read is ~0.1x this, a cache write 1.25x (CARD-0023). Anything showing a
+    /// human "tokens in" wants the sum of all three, not this alone.
+    /// </summary>
     public long TokensIn { get; set; }
+
+    /// <summary>Cached prefix re-read on a turn — the counter that dominates an agentic session.</summary>
+    public long CacheReadTokens { get; set; }
+
+    /// <summary>Tokens written into the prompt cache.</summary>
+    public long CacheCreationTokens { get; set; }
+
     public long TokensOut { get; set; }
     public decimal CostUsd { get; set; }
+
+    /// <summary>
+    /// Which costing model produced <see cref="CostUsd"/> (<see cref="Services.DelegationCost.PricingVersion"/>).
+    /// 0 means the row was priced before CARD-0023 — cache reads billed as fresh input against a
+    /// stale rate table, so roughly an order of magnitude high. The per-root ceiling still sums
+    /// those rows, so they are labelled in the API and UI rather than silently trusted.
+    /// </summary>
+    public int CostPricingVersion { get; set; }
 
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();

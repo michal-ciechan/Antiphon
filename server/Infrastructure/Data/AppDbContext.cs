@@ -1025,7 +1025,11 @@ public class AppDbContext : DbContext
             entity.Property(t => t.FailureReason).HasMaxLength(4000);
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.TokenHash).HasMaxLength(128);
+            entity.Property(t => t.CacheReadTokens).IsRequired();
+            entity.Property(t => t.CacheCreationTokens).IsRequired();
             entity.Property(t => t.CostUsd).HasPrecision(18, 6);
+            // 0 on every pre-existing row: priced before CARD-0023, and labelled as such.
+            entity.Property(t => t.CostPricingVersion).IsRequired().HasDefaultValue(0);
             entity.Property(t => t.CreatedAt).IsRequired();
             entity.Property(t => t.ConcurrencyToken).IsRequired();
 

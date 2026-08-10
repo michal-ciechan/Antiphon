@@ -124,22 +124,21 @@ public sealed class AgentTaskReplyService
         task.Status = LooksLikeAQuestion(report) ? AgentTaskStatus.Blocked : AgentTaskStatus.Succeeded;
 
         // Roll the delegate's token spend up onto the task so the board and the per-root ceiling
-        // see it. TranscriptEntry carries raw counts per API call (cache reads count as input);
-        // cost is derived from the tier, since Claude Code doesn't report dollars per turn.
+        // see it. The four counters stay SEPARATE all the way to the price: collapsing them and
+        // applying the input rate to the total is what made a $2.47 task read as $31.29
+        // (CARD-0023). Cost is derived from the tier, since Claude Code reports no dollars per turn.
         if (task.AgentSessionId is Guid sessionId)
         {
-            var usage = await db.TranscriptEntries
-                .Where(t => t.AgentSessionId == sessionId && t.InputTokens != null)
-                .GroupBy(_ => 1)
-                .Select(g => new
-                {
-                    In = g.Sum(t => (long?)(t.InputTokens ?? 0) + (t.CacheReadTokens ?? 0) + (t.CacheCreationTokens ?? 0)) ?? 0,
-                    Out = g.Sum(t => (long?)(t.OutputTokens ?? 0)) ?? 0,
-                })
-                .FirstOrDefaultAsync(ct);
-            task.TokensIn = usage?.In ?? 0;
-            task.TokensOut = usage?.Out ?? 0;
-            task.CostUsd = DelegationCost.Estimate(task.ModelLevel, task.TokensIn, task.TokensOut);
+            // Bounded to THIS task's window: a warm pool delegate's session outlives its first
+            // task, and charging its tokens to the next one would double-count them against the
+            // per-root ceiling.
+            var spend = await DelegationUsageRollup.ForSessionAsync(db, sessionId, task.DispatchedAt, now, ct);
+            task.TokensIn = spend.InputTokens;
+            task.CacheReadTokens = spend.CacheReadTokens;
+            task.CacheCreationTokens = spend.CacheCreationTokens;
+            task.TokensOut = spend.OutputTokens;
+            task.CostUsd = DelegationCost.Estimate(_settings.Pricing, task.ModelLevel, spend, now);
+            task.CostPricingVersion = DelegationCost.PricingVersion;
         }
 
         // The delegate was told to spill a long report to a file. Note it if it did — and if it

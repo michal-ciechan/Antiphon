@@ -223,6 +223,96 @@ public class AgentTaskReplyIntegrationTests
         settled.TokensIn.ShouldBe(50_000);
         settled.TokensOut.ShouldBe(4_000);
         settled.CostUsd.ShouldBeGreaterThan(0m, "the per-root ceiling can only work if spend is recorded");
+        settled.CostPricingVersion.ShouldBe(
+            DelegationCost.PricingVersion, "a freshly priced row must not read as a legacy estimate");
+    }
+
+    [Test]
+    public async Task the_three_input_counters_are_kept_apart_and_priced_apart()
+    {
+        // CARD-0023: collapsing them and applying the input rate to the total prices a cache READ
+        // — about a tenth of base input — as fresh input. Claude Code re-reads its whole cached
+        // prefix every turn, so that term dominates and the run reads ~10x its real cost.
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.",
+            inputTokens: 1_000, outputTokens: 2_000,
+            cacheReadTokens: 5_000_000, cacheCreationTokens: 100_000);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.TokensIn.ShouldBe(1_000, "TokensIn is UNCACHED input — the cache counters have their own columns");
+        settled.CacheReadTokens.ShouldBe(5_000_000);
+        settled.CacheCreationTokens.ShouldBe(100_000);
+        settled.TokensOut.ShouldBe(2_000);
+
+        // Whatever the rates are, the same tokens billed as fresh input must cost far more.
+        var spend = new TokenSpend(
+            settled.TokensIn, settled.CacheReadTokens, settled.CacheCreationTokens, settled.TokensOut);
+        var collapsed = new TokenSpend(spend.TotalInputTokens, 0, 0, spend.OutputTokens);
+        var pricing = new DelegationPricingSettings();
+        var asFreshInput = DelegationCost.Estimate(pricing, settled.ModelLevel, collapsed, DateTime.UtcNow);
+
+        settled.CostUsd.ShouldBeLessThan(asFreshInput / 5m, "cache reads must not be priced as fresh input");
+        settled.CostUsd.ShouldBe(
+            DelegationCost.Estimate(pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value));
+    }
+
+    [Test]
+    public async Task usage_repeated_across_one_api_calls_entries_is_counted_once()
+    {
+        // Every JSONL line of one API call repeats that call's usage verbatim. Summing per entry
+        // multiplied the measured session by ~1.8x on top of the mispricing — and ~3x across the
+        // whole dev database.
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.",
+            inputTokens: 700, outputTokens: 400,
+            cacheReadTokens: 90_000, cacheCreationTokens: 3_000,
+            entriesPerApiCall: 4);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.TokensIn.ShouldBe(700, "four entries, one API call — the usage is the call's, not each line's");
+        settled.CacheReadTokens.ShouldBe(90_000);
+        settled.CacheCreationTokens.ShouldBe(3_000);
+        settled.TokensOut.ShouldBe(400);
+    }
+
+    [Test]
+    public async Task spend_from_before_the_task_was_dispatched_is_not_charged_to_it()
+    {
+        // A warm pool delegate's session outlives its first task, and a session can adopt another's
+        // transcript entirely (CARD-0006) — so a whole-session sum bills one task for another's
+        // tokens, twice over against the per-root ceiling.
+        using var workspace = new TempWorkspace();
+        // Dispatched ten minutes ago, so both turns sit unambiguously on their side of the bound
+        // (settle's upper bound is "now").
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+
+        await SeedTurnAsync(
+            sessionId, "an earlier task in this same session", "That one is finished.",
+            inputTokens: 900_000, outputTokens: 40_000, cacheReadTokens: 8_000_000,
+            timestamp: dispatched.AddMinutes(-5));
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.",
+            inputTokens: 300, outputTokens: 120, cacheReadTokens: 45_000,
+            timestamp: dispatched.AddMinutes(1));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.TokensIn.ShouldBe(300, "only this task's own window counts");
+        settled.CacheReadTokens.ShouldBe(45_000);
+        settled.TokensOut.ShouldBe(120);
     }
 
     [Test]
@@ -564,9 +654,16 @@ public class AgentTaskReplyIntegrationTests
         return sessionId;
     }
 
-    /// <summary>A prompt, optional assistant text, then a TurnEnd — the shape a real turn leaves.</summary>
+    /// <summary>
+    /// A prompt, optional assistant text, then a TurnEnd — the shape a real turn leaves.
+    /// <paramref name="entriesPerApiCall"/> models the real JSONL shape: a single API
+    /// call emits several entries (text, tool call, tool result...) that all carry the same
+    /// ApiCallId and REPEAT its usage numbers verbatim — so anything summing per entry overcounts.
+    /// </summary>
     private static async Task SeedTurnAsync(
-        Guid sessionId, string prompt, string? assistantText, int? inputTokens = null, int? outputTokens = null)
+        Guid sessionId, string prompt, string? assistantText, int? inputTokens = null, int? outputTokens = null,
+        int? cacheReadTokens = null, int? cacheCreationTokens = null, int entriesPerApiCall = 1,
+        DateTime? timestamp = null)
     {
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
@@ -576,10 +673,18 @@ public class AgentTaskReplyIntegrationTests
         db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
         if (assistantText is not null)
         {
-            var entry = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, assistantText);
-            entry.InputTokens = inputTokens;
-            entry.OutputTokens = outputTokens;
-            db.TranscriptEntries.Add(entry);
+            var apiCallId = $"msg_{Guid.NewGuid():N}";
+            for (var i = 0; i < entriesPerApiCall; i++)
+            {
+                var entry = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, assistantText);
+                entry.ApiCallId = apiCallId;
+                entry.Timestamp = timestamp;
+                entry.InputTokens = inputTokens;
+                entry.OutputTokens = outputTokens;
+                entry.CacheReadTokens = cacheReadTokens;
+                entry.CacheCreationTokens = cacheCreationTokens;
+                db.TranscriptEntries.Add(entry);
+            }
         }
         var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
         end.StopReason = "end_turn";

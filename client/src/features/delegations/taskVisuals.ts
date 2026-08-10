@@ -76,6 +76,23 @@ export function formatCost(costUsd: number): string {
   return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`
 }
 
+/**
+ * Everything the model read this session. The three input counters are stored apart because they
+ * are PRICED apart (CARD-0023) — but a human reading the board means their sum by "tokens in".
+ */
+export function totalTokens(task: AgentTaskSummaryDto): number {
+  return task.tokensIn + task.cacheReadTokens + task.cacheCreationTokens + task.tokensOut
+}
+
+/**
+ * A cost figure written by the pre-CARD-0023 model: cache reads billed as fresh input against a
+ * stale rate table, so roughly an order of magnitude high. Those rows are labelled rather than
+ * silently trusted — the per-root ceiling still sums them.
+ */
+export function isLegacyCostEstimate(task: AgentTaskSummaryDto): boolean {
+  return task.costPricingVersion === 0 && task.costUsd > 0
+}
+
 export function shortId(id: string): string {
   return id.replace(/-/g, '').slice(0, 8)
 }

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Delete regenerable alternate build outputs (bin-verify/, bin-ptyhost/, bin-profile*/,
-    bin-alt*/) across the repo. These are created by "build while daemons lock bin/"
+    bin-alt*/, bin-cost*/) across the repo. These are created by "build while daemons lock bin/"
     workarounds (dotnet build --property:OutputPath=bin-verify\) and are never referenced
     afterwards, but they bloat the tree and slow MSBuild evaluation when left to accumulate.
 
@@ -25,7 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*')
+$patterns = @('bin-verify', 'bin-ptyhost', 'bin-profile*', 'bin-alt*', 'bin-cost*')
 $cutoff = (Get-Date).AddMinutes(-$SkipIfModifiedWithinMinutes)
 
 $empty = Join-Path $env:TEMP ("antiphon-empty-" + [guid]::NewGuid().ToString('N'))

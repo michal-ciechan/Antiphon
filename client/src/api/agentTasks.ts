@@ -77,9 +77,18 @@ export interface AgentTaskSummaryDto {
   createdAt: string
   dispatchedAt: string | null
   completedAt: string | null
+  /** UNCACHED input only — add the two cache counters for a human "tokens in". */
   tokensIn: number
+  /** Cached prefix re-read per turn, priced at ~0.1x input. Dominates an agentic session. */
+  cacheReadTokens: number
+  cacheCreationTokens: number
   tokensOut: number
   costUsd: number
+  /**
+   * 0 means the figure predates the CARD-0023 pricing fix (cache reads billed as fresh input, stale
+   * rates) and is roughly 10x high — shown as a legacy estimate rather than passed off as current.
+   */
+  costPricingVersion: number
   /** This task plus everything under it — what a collapsed sub-orchestrator row reports. */
   subtreeCostUsd: number
   childCount: number

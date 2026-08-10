@@ -238,7 +238,8 @@ public class ContractSnapshotTests
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Frontier;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Working;
                     t.DispatchedAt = t0;
-                    t.TokensIn = 84_000; t.TokensOut = 3_100; t.CostUsd = 0.412m;
+                    t.TokensIn = 84_000; t.CacheReadTokens = 2_400_000; t.CacheCreationTokens = 41_000;
+                    t.TokensOut = 3_100; t.CostUsd = 0.412m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }),
                 Task(schema, root, root, 1, "Migrate the schema and connection strings", cwd, t0.AddMinutes(2),
                     agents["task-schema"], "task-schema", t =>
@@ -250,7 +251,8 @@ public class ContractSnapshotTests
                     t.Workspace = Server.Domain.Enums.WorkspaceMode.Worktree;
                     t.MergeTargetRef = "feat/pg18";
                     t.DispatchedAt = t0.AddMinutes(2);
-                    t.TokensIn = 61_500; t.TokensOut = 4_800; t.CostUsd = 0.318m;
+                    t.TokensIn = 61_500; t.CacheReadTokens = 1_850_000; t.CacheCreationTokens = 32_000;
+                    t.TokensOut = 4_800; t.CostUsd = 0.318m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }),
                 Task(suite, root, schema, 2, "Run the integration suite and report failures", cwd, t0.AddMinutes(9),
                     agents["task-suite"], "task-suite", t =>
@@ -264,7 +266,8 @@ public class ContractSnapshotTests
                     t.Result = "3 failures, all in Antiphon.Tests.Application.CardServiceTests — "
                         + "each is a missing checkpoint dependency, not a schema problem. Rerun with "
                         + "dotnet run --project tests/Antiphon.Tests.";
-                    t.TokensIn = 22_000; t.TokensOut = 900; t.CostUsd = 0.019m;
+                    t.TokensIn = 22_000; t.CacheReadTokens = 430_000; t.CacheCreationTokens = 9_000;
+                    t.TokensOut = 900; t.CostUsd = 0.019m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }),
                 Task(install, root, root, 1, "Rewrite the Windows install section", cwd, t0.AddMinutes(3),
                     agents["task-install"], "task-install", t =>
@@ -278,7 +281,8 @@ public class ContractSnapshotTests
                     t.Result = "Rewrote \"## Windows install\" in docs/setup.md — 34 lines changed, "
                         + "every command now pwsh 7.\n\nOne decision is yours: should the old cmd "
                         + "examples be deleted, or kept alongside?";
-                    t.TokensIn = 18_400; t.TokensOut = 1_250; t.CostUsd = 0.031m;
+                    t.TokensIn = 18_400; t.CacheReadTokens = 520_000; t.CacheCreationTokens = 11_000;
+                    t.TokensOut = 1_250; t.CostUsd = 0.031m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }),
                 Task(hang, root, root, 1, "Find out why the suite hangs on CI", cwd, t0.AddMinutes(4),
                     agents["task-hang"], "task-hang", t =>
@@ -290,7 +294,8 @@ public class ContractSnapshotTests
                     t.Attempt = 2;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Queued;
                     t.Result = "Could not reproduce in 25 minutes; the hang only appears under load.";
-                    t.TokensIn = 40_100; t.TokensOut = 2_600; t.CostUsd = 0.204m;
+                    t.TokensIn = 40_100; t.CacheReadTokens = 1_150_000; t.CacheCreationTokens = 21_000;
+                    t.TokensOut = 2_600; t.CostUsd = 0.204m; t.CostPricingVersion = Server.Application.Services.DelegationCost.PricingVersion;
                 }));
 
             db.AgentTaskEvents.AddRange(

@@ -708,7 +708,8 @@ public sealed class AgentTaskService
             task.AgentName,
             task.AgentSessionId, task.Attempt,
             task.CreatedAt, task.DispatchedAt, task.CompletedAt,
-            task.TokensIn, task.TokensOut, task.CostUsd, subtreeCost, childCount);
+            task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
+            task.CostUsd, task.CostPricingVersion, subtreeCost, childCount);
     }
 
     private static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)

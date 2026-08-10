@@ -491,23 +491,114 @@ public class DelegationQuestionDetectionTests
 }
 
 /// <summary>
-/// The tier ladder — the cost decision the whole design turns on.
+/// The tier ladder — the cost decision the whole design turns on — and the four-counter pricing
+/// that CARD-0023 fixed. The per-root ceiling gates DISPATCH on these numbers, so a rate edit that
+/// silently reintroduced the 10x error would throttle real runs on spend that never happened.
 /// </summary>
 [Category("Unit")]
 public class DelegationCostTests
 {
+    private static readonly DelegationPricingSettings Pricing = new();
+
+    /// <summary>Inside the Sonnet introductory window; every test states its own instant.</summary>
+    private static readonly DateTime DuringPromo = new(2026, 8, 10, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime AfterPromo = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+
     [Test]
     public void the_cheap_tier_costs_far_less_than_the_frontier_tier_for_the_same_work()
     {
-        var frontier = DelegationCost.Estimate(AgentModelLevel.Frontier, 100_000, 10_000);
-        var low = DelegationCost.Estimate(AgentModelLevel.Low, 100_000, 10_000);
+        var work = new TokenSpend(100_000, 0, 0, 10_000);
+        var frontier = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, work, AfterPromo);
+        var low = DelegationCost.Estimate(Pricing, AgentModelLevel.Low, work, AfterPromo);
 
-        low.ShouldBeLessThan(frontier / 10, "the ladder only pays off if the bottom rung is an order of magnitude cheaper");
+        low.ShouldBeLessThan(frontier / 8, "the ladder only pays off if the bottom rung is far cheaper");
     }
 
     [Test]
     public void zero_tokens_cost_nothing()
     {
-        DelegationCost.Estimate(AgentModelLevel.Frontier, 0, 0).ShouldBe(0m);
+        DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, TokenSpend.Zero, AfterPromo).ShouldBe(0m);
+    }
+
+    [Test]
+    public void the_shipped_rate_table_is_the_published_list_price()
+    {
+        // Pinned so a table edit is a deliberate act. Per million tokens, in/out:
+        // Fable 5 $10/$50, Opus 5 $5/$25, Sonnet 5 $3/$15, Haiku 4.5 $1/$5.
+        var expected = new (AgentModelLevel Level, decimal In, decimal Out)[]
+        {
+            (AgentModelLevel.Frontier, 10m, 50m),
+            (AgentModelLevel.High, 5m, 25m),
+            (AgentModelLevel.Medium, 3m, 15m),
+            (AgentModelLevel.Low, 1m, 5m),
+        };
+
+        foreach (var (level, input, output) in expected)
+        {
+            var rates = DelegationCost.RatesFor(Pricing, level, AfterPromo);
+            rates.InputPerMillion.ShouldBe(input, $"{level} input rate");
+            rates.OutputPerMillion.ShouldBe(output, $"{level} output rate");
+        }
+    }
+
+    [Test]
+    public void a_cache_read_is_a_tenth_of_input_and_a_cache_write_is_a_quarter_more()
+    {
+        // The multipliers ARE the fix. Cache read ~0.1x base input; cache write 1.25x at the
+        // 5-minute TTL Claude Code uses (2x at 1h — see DelegationPricingSettings).
+        var rates = DelegationCost.RatesFor(Pricing, AgentModelLevel.High, AfterPromo);
+
+        rates.CacheReadPerMillion.ShouldBe(rates.InputPerMillion * 0.10m);
+        rates.CacheWritePerMillion.ShouldBe(rates.InputPerMillion * 1.25m);
+    }
+
+    [Test]
+    public void the_sonnet_introductory_price_applies_inside_its_window_and_not_after()
+    {
+        DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, DuringPromo).InputPerMillion
+            .ShouldBe(2m, "Sonnet 5 runs an introductory $2/$10 through 2026-08-31");
+        DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, DuringPromo).OutputPerMillion.ShouldBe(10m);
+
+        DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, AfterPromo).InputPerMillion
+            .ShouldBe(3m, "list price resumes the instant the window closes");
+        DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, AfterPromo).OutputPerMillion.ShouldBe(15m);
+    }
+
+    /// <summary>
+    /// The measured CARD-0023 session (task 0b0f558c, Medium/sonnet, 6.5 minutes), deduplicated
+    /// per API call: 114 uncached input, 5,642,467 cache reads, 96,552 cache writes, 27,735 output.
+    /// It was reported as $31.29. This pins the honest figure so a future rate or multiplier edit
+    /// cannot quietly put the order of magnitude back.
+    /// </summary>
+    [Test]
+    public void a_cache_heavy_session_is_priced_at_cache_rates_not_input_rates()
+    {
+        var measured = new TokenSpend(114, 5_642_467, 96_552, 27_735);
+
+        // At list ($3/$15): 0.000342 + 1.6927401 + 0.362070 + 0.416025
+        var atList = DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, measured, AfterPromo);
+        atList.ShouldBe(2.471177m);
+
+        // Inside the introductory window ($2/$10) the same session is cheaper again.
+        var atPromo = DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, measured, DuringPromo);
+        atPromo.ShouldBe(1.647451m);
+
+        // The regression guard: the old model collapsed the three input counters and applied the
+        // full input rate to the sum. Whatever the rates become, that must stay far more expensive.
+        var collapsed = new TokenSpend(measured.TotalInputTokens, 0, 0, measured.OutputTokens);
+        var asFreshInput = DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, collapsed, AfterPromo);
+        asFreshInput.ShouldBeGreaterThan(
+            atList * 5m, "pricing cache reads as fresh input is what overstated a run by ~10x");
+    }
+
+    [Test]
+    public void an_unknown_tier_falls_back_to_a_real_rate_rather_than_to_zero()
+    {
+        // A mistyped or emptied config must not make every task free — that would put the per-root
+        // ceiling permanently out of reach.
+        var emptied = new DelegationPricingSettings { Rates = new() };
+
+        DelegationCost.Estimate(emptied, AgentModelLevel.Medium, new TokenSpend(1_000_000, 0, 0, 0), AfterPromo)
+            .ShouldBeGreaterThan(0m);
     }
 }

@@ -9,8 +9,10 @@ import {
   elapsedSeconds,
   formatCost,
   formatDuration,
+  isLegacyCostEstimate,
   laneOf,
   subtreeIds,
+  totalTokens,
 } from './taskVisuals'
 
 function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTaskSummaryDto {
@@ -36,8 +38,11 @@ function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTa
     dispatchedAt: null,
     completedAt: null,
     tokensIn: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     tokensOut: 0,
     costUsd: 0,
+    costPricingVersion: 2,
     subtreeCostUsd: 0,
     childCount: 0,
     ...overrides,
@@ -173,5 +178,26 @@ describe('formatting', () => {
     expect(formatCost(0.0031)).toBe('$0.0031')
     expect(formatCost(1.234)).toBe('$1.23')
     expect(formatCost(0)).toBe('$0')
+  })
+
+  it('counts cached tokens in the total a human reads as "tokens"', () => {
+    // The three input counters are stored apart because they are PRICED apart, but the cache-read
+    // term is most of what an agentic session actually read — dropping it under-reports by ~100x.
+    const t = task({
+      id: 'a',
+      tokensIn: 400,
+      cacheReadTokens: 2_000_000,
+      cacheCreationTokens: 30_000,
+      tokensOut: 5_000,
+    })
+    expect(totalTokens(t)).toBe(2_035_400)
+  })
+
+  it('labels a cost written by the pre-fix pricing model rather than passing it off as current', () => {
+    // Version 0 rows billed cache reads as fresh input against a stale rate table — ~10x high, and
+    // the per-root ceiling still sums them, so a human comparing runs has to be told.
+    expect(isLegacyCostEstimate(task({ id: 'a', costUsd: 31.29, costPricingVersion: 0 }))).toBe(true)
+    expect(isLegacyCostEstimate(task({ id: 'b', costUsd: 1.65, costPricingVersion: 2 }))).toBe(false)
+    expect(isLegacyCostEstimate(task({ id: 'c', costUsd: 0, costPricingVersion: 0 }))).toBe(false)
   })
 })

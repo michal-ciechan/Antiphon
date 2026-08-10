@@ -22,8 +22,11 @@
     "dispatchedAt": "2026-02-03T09:03:00Z",
     "completedAt": null,
     "tokensIn": 18400,
+    "cacheReadTokens": 520000,
+    "cacheCreationTokens": 11000,
     "tokensOut": 1250,
     "costUsd": 0.031000,
+    "costPricingVersion": 2,
     "subtreeCostUsd": 0.031000,
     "childCount": 0
   },

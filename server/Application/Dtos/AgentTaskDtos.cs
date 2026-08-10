@@ -63,9 +63,19 @@ public sealed record AgentTaskSummaryDto(
     DateTime CreatedAt,
     DateTime? DispatchedAt,
     DateTime? CompletedAt,
+    /// <summary>UNCACHED input only — add the two cache counters for a human "tokens in".</summary>
     long TokensIn,
+    /// <summary>Cached prefix re-read per turn, priced at ~0.1x input. Dominates an agentic session.</summary>
+    long CacheReadTokens,
+    long CacheCreationTokens,
     long TokensOut,
     decimal CostUsd,
+    /// <summary>
+    /// 0 means the figure predates the CARD-0023 pricing fix (cache reads billed as fresh input,
+    /// stale rates) and is roughly 10x high. The UI labels those rather than passing them off as
+    /// current — the per-root ceiling still sums them.
+    /// </summary>
+    int CostPricingVersion,
     /// <summary>Rolled-up spend for this task and everything under it — what the board chip shows.</summary>
     decimal SubtreeCostUsd,
     int ChildCount);

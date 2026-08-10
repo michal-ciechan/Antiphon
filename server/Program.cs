@@ -271,6 +271,9 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
+    // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
+    // ~10x-inflated history. No-ops once every row carries the current pricing version.
+    builder.Services.AddHostedService<DelegationCostBackfillService>();
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
     builder.Services.AddHostedService<SessionRunnerEventPump>();
 
