@@ -67,4 +67,22 @@ public enum AgentIncidentKind
     /// again invisible: this incident is the record that the recipient may have read a splice.
     /// </summary>
     OversizedTerminalDelivery = 14,
+
+    /// <summary>
+    /// The runner could not safely bind a transcript to this agent's session and is running
+    /// WITHOUT one — nothing is ingested, working/idle reads permanently idle, and a channel-bound
+    /// agent cannot dispatch replies at all. Refusing is the safe outcome (CARD-0006: the
+    /// alternative bound an agent to the human operator's own Claude conversation on nothing but
+    /// "same cwd, written recently"), but it must never be silent. Critical when the agent has a
+    /// channel binding, Warning otherwise.
+    /// </summary>
+    TranscriptBindFailed = 15,
+
+    /// <summary>
+    /// A transcript was bound by HEURISTIC rather than by the exact <c>&lt;session-id&gt;.jsonl</c>
+    /// filename (cwd discovery, a mid-session fork, or the restart migration shim). Info-level,
+    /// recorded WITHOUT an alert, mirroring <see cref="ContextCompacted"/>: the bind passed every
+    /// adoption rule, but which file an agent reads from should be on the record.
+    /// </summary>
+    TranscriptBoundByDiscovery = 16,
 }
