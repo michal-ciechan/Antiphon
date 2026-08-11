@@ -20,6 +20,9 @@
     <!-- Golden recordings of REAL Claude PTY bytes — replayed to pin our parsers/detectors/screen
          reconstruction against ground truth. Copied verbatim to the test output. -->
     <Content Include="golden\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Node peers for the pty input path. The real Claude is Node, so a .NET peer cannot
+         characterise the consumer that actually loses bytes (CARD-0027). -->
+    <Content Include="probes\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

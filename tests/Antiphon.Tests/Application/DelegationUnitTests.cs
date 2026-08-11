@@ -754,3 +754,54 @@ public class DelegationCostTests
             .ShouldBeGreaterThan(0m);
     }
 }
+
+/// <summary>
+/// CARD-0027. The transport boundary is ONE ~1024-byte read chunk: a body that fits in one arrives
+/// whole, a body that spans two or more is truncated to a whole number of chunks, unpredictably.
+/// Measured against the real Claude TUI — 810 and 972-byte bodies arrived whole 3/3, 1 026 and
+/// 1 350-byte bodies lost their heads 3/3, and the cut sits at body byte 1029 at 7-byte resolution.
+/// See docs/investigations/2026-08-11-pty-chunk-loss-root-cause-CARD-0027.md.
+/// </summary>
+[Category("Unit")]
+public class PtyInlineCeilingTests
+{
+    /// <summary>The measured single-read-chunk boundary, in UTF-8 BYTES.</summary>
+    private const int SingleChunkBytes = 1024;
+
+    /// <summary>
+    /// The brief ceiling is the one gate that already sits under a single chunk, which is why the
+    /// brief-pointer mitigation holds. Raising it above one chunk puts briefs back in the failure
+    /// mode that stranded four tasks on 2026-08-11 — with no new evidence, that is a regression.
+    /// </summary>
+    [Test]
+    public void the_brief_ceiling_stays_within_one_read_chunk()
+    {
+        new DelegationSettings().BriefInlineMaxChars
+            .ShouldBeLessThanOrEqualTo(SingleChunkBytes,
+                "a brief must fit in ONE ~1024-byte read chunk — a body spanning two or more is "
+                + "truncated to whole chunks by the receiving TUI (CARD-0027)");
+    }
+
+    /// <summary>
+    /// The gap this leaves open, stated as a measurement rather than a worry: every ceiling in
+    /// DelegationSettings is compared against <c>string.Length</c> (UTF-16 chars) while the
+    /// transport boundary is UTF-8 BYTES. Briefs in this codebase are em-dash-heavy — the
+    /// 2026-08-11 investigation had to correct character offsets to byte offsets for exactly that
+    /// reason — and an em-dash costs 3 bytes. So a brief can pass the 900-CHARACTER gate and still
+    /// cross the 1024-BYTE boundary. This test does not assert the bug away; it pins the arithmetic
+    /// so the next person sizing a ceiling counts the right unit.
+    /// </summary>
+    [Test]
+    public void a_brief_under_the_character_ceiling_can_still_exceed_one_chunk_in_bytes()
+    {
+        var settings = new DelegationSettings();
+        var emDashHeavy = new string('—', settings.BriefInlineMaxChars);
+
+        emDashHeavy.Length.ShouldBeLessThanOrEqualTo(settings.BriefInlineMaxChars,
+            "it passes the shipped gate");
+        System.Text.Encoding.UTF8.GetByteCount(emDashHeavy)
+            .ShouldBeGreaterThan(SingleChunkBytes,
+                "yet it is over the transport boundary — the gates count characters, the pty "
+                + "counts bytes. Any real fix has to size these in UTF-8 bytes.");
+    }
+}
