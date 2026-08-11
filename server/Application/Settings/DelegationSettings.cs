@@ -107,6 +107,21 @@ public sealed class DelegationSettings
     public int PtyInlineSafeChars { get; set; } = 4_000;
 
     /// <summary>
+    /// Where typed-body loss actually STARTS: one ConPTY read chunk, in UTF-8 bytes.
+    ///
+    /// CARD-0027 root-caused the loss to the receiving TUI, which keeps ONE ~1024-byte read chunk
+    /// per event-loop turn and discards the rest. Measured against real Claude: 810 and 972-byte
+    /// bodies arrived whole 3/3; 1 026 and 1 350-byte bodies lost their heads 3/3; the cut sits at
+    /// body byte 1029 at 7-byte resolution. A body inside one chunk has no earlier chunk to lose.
+    ///
+    /// This is the threshold the oversize incident should fire on, NOT
+    /// <see cref="PtyInlineSafeChars"/>. That one is 4 000 CHARACTERS, so a body between roughly
+    /// 1 KB and 4 KB was typed, clipped, and raised nothing at all — the exact window that
+    /// swallowed four briefs on 2026-08-11 while the guard stayed quiet.
+    /// </summary>
+    public int PtySingleChunkBytes { get; set; } = 1_024;
+
+    /// <summary>
     /// Directory prefixes a task may run in. A SECURITY BOUNDARY: without it an agent that can
     /// delegate could point a task at any path the server user can read. Empty = only the parent's
     /// own working directory tree is allowed.

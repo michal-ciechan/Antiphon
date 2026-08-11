@@ -525,9 +525,11 @@ public sealed class SessionMessageQueueService
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             await supervisor.RecordIncidentAsync(
                 agent.Id, sessionId, AgentIncidentKind.OversizedTerminalDelivery, AlertSeverity.Warning,
-                $"A {length:N0}-character message was typed into this terminal, over the {_delegationSettings.PtyInlineSafeChars:N0}-character "
-                + "size the pty has been measured to deliver intact. The middle of it may be missing "
-                + "without any visible sign — treat what the agent read as unverified.",
+                $"A {length:N0}-byte message was typed into this terminal, spanning more than one "
+                + $"{_delegationSettings.PtySingleChunkBytes:N0}-byte read chunk. The receiving TUI keeps ONE chunk "
+                + "per event-loop turn and discards the rest, so part of this — the head, the middle, "
+                + "or all but one chunk — may be missing with no visible sign. Treat what the agent "
+                + "read as unverified.",
                 ct: ct);
             await db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
@@ -582,14 +584,20 @@ public sealed class SessionMessageQueueService
         // refusing would strand the message with no path forward — but never silently: the caller
         // paths that produce multi-KB bodies (delegation briefs and reports) now spill to a file
         // instead, so anything still arriving here is a case we have not yet given a file path to.
-        if (trimmed.Length > _delegationSettings.PtyInlineSafeChars)
+        // Measured in UTF-8 BYTES against ONE read chunk, because that is where loss starts
+        // (CARD-0027). This used to compare string.Length against PtyInlineSafeChars (4 000
+        // CHARACTERS), which left everything from ~1 KB to 4 KB typed, clipped and silent — the
+        // window that swallowed four briefs on 2026-08-11 without raising a thing.
+        var bodyBytes = System.Text.Encoding.UTF8.GetByteCount(trimmed);
+        if (bodyBytes > _delegationSettings.PtySingleChunkBytes)
         {
             _logger.LogError(
-                "Delivering an OVERSIZED body to session {SessionId}: {Length:N0} chars exceeds the "
-                + "pty-safe ceiling of {Ceiling:N0}. The terminal may drop 1024-byte chunks from the "
-                + "middle and the recipient cannot tell. Give this path a spill file.",
-                sessionId, trimmed.Length, _delegationSettings.PtyInlineSafeChars);
-            await RecordOversizeAsync(sessionId, trimmed.Length, ct);
+                "Delivering an OVERSIZED body to session {SessionId}: {Bytes:N0} UTF-8 bytes spans "
+                + "more than one {Chunk:N0}-byte read chunk. The receiving TUI keeps ONE chunk per "
+                + "event-loop turn and discards the rest, and the recipient cannot tell. Give this "
+                + "path a spill file.",
+                sessionId, bodyBytes, _delegationSettings.PtySingleChunkBytes);
+            await RecordOversizeAsync(sessionId, bodyBytes, ct);
         }
 
         var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);

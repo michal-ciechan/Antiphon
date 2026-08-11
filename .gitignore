@@ -40,3 +40,6 @@ out/
 # Deliberately a wildcard: this was an enumerated list of one-off names, and the first
 # --property:OutputPath=bin-orch/ that nobody had thought of got committed by a git add -A.
 bin-*/
+
+# Agent scratch: delegation brief/report spill files, regenerable from the task row
+.antiphon/
