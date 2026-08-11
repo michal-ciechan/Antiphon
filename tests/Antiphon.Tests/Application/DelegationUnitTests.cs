@@ -432,7 +432,7 @@ public class DelegationReportFormatterTests
     }
 
     /// <summary>
-    /// The ceiling that governs a brief must be BriefInlineMaxChars, not ReplyInlineMaxChars.
+    /// The ceiling that governs a brief must be BriefInlineMaxBytes, not ReplyInlineMaxChars.
     /// Four briefs stranded on 2026-08-11 at 1 366-2 320 characters, each arriving as its final
     /// sub-1024-byte chunk alone with the head — and therefore the task — gone. Every one of them
     /// was under ReplyInlineMaxChars (3 000) and under PtyInlineSafeChars (4 000), which is exactly
@@ -448,7 +448,7 @@ public class DelegationReportFormatterTests
         var settings = new DelegationSettings();
 
         length.ShouldBeGreaterThan(
-            settings.BriefInlineMaxChars,
+            settings.BriefInlineMaxBytes,
             "a brief this size must spill — it is a size measured to lose its head in delivery");
         length.ShouldBeLessThan(
             settings.ReplyInlineMaxChars,
@@ -470,7 +470,7 @@ public class DelegationReportFormatterTests
             NewTask(), Settings, spillPath: null, fullLength: 2_320);
 
         pointer.Length.ShouldBeLessThanOrEqualTo(
-            new DelegationSettings().BriefInlineMaxChars,
+            new DelegationSettings().BriefInlineMaxBytes,
             "a pointer over the brief ceiling could lose its own head, which is the whole failure "
             + "it exists to prevent");
     }
@@ -776,32 +776,48 @@ public class PtyInlineCeilingTests
     [Test]
     public void the_brief_ceiling_stays_within_one_read_chunk()
     {
-        new DelegationSettings().BriefInlineMaxChars
+        new DelegationSettings().BriefInlineMaxBytes
             .ShouldBeLessThanOrEqualTo(SingleChunkBytes,
                 "a brief must fit in ONE ~1024-byte read chunk — a body spanning two or more is "
                 + "truncated to whole chunks by the receiving TUI (CARD-0027)");
     }
 
     /// <summary>
-    /// The gap this leaves open, stated as a measurement rather than a worry: every ceiling in
-    /// DelegationSettings is compared against <c>string.Length</c> (UTF-16 chars) while the
-    /// transport boundary is UTF-8 BYTES. Briefs in this codebase are em-dash-heavy — the
-    /// 2026-08-11 investigation had to correct character offsets to byte offsets for exactly that
-    /// reason — and an em-dash costs 3 bytes. So a brief can pass the 900-CHARACTER gate and still
-    /// cross the 1024-BYTE boundary. This test does not assert the bug away; it pins the arithmetic
-    /// so the next person sizing a ceiling counts the right unit.
+    /// The ceiling must be counted in UTF-8 BYTES, because that is the unit of the read chunk the
+    /// TUI drops. It shipped counting <c>string.Length</c> (UTF-16 chars), and briefs here are
+    /// em-dash-heavy at 3 bytes each — so a 900-CHARACTER brief could be 2 700 bytes, span three
+    /// chunks, and mangle exactly as before while passing the guard.
+    ///
+    /// This is the arithmetic that made the char gate unsafe. It is kept as a test so the ceiling
+    /// can never quietly go back to counting characters.
     /// </summary>
     [Test]
-    public void a_brief_under_the_character_ceiling_can_still_exceed_one_chunk_in_bytes()
+    public void the_brief_ceiling_is_counted_in_utf8_bytes_not_characters()
     {
         var settings = new DelegationSettings();
-        var emDashHeavy = new string('—', settings.BriefInlineMaxChars);
+        var emDashHeavy = new string('—', settings.BriefInlineMaxBytes);
 
-        emDashHeavy.Length.ShouldBeLessThanOrEqualTo(settings.BriefInlineMaxChars,
-            "it passes the shipped gate");
+        emDashHeavy.Length.ShouldBeLessThanOrEqualTo(settings.BriefInlineMaxBytes,
+            "a char-counting gate would wave this through");
         System.Text.Encoding.UTF8.GetByteCount(emDashHeavy)
             .ShouldBeGreaterThan(SingleChunkBytes,
-                "yet it is over the transport boundary — the gates count characters, the pty "
-                + "counts bytes. Any real fix has to size these in UTF-8 bytes.");
+                "yet it crosses the transport boundary — which is why the gate counts bytes");
+    }
+
+    /// <summary>
+    /// The gate as actually applied: an em-dash-heavy brief under the ceiling in characters but
+    /// over it in bytes must spill. This is the case that would still have mangled after 8c42ebd.
+    /// </summary>
+    [Test]
+    public void a_multibyte_brief_over_the_byte_ceiling_is_not_typed_inline()
+    {
+        var settings = new DelegationSettings();
+        var body = new string('—', 400); // 400 chars, 1 200 bytes
+
+        body.Length.ShouldBeLessThan(settings.BriefInlineMaxBytes);
+        System.Text.Encoding.UTF8.GetByteCount(body)
+            .ShouldBeGreaterThan(settings.BriefInlineMaxBytes,
+                "over the ceiling once measured in the unit the transport actually uses, so it "
+                + "must spill to a file rather than be typed");
     }
 }

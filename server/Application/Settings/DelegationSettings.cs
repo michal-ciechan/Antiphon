@@ -69,14 +69,19 @@ public sealed class DelegationSettings
     /// only its FINAL sub-1024-byte chunk, cut at byte 1024n-2, losing the head that carried the
     /// task. Every one sat under <see cref="ReplyInlineMaxChars"/> (3 000) and under
     /// <see cref="PtyInlineSafeChars"/> (4 000), so neither guard fired and neither was ever a
-    /// safety guarantee for this failure mode: the loss takes the HEAD, and it starts well below
-    /// the 4 262-character body that once arrived intact. A body that fits in one 1024-byte chunk
-    /// has no earlier chunk to lose; 900 leaves room for the marker the brief now closes with.
+    /// safety guarantee for this failure mode.
     ///
-    /// This bounds the damage rather than explaining it — why ConPTY drops the leading chunks of a
-    /// sub-2KB write is still unknown (see docs/investigations/2026-08-11-tasks-stuck-dispatched-9775fe45.md).
+    /// CARD-0027 then root-caused it: the transport is lossless and it is the receiving TUI that
+    /// keeps one ~1024-byte read chunk per event-loop turn and discards the rest. Bodies of 810 and
+    /// 972 bytes arrived whole 3/3; 1 026 and 1 350 lost their heads 3/3. So the boundary is ONE
+    /// READ CHUNK, and a body inside it has no earlier chunk to lose.
+    ///
+    /// It is counted in UTF-8 BYTES, which is what the read quantum is measured in — NOT in
+    /// <c>string.Length</c>. This gate shipped comparing UTF-16 chars, and briefs here are
+    /// em-dash-heavy at 3 bytes each: a 900-CHARACTER brief can be 2 700 bytes, three chunks, and
+    /// mangle exactly as before while passing the guard.
     /// </summary>
-    public int BriefInlineMaxChars { get; set; } = 900;
+    public int BriefInlineMaxBytes { get; set; } = 900;
 
     /// <summary>
     /// The largest body we are willing to type into a TUI in one go, from MEASURED behaviour — not

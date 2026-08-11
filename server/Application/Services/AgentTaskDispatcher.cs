@@ -488,7 +488,7 @@ public sealed class AgentTaskDispatcher
 
     /// <summary>
     /// The brief as it will actually be TYPED. A brief past
-    /// <see cref="DelegationSettings.BriefInlineMaxChars"/> is written to a file and replaced by a
+    /// <see cref="DelegationSettings.BriefInlineMaxBytes"/> is written to a file and replaced by a
     /// pointer, because handing a body of any size to a pty is how the 2026-08-10 and 2026-08-11
     /// live misses happened: a 5 203-character brief arrived spliced mid-word, and four briefs of
     /// 1 366-2 320 characters arrived as their last chunk alone, losing the head that carried the
@@ -504,7 +504,10 @@ public sealed class AgentTaskDispatcher
     private string FitBriefForTyping(AgentTask task)
     {
         var brief = DelegationReportFormatter.BuildBrief(task, _settings);
-        if (brief.Length <= _settings.BriefInlineMaxChars)
+        // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
+        // and an em-dash costs 3 of them (CARD-0027).
+        var briefBytes = System.Text.Encoding.UTF8.GetByteCount(brief);
+        if (briefBytes <= _settings.BriefInlineMaxBytes)
             return brief;
 
         string? spillPath = null;
@@ -527,8 +530,8 @@ public sealed class AgentTaskDispatcher
         }
 
         _logger.LogInformation(
-            "Task {ShortId}: brief is {Chars:N0} chars (> {Ceiling:N0}); delivering a pointer to {Where}",
-            DelegationReportFormatter.Short(task.Id), brief.Length, _settings.BriefInlineMaxChars,
+            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0}); delivering a pointer to {Where}",
+            DelegationReportFormatter.Short(task.Id), briefBytes, _settings.BriefInlineMaxBytes,
             spillPath ?? "the API");
 
         return DelegationReportFormatter.BuildBriefPointer(task, _settings, spillPath, brief.Length);
