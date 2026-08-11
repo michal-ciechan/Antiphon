@@ -227,3 +227,46 @@ CARD-0019 itself then moves to done with `TerminalReason` pointing at this spec.
 - Auth/actor identity — `EditedBy` is honest free text until the server has principals.
 - Card *comments as annotations* (the `/comments` route stays session-messaging; renaming it is
   a separate cleanup).
+
+---
+
+## Caller decisions (2026-08-11, orchestrator)
+
+Both open questions are answered; one carries a condition.
+
+### 1. The 20,000-character cap — accepted, but NOT for the spawn path
+
+Accepted as a storage and API policy. `text` plus an application constant is the right shape, and
+4,000 is demonstrably too small for the house style.
+
+**The condition:** raising it must not widen an existing live defect. `CardService.BuildPrompt`
+embeds `card.Description` verbatim, and that prompt reaches the session via
+`adapter.SendPromptAsync` — it is TYPED INTO THE PTY. Per CARD-0027 the receiving TUI keeps one
+~1024-byte read chunk per event-loop turn and silently discards the rest, so a description over
+roughly 1 KB is already at risk of reaching a spawned agent clipped, with no error and no sign on
+either side. The agent then works from a mangled instruction that reads as complete.
+
+This is not introduced by this plan — it is broken at the current 4,000 ceiling too — but going to
+20,000 makes the exposure five times larger. So:
+
+> Ship the cap only together with spill-to-pointer on the spawn prompt, the same treatment briefs
+> got in `8c42ebd`/`21743a5`: over `BriefInlineMaxBytes` (UTF-8 BYTES, not chars), write the prompt
+> to a file and type a short pointer.
+
+If that is not in this card's scope, the cap stays at 4,000 until the spawn path is fixed, and the
+spawn-prompt clipping is carded separately. Either is fine; shipping 20,000 over a typed prompt is
+not.
+
+### 2. `EditedBy` as free text — accepted
+
+Correct call while the server has no principals. An honest unauthenticated string beats inventing
+an identity model this card does not need. It must never be presented as an authenticated actor in
+the UI or API docs — label it as self-reported.
+
+### Also worth doing here
+
+Slice 3 corrects CARD-0026 and CARD-0018. Add a third: **CARD-0026's note is wrong in a specific
+way that should be recorded accurately** — the test was checkout-path dependent (the cmd prompt
+prefix is the cwd, so the echoed prompt wrapped at 129 columns from a worktree and 110 from
+`C:\src\Antiphon`), not load-flaky, and `f078dd2` fixed the underlying `CodexResponseAnalyzer`
+defect rather than the test. The correction should say that, not merely retract the old note.
