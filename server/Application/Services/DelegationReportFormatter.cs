@@ -83,6 +83,16 @@ public static class DelegationReportFormatter
     /// How to report back. The delegate's final message IS the report, so this is the highest-leverage
     /// text in the system — and the spill rule is the primary size mechanism, because the delegate is
     /// the only party that knows which 20 000 characters mattered.
+    ///
+    /// It CLOSES with the task marker, which is also the brief's opening token. That repetition is
+    /// load-bearing, not tidiness: correlation reads the marker out of the delivered prompt, so a
+    /// single copy at the head makes settlement depend on the head surviving the pty — and it does
+    /// not always. Aligning what was queued against what four delegates actually recorded
+    /// (2026-08-11) put the cut at byte 1024n-2 with only the FINAL chunk surviving: a 1 420-char
+    /// brief arrived as its last 380 characters, marker gone. Those tasks then ran to completion and
+    /// sat Dispatched forever, because every turn-end failed the marker gate. The tail survived in
+    /// all seven deliveries measured across both mangling shapes, so a marker at each end
+    /// correlates whichever fragment lands.
     /// </summary>
     public static string ReportingContract(Guid taskId, AgentTaskKind kind, int inlineMaxChars)
     {
@@ -112,6 +122,8 @@ public static class DelegationReportFormatter
             If your report would run past {inlineMaxChars:N0} characters, write the full detail to
             .antiphon/task-{Short(taskId)}.md and make your final message a summary that points
             at that path.
+
+            {TaskMarker(taskId)}
             """;
     }
 

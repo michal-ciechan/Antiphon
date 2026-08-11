@@ -570,11 +570,15 @@ public sealed class SessionMessageQueueService
         // PtyInputEncoding (SendLineAsync callers were the 2026-08-08 miss).
         var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
 
-        // Size gate. Above the measured-safe ceiling the pty drops whole 1024-byte chunks out of
-        // the MIDDLE of the body and reports success — and because the head and the tail always
-        // survive, the composer-evidence check below (which matches on head OR tail) certifies the
-        // splice as Delivered. That is exactly how a 5 203-char brief and a 5 368-char report
-        // reached their readers as coherent-looking fragments on 2026-08-10. We still deliver —
+        // Size gate. Above the measured-safe ceiling the pty drops whole 1024-byte chunks of the
+        // body and reports success — and because a surviving head or tail is enough for it, the
+        // composer-evidence check below certifies the splice as Delivered. That is exactly how a
+        // 5 203-char brief and a 5 368-char report reached their readers as coherent-looking
+        // fragments on 2026-08-10.
+        //
+        // The gate is NOT a guarantee that a body under it arrives whole: on 2026-08-11 four
+        // bodies of 1 366-2 320 chars arrived as their final 1024-byte chunk alone, passing
+        // straight through here without a word. We still deliver —
         // refusing would strand the message with no path forward — but never silently: the caller
         // paths that produce multi-KB bodies (delegation briefs and reports) now spill to a file
         // instead, so anything still arriving here is a case we have not yet given a file path to.

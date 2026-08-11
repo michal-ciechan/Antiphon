@@ -63,22 +63,98 @@ public sealed class AgentTaskReplyService
                 return;
 
             var turn = await ExtractMarkedTurnAsync(db, sessionId, task.Id, ct);
-            if (turn is null)
+            if (turn.Report is not string report)
             {
-                // Either the delegate hasn't produced text yet (Claude can write the stop marker
-                // before its reply — the AssistantText arrival re-triggers us), or this turn was a
-                // human typing in the delegate's terminal. Both mean: leave the task running.
+                if (turn.UncorrelatedReport)
+                {
+                    // A finished-looking turn we cannot attribute. Left at Debug this printed
+                    // nothing under an Information file sink, and three delegates that had done
+                    // their work sat Dispatched overnight with no record of why (CARD-0003).
+                    _logger.LogWarning(
+                        "Session {SessionId} ended a turn WITH a report but the prompt carried no "
+                        + "marker for task {ShortId} — not settling it. Either a human typed here, or "
+                        + "the brief's marker did not survive delivery and this task will strand.",
+                        sessionId, DelegationReportFormatter.Short(task.Id));
+                    await RecordUncorrelatedReportAsync(scope.ServiceProvider, db, task, sessionId, ct);
+                    return;
+                }
+
+                // The delegate hasn't produced text yet — Claude can write the stop marker before
+                // its reply, and the AssistantText arrival re-triggers us. Leave the task running.
                 _logger.LogDebug(
                     "Session {SessionId} ended a turn with no report for task {ShortId}; still working",
                     sessionId, DelegationReportFormatter.Short(task.Id));
                 return;
             }
 
-            await SettleAsync(scope.ServiceProvider, db, task, turn, ct);
+            await SettleAsync(scope.ServiceProvider, db, task, report, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to settle a delegated task for session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// Put an uncorrelated report on the agent's incident timeline, ONCE per session. A log line is
+    /// the diagnostic; an incident is what the board and the alert pipeline can actually see, and
+    /// this failure's whole character is that every surface said the task was fine. Once per
+    /// session because a stranded delegate keeps ending turns, and the same finding repeated on
+    /// every one of them is noise that buries the first.
+    /// </summary>
+    private async Task RecordUncorrelatedReportAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        if (task.AgentId is not Guid agentId)
+            return;
+
+        try
+        {
+            var already = await db.AgentIncidents.AnyAsync(
+                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated, ct);
+            if (already)
+                return;
+
+            var message =
+                $"Task {DelegationReportFormatter.Short(task.Id)} could not be settled from this "
+                + "session's finished turn: the prompt it answered does not carry the task marker. "
+                + "If the delegate has in fact reported, its brief was mangled in delivery and the "
+                + "task will sit Dispatched until the delivery watchdog fails it.";
+
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.DelegateReportUncorrelated,
+                Severity = AlertSeverity.Warning,
+                Message = message,
+                CreatedAt = UtcNow(),
+            });
+            await db.SaveChangesAsync(ct);
+
+            // The timeline row is the record; the alert is what actually reaches someone. Optional
+            // so the reply path keeps working in hosts that wire no alerting.
+            if (services.GetService<IAlertService>() is { } alerts)
+            {
+                await alerts.RaiseAsync(
+                    new AlertRaise(
+                        AlertSeverity.Warning,
+                        Source: "delegation",
+                        Title: $"Delegate report could not be correlated to task {DelegationReportFormatter.Short(task.Id)}",
+                        Detail: message,
+                        DedupKey: $"delegation:uncorrelated:{task.Id}",
+                        AgentId: agentId,
+                        SessionId: sessionId),
+                    ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Observability must never be able to break settlement.
+            _logger.LogError(
+                ex, "Could not record an uncorrelated-report incident for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
         }
     }
 
@@ -349,17 +425,32 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// The turn's assistant text, but only if the turn was the one we asked for — its prompt must
-    /// carry this task's marker. Returns null when the turn isn't ours or has no text yet.
+    /// What a finished turn was: our task's report, nothing yet, or — the dangerous one — a real
+    /// report we cannot attribute because the prompt it answered carries no marker.
     /// </summary>
-    private static async Task<string?> ExtractMarkedTurnAsync(
+    /// <param name="Report">The report text, non-null only when the turn correlated.</param>
+    /// <param name="UncorrelatedReport">
+    /// The turn produced assistant text but failed the marker gate. Either a human typed in this
+    /// delegate's terminal (benign, and what the gate is for), or the marker did not survive
+    /// delivery and a finished task is about to strand (the 2026-08-11 miss).
+    /// </param>
+    private readonly record struct TurnOutcome(string? Report, bool UncorrelatedReport)
+    {
+        public static readonly TurnOutcome Nothing = new(null, false);
+    }
+
+    /// <summary>
+    /// The turn's assistant text, but only if the turn was the one we asked for — its prompt must
+    /// carry this task's marker.
+    /// </summary>
+    private static async Task<TurnOutcome> ExtractMarkedTurnAsync(
         AppDbContext db, Guid sessionId, Guid taskId, CancellationToken ct)
     {
         var endSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
             .MaxAsync(t => (long?)t.Sequence, ct);
         if (endSeq is not long turnEnd)
-            return null;
+            return TurnOutcome.Nothing;
 
         var prompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -368,11 +459,7 @@ public sealed class AgentTaskReplyService
             .OrderByDescending(t => t.Sequence)
             .FirstOrDefaultAsync(ct);
         if (prompt?.Text is not string promptText)
-            return null;
-
-        // The marker gate. A human typing in this terminal produces a prompt without it.
-        if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
-            return null;
+            return TurnOutcome.Nothing;
 
         var nextPrompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -389,7 +476,14 @@ public sealed class AgentTaskReplyService
 
         var texts = await query.OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync(ct);
         var joined = string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();
-        return joined.Length == 0 ? null : joined;
+
+        // The marker gate. A human typing in this terminal produces a prompt without it — but so
+        // does a brief whose marker was eaten in transit, and those two look identical from here.
+        // Distinguishing them is not possible; SAYING SO is, which is the whole point of the flag.
+        if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
+            return new TurnOutcome(null, joined.Length > 0);
+
+        return joined.Length == 0 ? TurnOutcome.Nothing : new TurnOutcome(joined, false);
     }
 
     /// <summary>

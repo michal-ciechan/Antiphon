@@ -218,13 +218,21 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// The delivery backstop (CARD-0003/CARD-0020): a Dispatched task whose session has produced
-    /// ZERO transcript entries after <see cref="DelegationSettings.DeliveryFailTimeoutMinutes"/>
-    /// never received its brief. Four tasks sat like that for up to 26 minutes on 2026-08-09 while
-    /// every surface reported Running. Deliberately separate from the stall scan above: escalation
-    /// re-runs work on a bigger model, which would launder a lost prompt into a billed upgrade.
-    /// The stranded-queue watchdog gets the whole window to redeliver a reverted brief first; this
-    /// fires only when nothing ever landed, and it says WHY using the queue's own state.
+    /// The delivery backstop (CARD-0003/CARD-0020) for a task still Dispatched
+    /// <see cref="DelegationSettings.DeliveryFailTimeoutMinutes"/> after dispatch. Two ways that
+    /// happens, and it reports which:
+    ///
+    /// <list type="bullet">
+    /// <item>The brief never arrived — ZERO transcript entries. Four tasks sat like that for up to
+    /// 26 minutes on 2026-08-09 while every surface reported Running.</item>
+    /// <item>The brief arrived, the delegate worked and REPORTED, but no turn could be matched to
+    /// the task, so nothing settled it (2026-08-11: three tasks stranded overnight after the pty
+    /// ate the head of the brief and the marker with it).</item>
+    /// </list>
+    ///
+    /// Deliberately separate from the stall scan above: escalation re-runs work on a bigger model,
+    /// which would launder a lost prompt into a billed upgrade. The stranded-queue watchdog gets
+    /// the whole window to redeliver a reverted brief first.
     /// </summary>
     internal async Task<int> FailNeverStartedAsync(CancellationToken ct)
     {
@@ -247,26 +255,48 @@ public sealed class AgentTaskDispatcher
 
             // Any transcript entry at all means the session started — slow work belongs to the
             // stall scan, not here.
-            if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct))
-                continue;
+            var started = await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct);
 
-            var briefStatus = await _db.SessionQueuedMessages
-                .AsNoTracking()
-                .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
-                .OrderBy(m => m.Sequence)
-                .Select(m => (QueuedMessageStatus?)m.Status)
-                .FirstOrDefaultAsync(ct);
-            var evidence = briefStatus switch
+            string reason;
+            if (!started)
             {
-                QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
-                QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a transcript",
-                null => "no brief was ever queued for the session",
-                _ => $"brief status: {briefStatus}",
-            };
-            var reason =
-                $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
-                + $"the session has zero transcript entries ({evidence}). "
-                + "See the agent's incidents for the delivery errors.";
+                var briefStatus = await _db.SessionQueuedMessages
+                    .AsNoTracking()
+                    .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
+                    .OrderBy(m => m.Sequence)
+                    .Select(m => (QueuedMessageStatus?)m.Status)
+                    .FirstOrDefaultAsync(ct);
+                var evidence = briefStatus switch
+                {
+                    QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
+                    QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a transcript",
+                    null => "no brief was ever queued for the session",
+                    _ => $"brief status: {briefStatus}",
+                };
+                reason =
+                    $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
+                    + $"the session has zero transcript entries ({evidence}). "
+                    + "See the agent's incidents for the delivery errors.";
+            }
+            else if (await _db.AgentIncidents.AnyAsync(
+                i => i.SessionId == sessionId
+                    && i.Kind == AgentIncidentKind.DelegateReportUncorrelated, ct))
+            {
+                // The opposite failure to the one above, and the one that actually stranded three
+                // tasks overnight (2026-08-11): the session ran, worked and REPORTED, but no turn
+                // could be matched to the task, so nothing ever settled it. Starting is not the
+                // test of a healthy task — settling is. Without this branch the check above waves
+                // it through forever on the strength of a transcript it cannot use.
+                reason =
+                    $"Delegate reported but the result could not be attributed: {(int)timeout.TotalMinutes} "
+                    + "minutes after dispatch the session has ended a turn with a report whose prompt "
+                    + "carries no task marker (most likely the brief was mangled in delivery). The work "
+                    + $"may be real — read session {sessionId} before re-running this task.";
+            }
+            else
+            {
+                continue;
+            }
 
             await FailAsync(task, reason, ct);
 
@@ -306,8 +336,8 @@ public sealed class AgentTaskDispatcher
             await _eventBus.PublishToAllAsync(
                 "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
             _logger.LogWarning(
-                "Task {ShortId} failed: boot prompt never delivered (session {SessionId}, {Evidence})",
-                DelegationReportFormatter.Short(task.Id), sessionId, evidence);
+                "Task {ShortId} failed by the delivery watchdog (session {SessionId}): {Reason}",
+                DelegationReportFormatter.Short(task.Id), sessionId, reason);
             failed++;
         }
 
