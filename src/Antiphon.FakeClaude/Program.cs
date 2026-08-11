@@ -30,6 +30,10 @@ namespace Antiphon.FakeClaude;
 ///    after the Nth turn) renders the pinned <c>Compacted (ctrl+o to see full summary)</c> screen line
 ///    with NO turn-end signal — compaction is not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set,
 ///    a compact-boundary JSONL line is appended too (shape mirrors the canary fixture).
+///  * <b>Chunk clipping</b> (OPT-IN, <c>ANTIPHON_FAKE_STDIN_CLIP</c>) — the real TUI keeps ONE
+///    ~1024-byte read chunk per event-loop turn and silently discards the rest, which is how briefs
+///    arrived with their heads missing (CARD-0027). Default OFF: our transport is genuinely
+///    lossless and <c>PtyLargeWriteTests</c> pins that. See <see cref="StdinClipModel"/>.
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
 ///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>) line on turn end, in the shapes
 ///    <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
@@ -60,6 +64,9 @@ internal static class Program
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
         var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
+        // OPT-IN: models the real TUI dropping all but one read chunk per event-loop turn. Unset =
+        // null = the fake stays the lossless peer PtyLargeWriteTests pins. See StdinClipModel.
+        var clip = StdinClipModel.FromEnvironment();
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -72,11 +79,14 @@ internal static class Program
 
         // Startup banner, then quiet — lets the quiet-period readiness detector settle.
         Write(banner + "\r\n");
+        // Printed only when clipping is on, and it carries the SEED: a non-deterministic failure is
+        // only useful if it can be replayed.
+        if (clip is not null) Write(clip.Describe() + "\r\n");
         if (debugInput)
         {
             var h = GetStdHandle(STD_INPUT_HANDLE);
             Write(GetConsoleMode(h, out var m)
-                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0}\r\n"
+                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0} cp={GetConsoleCP()}\r\n"
                 : "INMODE:unavailable\r\n");
         }
         // --echo-args: print the argv verbatim (newline-escaped) so tests can assert that args —
@@ -161,6 +171,14 @@ internal static class Program
             if (current.Count > 0)
                 bursts.Add(current.ToArray());
 
+            // The burst grouping is load-bearing for BOTH submit semantics and the clip model (one
+            // burst = one event-loop turn), and ConPTY's read cadence is the thing that decides it.
+            // Printing the per-read arrival stamps makes that cadence observable instead of a
+            // guess — it is how the clip tests' burst-gap sizing was chosen.
+            if (debugInput)
+                Write($"READS:{drained.Count} bursts={bursts.Count} stamps=["
+                    + string.Join(",", drained.Select(d => $"{d.AtMs}:{d.Bytes.Length}")) + "]\r\n");
+
             foreach (var burst in bursts)
             {
                 if (!ProcessBurst(burst))
@@ -176,6 +194,16 @@ internal static class Program
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
+
+            // The burst IS the event-loop turn: bytes that arrived without a quiet gap between
+            // them. Clipping (opt-in) keeps one read chunk of it and discards the rest, in UTF-8
+            // BYTES — before the string decode, because the read quantum the real TUI drops is
+            // measured in bytes and a char-based cut would disagree on any multibyte body.
+            if (clip is not null)
+            {
+                burst = clip.Apply(burst, out var clipNote);
+                if (clipNote is not null) Write(clipNote + "\r\n");
+            }
 
             var chunk = Encoding.UTF8.GetString(burst);
             if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1")
@@ -442,6 +470,9 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleCP(uint wCodePageID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetConsoleCP();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
