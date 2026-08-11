@@ -74,6 +74,35 @@ public class AgentTaskDeliveryWatchdogTests
         stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
     }
 
+    /// <summary>
+    /// The opposite failure to a lost boot prompt, and the one that actually stranded three tasks
+    /// overnight on 2026-08-11: the session ran, worked and REPORTED, but no turn could be matched
+    /// to the task, so nothing settled it. Starting is not the test of a healthy task — settling
+    /// is. Red before this branch existed: the "any transcript entry" check above waved it through
+    /// forever on the strength of a transcript it could not use.
+    /// </summary>
+    [Test]
+    public async Task a_task_whose_report_could_never_be_correlated_fails_instead_of_hanging()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedTranscriptEntryAsync(sessionId);
+        await SeedUncorrelatedIncidentAsync(sessionId);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(
+            AgentTaskStatus.Failed, "a task that reported but never correlated must not sit Dispatched");
+        failed.FailureReason.ShouldContain(
+            "could not be attributed", customMessage: "and the reason must not read as a lost prompt");
+        failed.FailureReason.ShouldContain(
+            sessionId.ToString(), customMessage: "the work may be real — say where to find it");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
     [Test]
     public async Task a_task_inside_the_delivery_window_is_not_touched()
     {
@@ -194,6 +223,38 @@ public class AgentTaskDeliveryWatchdogTests
             Text = "[delegated task] Do the thing.",
             Timestamp = at,
             CreatedAt = at,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The mark the reply path leaves when a finished turn fails the marker gate.</summary>
+    private static async Task SeedUncorrelatedIncidentAsync(Guid sessionId)
+    {
+        var name = $"wd-{Guid.NewGuid():N}"[..16];
+        await using var db = CreateContext();
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Slug = name,
+            WorkingDirectory = Path.GetTempPath(),
+            Details = "Delivery watchdog test delegate.",
+            Status = AgentStatus.Running,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Agents.Add(agent);
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agent.Id,
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.DelegateReportUncorrelated,
+            Severity = AlertSeverity.Warning,
+            Message = "Report could not be correlated to the task.",
+            CreatedAt = DateTime.UtcNow.AddMinutes(-5),
         });
         await db.SaveChangesAsync();
     }

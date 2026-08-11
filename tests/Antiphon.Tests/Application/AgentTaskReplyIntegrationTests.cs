@@ -75,6 +75,120 @@ public class AgentTaskReplyIntegrationTests
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
     }
 
+    /// <summary>
+    /// The 2026-08-11 live miss, replayed end to end: three delegates ran, did real work and
+    /// reported, and their tasks sat Dispatched overnight because the brief reached them with its
+    /// HEAD missing — and the correlation marker was only ever at the head.
+    ///
+    /// Aligning what was queued against what each delegate recorded put the cut at byte 1024n-2
+    /// with only the FINAL chunk surviving: a 1 420-character brief arrived as its last 380
+    /// characters. The prior investigation had concluded head and tail always survive; these four
+    /// deliveries are the counter-example, and the tail is the only fragment that survived all of
+    /// them. Hence a marker at BOTH ends. Red before that change: no marker anywhere in the
+    /// prompt, so every turn-end failed the gate and nothing ever settled the task.
+    /// </summary>
+    [Test]
+    public async Task a_brief_that_lost_its_head_in_the_pty_still_settles_the_task()
+    {
+        using var workspace = new TempWorkspace();
+        // A goal the size of the ones that actually stranded: their briefs came to 1 384-2 338
+        // characters, which is one chunk boundary in and squarely inside the ceiling — this is
+        // ordinary delegation, not an oversized body anything already guards against.
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+            t.Goal = "Delegated tasks never settle. "
+                + string.Join(" ", Enumerable.Range(0, 110).Select(i => $"context{i:D3}")));
+
+        var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
+        brief.Length.ShouldBeGreaterThan(1024, "the loss only happens to a brief past the first chunk");
+        brief.Length.ShouldBeLessThan(
+            new DelegationSettings().PtyInlineSafeChars,
+            "and this is a brief every existing size guard considers safe");
+        var arrived = DropEverythingBeforeTheFinalPtyChunk(brief);
+
+        arrived.ShouldNotContain(
+            "role=", customMessage: "the head — metadata line and its marker — must really be gone");
+        arrived.Length.ShouldBeLessThan(brief.Length);
+
+        await SeedTurnAsync(sessionId, arrived, "Fixed it in Numbers.cs. 142 passed, 0 failed.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(
+            AgentTaskStatus.Succeeded,
+            "a delegate that reported must settle even when only the tail of its brief arrived");
+        settled.Result.ShouldBe("Fixed it in Numbers.cs. 142 passed, 0 failed.");
+    }
+
+    /// <summary>
+    /// The other half of the same miss (CARD-0003): when a turn CANNOT be correlated, that has to
+    /// leave a mark. It was logged at Debug under an Information file sink, so the single event
+    /// explaining three dead tasks was written precisely nowhere.
+    /// </summary>
+    [Test]
+    public async Task a_report_that_cannot_be_correlated_raises_an_incident()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+
+        // A finished-looking turn whose prompt carries no marker at all.
+        await SeedTurnAsync(sessionId, "the brief, with its head eaten", "Done — here is the report.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "it still must not settle on an unmarked turn");
+
+        var incident = await verify.AgentIncidents
+            .SingleAsync(i => i.SessionId == sessionId
+                && i.Kind == AgentIncidentKind.DelegateReportUncorrelated);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
+    }
+
+    [Test]
+    public async Task the_uncorrelated_incident_is_raised_once_not_once_per_turn()
+    {
+        // A stranded delegate keeps ending turns. One finding repeated on every one of them is
+        // noise that buries the first.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+        var service = CreateService();
+
+        await SeedTurnAsync(sessionId, "headless brief", "First report.");
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await SeedTurnAsync(sessionId, "headless brief", "Second report.");
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentIncidents.CountAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The measured shape of the 2026-08-11 loss: everything before the last whole 1024-byte chunk
+    /// is dropped, cutting at byte 1024n-2. Nudged off a UTF-8 continuation byte so the surviving
+    /// fragment is still text — em-dashes are why the character offsets read 986 where the byte
+    /// offset was 1022.
+    /// </summary>
+    private static string DropEverythingBeforeTheFinalPtyChunk(string body)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(body);
+        const int chunk = 1024;
+        if (bytes.Length <= chunk)
+            return body;
+
+        var cut = bytes.Length / chunk * chunk - 2;
+        while (cut < bytes.Length && (bytes[cut] & 0xC0) == 0x80)
+            cut++;
+        return System.Text.Encoding.UTF8.GetString(bytes, cut, bytes.Length - cut);
+    }
+
     [Test]
     public async Task a_turn_with_no_assistant_text_yet_leaves_the_task_running()
     {

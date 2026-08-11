@@ -58,14 +58,22 @@ public sealed class DelegationSettings
     /// The largest body we are willing to type into a TUI in one go, from MEASURED behaviour — not
     /// a guess. Aligning seven real deliveries against what the receiving Claude actually recorded
     /// (2026-08-10) put the cliff between 4 262 characters (intact) and 5 185 (mangled): above it a
-    /// single write to the ConPTY input pipe loses whole 1024-byte chunks out of the MIDDLE, with
-    /// no error, no short write and no exception — the head and the tail always survive, which is
-    /// why it reads as a complete message and why a head-or-tail liveness check certifies it.
+    /// single write to the ConPTY input pipe loses whole 1024-byte chunks with no error, no short
+    /// write and no exception, which is why it reads as a complete message.
     ///
     /// 4 000 is under the largest body observed to arrive intact, so it is a size we have direct
     /// evidence for rather than an extrapolation. <see cref="ReplyInlineMaxChars"/> sits below it
     /// so delegation bodies never reach the cliff; anything that still crosses it raises an
     /// incident rather than going quietly.
+    ///
+    /// This is a DAMAGE LIMIT, not a safety guarantee, and the difference cost three tasks. The
+    /// 2026-08-10 reading — that the loss only takes the middle, so head and tail always survive —
+    /// was contradicted on 2026-08-11 by four deliveries of 1 366-2 320 characters, all far UNDER
+    /// this ceiling, which arrived as their final 1024-byte chunk alone: cut at byte 1024n-2, head
+    /// gone. Nothing here can promise a typed body arrives whole. Anything whose correctness
+    /// depends on a specific span surviving must not rely on a size check — see
+    /// <see cref="DelegationReportFormatter.ReportingContract"/>, where the correlation marker is
+    /// emitted at BOTH ends for exactly this reason.
     /// </summary>
     public int PtyInlineSafeChars { get; set; } = 4_000;
 

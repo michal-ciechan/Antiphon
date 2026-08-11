@@ -61,10 +61,27 @@ public enum AgentIncidentKind
     /// <summary>
     /// A message larger than <c>DelegationSettings.PtyInlineSafeChars</c> was typed into a terminal.
     /// Measured on 2026-08-10: above roughly 4 300 characters a single write to the ConPTY input
-    /// pipe silently loses whole 1024-byte chunks out of the MIDDLE of the body — head and tail
-    /// always survive, so the result reads as a complete message and passes a head-or-tail
-    /// liveness check. Delivery still proceeds (refusing would strand the message), but it is never
-    /// again invisible: this incident is the record that the recipient may have read a splice.
+    /// pipe silently loses whole 1024-byte chunks of the body, so the result reads as a complete
+    /// message and passes a head-or-tail liveness check. Delivery still proceeds (refusing would
+    /// strand the message), but it is never again invisible: this incident is the record that the
+    /// recipient may have read a splice.
+    ///
+    /// Note this fires on SIZE alone and is therefore not a complete guard: on 2026-08-11 four
+    /// bodies well under the ceiling lost everything before their final 1024-byte chunk, raising
+    /// no incident at all. See <see cref="DelegateReportUncorrelated"/>, which catches the
+    /// consequence rather than the size.
     /// </summary>
     OversizedTerminalDelivery = 14,
+
+    /// <summary>
+    /// A delegate ended a turn with a report, but the prompt that turn answered did not carry the
+    /// task's correlation marker — so the task could not be settled from it. The delegate does the
+    /// work, reports, and the task sits Dispatched forever with no surface saying why.
+    ///
+    /// Live miss 2026-08-11 (CARD-0003): three tasks stranded overnight because the pty dropped
+    /// everything before the final 1024-byte chunk of the brief, taking the head-only marker with
+    /// it. The condition was already detected in code and logged at DEBUG, under a file sink set to
+    /// Information — so the one event that explained three dead tasks was written nowhere.
+    /// </summary>
+    DelegateReportUncorrelated = 15,
 }
