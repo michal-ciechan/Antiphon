@@ -192,6 +192,10 @@ Not implemented here — the card asked for the mechanism, not a fourth mitigati
 
 | path | what it is |
 |---|---|
+| `src/Antiphon.FakeClaude/StdinClipModel.cs` | **the mechanism above, modelled** (CARD-0028). Opt-in `ANTIPHON_FAKE_STDIN_CLIP` |
+| `tests/Antiphon.Agents.Pty.Tests/StdinClipModelTests.cs` | **CI-runnable.** The model's arithmetic, incl. UTF-8 bytes vs chars |
+| `tests/Antiphon.Agents.Pty.Tests/FakeVsRealClipParityTests.cs` | **the honesty check.** Same bodies through real Claude and the fake; costs no turns |
+| `tests/Antiphon.Tests/Application/DelegationBriefCeilingPtyTests.cs` | **CI-runnable.** The brief ceiling, end to end, into a clipping receiver |
 | `tests/Antiphon.Agents.Pty.Tests/probes/stdin-probe.js` | JS peer: byte totals, chunk sizes, event-loop turn per chunk |
 | `tests/Antiphon.Agents.Pty.Tests/NodeStdinProbe.cs` | drives it over ConPTY; `CARD27_RUNTIME` selects node or bun |
 | `tests/Antiphon.Agents.Pty.Tests/PtyInputChunkingTests.cs` | **CI-runnable.** Pins losslessness to a JS peer + the ~1 KB/one-turn precondition |
@@ -212,3 +216,53 @@ dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=bin-c
 dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=bin-card27/ `
   -- --treenode-filter "/*/*/PtyInputChunkingTests/*"
 ```
+
+## Follow-up: the fake can now exhibit it (CARD-0028, 2026-08-11)
+
+The instrument that cleared our stack could not reproduce the defect, so CI could not either. It can
+now, **opt-in only** — `ANTIPHON_FAKE_STDIN_CLIP=1` makes fakeclaude keep one ~1024-byte read chunk
+per burst (a burst is its event-loop turn) and discard the rest, in UTF-8 **bytes**. Default OFF, so
+`PtyLargeWriteTests` keeps pinning that our transport is genuinely lossless. `=random` with
+`ANTIPHON_FAKE_STDIN_CLIP_SEED` offers the live non-determinism, replayably; the fake prints its
+model and seed at startup (`CLIP:mode=…`).
+
+```
+# the fake vs the real thing — no model turns, one fresh TUI per trial
+$env:ANTIPHON_HEADED_TESTS=1
+dotnet run --project tests/Antiphon.Agents.Pty.Tests --property:OutputPath=bin-fake/ `
+  -- --treenode-filter "/*/*/FakeVsRealClipParityTests/*"
+```
+
+Run 2026-08-11, artifacts under `TestOutput/card-0028/`. Body of 7-byte marker lines, one write:
+
+| body bytes | fake | real #0 | real #1 | real #2 |
+|---|---|---|---|---|
+| 804 | whole | whole | whole | whole |
+| 965 | whole | whole | whole | whole |
+| 1 399 | markers 147-199 | 147-199 | 147-199 | whole |
+
+Both peers cut at marker 147 = byte 1029, i.e. body byte 1024 — the same number section 4 measured,
+reproduced against a live Claude today, and the same whole/clipped/clipped non-determinism.
+
+**Two things measured while building it that change how these tests must be written:**
+
+1. **ConPTY does not hand one write to the child as one read.** A 1 399-byte write arrives as 2-5
+   reads up to ~14 ms apart, and conhost strips the bracketed-paste markers on the way, so the first
+   read is the body's first 6 bytes. Anything grouping reads into "turns" by a quiet gap must use a
+   window wider than that jitter (the clip tests use `ANTIPHON_FAKE_BURST_MS=80`) or the same body
+   lands in one turn or two depending on scheduling.
+2. **ConPTY narrows non-ASCII input to ONE BYTE per character for a .NET peer** — even with the
+   peer's console input codepage reading back as 65001. A 1 291-byte em-dash-heavy body reaches
+   fakeclaude as 1 023 bytes. So the byte-vs-char rule — the one that shipped wrong in the ceilings —
+   **cannot be tested through the pty at all**; `StdinClipModelTests` drives the model directly for
+   it, and `FakeClaudeContractTests.Non_ascii_input_reaches_a_dotnet_peer_narrowed_to_one_byte_per_char`
+   pins the transport fact so nobody re-writes that unit test as a pty test and gets a green run for
+   the wrong reason. Real Claude is unaffected: em-dashes reach it intact.
+
+And one thing the end-to-end ceiling test exposed: **at the shipped `BriefInlineMaxBytes = 900`, no
+brief is ever delivered inline.** `DelegationReportFormatter.BuildBrief` has a floor of ~915 bytes —
+the reporting contract alone is 838 — so every brief takes the pointer path. That is a safe state,
+not a broken one, but the inline branch is dead code in production and the ceiling is doing no
+sizing work; if the contract ever shrinks, the branch reopens silently.
+`DelegationBriefCeilingPtyTests` pins both the floor and the inline path at the physical 1024-byte
+boundary.

@@ -396,6 +396,333 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
+    // ------------------------------------------------------------------------------------------
+    // CARD-0028 — the TUI's chunk clipping, modelled. OPT-IN (ANTIPHON_FAKE_STDIN_CLIP).
+    //
+    // fakeclaude receives every byte; the real consumer keeps ONE ~1024-byte read chunk per
+    // event-loop turn and drops the rest (CARD-0027). Because the fake was lossless where the real
+    // one clips, the 2026-08-10 investigation used it to clear our stack and shipped ceilings on
+    // that reading — and they were wrong twice. These pin the fake's model of the MEASURED
+    // behaviour, the same way the CR-vs-LF tests above pin the measured line-ending behaviour.
+    //
+    // The default stays OFF and unchanged: PtyLargeWriteTests deliberately pins that OUR transport
+    // delivers 43 KB whole, which is true and must stay pinned.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>Body of <paramref name="lines"/> 7-byte marker lines — the resolution CARD-0027 measured the cut at.</summary>
+    private static string MarkedBody(int lines) =>
+        string.Concat(Enumerable.Range(0, lines).Select(i => $"Q{i:D5}\n"));
+
+    /// <summary>Surviving markers as contiguous RUNS — "0-145" says whole chunk, "3,17,42" says the model is wrong.</summary>
+    private static string Runs(IEnumerable<int> markers)
+    {
+        var runs = new List<(int Lo, int Hi)>();
+        foreach (var i in markers.OrderBy(x => x))
+        {
+            if (runs.Count > 0 && runs[^1].Hi == i - 1) runs[^1] = (runs[^1].Lo, i);
+            else runs.Add((i, i));
+        }
+        return runs.Count == 0 ? "(none)" : string.Join(",", runs.Select(r => $"{r.Lo}-{r.Hi}"));
+    }
+
+    /// <summary>The fake's own account of what it ate — the first thing to read when one of these fails.</summary>
+    private static string ClipNotes(string raw) =>
+        string.Join(" | ", raw.Split('\n')
+            .Select(l => l.Trim('\r', ' '))
+            .Where(l => l.StartsWith("CLIP", StringComparison.Ordinal)));
+
+    /// <summary>Which marked lines reached the child. CR/LF stripped first: ConPTY soft-wraps long lines.</summary>
+    private static HashSet<int> MarkersIn(string raw) =>
+        System.Text.RegularExpressions.Regex
+            .Matches(raw.Replace("\r", "").Replace("\n", ""), @"Q(\d{5})")
+            .Select(m => int.Parse(m.Groups[1].Value))
+            .ToHashSet();
+
+    /// <summary>
+    /// The clipping fake, with a burst gap wide enough that ONE write is ONE turn.
+    ///
+    /// <para>The fake groups arriving bytes into bursts by a quiet gap, and a burst is what the clip
+    /// model treats as one event-loop turn. ConPTY does not hand a single write to a .NET child as a
+    /// single read: measured here (<c>ANTIPHON_FAKE_DEBUG_INPUT=1</c>, READS lines), a 1 399-byte
+    /// write arrives as 2-5 reads up to ~14 ms apart — and it strips the bracketed-paste markers on
+    /// the way, so the first read is the body's first 6 bytes. At the default 12 ms gap that split
+    /// the body across two bursts and made the survivor boundary jitter by 6 bytes between runs.
+    /// 80 ms swallows the delivery jitter without coming near the 300 ms this file leaves before the
+    /// submitting CR, so the CR is still its own burst — a discrete Enter, as it must be.</para>
+    /// </summary>
+    private static async Task<PtyAgentRunner> LaunchClippingFakeAsync(
+        params (string Key, string Value)[] extraEnv)
+    {
+        var env = new Dictionary<string, string>
+        {
+            ["ANTIPHON_FAKE_STDIN_CLIP"] = "1",
+            ["ANTIPHON_FAKE_BURST_MS"] = "80",
+        };
+        foreach (var (k, v) in extraEnv) env[k] = v;
+
+        var runner = new PtyAgentRunner();
+        await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
+        // The CLIP banner carries the seed and the chunk size: a test that believed it enabled
+        // clipping but did not must fail here, not by mysteriously observing no loss.
+        var ready = await runner.WaitForOutputAsync(
+            s => s.Contains("Fake Claude ready") && s.Contains("CLIP:mode="), TimeSpan.FromSeconds(15));
+        ready.ShouldBeTrue("the clipping fake must announce its model (CLIP:mode=…)");
+        runner.ClearLiveBuffer();
+        return runner;
+    }
+
+    /// <summary>Paste a body through the production encoding, submit with a separate CR, report the survivors.</summary>
+    private static async Task<HashSet<int>> PasteAndSubmitAsync(PtyAgentRunner runner, string body)
+    {
+        await runner.WriteAsync(PtyInputEncoding.EncodeBody(body));
+        await Task.Delay(300); // past the 80ms burst gap: the submitting CR must be its own turn
+        await runner.WriteAsync("\r");
+
+        var submitted = await runner.WaitForOutputAsync(
+            s => s.Contains("SUBMITTED:"), TimeSpan.FromSeconds(15));
+        submitted.ShouldBeTrue(
+            "a clipped body must still SUBMIT — clipping must never eat the submitting CR. Raw:\n"
+            + runner.SnapshotText());
+        return MarkersIn(runner.SnapshotText());
+    }
+
+    // The opt-in is load-bearing: with the variable unset the fake is the lossless peer that
+    // PtyLargeWriteTests pins. If this ever goes red, clipping has leaked into the default and
+    // every "our transport is lossless" test has quietly started testing something else.
+    [Test]
+    public async Task Clipping_is_off_by_default_and_a_two_chunk_body_arrives_whole()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200)); // 1 399 bytes = 2 chunks
+
+        got.Count.ShouldBe(200, "with clipping OFF the fake must lose nothing");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // MEASURED: 810 and 972-byte bodies were whole 3/3 against real Claude. A body that fits in one
+    // read chunk has no earlier chunk to lose — this is the boundary BriefInlineMaxBytes sits under.
+    [Test]
+    [Arguments(115)] // 805 bytes
+    [Arguments(138)] // 966 bytes
+    public async Task A_body_inside_one_read_chunk_survives_clipping_whole(int lines)
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync();
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(lines));
+
+        got.Count.ShouldBe(lines,
+            $"a {lines * 7}-byte body fits in one 1024-byte read chunk and must arrive whole even "
+            + "with clipping on (measured whole 3/3 at 810 and 972 bytes)");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The live shape: 1 400 bytes = 2 chunks, the head goes, the survivor is a WHOLE chunk cut on a
+    // 1024-byte boundary. Real Claude's R4 run reported survivors at bytes 1029-1400 with 7-byte
+    // markers, i.e. marker 147 onward — exactly what this asserts.
+    [Test]
+    public async Task A_body_spanning_two_chunks_arrives_as_its_final_whole_chunk()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync();
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200));
+
+        // Marker i occupies bytes [7i, 7i+7); the cut at 1024 makes 147 (byte 1029) the first whole one.
+        got.ShouldNotContain(0, "the HEAD must be gone — that is the failure that stranded four briefs");
+        got.Where(i => i < 147).ShouldBeEmpty("nothing before the 1024-byte boundary may survive");
+        got.ShouldContain(147, "the survivor starts at the first marker past body byte 1024");
+        got.ShouldContain(199, "and runs to the end of the body — survivors are whole chunks");
+        got.Count.ShouldBe(53, "exactly markers 147-199 survive (one whole 1024-byte chunk)");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The other live signature: a 5 194-byte body kept its FIRST chunk only. Same mechanism, the
+    // other survivor — which end survives is the TUI's render timing, not the body.
+    [Test]
+    public async Task Keep_first_models_the_first_chunk_only_shape()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync(("ANTIPHON_FAKE_STDIN_CLIP_KEEP", "first"));
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200));
+
+        var why = $"survivors: {Runs(got)} — {ClipNotes(runner.SnapshotText())}";
+        got.ShouldContain(0, "the head must survive in the first-chunk shape. " + why);
+        got.ShouldContain(145, "…up to the marker that ends inside byte 1024. " + why);
+        got.ShouldNotContain(199, "and the tail must be gone. " + why);
+        got.Count.ShouldBe(146, "markers 0-145 fit inside the first 1024-byte chunk. " + why);
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The read quantum is UTF-8 BYTES, and that rule cannot be tested here — it is pinned by
+    // StdinClipModelTests instead. This is why, MEASURED rather than assumed:
+    //
+    // ConPTY narrows non-ASCII input to ONE BYTE per character before a .NET console peer reads it
+    // (and strips the bracketed-paste markers on the way), even though the peer's console input
+    // codepage reads back as 65001. So an em-dash-heavy body — 3 bytes per dash on the wire, the
+    // exact shape that made a 900-CHARACTER brief 2 700 bytes and mangled it (21743a5) — reaches
+    // this peer as one byte per dash, and down here bytes and chars are the same number.
+    //
+    // Pinned so nobody "improves" the unit test into a pty test and gets a green run for the wrong
+    // reason. If this goes red, the transport changed and the parity canary should be re-measured.
+    [Test]
+    public async Task Non_ascii_input_reaches_a_dotnet_peer_narrowed_to_one_byte_per_char()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync(("ANTIPHON_FAKE_DEBUG_INPUT", "1"));
+
+        // "Q00000—\n" = 8 chars, 10 bytes. 128 lines = 1 024 chars / 1 280 bytes (1 279 after the
+        // trailing newline is trimmed), + 12 bytes of paste markers = 1 291 bytes written.
+        var encoded = PtyInputEncoding.EncodeBody(
+            string.Concat(Enumerable.Range(0, 128).Select(i => $"Q{i:D5}—\n")));
+        System.Text.Encoding.UTF8.GetByteCount(encoded).ShouldBe(1291);
+
+        await runner.WriteAsync(encoded);
+        (await runner.WaitForOutputAsync(s => s.Contains("READS:"), TimeSpan.FromSeconds(10)))
+            .ShouldBeTrue("the fake must report the reads it got");
+
+        var flat = runner.SnapshotText().Replace("\r", "").Replace("\n", "");
+        var stamps = System.Text.RegularExpressions.Regex.Match(flat, @"stamps=\[([^\]]*)\]");
+        stamps.Success.ShouldBeTrue("READS line: " + flat);
+        var received = stamps.Groups[1].Value.Split(',')
+            .Sum(s => int.Parse(s.Split(':')[1]));
+
+        received.ShouldBe(1023,
+            "1 279 body bytes, minus 12 for the paste markers conhost strips, minus 2 for each of "
+            + "the 128 em-dashes it narrows to a single byte. A body that is 1 280 BYTES on the wire "
+            + "arrives as 1 023 — under the read quantum, so it is not even clipped");
+        ClipNotes(runner.SnapshotText()).ShouldBeEmpty(
+            "and that is the trap: the fake CANNOT show byte-vs-char chunking, so StdinClipModelTests "
+            + "pins that rule directly");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // Live, this loss is NON-deterministic — three identical 1 400-byte trials gave whole, clipped,
+    // clipped. A flaky fake is useless to CI, so the default mode is the deterministic worst case.
+    [Test]
+    public async Task Deterministic_clipping_gives_identical_survivors_on_three_identical_trials()
+    {
+        SkipIfUnavailable();
+
+        var results = new List<HashSet<int>>();
+        var notes = new List<string>();
+        for (var rep = 0; rep < 3; rep++)
+        {
+            await using var runner = await LaunchClippingFakeAsync();
+            results.Add(await PasteAndSubmitAsync(runner, MarkedBody(200)));
+            notes.Add($"rep{rep}: {Runs(results[^1])} — {ClipNotes(runner.SnapshotText())}");
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+
+        var why = string.Join("\n", notes);
+        results[1].SetEquals(results[0]).ShouldBeTrue("trial 1 must match trial 0.\n" + why);
+        results[2].SetEquals(results[0]).ShouldBeTrue("trial 2 must match trial 0.\n" + why);
+        results[0].Count.ShouldBe(53, "and all three must be the worst case: one surviving chunk.\n" + why);
+    }
+
+    // The dose-response that named the mechanism: more gap between writes ⇒ more chunks survive
+    // (0ms kept 8 %, 25ms 26 %, 50-100ms 56 %). Spreading the same body over two turns saves both
+    // chunks — the fake's bursts ARE its event-loop turns, so the gap is what changes the verdict.
+    [Test]
+    public async Task A_gap_between_writes_saves_the_chunk_that_would_otherwise_be_dropped()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync();
+
+        var body = PtyInputEncoding.NormalizeBody(MarkedBody(200)); // ASCII: 1 char = 1 byte
+        await runner.WriteAsync(body[..700]);
+        await Task.Delay(300); // > the burst gap: the halves land in two different turns
+        await runner.WriteAsync(body[700..]);
+        await Task.Delay(300);
+        await runner.WriteAsync("\r");
+
+        (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:"), TimeSpan.FromSeconds(15)))
+            .ShouldBeTrue();
+        var got = MarkersIn(runner.SnapshotText());
+
+        got.Count.ShouldBe(200,
+            "the same 1 400-byte body written as two sub-chunk halves in two turns must arrive "
+            + "whole — that monotonic gap→survival response is what identified the mechanism");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // The non-determinism, offered separately from the CI worst case. Turn grouping is the live
+    // variable: every chunk in its own turn is the "whole" outcome that one of the three identical
+    // trials produced.
+    [Test]
+    public async Task Random_clipping_with_every_chunk_in_its_own_turn_loses_nothing()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync(
+            ("ANTIPHON_FAKE_STDIN_CLIP", "random"),
+            ("ANTIPHON_FAKE_STDIN_CLIP_SPLIT_PCT", "100"),
+            ("ANTIPHON_FAKE_STDIN_CLIP_SEED", "7"));
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200));
+
+        got.Count.ShouldBe(200, "chunks that land in separate turns all survive");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Test]
+    public async Task Random_clipping_with_one_turn_keeps_exactly_one_whole_chunk()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeAsync(
+            ("ANTIPHON_FAKE_STDIN_CLIP", "random"),
+            ("ANTIPHON_FAKE_STDIN_CLIP_SPLIT_PCT", "0"),
+            ("ANTIPHON_FAKE_STDIN_CLIP_SEED", "7"));
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200));
+
+        // Whichever chunk the seed picked, it is ONE contiguous whole chunk — never a mixture.
+        var why = $"survivors: {Runs(got)} — {ClipNotes(runner.SnapshotText())}";
+        var survived = got.OrderBy(i => i).ToList();
+        survived.Zip(survived.Skip(1)).ShouldAllBe(p => p.Second == p.First + 1,
+            "survivors are a single contiguous run, never scattered lines. " + why);
+        // markers 0-145 (first chunk) or 147-199 (second)
+        survived.Count.ShouldBeOneOf([146, 53], why);
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    // A non-deterministic failure is only useful if it can be replayed: the fake prints its seed and
+    // the same seed must reproduce the same loss.
+    [Test]
+    public async Task Random_clipping_replays_identically_for_the_same_seed()
+    {
+        SkipIfUnavailable();
+
+        async Task<(HashSet<int> Markers, string Note)> RunAsync()
+        {
+            await using var runner = await LaunchClippingFakeAsync(
+                ("ANTIPHON_FAKE_STDIN_CLIP", "random"),
+                ("ANTIPHON_FAKE_STDIN_CLIP_SPLIT_PCT", "50"),
+                ("ANTIPHON_FAKE_STDIN_CLIP_SEED", "20260811"));
+            var got = await PasteAndSubmitAsync(runner, MarkedBody(400)); // 2 799 bytes = 3 chunks
+            var note = $"{Runs(got)} — {ClipNotes(runner.SnapshotText())}";
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+            return (got, note);
+        }
+
+        var first = await RunAsync();
+        var second = await RunAsync();
+
+        second.Markers.SetEquals(first.Markers).ShouldBeTrue(
+            "the same seed must reproduce the same survivors.\n"
+            + $"run 1: {first.Note}\nrun 2: {second.Note}");
+    }
+
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,
     // so each must round-trip independently when delivered the correct (two-write) way.
     [Test]

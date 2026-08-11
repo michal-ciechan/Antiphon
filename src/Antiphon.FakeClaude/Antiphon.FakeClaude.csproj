@@ -12,4 +12,11 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- StdinClipModel's arithmetic (UTF-8 byte chunking, whole-chunk survival, seeded replay) is
+         unit-tested directly: ConPTY narrows non-ASCII input to one byte per char before a .NET
+         peer reads it, so a multibyte body cannot exercise the byte-vs-char rule through the pty. -->
+    <InternalsVisibleTo Include="Antiphon.Agents.Pty.Tests" />
+  </ItemGroup>
+
 </Project>
