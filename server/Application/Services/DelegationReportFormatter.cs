@@ -282,7 +282,18 @@ public static class DelegationReportFormatter
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
 
-        sb.Append(ReportingContract(task.Id, task.Kind, settings.ReplyInlineMaxChars));
+        // Deliberately NOT the full ReportingContract: it is the largest part of this message, and
+        // a pointer that grows past one 1024-byte transport chunk can lose its own head — the exact
+        // failure it exists to prevent. The complete contract is in the spilled brief the delegate
+        // is told to read first, so repeating it here buys nothing and risks the whole message.
+        // The closing marker stays, because correlation must survive even if the head is lost.
+        sb.AppendLine("""
+            --- how to report back ---
+            The full reporting contract is in the brief above — read it there.
+            Your final message is the entire report the caller receives.
+            """).AppendLine();
+
+        sb.Append(TaskMarker(task.Id));
         return sb.ToString();
     }
 

@@ -487,18 +487,24 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// The brief as it will actually be TYPED. A brief past the inline ceiling is written to a file
-    /// and replaced by a pointer, because handing a multi-KB body to a pty is how the 2026-08-10
-    /// live miss happened: a 5 203-character brief reached its delegate as 1 091 characters — the
-    /// first 1 018 and the last 73, spliced mid-word — because the transport dropped whole
-    /// 1024-byte chunks out of the middle without erroring. The full text is on the task row
-    /// either way, so if the file cannot be written the pointer names the API instead; what we
-    /// never do is type a body big enough to be silently mangled.
+    /// The brief as it will actually be TYPED. A brief past
+    /// <see cref="DelegationSettings.BriefInlineMaxChars"/> is written to a file and replaced by a
+    /// pointer, because handing a body of any size to a pty is how the 2026-08-10 and 2026-08-11
+    /// live misses happened: a 5 203-character brief arrived spliced mid-word, and four briefs of
+    /// 1 366-2 320 characters arrived as their last chunk alone, losing the head that carried the
+    /// task — so the delegate could not tell what it had been asked to do.
+    ///
+    /// Note this gate is deliberately NOT <see cref="DelegationSettings.ReplyInlineMaxChars"/>: it
+    /// was, and every one of those four briefs sat under it. A brief is not a deliverable, so the
+    /// ceiling that governs reports is the wrong one to reuse here.
+    ///
+    /// The full text is on the task row either way, so if the file cannot be written the pointer
+    /// names the API instead; what we never do is type a body big enough to be silently mangled.
     /// </summary>
     private string FitBriefForTyping(AgentTask task)
     {
         var brief = DelegationReportFormatter.BuildBrief(task, _settings);
-        if (brief.Length <= _settings.ReplyInlineMaxChars)
+        if (brief.Length <= _settings.BriefInlineMaxChars)
             return brief;
 
         string? spillPath = null;
@@ -522,7 +528,7 @@ public sealed class AgentTaskDispatcher
 
         _logger.LogInformation(
             "Task {ShortId}: brief is {Chars:N0} chars (> {Ceiling:N0}); delivering a pointer to {Where}",
-            DelegationReportFormatter.Short(task.Id), brief.Length, _settings.ReplyInlineMaxChars,
+            DelegationReportFormatter.Short(task.Id), brief.Length, _settings.BriefInlineMaxChars,
             spillPath ?? "the API");
 
         return DelegationReportFormatter.BuildBriefPointer(task, _settings, spillPath, brief.Length);

@@ -431,6 +431,50 @@ public class DelegationReportFormatterTests
             "the pointer itself must be small enough to type intact — otherwise it can be mangled too");
     }
 
+    /// <summary>
+    /// The ceiling that governs a brief must be BriefInlineMaxChars, not ReplyInlineMaxChars.
+    /// Four briefs stranded on 2026-08-11 at 1 366-2 320 characters, each arriving as its final
+    /// sub-1024-byte chunk alone with the head — and therefore the task — gone. Every one of them
+    /// was under ReplyInlineMaxChars (3 000) and under PtyInlineSafeChars (4 000), which is exactly
+    /// why nothing fired. This pins the sizes that actually failed, not a round number.
+    /// </summary>
+    [Test]
+    [Arguments(1_366)]
+    [Arguments(1_402)]
+    [Arguments(1_431)]
+    [Arguments(2_320)]
+    public void a_brief_at_a_size_that_stranded_a_real_task_is_not_typed_inline(int length)
+    {
+        var settings = new DelegationSettings();
+
+        length.ShouldBeGreaterThan(
+            settings.BriefInlineMaxChars,
+            "a brief this size must spill — it is a size measured to lose its head in delivery");
+        length.ShouldBeLessThan(
+            settings.ReplyInlineMaxChars,
+            "and it sits under the REPORT ceiling, which is why reusing that ceiling let it through");
+        length.ShouldBeLessThan(
+            settings.PtyInlineSafeChars,
+            "and under the pty-safe size, so the oversize incident never fired either");
+    }
+
+    /// <summary>
+    /// The pointer replaces a body that was mangled, so it is worthless if it is big enough to be
+    /// mangled itself. It must fit inside a single 1024-byte chunk — the unit the transport was
+    /// measured to drop.
+    /// </summary>
+    [Test]
+    public void a_brief_pointer_fits_in_one_transport_chunk()
+    {
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            NewTask(), Settings, spillPath: null, fullLength: 2_320);
+
+        pointer.Length.ShouldBeLessThanOrEqualTo(
+            new DelegationSettings().BriefInlineMaxChars,
+            "a pointer over the brief ceiling could lose its own head, which is the whole failure "
+            + "it exists to prevent");
+    }
+
     [Test]
     public void a_brief_pointer_names_the_spill_file_when_one_was_written()
     {

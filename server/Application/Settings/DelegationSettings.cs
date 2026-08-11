@@ -55,6 +55,30 @@ public sealed class DelegationSettings
     public int ReplyExcerptTailChars { get; set; } = 900;
 
     /// <summary>
+    /// The ceiling for a BRIEF, deliberately far below <see cref="ReplyInlineMaxChars"/>. A brief
+    /// above it is written to a file and typed as a pointer instead.
+    ///
+    /// A report and a brief are not the same risk. The report IS the deliverable, so forwarding it
+    /// whole is worth a large ceiling. A brief is only an instruction to go and do something — the
+    /// full text is always on the task row and always readable from a file, so spilling it costs
+    /// the delegate one read and nothing else. There is no reason to type a brief big enough to be
+    /// mangled, and every reason not to.
+    ///
+    /// 900 comes from measurement, not caution. Four briefs stranded on 2026-08-11 —
+    /// 1 366 -&gt; 380, 1 402 -&gt; 380, 1 431 -&gt; 409, 2 320 -&gt; 274 delivered — each keeping
+    /// only its FINAL sub-1024-byte chunk, cut at byte 1024n-2, losing the head that carried the
+    /// task. Every one sat under <see cref="ReplyInlineMaxChars"/> (3 000) and under
+    /// <see cref="PtyInlineSafeChars"/> (4 000), so neither guard fired and neither was ever a
+    /// safety guarantee for this failure mode: the loss takes the HEAD, and it starts well below
+    /// the 4 262-character body that once arrived intact. A body that fits in one 1024-byte chunk
+    /// has no earlier chunk to lose; 900 leaves room for the marker the brief now closes with.
+    ///
+    /// This bounds the damage rather than explaining it — why ConPTY drops the leading chunks of a
+    /// sub-2KB write is still unknown (see docs/investigations/2026-08-11-tasks-stuck-dispatched-9775fe45.md).
+    /// </summary>
+    public int BriefInlineMaxChars { get; set; } = 900;
+
+    /// <summary>
     /// The largest body we are willing to type into a TUI in one go, from MEASURED behaviour — not
     /// a guess. Aligning seven real deliveries against what the receiving Claude actually recorded
     /// (2026-08-10) put the cliff between 4 262 characters (intact) and 5 185 (mangled): above it a
