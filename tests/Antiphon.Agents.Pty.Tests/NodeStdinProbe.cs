@@ -22,10 +22,15 @@ public sealed record ProbeResult(
     int[][] MissingRuns,
     bool HasPasteStart,
     bool HasPasteEnd,
-    int CrCount)
+    int CrCount,
+    string HeadHex,
+    string TailHex,
+    int[] Gaps,
+    int SpanMs)
 {
     public override string ToString() =>
         $"bytes={Bytes} chunks={Chunks} lines={LinesSeen}/{HighestLine + 1} missing={MissingCount} "
+        + $"paste={(HasPasteStart ? "200~" : "-")}/{(HasPasteEnd ? "201~" : "-")} head={HeadHex} "
         + $"sizes=[{string.Join(",", DistinctSizes)}]";
 }
 
@@ -41,6 +46,21 @@ public sealed class NodeStdinProbe : IAsyncDisposable
         Path.Combine(AppContext.BaseDirectory, "probes", "stdin-probe.js");
 
     public static bool NodeAvailable => ResolveNode() is not null;
+
+    /// <summary>The JS runtime this machine will drive the probe with.</summary>
+    public static string NodeExe => ResolveNode() ?? throw new InvalidOperationException("node.exe not on PATH");
+
+    /// <summary>
+    /// Reads a summary the probe wrote to its <c>PROBE_OUT</c> file. The pty's own output is a
+    /// RENDERED SCREEN — line-wrapped and interleaved with cursor sequences — so a summary scraped
+    /// from it is only as good as the de-wrapping. A file is the raw thing.
+    /// </summary>
+    public static ProbeResult ParseSummaryFile(string path)
+    {
+        var line = File.ReadAllLines(path).LastOrDefault(l => l.StartsWith("PROBE-SUMMARY ", StringComparison.Ordinal))
+            ?? throw new InvalidOperationException("no PROBE-SUMMARY line in " + path);
+        return ParseJson(line["PROBE-SUMMARY ".Length..]);
+    }
 
     /// <summary>
     /// The JS runtime to drive. Defaults to node.exe, but the real Claude CLI is a <b>Bun</b>
@@ -78,7 +98,9 @@ public sealed class NodeStdinProbe : IAsyncDisposable
         int blockMs = 0,
         bool chunkLog = true,
         int cols = 120,
-        int rows = 30)
+        int rows = 30,
+        bool decset2004 = false,
+        int quietMs = 0)
     {
         var node = ResolveNode() ?? throw new InvalidOperationException("node.exe not on PATH");
         var runner = new PtyAgentRunner();
@@ -87,6 +109,10 @@ public sealed class NodeStdinProbe : IAsyncDisposable
             ["PROBE_RAW"] = raw ? "1" : "0",
             ["PROBE_BLOCK_MS"] = blockMs.ToString(),
             ["PROBE_CHUNKLOG"] = chunkLog ? "1" : "0",
+            // CARD-0030: a client that never asks for bracketed paste is not entitled to the
+            // markers. Real TUIs ask; the probe has to be able to.
+            ["PROBE_DECSET_2004"] = decset2004 ? "1" : "0",
+            ["PROBE_QUIET_MS"] = quietMs.ToString(),
         };
         await runner.StartAsync(node, [ProbePath], cwd: AppContext.BaseDirectory, env: env, cols: cols, rows: rows);
         var ready = await runner.WaitForOutputAsync(s => s.Contains("PROBE-READY"), TimeSpan.FromSeconds(30));
@@ -166,7 +192,11 @@ public sealed class NodeStdinProbe : IAsyncDisposable
                 if (depth == 0) break;
             }
         }
-        var json = sb.ToString();
+        return ParseJson(sb.ToString());
+    }
+
+    private static ProbeResult ParseJson(string json)
+    {
         using var doc = JsonDocument.Parse(json);
         var r = doc.RootElement;
         return new ProbeResult(
@@ -183,7 +213,13 @@ public sealed class NodeStdinProbe : IAsyncDisposable
                 .Select(e => e.EnumerateArray().Select(x => x.GetInt32()).ToArray()).ToArray(),
             r.GetProperty("hasPasteStart").GetBoolean(),
             r.GetProperty("hasPasteEnd").GetBoolean(),
-            r.GetProperty("crCount").GetInt32());
+            r.GetProperty("crCount").GetInt32(),
+            r.TryGetProperty("headHex", out var hh) ? hh.GetString() ?? "" : "",
+            r.TryGetProperty("tailHex", out var th) ? th.GetString() ?? "" : "",
+            r.TryGetProperty("gaps", out var g)
+                ? g.EnumerateArray().Select(e => e.GetInt32()).ToArray()
+                : [],
+            r.TryGetProperty("spanMs", out var sp) ? sp.GetInt32() : 0);
     }
 
     public async ValueTask DisposeAsync()
