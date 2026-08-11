@@ -45,6 +45,15 @@ describe('isWorking', () => {
     expect(isWorking([entry(1, 'UserPrompt'), entry(2, 'AssistantText'), entry(3, 'TurnEnd')])).toBe(false)
   })
 
+  // CARD-0006 pins this deliberately, because it looks like a bug and is not: a session with NO
+  // transcript reads IDLE. Every launch depends on it — the boot prompt and launch note are queued
+  // WhenIdle BEFORE any transcript exists — and since the runner now REFUSES to bind a transcript
+  // it cannot prove is the session's, a transcript-less session is a state operators will actually
+  // see. "Empty means working" would deadlock those sessions instead of merely degrading them.
+  it('reads idle with no entries at all (a session whose transcript never bound)', () => {
+    expect(isWorking([])).toBe(false)
+  })
+
   // The PR 6 pair: a compaction after the last turn end must NOT read as working — the server's
   // IsWorkingAsync has the same exclusion, and both sides drifting apart shows phantom activity.
   it('ignores compact boundary entries (compaction is housekeeping, not work)', () => {

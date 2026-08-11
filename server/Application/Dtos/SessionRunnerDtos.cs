@@ -71,10 +71,28 @@ public sealed record SessionRunnerAdoptedEvent(
     int? Pid,
     long LastSequence);
 
+/// <summary>
+/// The runner refused to bind a transcript to a session (CARD-0006) — it is running without one
+/// rather than risk reading a conversation that may belong to somebody else.
+/// </summary>
+public sealed record SessionRunnerTranscriptFaultEvent(
+    Guid SessionId,
+    string Kind,
+    string Detail,
+    string? CandidatePath);
+
+/// <summary>A transcript was bound by heuristic (discovery/fork/shim) rather than by exact id.</summary>
+public sealed record SessionRunnerTranscriptBoundEvent(
+    Guid SessionId,
+    string TranscriptPath,
+    string How);
+
 public sealed record SessionRunnerEvent(
     string EventName,
     Guid SessionId,
     SessionRunnerOutputEvent? Output = null,
     SessionRunnerExitedEvent? Exited = null,
     SessionRunnerTranscriptEvent? Transcript = null,
-    SessionRunnerAdoptedEvent? Adopted = null);
+    SessionRunnerAdoptedEvent? Adopted = null,
+    SessionRunnerTranscriptFaultEvent? TranscriptFault = null,
+    SessionRunnerTranscriptBoundEvent? TranscriptBound = null);

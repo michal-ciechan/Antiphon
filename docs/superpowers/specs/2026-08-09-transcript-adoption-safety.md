@@ -1,11 +1,36 @@
 # Transcript adoption safety (CARD-0006)
 
-**Status:** planned, not implemented.
+**Status: slice 1 implemented 2026-08-10** (§7.1 — the slice that closes the card). Slices 2
+(SessionStart marker hook) and 3 (UI badge) are NOT done and remain as specified below.
 **Scope:** session-runner transcript discovery (`TranscriptTailer`), plus a new runner→server
 fault event and incident kind.
 **All file/line citations are against the worktree at planning time (2026-08-09) and MUST be
 re-checked before implementation** — one cited file (`SessionRunnerRuntime.cs`) already has an
 uncommitted fix in `C:\src\Antiphon` that shifts its line numbers.
+
+## What slice 1 actually shipped
+
+| Piece | Where |
+|---|---|
+| Claim registry (C1) | `src/Antiphon.SessionRunner/TranscriptClaimRegistry.cs`, one per `SessionRunnerRuntime`, restored from sidecars at the top of `AdoptOrphanedHostsAsync` |
+| Transcript sidecar | `src/Antiphon.SessionRunner/TranscriptSidecar.cs` → `<SessionLogPath>/transcripts/<sessionId:N>.json`; pruned with the pty-host state on the same 14-day window |
+| Input log (C4 evidence) | `src/Antiphon.SessionRunner/SessionInputLog.cs`, fed from `RunnerSession.WriteAsync` before the write reaches the host |
+| Candidate evidence probe | `src/Antiphon.SessionRunner/TranscriptCandidateProbe.cs` — incremental, so 4 polls/second over multi-MB candidates stays cheap |
+| Rules C1–C4 + decision procedure | `TranscriptTailer.LocateAsync` / `EvaluateCandidates` / `TryBind` / `TryFindNewerFork` |
+| `allowActivePreexisting` + `_readoptionGrace` | **deleted** — steps 1 (sidecar) and the migration shim replace them |
+| Fault + bound events | `SessionRunnerEventNames.SessionTranscriptFault` / `SessionTranscriptBound`, `TranscriptFaultKinds`, `TranscriptBindMethods` |
+| Server plumbing | DTOs → `SessionRunnerHttpClient.ParseEvent` → `SessionRunnerEventPump` → `TranscriptBindingIncidentService` (split out so the severity decision is testable without an SSE stream) |
+| Incident kinds | `TranscriptBindFailed = 15`, `TranscriptBoundByDiscovery = 16` — **not** 13/14 as drafted below: those numbers were taken by `DeliveryTransportFailed` and `OversizedTerminalDelivery` between planning and implementation |
+| Tests | `tests/Antiphon.SessionRunner.Tests/TranscriptAdoptionSafetyTests.cs` (14), `tests/Antiphon.Tests/Application/TranscriptBindingIncidentTests.cs` (4), plus the empty-transcript-is-idle case in `client/src/features/agents/SessionTranscriptPanel.test.tsx` |
+
+Decisions taken against §9's open questions: the migration shim **ships** (bounded to the
+restart-adopt path with a unique active candidate, and it announces itself); `SessionTranscriptBound`
+fires for **heuristic binds only**, not for exact-id or sidecar re-tails, since the point is to make
+guessing visible rather than to log every bind. C2b rejects only on an explicit `agentName` field
+mismatch — the `custom-title` shape was never verified against a live transcript, and guessing it
+would cause FALSE REJECTS of legitimate transcripts. C3 treats "no timestamped record yet" as
+neutral rather than as a rejection, because the leading meta block is legitimately untimestamped;
+C4 is what carries the identification in that window.
 
 ---
 

@@ -223,6 +223,7 @@ try
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();
+    builder.Services.AddSingleton<TranscriptBindingIncidentService>();
     // Same-sender inbound debounce for the channel bridge (host-constructed service — an
     // unregistered dependency here fails at startup, not at first message).
     builder.Services.AddSingleton<ChannelInboundDebouncer>();

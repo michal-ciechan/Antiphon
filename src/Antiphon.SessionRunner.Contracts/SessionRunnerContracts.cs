@@ -185,6 +185,66 @@ public static class RunnerExitReasons
     public const string CpuSpinKilled = "CpuSpinKilled";
 }
 
+/// <summary>
+/// The runner could not safely bind a transcript to a session (CARD-0006). Emitted INSTEAD of
+/// silently adopting a file that might belong to somebody else — the live miss on 2026-08-09 bound
+/// an agent to the human operator's own Claude conversation on nothing more than "same cwd, written
+/// recently", and the only warning was one WRN line nobody watches.
+/// </summary>
+public sealed record RunnerTranscriptFaultEvent(
+    Guid SessionId,
+    string Kind,
+    string Detail,
+    string? CandidatePath);
+
+/// <summary>
+/// A transcript was bound by HEURISTIC (cwd discovery / fork follow / migration shim) rather than
+/// by the exact <c>&lt;session-id&gt;.jsonl</c> filename. Info-level audit: the binding passed every
+/// adoption rule, but which file an agent is reading from should never be invisible.
+/// </summary>
+public sealed record RunnerTranscriptBoundEvent(
+    Guid SessionId,
+    string TranscriptPath,
+    string How);
+
+/// <summary>Values for <see cref="RunnerTranscriptFaultEvent.Kind"/>.</summary>
+public static class TranscriptFaultKinds
+{
+    /// <summary>Candidate transcripts existed in this session's cwd but none proved it owned them.</summary>
+    public const string AdoptionRefused = "AdoptionRefused";
+
+    /// <summary>
+    /// No transcript can be found at all — the projects root is missing/unreadable, or the child
+    /// exited after input was delivered without ever producing one.
+    /// </summary>
+    public const string TranscriptMissing = "TranscriptMissing";
+
+    /// <summary>A mid-session fork was detected but could not be attributed to this session.</summary>
+    public const string ForkUnresolved = "ForkUnresolved";
+
+    /// <summary>Two sessions were pointed at the same transcript (slice 2, SessionStart marker).</summary>
+    public const string MarkerConflict = "MarkerConflict";
+}
+
+/// <summary>How a transcript came to be bound (<see cref="RunnerTranscriptBoundEvent.How"/>).</summary>
+public static class TranscriptBindMethods
+{
+    /// <summary>Claude honoured <c>--session-id</c>: the filename itself is the positive id.</summary>
+    public const string Exact = "exact";
+
+    /// <summary>Re-tail after a runner restart, from the runner's own transcript sidecar.</summary>
+    public const string Sidecar = "sidecar";
+
+    /// <summary>Cwd discovery of an id-forked transcript, positively identified by content.</summary>
+    public const string Discovery = "discovery";
+
+    /// <summary>Mid-session fork (e.g. <c>/clear</c>) followed.</summary>
+    public const string Fork = "fork";
+
+    /// <summary>Restart re-adopt of a session that predates sidecars (see the migration shim).</summary>
+    public const string MigrationShim = "migration-shim";
+}
+
 public static class SessionRunnerEventNames
 {
     public const string SessionStarted = "SessionStarted";
@@ -194,4 +254,6 @@ public static class SessionRunnerEventNames
     public const string SessionError = "SessionError";
     public const string SessionHeartbeat = "SessionHeartbeat";
     public const string SessionTranscript = "SessionTranscript";
+    public const string SessionTranscriptFault = "SessionTranscriptFault";
+    public const string SessionTranscriptBound = "SessionTranscriptBound";
 }

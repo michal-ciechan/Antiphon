@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
@@ -13,10 +12,25 @@ namespace Antiphon.SessionRunner;
 /// The transcript file <em>should</em> be <c>~/.claude/projects/&lt;enc-cwd&gt;/&lt;sessionId&gt;.jsonl</c>
 /// (the id we pass via <c>--session-id</c>), but interactive Claude does not reliably honour
 /// <c>--session-id</c> — it can write the conversation to a self-chosen <c>&lt;uuid&gt;.jsonl</c>
-/// instead (observed 2026-07-22; not env/flag dependent). So after a grace period the tailer FALLS
-/// BACK to discovering the real file by its <c>cwd</c> field: the newest transcript whose recorded
-/// cwd matches this session's, preferring one that appeared after the tailer started. Without this,
-/// turn-end detection and channel reply routing silently break whenever Claude forks the id.
+/// instead (observed 2026-07-22). So the tailer also discovers the real file. What it may NOT do is
+/// guess: Claude's transcript root is per-cwd, several agents and the human operator share one
+/// checkout, and on 2026-08-09 "same cwd, written recently" bound an agent to the operator's own
+/// conversation — 65 of the operator's file edits were reported as the agent's work, and a
+/// channel-bound agent in that state relays a stranger's turns to Telegram (CARD-0006).
+///
+/// So every non-exact binding must carry positive evidence that the file belongs to THIS session:
+/// <list type="bullet">
+/// <item><b>C1</b> — no other live session has claimed it (<see cref="TranscriptClaimRegistry"/>).</item>
+/// <item><b>C2</b> — its recorded <c>cwd</c> is this session's cwd.</item>
+/// <item><b>C2b</b> — it carries no CONFLICTING <c>agentName</c> record (absence stays neutral).</item>
+/// <item><b>C3</b> — its first timestamped record is not older than the child process
+///   (waived on a <c>--resume</c> launch, whose copied history legitimately predates the relaunch).</item>
+/// <item><b>C4</b> — some user prompt in it is text this session actually received
+///   (<see cref="SessionInputLog"/>). This is the only positive identification available, and it is
+///   mandatory for every heuristic bind.</item>
+/// </list>
+/// Nothing qualifying means the session runs WITHOUT a transcript and raises a visible fault —
+/// never a bind on cwd and recency alone.
 /// </summary>
 internal sealed class TranscriptTailer : IAsyncDisposable
 {
@@ -27,8 +41,13 @@ internal sealed class TranscriptTailer : IAsyncDisposable
     private const int LocateFaultFirstReportPolls = 120;
     private const int LocateFaultRepeatPolls = 480;
     private static readonly TimeSpan DefaultForkScanInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultRefusalFaultDelay = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan RefusalFaultRepeat = TimeSpan.FromMinutes(5);
+    // A dead child writes no more transcript; give the last flush a moment, then stop looking.
+    private static readonly TimeSpan ChildExitSettle = TimeSpan.FromSeconds(3);
     private const int MaxReadChunkBytes = 1 << 20; // 1 MiB per poll
-    private const int CwdProbeLines = 25; // how many leading lines to scan for the "cwd" field
+    // Slack on rule C3 for clock skew between the process-start stamp and Claude's own timestamps.
+    private static readonly TimeSpan EpochSkewSlack = TimeSpan.FromSeconds(2);
 
     private readonly Guid _sessionId;
     private readonly string _cwd;
@@ -36,44 +55,86 @@ internal sealed class TranscriptTailer : IAsyncDisposable
     private readonly ILogger _logger;
     // How long to wait for the exact <session-id>.jsonl before falling back to cwd-based discovery.
     private readonly TimeSpan _exactIdGrace;
-    // How long to insist on a transcript that APPEARED since we started (a fresh fork) before also
-    // accepting an already-existing, still-actively-written one (a re-adopted live session). Keeps a
-    // fresh launch from ever adopting a previous session's stale transcript in the same cwd.
-    private readonly TimeSpan _readoptionGrace;
-    // A pre-existing transcript is only adopted (re-adoption path) if it was written this recently —
-    // an actively-running session touches its file constantly; a stale one does not.
+    // How recently a file must have been written to count as "actively written" — the only signal
+    // left to the migration shim below.
     private readonly TimeSpan _activeWriteWindow;
+    private readonly TimeSpan _refusalFaultDelay;
+    private readonly TranscriptClaimRegistry? _claims;
+    private readonly SessionInputLog? _inputLog;
+    private readonly DateTime? _childStartUtc;
+    private readonly string? _agentName;
+    private readonly bool _resumeLaunch;
+    private readonly string? _knownTranscriptPath;
+    private readonly bool _restartAdopt;
+    private readonly Action<string, string>? _onBound;
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
+    private readonly Dictionary<string, TranscriptCandidateProbe> _probes = new(StringComparer.OrdinalIgnoreCase);
     private Task? _loop;
     private long _seq;
+    private DateTime? _childExitedAtUtc;
 
+    /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
+    /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
+    /// heuristic bind can ever be justified, which is the safe default for a session with no input record.</param>
+    /// <param name="childStartUtc">Child process start, the epoch for rule C3.</param>
+    /// <param name="agentName">Launch <c>--name</c>, for the C2b reject filter.</param>
+    /// <param name="resumeLaunch">True for <c>--resume</c>/<c>--continue</c>: waives C3.</param>
+    /// <param name="knownTranscriptPath">Sidecar-recorded path (restart re-adopt): re-tailed directly, no discovery.</param>
+    /// <param name="restartAdopt">True when adopting a host that survived a runner restart (enables the migration shim).</param>
+    /// <param name="onBound">Called with (path, how) whenever a transcript is bound, so the sidecar can record it.</param>
     public TranscriptTailer(
         Guid sessionId,
         string cwd,
         SessionRunnerEventHub events,
         ILogger logger,
         TimeSpan? exactIdGrace = null,
-        TimeSpan? readoptionGrace = null,
         TimeSpan? activeWriteWindow = null,
-        TimeSpan? forkScanInterval = null)
+        TimeSpan? forkScanInterval = null,
+        TranscriptClaimRegistry? claims = null,
+        SessionInputLog? inputLog = null,
+        DateTime? childStartUtc = null,
+        string? agentName = null,
+        bool resumeLaunch = false,
+        string? knownTranscriptPath = null,
+        bool restartAdopt = false,
+        Action<string, string>? onBound = null,
+        TimeSpan? refusalFaultDelay = null)
     {
         _sessionId = sessionId;
         _cwd = cwd;
         _events = events;
         _logger = logger;
         _exactIdGrace = exactIdGrace ?? TimeSpan.FromSeconds(10);
-        _readoptionGrace = readoptionGrace ?? TimeSpan.FromSeconds(30);
         _activeWriteWindow = activeWriteWindow ?? TimeSpan.FromSeconds(20);
+        _refusalFaultDelay = refusalFaultDelay ?? DefaultRefusalFaultDelay;
+        _claims = claims;
+        _inputLog = inputLog;
+        _childStartUtc = childStartUtc;
+        _agentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName;
+        _resumeLaunch = resumeLaunch;
+        _knownTranscriptPath = string.IsNullOrWhiteSpace(knownTranscriptPath) ? null : knownTranscriptPath;
+        _restartAdopt = restartAdopt;
+        _onBound = onBound;
         ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
     }
 
     /// <summary>How often the tailer looks for a mid-session conversation fork (see RunAsync).</summary>
     private TimeSpan ForkScanInterval { get; }
 
+    /// <summary>The transcript currently being tailed, or null while unbound (tests/diagnostics).</summary>
+    public string? BoundTranscriptPath { get; private set; }
+
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
+
+    /// <summary>
+    /// The child process is gone. A dead child writes no further transcript, so adoption attempts
+    /// stop — and if input WAS delivered and nothing ever bound, that is reported now rather than
+    /// polling silently for the rest of the runner's life.
+    /// </summary>
+    public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
 
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     public RunnerTranscriptDto Snapshot()
@@ -88,7 +149,7 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         {
             var path = await LocateAsync(ct);
             if (path is null)
-                return; // cancelled before the transcript file appeared (session ended)
+                return; // cancelled, or the session ended without ever producing a transcript
 
             _logger.LogInformation("Tailing transcript {Path} for session {SessionId}", path, _sessionId);
 
@@ -107,7 +168,7 @@ internal sealed class TranscriptTailer : IAsyncDisposable
                 if (DateTime.UtcNow - lastForkScan >= ForkScanInterval)
                 {
                     lastForkScan = DateTime.UtcNow;
-                    if (TryFindNewerFork(path) is { } fork)
+                    if (TryFindNewerFork(path) is { } fork && TryBind(fork, TranscriptBindMethods.Fork))
                     {
                         _logger.LogWarning(
                             "Session {SessionId}: conversation forked mid-session (e.g. /clear); "
@@ -207,61 +268,71 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         }
     }
 
-    // Poll for the session's JSONL until it appears or the session ends (cancellation). Claude creates
-    // the file lazily — for an interactive session, not until the first prompt is submitted — so we
-    // must wait for the whole session lifetime, never give up early. The exact <session-id>.jsonl is
-    // preferred; if it never appears (Claude forked the id) we fall back to cwd-based discovery.
+    /// <summary>
+    /// Finds the session's JSONL, or returns null when the session ends without one. Claude creates
+    /// the file lazily — for an interactive session not until the first prompt is submitted — so a
+    /// missing transcript is normal and this polls for the session's lifetime. The order below is
+    /// the decision procedure; each step is a positive identification, never a guess.
+    /// </summary>
     private async Task<string?> LocateAsync(CancellationToken ct)
     {
         var fileName = _sessionId.ToString("D") + ".jsonl";
         var projectsRoot = ResolveProjectsRoot();
-
-        // Files that already existed when we started — the forked file (if any) will NOT be among
-        // them, so preferring a not-previously-seen file disambiguates a fresh fork from stale
-        // transcripts of earlier sessions in the same cwd.
-        var preexisting = SnapshotJsonlPaths(projectsRoot);
 
         // Consecutive polls that could not even look. A transcript that simply has not been written
         // yet is normal and stays silent; a root that is missing or unreadable is a fault, and
         // without this the session would spend its entire life failing to ingest with NOTHING in
         // the log to say so.
         var faultPolls = 0;
+        DateTime? refusingSince = null;
+        DateTime? lastRefusalFault = null;
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                // 1. Sidecar: this runner already knew which file this session reads. A restart
+                //    re-tails it directly — no discovery, so a busier stranger in the same cwd is
+                //    never even considered (this REPLACES the old active-pre-existing heuristic).
+                if (_knownTranscriptPath is { } known
+                    && File.Exists(known)
+                    && TryBind(known, TranscriptBindMethods.Sidecar))
+                {
+                    return known;
+                }
+
                 if (!Directory.Exists(projectsRoot))
                 {
-                    ReportLocateFault(++faultPolls, projectsRoot, "the transcript root does not exist", null);
+                    ReportRootFault(++faultPolls, projectsRoot, "the transcript root does not exist", null);
                 }
                 else
                 {
                     faultPolls = 0;
-                    // Fast path: Claude honoured --session-id.
+
+                    // 2. Claude honoured --session-id: the filename IS the positive identification.
                     foreach (var dir in Directory.EnumerateDirectories(projectsRoot))
                     {
                         var candidate = Path.Combine(dir, fileName);
-                        if (File.Exists(candidate))
+                        if (File.Exists(candidate) && TryBind(candidate, TranscriptBindMethods.Exact))
                             return candidate;
                     }
 
-                    // Fallback: Claude forked to a self-chosen id. Discover by cwd once the exact
-                    // file has had a fair chance to appear. Only files that appeared SINCE we started
-                    // are eligible at first (a fresh fork) — never a previous session's transcript in
-                    // the same cwd. After a longer grace, an already-existing but still-actively-written
-                    // file also qualifies (a re-adopted live session whose fork predates this tailer).
+                    // 3. Claude forked to a self-chosen id. Discover by evidence, once the exact
+                    //    file has had a fair chance to appear.
                     if (DateTime.UtcNow - _startedAtUtc >= _exactIdGrace)
                     {
-                        var allowActive = DateTime.UtcNow - _startedAtUtc >= _readoptionGrace;
-                        if (DiscoverByCwd(projectsRoot, preexisting, allowActive) is { } discovered)
+                        var verdict = EvaluateCandidates(projectsRoot);
+                        if (verdict.Winner is { } winner && TryBind(winner, verdict.How))
                         {
                             _logger.LogWarning(
                                 "Session {SessionId}: <session-id>.jsonl never appeared (Claude forked the id); "
-                                + "adopting discovered transcript {Path} by cwd match ({Cwd})",
-                                _sessionId, discovered, _cwd);
-                            return discovered;
+                                + "adopting {Path} ({How}) — cwd {Cwd}",
+                                _sessionId, winner, verdict.How, _cwd);
+                            return winner;
                         }
+
+                        refusingSince = verdict.Refusals.Count > 0 ? refusingSince ?? DateTime.UtcNow : null;
+                        MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault);
                     }
                 }
             }
@@ -269,7 +340,13 @@ internal sealed class TranscriptTailer : IAsyncDisposable
             {
                 // Retry — a directory being written to can throw transiently. But a fault that
                 // never clears used to be invisible, so it is reported once it persists.
-                ReportLocateFault(++faultPolls, projectsRoot, ex.Message, ex);
+                ReportRootFault(++faultPolls, projectsRoot, ex.Message, ex);
+            }
+
+            if (_childExitedAtUtc is { } exitedAt && DateTime.UtcNow - exitedAt >= ChildExitSettle)
+            {
+                ReportMissingAfterChildExit();
+                return null;
             }
 
             try { await Task.Delay(LocatePollInterval, ct); }
@@ -280,74 +357,192 @@ internal sealed class TranscriptTailer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Reports a persistent inability to look for the transcript at all. Deliberately NOT called
-    /// when the transcript merely has not appeared yet — Claude creates it lazily, so for an
-    /// interactive session that is the normal state for as long as the user takes to type. Only a
-    /// missing or unreadable root is a fault, and at four polls a second it has to be rate-limited:
-    /// once it has persisted ~30s, then every ~2 minutes.
+    /// Takes ownership of a transcript and records the binding. The claim (rule C1) is the atomic
+    /// arbiter: candidates are evaluated without side effects, and only the winner is claimed, so
+    /// two tailers that both judge one file eligible cannot both adopt it — exactly one
+    /// <see cref="TranscriptClaimRegistry.TryClaim"/> succeeds and the loser simply keeps looking.
     /// </summary>
-    private void ReportLocateFault(int faultPolls, string projectsRoot, string reason, Exception? ex)
+    private bool TryBind(string path, string how)
     {
-        var firstReport = faultPolls == LocateFaultFirstReportPolls;
-        var repeatReport = faultPolls > LocateFaultFirstReportPolls
-            && faultPolls % LocateFaultRepeatPolls == 0;
-        if (!firstReport && !repeatReport)
-            return;
-
-        _logger.LogWarning(
-            ex,
-            "Session {SessionId}: cannot search for a transcript under {ProjectsRoot} after {Seconds:F0}s — {Reason}. "
-            + "Ingestion, working/idle and channel replies are all dead for this session until it clears.",
-            _sessionId, projectsRoot, faultPolls * LocatePollInterval.TotalSeconds, reason);
-    }
-
-    private static HashSet<string> SnapshotJsonlPaths(string projectsRoot)
-    {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
+        if (_claims is not null && !_claims.TryClaim(path, _sessionId))
         {
-            if (Directory.Exists(projectsRoot))
-                foreach (var f in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
-                    set.Add(f);
+            _logger.LogDebug(
+                "Session {SessionId}: transcript {Path} is already claimed by another session; not adopting",
+                _sessionId, path);
+            return false;
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        return set;
+
+        BoundTranscriptPath = path;
+        try { _onBound?.Invoke(path, how); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Recording the transcript binding for session {SessionId} failed", _sessionId); }
+
+        // Exact-id and sidecar binds are self-evidently this session's file; the heuristic ones are
+        // the interesting audit trail (which file is an agent actually reading, and on what basis).
+        if (how is not TranscriptBindMethods.Exact and not TranscriptBindMethods.Sidecar)
+        {
+            _events.Publish(
+                SessionRunnerEventNames.SessionTranscriptBound,
+                new RunnerTranscriptBoundEvent(_sessionId, path, how));
+        }
+
+        return true;
     }
 
-    // The transcript whose recorded cwd matches this session's. A file that APPEARED since we started
-    // (a fresh fork) is always eligible. A pre-existing file is eligible only when re-adoption is
-    // allowed AND it is still being actively written (a live session across a runner restart) — never
-    // a stale transcript of an earlier session in the same cwd. Newest match wins.
-    private string? DiscoverByCwd(string projectsRoot, HashSet<string> preexisting, bool allowActivePreexisting)
+    private readonly record struct CandidateVerdict(string? Winner, string How, IReadOnlyList<string> Refusals);
+
+    /// <summary>
+    /// Applies C1–C4 to every transcript under the projects root and returns the best qualifying
+    /// candidate (newest mtime as a TIEBREAK only — recency is never evidence), plus the reasons
+    /// any near-miss was refused, for the fault report.
+    /// </summary>
+    private CandidateVerdict EvaluateCandidates(string projectsRoot)
     {
-        var eligible = new List<(string Path, DateTime Mtime)>();
+        var qualified = new List<(string Path, DateTime Mtime)>();
+        var shimEligible = new List<(string Path, DateTime Mtime)>();
+        var refusals = new List<string>();
         var activeCutoff = DateTime.UtcNow - _activeWriteWindow;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var file in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
         {
+            seen.Add(file);
+
             if (Path.GetFileNameWithoutExtension(file).Equals(_sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
                 continue; // the exact file is handled by the fast path
+
+            // C1 — someone else's transcript, definitively.
+            if (_claims?.IsClaimedByOther(file, _sessionId) == true)
+                continue;
+
             DateTime mtime;
             try { mtime = File.GetLastWriteTimeUtc(file); }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
 
-            var isNew = !preexisting.Contains(file);
-            var isActive = allowActivePreexisting && mtime >= activeCutoff;
-            if (!isNew && !isActive)
-                continue; // a stale pre-existing transcript — never adopt it
-            if (!TranscriptCwdMatches(file))
+            // C2 — a different cwd is a different conversation entirely; not a near-miss worth
+            // reporting. Also the cheap gate: a non-matching file is never read past its lead.
+            if (ProbeCwdMatchingCandidate(file) is not { } probe)
                 continue;
-            eligible.Add((file, mtime));
+
+            // C2b — a name we know is not ours. Absence is neutral: operator sessions may carry
+            // their own names and older Claude versions may write none at all.
+            if (_agentName is not null
+                && probe.AgentName is { } candidateName
+                && !string.Equals(candidateName, _agentName, StringComparison.OrdinalIgnoreCase))
+            {
+                refusals.Add($"{file}: agent-name '{candidateName}' is not '{_agentName}'");
+                continue;
+            }
+
+            // C3 — a transcript for this session cannot have started before the session did.
+            if (!EpochOk(probe.FirstTimestamp))
+            {
+                refusals.Add(
+                    $"{file}: first timestamped record {probe.FirstTimestamp:O} predates the child start {_childStartUtc:O}");
+                continue;
+            }
+
+            // C4 — the only positive identification: text WE sent, recorded as a prompt in there.
+            if (!probe.ContentMatched)
+            {
+                if (mtime >= activeCutoff)
+                    shimEligible.Add((file, mtime));
+                refusals.Add($"{file}: no prompt in it matches input delivered to this session");
+                continue;
+            }
+
+            qualified.Add((file, mtime));
         }
 
-        return eligible.Count == 0 ? null : eligible.OrderByDescending(m => m.Mtime).First().Path;
+        PruneProbes(seen);
+
+        if (qualified.Count > 0)
+        {
+            return new CandidateVerdict(
+                qualified.OrderByDescending(c => c.Mtime).First().Path,
+                TranscriptBindMethods.Discovery,
+                refusals);
+        }
+
+        // Migration shim (removable one release after deploy): a session being re-adopted with no
+        // recorded transcript path — one that predates sidecars, or one that had not bound a
+        // transcript before the restart — starts with an EMPTY input log, so C4 can never be
+        // satisfied until new input arrives. Rather than strand every such live session, allow the
+        // old active-write heuristic, but ONLY when the candidate is the UNIQUE cwd-matching active
+        // file that also passed C2b and C3, and only on the restart-adopt path. It is never
+        // available to a fresh launch — which is where the 2026-08-09 incident happened — and it
+        // announces itself with a SessionTranscriptBound event rather than binding quietly.
+        if (_restartAdopt && _knownTranscriptPath is null && shimEligible.Count == 1)
+            return new CandidateVerdict(shimEligible[0].Path, TranscriptBindMethods.MigrationShim, refusals);
+
+        return new CandidateVerdict(null, TranscriptBindMethods.Discovery, refusals);
     }
 
     /// <summary>
-    /// A conversation file that forked off the one being tailed: created AFTER this tailer
-    /// started, written more recently than the current file, same recorded cwd. Newest wins.
-    /// Stale transcripts of earlier sessions can never qualify (their creation predates the tail).
+    /// Reads a candidate in two phases, and returns it only if its recorded cwd is ours (C2).
+    ///
+    /// Phase one reads just enough to find the cwd — the projects root holds every project on the
+    /// machine, and answering "is this even our working directory?" must not cost a full read of
+    /// each one. Only a cwd match earns the deep scan that collects prompts for C4.
+    /// </summary>
+    private TranscriptCandidateProbe? ProbeCwdMatchingCandidate(string file)
+    {
+        if (!_probes.TryGetValue(file, out var probe))
+            _probes[file] = probe = new TranscriptCandidateProbe(file);
+
+        if (probe.Cwd is null && !probe.Refresh(_inputLog, TranscriptCandidateProbe.LeadScanBytes))
+            return null;
+        if (!CwdMatches(probe.Cwd))
+            return null;
+
+        return probe.Refresh(_inputLog) && probe.HasRecords ? probe : null;
+    }
+
+    // Candidate state is per file and the projects root is shared with every other session on the
+    // box; drop probes for files that have gone away so a long-lived unbound session cannot grow
+    // one entry per transcript ever written in this cwd.
+    private void PruneProbes(HashSet<string> seen)
+    {
+        foreach (var stale in _probes.Keys.Where(p => !seen.Contains(p)).ToList())
+            _probes.Remove(stale);
+    }
+
+    /// <summary>
+    /// Rule C3. A candidate whose first TIMESTAMPED record predates the child process cannot be
+    /// this session's transcript. Untimestamped records (the leading meta block) are not evidence
+    /// either way, so a file that has produced none yet passes — C4 is what actually identifies it.
+    /// Waived entirely for a resume launch: <c>--resume</c> can fork to a new file whose copied
+    /// history carries the ORIGINAL timestamps, and refusing that would break resume re-adoption.
+    /// </summary>
+    private bool EpochOk(DateTimeOffset? firstTimestamp)
+    {
+        if (_resumeLaunch || _childStartUtc is not { } childStart || firstTimestamp is not { } first)
+            return true;
+        return first.UtcDateTime >= childStart - EpochSkewSlack;
+    }
+
+    private bool CwdMatches(string? candidateCwd)
+    {
+        if (string.IsNullOrWhiteSpace(candidateCwd) || string.IsNullOrWhiteSpace(_cwd))
+            return false;
+        try
+        {
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(Path.GetFullPath(candidateCwd), Path.GetFullPath(_cwd), comparison);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A conversation file that forked off the one being tailed: created AFTER this tailer started,
+    /// written more recently than the current file, same recorded cwd — and, since CARD-0006, also
+    /// unclaimed (C1) and content-matched (C4), so a sibling session's <c>/clear</c> fork in the
+    /// same cwd can never be stolen. A fresh <c>/clear</c> fork holds only the command record at
+    /// first, so the switch defers until this session's next real prompt lands in it: harmless, the
+    /// old file is quiet, working/idle correctly reads idle, and the queued post-clear delivery is
+    /// what completes the identification.
     /// </summary>
     private string? TryFindNewerFork(string currentPath)
     {
@@ -364,6 +559,8 @@ internal sealed class TranscriptTailer : IAsyncDisposable
             {
                 if (string.Equals(file, currentPath, StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (_claims?.IsClaimedByOther(file, _sessionId) == true)
+                    continue;
                 DateTime created, written;
                 try
                 {
@@ -373,8 +570,18 @@ internal sealed class TranscriptTailer : IAsyncDisposable
                 catch (IOException) { continue; }
                 if (created < _startedAtUtc || written <= currentWrite || written <= bestWrite)
                     continue;
-                if (!TranscriptCwdMatches(file))
+
+                if (ProbeCwdMatchingCandidate(file) is not { } probe)
                     continue;
+                if (_agentName is not null
+                    && probe.AgentName is { } candidateName
+                    && !string.Equals(candidateName, _agentName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (!probe.ContentMatched)
+                    continue;
+
                 best = file;
                 bestWrite = written;
             }
@@ -384,38 +591,90 @@ internal sealed class TranscriptTailer : IAsyncDisposable
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    private bool TranscriptCwdMatches(string file)
+    /// <summary>
+    /// Reports a persistent inability to look for the transcript at all. Deliberately NOT called
+    /// when the transcript merely has not appeared yet — Claude creates it lazily, so for an
+    /// interactive session that is the normal state for as long as the user takes to type. Only a
+    /// missing or unreadable root is a fault, and at four polls a second it has to be rate-limited:
+    /// once it has persisted ~30s, then every ~2 minutes.
+    /// </summary>
+    private void ReportRootFault(int faultPolls, string projectsRoot, string reason, Exception? ex)
     {
-        try
-        {
-            var canonicalCwd = Path.GetFullPath(_cwd);
-            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            using var reader = new StreamReader(new FileStream(
-                file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
-            for (var i = 0; i < CwdProbeLines; i++)
-            {
-                var line = reader.ReadLine();
-                if (line is null) break;
-                if (line.Length == 0 || line.IndexOf("\"cwd\"", StringComparison.Ordinal) < 0)
-                    continue;
-                try
-                {
-                    using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement.ValueKind == JsonValueKind.Object
-                        && doc.RootElement.TryGetProperty("cwd", out var cwdEl)
-                        && cwdEl.ValueKind == JsonValueKind.String
-                        && cwdEl.GetString() is { } fileCwd)
-                    {
-                        return string.Equals(Path.GetFullPath(fileCwd), canonicalCwd, comparison);
-                    }
-                }
-                catch (JsonException) { /* partial line mid-write — try the next */ }
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        catch (ArgumentException) { /* bad path in cwd field */ }
-        return false;
+        var firstReport = faultPolls == LocateFaultFirstReportPolls;
+        var repeatReport = faultPolls > LocateFaultFirstReportPolls
+            && faultPolls % LocateFaultRepeatPolls == 0;
+        if (!firstReport && !repeatReport)
+            return;
+
+        _logger.LogWarning(
+            ex,
+            "Session {SessionId}: cannot search for a transcript under {ProjectsRoot} after {Seconds:F0}s — {Reason}. "
+            + "Ingestion, working/idle and channel replies are all dead for this session until it clears.",
+            _sessionId, projectsRoot, faultPolls * LocatePollInterval.TotalSeconds, reason);
+
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.TranscriptMissing,
+                $"Cannot search for a transcript under {projectsRoot}: {reason}",
+                null));
+    }
+
+    /// <summary>
+    /// Candidates exist in this cwd but none of them proved to belong to this session. That is the
+    /// SAFE outcome — the alternative is reading a stranger's conversation — but it is never
+    /// silent: after <see cref="_refusalFaultDelay"/> of continuous refusal it becomes an incident,
+    /// repeated at most every five minutes.
+    /// </summary>
+    private void MaybeReportRefusal(
+        CandidateVerdict verdict, ref DateTime? refusingSince, ref DateTime? lastRefusalFault)
+    {
+        if (verdict.Refusals.Count == 0 || refusingSince is not { } since)
+            return;
+
+        var now = DateTime.UtcNow;
+        if (now - since < _refusalFaultDelay)
+            return;
+        if (lastRefusalFault is { } last && now - last < RefusalFaultRepeat)
+            return;
+
+        lastRefusalFault = now;
+        var detail = string.Join("; ", verdict.Refusals.Take(5));
+        _logger.LogWarning(
+            "Session {SessionId}: refusing every transcript candidate in {Cwd} after {Seconds:F0}s — {Detail}. "
+            + "Running WITHOUT a transcript rather than binding to a conversation that may not be ours.",
+            _sessionId, _cwd, (now - since).TotalSeconds, detail);
+
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.AdoptionRefused,
+                detail,
+                verdict.Refusals.Count == 1 ? verdict.Refusals[0] : null));
+    }
+
+    // The child is dead and nothing ever bound. Only a fault if input was actually delivered: a
+    // session that was never typed at legitimately has no transcript to find.
+    private void ReportMissingAfterChildExit()
+    {
+        if (_inputLog is null || _inputLog.IsEmpty)
+            return;
+
+        _logger.LogWarning(
+            "Session {SessionId}: the child exited without ever producing a transcript we could identify, "
+            + "although input was delivered to it. Nothing was ingested for this session.",
+            _sessionId);
+
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.TranscriptMissing,
+                "The session's child process exited without producing an identifiable transcript, "
+                + "although input had been delivered to it.",
+                null));
     }
 
     // Mirror Claude Code's transcript root: CLAUDE_CONFIG_DIR if set, else ~/.claude — then /projects.
@@ -436,6 +695,7 @@ internal sealed class TranscriptTailer : IAsyncDisposable
             try { await _loop; }
             catch { /* loop already logged */ }
         }
+        _claims?.ReleaseAll(_sessionId);
         _cts.Dispose();
     }
 }

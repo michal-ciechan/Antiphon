@@ -64,7 +64,9 @@ public class TranscriptTailerCompactionTests
     }
 
     // Interactive Claude forks --session-id: the transcript lands in a self-chosen <uuid>.jsonl.
-    // The tailer must discover it by matching the session cwd, or reply routing silently breaks.
+    // The tailer must discover it, or reply routing silently breaks. Since CARD-0006 a cwd match is
+    // no longer enough on its own — the fork is identified by containing a prompt this session was
+    // actually sent (rule C4), so the input log carries that text.
     [Test]
     public async Task Tailer_discovers_forked_transcript_by_cwd_when_session_id_is_not_honored()
     {
@@ -86,25 +88,29 @@ public class TranscriptTailerCompactionTests
         {
             var antiphonSessionId = Guid.NewGuid(); // the id we PASSED; Claude will ignore it
             var hub = new SessionRunnerEventHub();
-            // Short graces so the test is fast (production defaults are 10s/30s).
+            var inputLog = new SessionInputLog();
+            inputLog.Append("hello from the delivered prompt");
+            // Short grace so the test is fast (the production default is 10s).
             var tailer = new TranscriptTailer(
                 antiphonSessionId, cwd, hub, NullLogger.Instance,
                 exactIdGrace: TimeSpan.FromMilliseconds(300),
-                readoptionGrace: TimeSpan.FromSeconds(30));
+                inputLog: inputLog);
             tailer.Start();
             try
             {
                 // Claude forks AFTER the exact-id grace: writes to a NEW <uuid>.jsonl.
                 await Task.Delay(600);
                 var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
-                await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "hello") + "\n");
+                await File.WriteAllTextAsync(
+                    forked, UserLine("u1", cwd, "hello from the delivered prompt") + "\n");
                 await File.AppendAllTextAsync(forked, FixtureLine() + "\n"); // + a compact boundary
 
                 var entries = await PollForEntriesAsync(tailer, want: 2, TimeSpan.FromSeconds(10));
 
                 entries.Select(e => e.Kind).ShouldBe(
                     [TranscriptKinds.UserPrompt, TranscriptKinds.CompactBoundary]);
-                entries[0].Text.ShouldBe("hello", "must adopt the forked file, not the stale/other-cwd ones");
+                entries[0].Text.ShouldBe(
+                    "hello from the delivered prompt", "must adopt the forked file, not the stale/other-cwd ones");
             }
             finally
             {
@@ -141,12 +147,12 @@ public class TranscriptTailerCompactionTests
         {
             var antiphonSessionId = Guid.NewGuid();
             var hub = new SessionRunnerEventHub();
-            // exact-id grace short; readoption grace long enough that the active-preexisting path
-            // never opens during the test — so only a genuinely NEW file may be adopted.
+            var inputLog = new SessionInputLog();
+            inputLog.Append("the real one, delivered to this session");
             var tailer = new TranscriptTailer(
                 antiphonSessionId, cwd, hub, NullLogger.Instance,
                 exactIdGrace: TimeSpan.FromMilliseconds(300),
-                readoptionGrace: TimeSpan.FromSeconds(60));
+                inputLog: inputLog);
             tailer.Start();
             try
             {
@@ -156,10 +162,11 @@ public class TranscriptTailerCompactionTests
 
                 // The real fork finally appears — now it must be adopted.
                 var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
-                await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "the real one") + "\n");
+                await File.WriteAllTextAsync(
+                    forked, UserLine("u1", cwd, "the real one, delivered to this session") + "\n");
 
                 var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
-                entries.ShouldHaveSingleItem().Text.ShouldBe("the real one");
+                entries.ShouldHaveSingleItem().Text.ShouldBe("the real one, delivered to this session");
             }
             finally
             {
@@ -174,48 +181,11 @@ public class TranscriptTailerCompactionTests
         }
     }
 
-    // Re-adoption: the forked file already existed when the tailer (re)started, but the session is
-    // still live (file actively written). After the readoption grace, that active file is adopted.
-    [Test]
-    public async Task Tailer_readopts_an_active_preexisting_forked_transcript_after_the_grace()
-    {
-        var configDir = Path.Combine(Path.GetTempPath(), $"antiphon-tailer-readopt-{Guid.NewGuid():N}");
-        var projectDir = Path.Combine(configDir, "projects", "C--src-ClaudeBot-agents-family");
-        Directory.CreateDirectory(projectDir);
-        var cwd = Path.Combine(Path.GetTempPath(), $"agent-cwd-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(cwd);
-
-        // The live session's forked transcript already exists at (re)start.
-        var forked = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
-        await File.WriteAllTextAsync(forked, UserLine("u1", cwd, "live across restart") + "\n");
-
-        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
-        try
-        {
-            var hub = new SessionRunnerEventHub();
-            var tailer = new TranscriptTailer(
-                Guid.NewGuid(), cwd, hub, NullLogger.Instance,
-                exactIdGrace: TimeSpan.FromMilliseconds(200),
-                readoptionGrace: TimeSpan.FromMilliseconds(600),
-                activeWriteWindow: TimeSpan.FromSeconds(30));
-            tailer.Start();
-            try
-            {
-                var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
-                entries.ShouldHaveSingleItem().Text.ShouldBe("live across restart");
-            }
-            finally
-            {
-                await tailer.DisposeAsync();
-            }
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
-            try { Directory.Delete(configDir, recursive: true); } catch { /* best effort */ }
-            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
-        }
-    }
+    // NOTE: re-adoption across a runner restart used to be pinned here as "adopt any pre-existing,
+    // actively-written, cwd-matching file after 30s". That heuristic is GONE (CARD-0006) — it is
+    // what bound a session to the human operator's live conversation on 2026-08-09. A restarted
+    // runner now re-tails the exact path recorded in its own transcript sidecar; that is pinned by
+    // TranscriptAdoptionSafetyTests.Sidecar_path_is_retailed_directly_after_restart_with_no_discovery.
 
     // Live miss 2026-07-31: /clear forks the conversation MID-SESSION to a fresh self-chosen file
     // (real shape pinned by ClaudeLocalCommandCanaryTests) — the file being tailed goes quiet and
@@ -238,9 +208,12 @@ public class TranscriptTailerCompactionTests
         try
         {
             var hub = new SessionRunnerEventHub();
+            var inputLog = new SessionInputLog();
+            inputLog.Append("the first prompt after the clear");
             var tailer = new TranscriptTailer(
                 sessionId, cwd, hub, NullLogger.Instance,
-                forkScanInterval: TimeSpan.FromMilliseconds(300));
+                forkScanInterval: TimeSpan.FromMilliseconds(300),
+                inputLog: inputLog);
             tailer.Start();
             try
             {
@@ -252,11 +225,12 @@ public class TranscriptTailerCompactionTests
                 var fork = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
                 await File.WriteAllTextAsync(
                     fork, UserLine("u2", cwd, "<command-name>/clear</command-name>") + "\n");
-                await File.AppendAllTextAsync(fork, UserLine("u3", cwd, "after clear") + "\n");
+                await File.AppendAllTextAsync(
+                    fork, UserLine("u3", cwd, "the first prompt after the clear") + "\n");
 
                 var entries = await PollForEntriesAsync(tailer, want: 3, TimeSpan.FromSeconds(10));
                 entries.ShouldContain(
-                    e => e.Text == "after clear",
+                    e => e.Text == "the first prompt after the clear",
                     "the tailer must switch to the forked conversation file");
             }
             finally
