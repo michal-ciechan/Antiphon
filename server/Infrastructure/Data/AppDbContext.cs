@@ -578,6 +578,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentTuiProfiles");
             entity.HasKey(p => p.Id);
+            entity.Property(p => p.Id).ValueGeneratedNever();
             entity.Property(p => p.DisplayName).IsRequired().HasMaxLength(200);
             entity.Property(p => p.Kind).IsRequired();
             entity.Property(p => p.IsEnabled).IsRequired();
@@ -593,14 +594,20 @@ public class AppDbContext : DbContext
 
             entity.HasOne(p => p.ActiveRevision)
                 .WithMany()
-                .HasForeignKey(p => p.ActiveRevisionId)
-                .OnDelete(DeleteBehavior.SetNull);
+                .HasForeignKey(p => new { p.Id, p.ActiveRevisionId })
+                .HasPrincipalKey(r => new { r.ProfileId, r.Id })
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<AgentTuiProfileRevision>(entity =>
         {
-            entity.ToTable("AgentTuiProfileRevisions");
+            entity.ToTable("AgentTuiProfileRevisions", table =>
+                table.HasCheckConstraint(
+                    "CK_AgentTuiProfileRevisions_RevisionNumber_Positive",
+                    "\"RevisionNumber\" > 0"));
             entity.HasKey(r => r.Id);
+            entity.HasAlternateKey(r => new { r.ProfileId, r.Id })
+                .HasName("AK_AgentTuiProfileRevisions_ProfileId_Id");
             entity.Property(r => r.ProfileId).IsRequired();
             entity.Property(r => r.RevisionNumber).IsRequired();
             entity.Property(r => r.Executable).IsRequired().HasMaxLength(2000);
@@ -695,7 +702,8 @@ public class AppDbContext : DbContext
 
             entity.HasOne(v => v.ProfileRevision)
                 .WithMany()
-                .HasForeignKey(v => v.ProfileRevisionId)
+                .HasForeignKey(v => new { v.ProfileId, v.ProfileRevisionId })
+                .HasPrincipalKey(r => new { r.ProfileId, r.Id })
                 .OnDelete(DeleteBehavior.NoAction);
         });
 

@@ -81,6 +81,8 @@ namespace Antiphon.Server.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AgentTuiProfileRevisions", x => x.Id);
+                    table.UniqueConstraint("AK_AgentTuiProfileRevisions_ProfileId_Id", x => new { x.ProfileId, x.Id });
+                    table.CheckConstraint("CK_AgentTuiProfileRevisions_RevisionNumber_Positive", "\"RevisionNumber\" > 0");
                 });
 
             migrationBuilder.CreateTable(
@@ -102,11 +104,10 @@ namespace Antiphon.Server.Migrations
                 {
                     table.PrimaryKey("PK_AgentTuiProfiles", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_AgentTuiProfiles_AgentTuiProfileRevisions_ActiveRevisionId",
-                        column: x => x.ActiveRevisionId,
+                        name: "FK_AgentTuiProfiles_AgentTuiProfileRevisions_Id_ActiveRevision~",
+                        columns: x => new { x.Id, x.ActiveRevisionId },
                         principalTable: "AgentTuiProfileRevisions",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
+                        principalColumns: new[] { "ProfileId", "Id" });
                 });
 
             migrationBuilder.CreateTable(
@@ -153,10 +154,10 @@ namespace Antiphon.Server.Migrations
                 {
                     table.PrimaryKey("PK_AgentTuiValidationRuns", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_AgentTuiValidationRuns_AgentTuiProfileRevisions_ProfileRevi~",
-                        column: x => x.ProfileRevisionId,
+                        name: "FK_AgentTuiValidationRuns_AgentTuiProfileRevisions_ProfileId_P~",
+                        columns: x => new { x.ProfileId, x.ProfileRevisionId },
                         principalTable: "AgentTuiProfileRevisions",
-                        principalColumn: "Id");
+                        principalColumns: new[] { "ProfileId", "Id" });
                     table.ForeignKey(
                         name: "FK_AgentTuiValidationRuns_AgentTuiProfiles_ProfileId",
                         column: x => x.ProfileId,
@@ -188,15 +189,15 @@ namespace Antiphon.Server.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_AgentTuiProfiles_ActiveRevisionId",
-                table: "AgentTuiProfiles",
-                column: "ActiveRevisionId");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_AgentTuiProfiles_DisplayName",
                 table: "AgentTuiProfiles",
                 column: "DisplayName",
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AgentTuiProfiles_Id_ActiveRevisionId",
+                table: "AgentTuiProfiles",
+                columns: new[] { "Id", "ActiveRevisionId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_AgentTuiSecrets_ProfileId_Name",
@@ -210,9 +211,9 @@ namespace Antiphon.Server.Migrations
                 columns: new[] { "ProfileId", "CreatedAt" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_AgentTuiValidationRuns_ProfileRevisionId",
+                name: "IX_AgentTuiValidationRuns_ProfileId_ProfileRevisionId",
                 table: "AgentTuiValidationRuns",
-                column: "ProfileRevisionId");
+                columns: new[] { "ProfileId", "ProfileRevisionId" });
 
             migrationBuilder.AddForeignKey(
                 name: "FK_Agents_AgentTuiProfiles_TuiProfileId",

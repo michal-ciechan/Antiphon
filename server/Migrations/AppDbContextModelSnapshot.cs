@@ -568,7 +568,6 @@ namespace Antiphon.Server.Migrations
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTuiProfile", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("ActiveRevisionId")
@@ -603,11 +602,11 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ActiveRevisionId");
-
                     b.HasIndex("DisplayName")
                         .IsUnique()
                         .HasDatabaseName("IX_AgentTuiProfiles_DisplayName");
+
+                    b.HasIndex("Id", "ActiveRevisionId");
 
                     b.ToTable("AgentTuiProfiles", (string)null);
                 });
@@ -669,11 +668,17 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("ProfileId", "Id")
+                        .HasName("AK_AgentTuiProfileRevisions_ProfileId_Id");
+
                     b.HasIndex("ProfileId", "RevisionNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_AgentTuiProfileRevisions_ProfileId_RevisionNumber");
 
-                    b.ToTable("AgentTuiProfileRevisions", (string)null);
+                    b.ToTable("AgentTuiProfileRevisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AgentTuiProfileRevisions_RevisionNumber_Positive", "\"RevisionNumber\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.AgentTuiSecret", b =>
@@ -761,10 +766,10 @@ namespace Antiphon.Server.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ProfileRevisionId");
-
                     b.HasIndex("ProfileId", "CreatedAt")
                         .HasDatabaseName("IX_AgentTuiValidationRuns_ProfileId_CreatedAt");
+
+                    b.HasIndex("ProfileId", "ProfileRevisionId");
 
                     b.ToTable("AgentTuiValidationRuns", (string)null);
                 });
@@ -2563,8 +2568,9 @@ namespace Antiphon.Server.Migrations
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.AgentTuiProfileRevision", "ActiveRevision")
                         .WithMany()
-                        .HasForeignKey("ActiveRevisionId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("Id", "ActiveRevisionId")
+                        .HasPrincipalKey("ProfileId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("ActiveRevision");
                 });
@@ -2601,7 +2607,8 @@ namespace Antiphon.Server.Migrations
 
                     b.HasOne("Antiphon.Server.Domain.Entities.AgentTuiProfileRevision", "ProfileRevision")
                         .WithMany()
-                        .HasForeignKey("ProfileRevisionId")
+                        .HasForeignKey("ProfileId", "ProfileRevisionId")
+                        .HasPrincipalKey("ProfileId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
