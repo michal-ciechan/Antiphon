@@ -30,7 +30,7 @@ Discovery failures, stale catalogues, individual validation failures, revision c
 
 ## 3. Logging
 
-- `Error`: protecting-key loss with affected enabled profiles, unrecoverable import/default failure, or a confidentiality invariant violation; include owner action and correlation ID.
+- `Error`: protecting-key loss with affected enabled profiles (installation operator restores key custody or disables the profiles), unrecoverable import/default failure (installation operator restores the prior definition/default), or a confidentiality invariant violation (Antiphon maintainers stop affected launches, revoke any exposed credential, and preserve sanitized evidence); include the owner action and correlation ID.
 - `Warning`: discovery/validation timeout, cached-catalogue fallback, unsupported/degraded capability, failed child cleanup that is subsequently recovered, or rejected stale revision.
 - `Information`: profile/revision lifecycle, secret set/replace/clear metadata, discovery/validation start and result, migration summary, and launch selection using profile ID, revision, runner type, and exact/default mode.
 - Never log secret plaintext/ciphertext, submitted secret bodies, child environment blocks, full arguments, raw authentication output, or browser secret state. Model identifiers and paths are sanitized and bounded before diagnostic logging.

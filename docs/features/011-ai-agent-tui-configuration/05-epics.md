@@ -1,11 +1,5 @@
 # AI Agent TUI Configuration — Epic Plan
 
-## 1. Overview
-
-Delivery starts with the persistent security and migration foundation, then adds runner knowledge and the launch path before exposing administration and per-agent selection in the browser. Local OpenCode proof follows the complete vertical path. The final three release-readiness epics remain sequential. UI work may begin against accepted API contracts while runtime adapter work proceeds, but neither can close before the foundation is stable.
-
-## 2. Epics
-
 ### E-01 — Secure Profile Foundation And Migration
 
 **Status:** [ ]
@@ -126,15 +120,4 @@ Delivery starts with the persistent security and migration foundation, then adds
 - A new operator can configure each initial runner and understand wrapper-owned versus managed authentication.
 - Recovery guidance covers lost keys, stale discovery, invalid executable, failed validation, and rollback without exposing secrets.
 - Regression and deployment procedures reproduce the accepted smoke evidence.
-- Metrics, logs, dashboards, ownership, and any no-alert decisions match `07-observability.md`.
-
-## 3. Out Of Scope
-
-- Installing or upgrading third-party terminal clients.
-- Managing provider accounts, billing, quotas, or authorization grants.
-- Defining a universal model identity across runner ecosystems.
-- Claiming transcript or unattended-delivery safety for unsupported runner capabilities.
-
-## 4. Open Questions
-
-None for the specification baseline.
+- Metrics, logs, dashboards, ownership, and any no-alert decisions match the accepted observability contract.

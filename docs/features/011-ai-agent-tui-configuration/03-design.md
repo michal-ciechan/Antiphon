@@ -78,10 +78,10 @@ All values are estimates to be replaced with measurements during delivery.
 
 | Path | Data usable / complete when | Measured or estimated | Expected magnitude | Accepted magnitude | Requirement |
 |---|---|---|---|---|---|
-| Startup | Profiles, active revisions, cached models, and key readiness are loaded; discovery is not on the critical path. | Estimated | 1s | 5s | NFR-6, NFR-9 |
-| Recovery | After a server restart, cached configuration is usable and running sessions remain bound to their recorded revision; unavailable keys are reported fail-closed. | Estimated | 5s | 10s | NFR-3, NFR-8, NFR-10 |
-| Snapshot / batch | A profile validation or model refresh finishes all supported stages or returns a bounded partial result. | Estimated | 30s | 30s | NFR-7 |
-| Incremental update | A saved profile revision, model choice, or secret metadata appears in UI queries and is available to the next session. | Estimated | 1s | 5s | NFR-6, NFR-9 |
+| Startup | Profiles, active revisions, cached models, and key readiness are loaded; discovery is not on the critical path. | Estimated | ~1 s | ~3 s | NFR-6, NFR-9 |
+| Recovery | After a server restart, cached configuration is usable and running sessions remain bound to their recorded revision; unavailable keys are reported fail-closed. | Estimated | ~3 s | ~10 s | NFR-3, NFR-8, NFR-10 |
+| Snapshot / batch | A profile validation or model refresh finishes all supported stages or returns a bounded partial result. | Estimated | ~30 s | ~30 s | NFR-7 |
+| Incremental update | A saved profile revision, model choice, or secret metadata appears in UI queries and is available to the next session. | Estimated | ~1 s | ~3 s | NFR-6, NFR-9 |
 
 ## 6. Cross-Cutting Concerns
 

@@ -1,21 +1,19 @@
 # AI Agent TUI Configuration — Test Strategy
 
-PTS testing and TDD defaults are implicit. Epic-specific test intent remains in `05-epics.md`.
-
 ## 1. Feature Test Catalogue
 
 | Area | Must prove |
 |---|---|
 | Secret confidentiality | Database, API, browser state, logs, metrics, traces, validation output, and process arguments contain no managed plaintext. |
-| Key custody and recovery | Supported platform protectors decrypt after restart; missing or incorrect keys fail closed without breaking wrapper-managed profiles. |
-| Revision isolation | Concurrent edits are atomic and a running session retains its resolved revision while the next session receives the update. |
-| Model catalogue resilience | Discovery, curated, and operator entries merge deterministically; failure, timeout, malformed output, and omission preserve valid prior choices. |
-| Capability truth | Unsupported, degraded, unknown, and supported states gate dependent unattended behaviour exactly as displayed. |
-| Runner conformance | Claude Code, Codex, and OpenCode resolve their own launch, optional-model, readiness, completion, cleanup, and capability behaviour. |
-| Migration and rollback | Existing definitions, agents, model intent, default choice, and wrapper launches survive idempotent import and rollback. |
-| API concurrency | Revision conflicts, duplicate refreshes, validation joining, secret idempotency, and in-use deletion return stable outcomes. |
-| UI safety and accessibility | Secret values clear after write; source, availability, pending-session changes, errors, and capability limitations remain understandable without colour alone. |
-| Cross-platform behaviour | Path, environment-name, key-protection, executable, wrapper, and child-environment semantics hold on supported operating systems. |
+| Key custody and recovery | Supported protectors decrypt after restart; incorrect keys fail closed without breaking wrapper profiles. |
+| Revision isolation | Concurrent edits are atomic; running sessions retain their revision and new sessions receive updates. |
+| Model catalogue resilience | Entries merge deterministically; failure, timeout, malformed output, and omission preserve prior choices. |
+| Capability truth | Capability states gate dependent unattended behaviour exactly as displayed. |
+| Runner conformance | Each runner owns its launch, model, readiness, completion, cleanup, and capability semantics. |
+| Migration and rollback | Existing definitions, agents, model intent, default, and wrappers survive idempotent import and rollback. |
+| API concurrency | Revision conflicts, joined refresh/validation, secret idempotency, and in-use deletion return stable outcomes. |
+| UI safety and accessibility | Secret inputs clear after write; statuses and errors are accessible without colour alone. |
+| Cross-platform behaviour | Supported systems preserve path, environment, key, executable, wrapper, and child-process semantics. |
 
 ## 2. Execution Policy
 
