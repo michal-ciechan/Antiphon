@@ -192,6 +192,36 @@ public class AgentRegistrySettingsTests
     }
 
     [Test]
+    [Arguments(200, true)]
+    [Arguments(201, false)]
+    public void Validator_enforces_bounded_definition_names(int length, bool expectedSuccess)
+    {
+        var definitionName = new string('n', length);
+        var settings = new AgentRegistrySettings
+        {
+            DefaultDefinition = definitionName,
+            Definitions =
+            {
+                [definitionName] = new AgentDefinition
+                {
+                    Kind = "ClaudeCode",
+                    Exe = "cl.bat"
+                }
+            }
+        };
+
+        var result = new AgentRegistrySettingsValidator().Validate(name: null, settings);
+
+        result.Succeeded.ShouldBe(expectedSuccess);
+        if (!expectedSuccess)
+        {
+            var failureMessage = result.FailureMessage!;
+            failureMessage.ShouldContain("200");
+            failureMessage.ShouldNotContain(definitionName);
+        }
+    }
+
+    [Test]
     [Arguments(AgentTuiPlatform.Windows, true)]
     [Arguments(AgentTuiPlatform.Linux, false)]
     [Arguments(AgentTuiPlatform.MacOS, false)]

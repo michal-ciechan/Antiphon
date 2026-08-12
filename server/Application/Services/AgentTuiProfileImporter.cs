@@ -69,6 +69,7 @@ public sealed class AgentTuiProfileImporter
 
     private async Task<AgentTuiImportResultDto> ImportAttemptAsync(CancellationToken cancellationToken)
     {
+        ValidateDefinitionNames();
         var profilesExist = await _db.AgentTuiProfiles.AnyAsync(cancellationToken);
         var plans = profilesExist ? [] : BuildImportPlans();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -165,6 +166,25 @@ public sealed class AgentTuiProfileImporter
                 secretEnvironment,
                 index);
         }).ToArray();
+    }
+
+    private void ValidateDefinitionNames()
+    {
+        foreach (var definitionName in _settings.Value.Definitions.Keys)
+        {
+            if (string.IsNullOrWhiteSpace(definitionName))
+            {
+                throw new ValidationException(
+                    nameof(AgentRegistrySettings.Definitions),
+                    "Agent definition names must not be empty.");
+            }
+            if (definitionName.Length > AgentRegistrySettings.MaximumDefinitionNameLength)
+            {
+                throw new ValidationException(
+                    nameof(AgentRegistrySettings.Definitions),
+                    $"Agent definition names must not exceed {AgentRegistrySettings.MaximumDefinitionNameLength} characters.");
+            }
+        }
     }
 
     private async Task<int> PersistPlansAsync(

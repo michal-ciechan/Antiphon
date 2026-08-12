@@ -2,6 +2,8 @@ namespace Antiphon.Server.Application.Settings;
 
 public class AgentRegistrySettings
 {
+    internal const int MaximumDefinitionNameLength = 200;
+
     public string DefaultDefinition { get; set; } = "claude";
     public Dictionary<string, AgentDefinition> Definitions { get; set; } = new();
     public int ClaudeReadyQuietPeriodMs { get; set; } = 5000;

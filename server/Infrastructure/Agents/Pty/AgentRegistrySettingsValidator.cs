@@ -28,6 +28,12 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
                 failures.Add("Agents:Definitions contains an entry with an empty key.");
                 continue;
             }
+            if (defName.Length > AgentRegistrySettings.MaximumDefinitionNameLength)
+            {
+                failures.Add(
+                    $"Agents:Definitions contains a definition name longer than {AgentRegistrySettings.MaximumDefinitionNameLength} characters.");
+                continue;
+            }
 
             if (!seenNames.Add(defName))
             {
@@ -64,7 +70,9 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
         if (!string.IsNullOrWhiteSpace(options.DefaultDefinition)
             && !options.Definitions.ContainsKey(options.DefaultDefinition))
         {
-            failures.Add($"Agents:DefaultDefinition '{options.DefaultDefinition}' does not match any entry in Agents:Definitions.");
+            failures.Add(options.DefaultDefinition.Length > AgentRegistrySettings.MaximumDefinitionNameLength
+                ? "Agents:DefaultDefinition does not match any entry in Agents:Definitions."
+                : $"Agents:DefaultDefinition '{options.DefaultDefinition}' does not match any entry in Agents:Definitions.");
         }
 
         if (options.ClaudeReadyQuietPeriodMs <= 0)
