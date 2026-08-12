@@ -1,17 +1,21 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -68,6 +72,7 @@ public class AgentTuiSecretProtectorTests
         var keyRingPath = Path.Combine(root, "keys");
         var contentRootPath = Path.Combine(root, "repository");
         var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var sourceKeyRingPath = Path.Combine(root, "source-keys");
         var newKeyPath = Path.Combine(keyRingPath, "new-key.xml");
         try
         {
@@ -82,7 +87,22 @@ public class AgentTuiSecretProtectorTests
                 contentRootPath).ShouldBeTrue();
             using var provider = services.BuildServiceProvider();
             var readiness = provider.GetRequiredService<AgentTuiKeyProtectionReadiness>();
-            File.WriteAllText(newKeyPath, "<key />");
+            var sourceServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                sourceServices,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                sourceKeyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using (var sourceProvider = sourceServices.BuildServiceProvider())
+            {
+                sourceProvider.GetRequiredService<IAgentTuiSecretProtector>()
+                    .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "source-key-secret");
+            }
+            File.Copy(
+                Directory.GetFiles(sourceKeyRingPath, "key-*.xml").ShouldHaveSingleItem(),
+                newKeyPath);
+            MakePersistedKeyFileOwnerOnly(newKeyPath);
             readiness.IsReady.ShouldBeTrue();
             var callbackProvider = new CallbackDataProtectionProvider(
                 new EphemeralDataProtectionProvider(),
@@ -136,6 +156,119 @@ public class AgentTuiSecretProtectorTests
             Should.Throw<CryptographicException>(() =>
                 sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "rejected-secret"));
             File.Exists(newKeyPath).ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Protect_rejects_payload_whose_key_appears_and_disappears_during_cryptography()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var sourceKeyRingPath = Path.Combine(root, "source-keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var transientKeyPath = Path.Combine(keyRingPath, "transient-key.xml");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var profileId = Guid.NewGuid();
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(profileId, "OPENAI_API_KEY", "stable-key-secret");
+
+            var sourceServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                sourceServices,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                sourceKeyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var sourceProvider = sourceServices.BuildServiceProvider();
+            sourceProvider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(profileId, "OPENAI_API_KEY", "transient-key-seed");
+            var sourceKeyPath = Directory.GetFiles(sourceKeyRingPath, "key-*.xml")
+                .ShouldHaveSingleItem();
+            var callbackProvider = new CallbackDataProtectionProvider(
+                sourceProvider.GetRequiredService<IDataProtectionProvider>(),
+                beforeProtect: () => File.Copy(sourceKeyPath, transientKeyPath),
+                afterProtect: () => File.Delete(transientKeyPath));
+            var sut = new DataProtectionAgentTuiSecretProtector(
+                callbackProvider,
+                provider.GetRequiredService<AgentTuiKeyProtectionReadiness>());
+
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));
+            File.Exists(transientKeyPath).ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Unprotect_rejects_payload_whose_key_only_exists_during_cryptography()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var sourceKeyRingPath = Path.Combine(root, "source-keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var transientKeyPath = Path.Combine(keyRingPath, "transient-key.xml");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var profileId = Guid.NewGuid();
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(profileId, "OPENAI_API_KEY", "stable-key-secret");
+
+            var sourceServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                sourceServices,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                sourceKeyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var sourceProvider = sourceServices.BuildServiceProvider();
+            var sourceProtector = sourceProvider.GetRequiredService<IAgentTuiSecretProtector>();
+            var protectedValue = sourceProtector.Protect(
+                profileId,
+                "OPENAI_API_KEY",
+                "transient-key-secret");
+            var sourceKeyPath = Directory.GetFiles(sourceKeyRingPath, "key-*.xml")
+                .ShouldHaveSingleItem();
+            var callbackProvider = new CallbackDataProtectionProvider(
+                sourceProvider.GetRequiredService<IDataProtectionProvider>(),
+                beforeUnprotect: () => File.Copy(sourceKeyPath, transientKeyPath),
+                afterUnprotect: () => File.Delete(transientKeyPath));
+            var sut = new DataProtectionAgentTuiSecretProtector(
+                callbackProvider,
+                provider.GetRequiredService<AgentTuiKeyProtectionReadiness>());
+
+            Should.Throw<CryptographicException>(() =>
+                sut.Unprotect(profileId, "OPENAI_API_KEY", protectedValue));
+            File.Exists(transientKeyPath).ShouldBeFalse();
         }
         finally
         {
@@ -415,6 +548,99 @@ public class AgentTuiSecretProtectorTests
     }
 
     [Test]
+    public void Windows_extended_path_alias_inside_protected_directory_is_not_outside()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var root = NewTempPath();
+        var protectedDirectory = Path.Combine(root, "repository");
+        var candidatePath = Path.Combine(protectedDirectory, "keys");
+        try
+        {
+            Directory.CreateDirectory(candidatePath);
+            var extendedCandidatePath = $@"\\?\{candidatePath}";
+
+            AgentTuiDataProtectionSetup.IsOutsideDirectory(
+                    extendedCandidatePath,
+                    protectedDirectory)
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Windows_extended_path_alias_uses_nearest_existing_parent_for_absent_leaf()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var root = NewTempPath();
+        var protectedDirectory = Path.Combine(root, "repository");
+        var absentCandidatePath = Path.Combine(protectedDirectory, "new", "keys");
+        try
+        {
+            Directory.CreateDirectory(protectedDirectory);
+            var extendedCandidatePath = $@"\\?\{absentCandidatePath}";
+
+            AgentTuiDataProtectionSetup.IsOutsideDirectory(
+                    extendedCandidatePath,
+                    protectedDirectory)
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Windows_volume_guid_alias_inside_protected_directory_is_not_outside()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var root = NewTempPath();
+        var protectedDirectory = Path.Combine(root, "repository");
+        var candidatePath = Path.Combine(protectedDirectory, "keys");
+        try
+        {
+            Directory.CreateDirectory(candidatePath);
+            var volumeRoot = Path.GetPathRoot(candidatePath);
+            volumeRoot.ShouldNotBeNullOrWhiteSpace();
+            var volumeName = new StringBuilder(1024);
+            GetVolumeNameForVolumeMountPointW(
+                    volumeRoot,
+                    volumeName,
+                    checked((uint)volumeName.Capacity))
+                .ShouldBeTrue($"Win32 error {Marshal.GetLastWin32Error()}");
+            var volumeAlias = Path.Combine(
+                volumeName.ToString(),
+                candidatePath[volumeRoot.Length..]);
+
+            AgentTuiDataProtectionSetup.IsOutsideDirectory(volumeAlias, protectedDirectory)
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void MacOS_canonical_path_containment_is_case_insensitive()
+    {
+        AgentTuiDataProtectionSetup.IsCanonicalPathOutsideDirectory(
+                "/Users/build/Repository/keys",
+                "/users/build/repository",
+                AgentTuiPlatform.MacOS)
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public void Public_protector_construction_requires_readiness()
     {
         var bypassConstructors = typeof(DataProtectionAgentTuiSecretProtector)
@@ -641,6 +867,45 @@ public class AgentTuiSecretProtectorTests
     }
 
     [Test]
+    public void X509_store_selection_disposes_unselected_candidates()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=Antiphon Agent TUI Candidate Test",
+            rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        using var source = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            DateTimeOffset.UtcNow.AddMinutes(10));
+        var publicCandidate = X509CertificateLoader.LoadCertificate(
+            source.Export(X509ContentType.Cert));
+        var privateCandidate = X509CertificateLoader.LoadPkcs12(
+            source.Export(X509ContentType.Pfx),
+            password: null,
+            X509KeyStorageFlags.EphemeralKeySet);
+        var candidates = new X509Certificate2Collection
+        {
+            publicCandidate,
+            privateCandidate
+        };
+        try
+        {
+            var selected = AgentTuiDataProtectionSetup
+                .SelectPrivateKeyCertificateAndDisposeOthers(candidates);
+
+            selected.ShouldBeSameAs(privateCandidate);
+            publicCandidate.Handle.ShouldBe(IntPtr.Zero);
+            privateCandidate.Handle.ShouldNotBe(IntPtr.Zero);
+        }
+        finally
+        {
+            publicCandidate.Dispose();
+            privateCandidate.Dispose();
+        }
+    }
+
+    [Test]
     public void Configured_X509_protector_rechecks_certificate_validity_at_operation_time()
     {
         var root = NewTempPath();
@@ -844,6 +1109,393 @@ public class AgentTuiSecretProtectorTests
                 sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));
             Should.Throw<CryptographicException>(() =>
                 sut.Unprotect(profileId, "OPENAI_API_KEY", cipher));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_rejects_corrupt_extra_key_xml()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            File.WriteAllText(Path.Combine(keyRingPath, "key-corrupt.xml"), "<not-a-key />");
+
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "rejected-secret"));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Corrupt_key_xml_present_at_startup_is_not_ready()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            AgentTuiDataProtectionSetup.EnsureKeyRingDirectory(
+                keyRingPath,
+                CurrentPlatform()).ShouldBeTrue();
+            var corruptKeyPath = Path.Combine(keyRingPath, "key-corrupt.xml");
+            File.WriteAllText(corruptKeyPath, "<key id=\"not-a-guid\">");
+            MakePersistedKeyFileOwnerOnly(corruptKeyPath);
+            var services = new ServiceCollection();
+
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeFalse();
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+            Should.Throw<CryptographicException>(() =>
+                provider.GetRequiredService<IAgentTuiSecretProtector>()
+                    .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "rejected-secret"));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_rejects_dtd_bearing_key_ring_xml()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            File.WriteAllText(
+                Path.Combine(keyRingPath, "revocation-dtd.xml"),
+                "<!DOCTYPE revocation [<!ENTITY probe 'blocked'>]>" +
+                "<revocation version=\"1\"><revocationDate>&probe;</revocationDate></revocation>");
+
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_rejects_oversized_key_ring_xml()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            File.WriteAllText(
+                Path.Combine(keyRingPath, "revocation-oversized.xml"),
+                "<revocation version=\"1\"><!--" + new string('x', 1024 * 1024) +
+                "--><revocationDate>2026-08-12T00:00:00Z</revocationDate></revocation>");
+
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Restored_key_ring_under_wrong_certificate_is_not_ready()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var originalCertificatePath = Path.Combine(root, "original-key-protection.pfx");
+        var wrongCertificatePath = Path.Combine(root, "wrong-key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(originalCertificatePath);
+            WriteTestCertificate(wrongCertificatePath);
+            var profileId = Guid.NewGuid();
+            string cipher;
+            var originalServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                originalServices,
+                CertificateSettings(originalCertificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using (var originalProvider = originalServices.BuildServiceProvider())
+            {
+                cipher = originalProvider.GetRequiredService<IAgentTuiSecretProtector>()
+                    .Protect(profileId, "OPENAI_API_KEY", "wrong-certificate-secret");
+            }
+
+            var restoredServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                restoredServices,
+                CertificateSettings(wrongCertificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var restoredProvider = restoredServices.BuildServiceProvider();
+            var readiness = restoredProvider.GetRequiredService<AgentTuiKeyProtectionReadiness>();
+            var sut = restoredProvider.GetRequiredService<IAgentTuiSecretProtector>();
+
+            readiness.IsReady.ShouldBeFalse();
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));
+            Should.Throw<CryptographicException>(() =>
+                sut.Unprotect(profileId, "OPENAI_API_KEY", cipher));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Restored_key_ring_with_permissive_file_acl_is_rejected_without_repair()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using (var provider = services.BuildServiceProvider())
+            {
+                provider.GetRequiredService<IAgentTuiSecretProtector>()
+                    .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            }
+            var keyPath = Directory.GetFiles(keyRingPath, "key-*.xml").ShouldHaveSingleItem();
+            MakeWindowsFileInsecure(keyPath);
+            AssertWindowsFileIsInsecure(keyPath);
+
+            var restoredServices = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                restoredServices,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeFalse();
+
+            AssertWindowsFileIsInsecure(keyPath);
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Provider_created_key_file_is_tightened_before_acceptance()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+
+            provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+
+            var keyPath = Directory.GetFiles(keyRingPath, "key-*.xml").ShouldHaveSingleItem();
+            if (OperatingSystem.IsWindows())
+                AssertWindowsFileOwnerOnly(keyPath);
+            else
+                File.GetUnixFileMode(keyPath).ShouldBe(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Unix_persisted_key_mode_rejects_group_or_other_permissions()
+    {
+        var ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+        AgentTuiDataProtectionSetup.IsUnixPersistedKeyModeOwnerOnly(ownerOnly)
+            .ShouldBeTrue();
+        AgentTuiDataProtectionSetup.IsUnixPersistedKeyModeOwnerOnly(
+                ownerOnly | UnixFileMode.GroupRead)
+            .ShouldBeFalse();
+        AgentTuiDataProtectionSetup.IsUnixPersistedKeyModeOwnerOnly(
+                ownerOnly | UnixFileMode.OtherWrite)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void Persisted_key_file_reparse_points_are_rejected()
+    {
+        AgentTuiDataProtectionSetup.IsPersistedXmlFileAttributeSetSafe(FileAttributes.Normal)
+            .ShouldBeTrue();
+        AgentTuiDataProtectionSetup.IsPersistedXmlFileAttributeSetSafe(
+                FileAttributes.Normal | FileAttributes.ReparsePoint)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void Restored_key_file_symlink_is_rejected_without_mutating_target()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var targetPath = Path.Combine(root, "restored-key-target.xml");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using (var provider = services.BuildServiceProvider())
+            {
+                provider.GetRequiredService<IAgentTuiSecretProtector>()
+                    .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            }
+            var keyPath = Directory.GetFiles(keyRingPath, "key-*.xml").ShouldHaveSingleItem();
+            File.Move(keyPath, targetPath);
+            var targetBytes = File.ReadAllBytes(targetPath);
+            try
+            {
+                File.CreateSymbolicLink(keyPath, targetPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new SkipTestException(
+                    $"File symlink creation is unavailable: {exception.Message}");
+            }
+
+            (File.GetAttributes(keyPath) & FileAttributes.ReparsePoint)
+                .ShouldBe(FileAttributes.ReparsePoint);
+            var restoredServices = new ServiceCollection();
+
+            AgentTuiDataProtectionSetup.Configure(
+                restoredServices,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeFalse();
+            File.ReadAllBytes(targetPath).ShouldBe(targetBytes);
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Valid_revocation_xml_is_not_treated_as_a_persisted_key()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "seed-secret");
+            var keyManager = provider.GetRequiredService<IKeyManager>();
+            var key = keyManager.GetAllKeys().ShouldHaveSingleItem();
+
+            keyManager.RevokeKey(key.KeyId, "test revocation");
+
+            Directory.GetFiles(keyRingPath, "revocation-*.xml", SearchOption.TopDirectoryOnly)
+                .ShouldNotBeEmpty();
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeTrue();
         }
         finally
         {
@@ -1225,12 +1877,64 @@ public class AgentTuiSecretProtectorTests
         rules.ShouldContain(rule => !rule.IdentityReference.Equals(user));
     }
 
+    [SupportedOSPlatform("windows")]
+    private static void MakeWindowsFileInsecure(string path)
+    {
+        var security = new FileInfo(path).GetAccessControl(AccessControlSections.Access);
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.WorldSid, domainSid: null),
+            FileSystemRights.Read,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void AssertWindowsFileIsInsecure(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        var user = identity.User;
+        user.ShouldNotBeNull();
+        var rules = new FileInfo(path)
+            .GetAccessControl(AccessControlSections.Access)
+            .GetAccessRules(
+                includeExplicit: true,
+                includeInherited: true,
+                targetType: typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .ToArray();
+        rules.ShouldContain(rule => !rule.IdentityReference.Equals(user));
+    }
+
     private static void AssertPrivateKeyFileOwnerOnly(string path)
     {
         if (OperatingSystem.IsWindows())
             AssertWindowsFileOwnerOnly(path);
         else
             AssertUnixFileOwnerOnly(path);
+    }
+
+    private static void MakePersistedKeyFileOwnerOnly(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            MakeWindowsFileOwnerOnly(path);
+        else
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void MakeWindowsFileOwnerOnly(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        var user = identity.User;
+        user.ShouldNotBeNull();
+        var security = new FileSecurity();
+        security.SetOwner(user);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(
+            user,
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
     }
 
     [SupportedOSPlatform("windows")]
@@ -1298,25 +2002,59 @@ public class AgentTuiSecretProtectorTests
 
     private sealed class CallbackDataProtectionProvider(
         IDataProtectionProvider inner,
-        Action beforeProtect) : IDataProtectionProvider
+        Action? beforeProtect = null,
+        Action? afterProtect = null,
+        Action? beforeUnprotect = null,
+        Action? afterUnprotect = null) : IDataProtectionProvider
     {
         public IDataProtector CreateProtector(string purpose) =>
-            new CallbackDataProtector(inner.CreateProtector(purpose), beforeProtect);
+            new CallbackDataProtector(
+                inner.CreateProtector(purpose),
+                beforeProtect,
+                afterProtect,
+                beforeUnprotect,
+                afterUnprotect);
 
         private sealed class CallbackDataProtector(
             IDataProtector inner,
-            Action beforeProtect) : IDataProtector
+            Action? beforeProtect,
+            Action? afterProtect,
+            Action? beforeUnprotect,
+            Action? afterUnprotect) : IDataProtector
         {
             public IDataProtector CreateProtector(string purpose) =>
-                new CallbackDataProtector(inner.CreateProtector(purpose), beforeProtect);
+                new CallbackDataProtector(
+                    inner.CreateProtector(purpose),
+                    beforeProtect,
+                    afterProtect,
+                    beforeUnprotect,
+                    afterUnprotect);
 
             public byte[] Protect(byte[] plaintext)
             {
-                beforeProtect();
-                return inner.Protect(plaintext);
+                beforeProtect?.Invoke();
+                try
+                {
+                    return inner.Protect(plaintext);
+                }
+                finally
+                {
+                    afterProtect?.Invoke();
+                }
             }
 
-            public byte[] Unprotect(byte[] protectedData) => inner.Unprotect(protectedData);
+            public byte[] Unprotect(byte[] protectedData)
+            {
+                beforeUnprotect?.Invoke();
+                try
+                {
+                    return inner.Unprotect(protectedData);
+                }
+                finally
+                {
+                    afterUnprotect?.Invoke();
+                }
+            }
         }
     }
 
@@ -1362,4 +2100,11 @@ public class AgentTuiSecretProtectorTests
         if (Directory.Exists(path))
             Directory.Delete(path, recursive: true);
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPointW(
+        string volumeMountPoint,
+        StringBuilder volumeName,
+        uint bufferLength);
 }
