@@ -40,3 +40,8 @@ out/
 # Deliberately a wildcard: this was an enumerated list of one-off names, and the first
 # --property:OutputPath=bin-orch/ that nobody had thought of got committed by a git add -A.
 bin-*/
+
+# pts-vibe-coding (managed by /pts-vibe-init)
+.pts-vibe/state.json
+.pts-vibe/implementation.json
+.pts-vibe/memsearch/

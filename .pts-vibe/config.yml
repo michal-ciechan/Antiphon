@@ -1,0 +1,42 @@
+schema_version: 1
+feature_root: docs/features
+conventions:
+  require_feature_branch: true
+  feature_branch_pattern: feature/{feature}
+memsearch:
+  enabled: true
+  required: false
+  scope: repo
+  embedding:
+    prefer: auto
+    proxy_url_env_var: ANTHROPIC_BASE_URL
+    proxy_token_env_var: ANTHROPIC_AUTH_TOKEN
+    allowed_proxy_hosts:
+    - llm-proxy.cs.mavensecurities.com
+    - llm-proxy.mm.mavensecurities.com
+    model: ''
+  extra_paths:
+  - docs/vibe-coding
+  ignore:
+  - '**/archive/**'
+  - '**/TODO.md'
+  watch:
+    enabled: true
+    debounce_seconds: 5
+  status:
+    last_checked_utc: '2026-08-12T16:19:08Z'
+    installed: true
+    version: memsearch.EXE, version 0.4.17
+    config_initialized: true
+    proxy_reachable: null
+    embedding_provider: onnx
+    index_built: false
+    watch_running: true
+    notes: $ANTHROPIC_BASE_URL not set -- using local ONNX
+hooks:
+  post_init: ''
+  post_implement_workitem: ''
+  post_review: ''
+review:
+  regen_coverage_matrix: true
+  doc_token_budget: 5000
