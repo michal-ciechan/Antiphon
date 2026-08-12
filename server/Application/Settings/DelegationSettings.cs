@@ -26,8 +26,17 @@ public sealed class DelegationSettings
     /// <summary>
     /// The real ceiling on a recursive tree: it can only run away by spending. Crossing it stops
     /// further dispatch for that root; work already in flight is left alone and still reports.
+    ///
+    /// PER ROOT, not per task — it bounds a whole delegation subtree, so a sub-orchestrator and
+    /// everything below it share one budget.
+    ///
+    /// Raised from 5.00 on 2026-08-12 against measured spend: a single opus investigation costs
+    /// $10-17 (CARD-0027 $10.48, CARD-0030 $16.57), so at 5.00 any root with more than one real
+    /// delegate blocked almost immediately, and a sub-orchestrator was effectively unusable — its
+    /// subtree would stall half-done with the earlier work already paid for. Note the ceiling only
+    /// gates NEW dispatches, which is why those single tasks completed while over it.
     /// </summary>
-    public decimal MaxCostUsdPerRoot { get; set; } = 5.00m;
+    public decimal MaxCostUsdPerRoot { get; set; } = 50.00m;
 
     /// <summary>
     /// Per-tier list prices and cache multipliers, bound from <c>Delegation:Pricing</c>. The
