@@ -31,13 +31,11 @@ public sealed record DuplicateAgentTuiProfileRequest(string DisplayName);
 public sealed record AgentTuiSecretWriteRequest(
     string Value,
     int ExpectedRevision,
-    string CorrelationId,
-    Guid? ActorId = null);
+    string CorrelationId);
 
 public sealed record AgentTuiSecretClearRequest(
     int ExpectedRevision,
-    string CorrelationId,
-    Guid? ActorId = null);
+    string CorrelationId);
 
 public sealed record AgentTuiSecretMetadataDto(
     string Name,

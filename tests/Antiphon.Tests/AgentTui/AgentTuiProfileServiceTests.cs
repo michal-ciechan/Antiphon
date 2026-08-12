@@ -18,6 +18,7 @@ using TUnit.Core;
 namespace Antiphon.Tests;
 
 [Category("Integration")]
+[NotInParallel]
 [ClassDataSource<TestDbFixture>(Shared = SharedType.PerTestSession)]
 public class AgentTuiProfileServiceTests : TransactionalTestBase
 {
@@ -86,6 +87,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var source = await service.CreateAsync(
             NewRequest(UniqueName("Source")) with
             {
+                AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
                 SecretEnvironmentNames = ["SERVICE_TOKEN"],
                 Models =
                 [
@@ -166,6 +168,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var created = await service.CreateAsync(
             NewRequest(UniqueName("Metadata")) with
             {
+                AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
                 SecretEnvironmentNames = ["SERVICE_TOKEN", "OPTIONAL_SECRET"]
             },
             CancellationToken.None);
@@ -195,9 +198,9 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
     {
         var clock = new FakeTimeProvider(FixedNow);
         var protector = new HashingSecretProtector();
-        var service = CreateService(protector, clock);
         var request = NewRequest(UniqueName("Secret atomicity")) with
         {
+            AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
             SecretEnvironmentNames = ["SERVICE_TOKEN"]
         };
         var actorId = Guid.NewGuid();
@@ -210,6 +213,10 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             CreatedAt = FixedNow.UtcDateTime
         });
         await DbContext.SaveChangesAsync();
+        var service = CreateService(
+            protector,
+            clock,
+            new TestCurrentUser(actorId, "trusted-actor", "203.0.113.42"));
         var created = await service.CreateAsync(request, CancellationToken.None);
         const string oldCanary = "synthetic-old-secret-canary";
         const string rejectedCanary = "synthetic-rejected-secret-canary";
@@ -218,7 +225,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var set = await service.PutSecretAsync(
             created.Id,
             "SERVICE_TOKEN",
-            new AgentTuiSecretWriteRequest(oldCanary, 1, "secret-set-correlation", actorId),
+            new AgentTuiSecretWriteRequest(oldCanary, 1, "secret-set-correlation"),
             CancellationToken.None);
         set.Revision.ShouldBe(1);
         var oldCiphertext = (await DbContext.AgentTuiSecrets.AsNoTracking()
@@ -234,7 +241,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         await Should.ThrowAsync<ConflictException>(() => service.PutSecretAsync(
             created.Id,
             "SERVICE_TOKEN",
-            new AgentTuiSecretWriteRequest(rejectedCanary, 1, "secret-rejected-correlation", actorId),
+            new AgentTuiSecretWriteRequest(rejectedCanary, 1, "secret-rejected-correlation"),
             CancellationToken.None));
         (await DbContext.AgentTuiSecrets.AsNoTracking()
             .SingleAsync(secret => secret.ProfileId == created.Id)).Ciphertext.ShouldBe(oldCiphertext);
@@ -243,7 +250,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var replaced = await service.PutSecretAsync(
             created.Id,
             "SERVICE_TOKEN",
-            new AgentTuiSecretWriteRequest(newCanary, 2, "secret-replace-correlation", actorId),
+            new AgentTuiSecretWriteRequest(newCanary, 2, "secret-replace-correlation"),
             CancellationToken.None);
         replaced.Revision.ShouldBe(2);
         var newCiphertext = (await DbContext.AgentTuiSecrets.AsNoTracking()
@@ -254,7 +261,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var cleared = await service.ClearSecretAsync(
             created.Id,
             "SERVICE_TOKEN",
-            new AgentTuiSecretClearRequest(2, "secret-clear-correlation", actorId),
+            new AgentTuiSecretClearRequest(2, "secret-clear-correlation"),
             CancellationToken.None);
         cleared.Configured.ShouldBeFalse();
         (await DbContext.AgentTuiSecrets.CountAsync(secret => secret.ProfileId == created.Id)).ShouldBe(0);
@@ -269,6 +276,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             && record.Summary.Contains("result=succeeded", StringComparison.Ordinal)
             && record.Summary.Contains("occurredAt=", StringComparison.Ordinal)
             && record.UserId == actorId
+            && record.ClientIp == "203.0.113.42"
             && record.CreatedAt != default);
         auditRecords.ShouldContain(record =>
             record.Summary.Contains("operation=set", StringComparison.Ordinal)
@@ -287,6 +295,179 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         auditText.ShouldNotContain(oldCiphertext);
         auditText.ShouldNotContain(newCiphertext);
         auditText.ShouldNotContain("secret-rejected-correlation");
+    }
+
+    [Test]
+    public void Secret_write_contract_cannot_supply_an_audit_actor()
+    {
+        typeof(AgentTuiSecretWriteRequest).GetProperties()
+            .ShouldNotContain(property => property.Name == "ActorId");
+        typeof(AgentTuiSecretClearRequest).GetProperties()
+            .ShouldNotContain(property => property.Name == "ActorId");
+    }
+
+    [Test]
+    public async Task Wrapper_managed_profiles_reject_secret_declarations_and_puts()
+    {
+        var service = CreateService(new FailOnAccessSecretProtector());
+
+        await Should.ThrowAsync<ValidationException>(() => service.CreateAsync(
+            NewRequest(UniqueName("Wrapper declaration")) with
+            {
+                SecretEnvironmentNames = ["SERVICE_TOKEN"]
+            },
+            CancellationToken.None));
+
+        var wrapper = await service.CreateAsync(
+            NewRequest(UniqueName("Wrapper put")),
+            CancellationToken.None);
+        await Should.ThrowAsync<ValidationException>(() => service.PutSecretAsync(
+            wrapper.Id,
+            "SERVICE_TOKEN",
+            new AgentTuiSecretWriteRequest("must-not-be-protected", 1, "wrapper-put"),
+            CancellationToken.None));
+    }
+
+    [Test]
+    public async Task Configured_secrets_must_be_cleared_before_removal_or_wrapper_transition()
+    {
+        var service = CreateService();
+        var managed = NewRequest(UniqueName("Managed transition")) with
+        {
+            AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
+            SecretEnvironmentNames = ["SERVICE_TOKEN"]
+        };
+        var created = await service.CreateAsync(managed, CancellationToken.None);
+        await service.PutSecretAsync(
+            created.Id,
+            "SERVICE_TOKEN",
+            new AgentTuiSecretWriteRequest("synthetic-transition-canary", 1, "transition-set"),
+            CancellationToken.None);
+
+        await Should.ThrowAsync<ConflictException>(() => service.UpdateAsync(
+            created.Id,
+            managed with
+            {
+                ExpectedRevision = 1,
+                SecretEnvironmentNames = []
+            },
+            CancellationToken.None));
+        await Should.ThrowAsync<ConflictException>(() => service.UpdateAsync(
+            created.Id,
+            managed with
+            {
+                ExpectedRevision = 1,
+                AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+                SecretEnvironmentNames = []
+            },
+            CancellationToken.None));
+
+        await service.ClearSecretAsync(
+            created.Id,
+            "SERVICE_TOKEN",
+            new AgentTuiSecretClearRequest(1, "transition-clear"),
+            CancellationToken.None);
+        var switched = await service.UpdateAsync(
+            created.Id,
+            managed with
+            {
+                ExpectedRevision = 1,
+                AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+                SecretEnvironmentNames = []
+            },
+            CancellationToken.None);
+
+        switched.Revision.ShouldBe(2);
+        switched.RevisionDetails.AuthenticationMode.ShouldBe(AgentTuiAuthenticationMode.WrapperManaged);
+    }
+
+    [Test]
+    public async Task Clear_removes_a_persisted_orphan_secret_even_when_no_longer_declared()
+    {
+        var service = CreateService();
+        var managed = NewRequest(UniqueName("Orphan clear")) with
+        {
+            AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
+            SecretEnvironmentNames = ["SERVICE_TOKEN"]
+        };
+        var created = await service.CreateAsync(managed, CancellationToken.None);
+        await service.PutSecretAsync(
+            created.Id,
+            "SERVICE_TOKEN",
+            new AgentTuiSecretWriteRequest("synthetic-orphan-canary", 1, "orphan-set"),
+            CancellationToken.None);
+        var revision = await DbContext.AgentTuiProfileRevisions
+            .SingleAsync(candidate => candidate.Id == created.RevisionId);
+        revision.SecretEnvironmentNamesJson = "[]";
+        revision.AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged;
+        await DbContext.SaveChangesAsync();
+
+        var cleared = await service.ClearSecretAsync(
+            created.Id,
+            "SERVICE_TOKEN",
+            new AgentTuiSecretClearRequest(1, "orphan-clear"),
+            CancellationToken.None);
+
+        cleared.Configured.ShouldBeFalse();
+        (await DbContext.AgentTuiSecrets
+            .AnyAsync(secret => secret.ProfileId == created.Id)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Profile_validation_rejects_undefined_enums_and_all_bounded_fields()
+    {
+        var service = CreateService();
+        var valid = NewRequest(UniqueName("Validation"));
+        AgentTuiProfileWriteRequest[] invalidRequests =
+        [
+            valid with { Kind = (AgentKind)999 },
+            valid with { AuthenticationMode = (AgentTuiAuthenticationMode)999 },
+            valid with { WorkingDirectory = new string('w', 1001) },
+            valid with { ModelArgumentName = new string('m', 101) },
+            valid with { Arguments = [new string('a', 2001)] },
+            valid with { DiscoveryArguments = [new string('d', 2001)] },
+            valid with { VersionArguments = [new string('v', 2001)] },
+            valid with
+            {
+                NonSecretEnvironment = new Dictionary<string, string>
+                {
+                    ["NORMAL_SETTING"] = new string('e', 4001)
+                }
+            },
+            valid with { Guidance = new string('g', 4001) },
+            valid with
+            {
+                Models = [new AgentTuiModelWriteDto("model", "Model", new string('f', 201))]
+            }
+        ];
+
+        foreach (var request in invalidRequests)
+        {
+            await Should.ThrowAsync<ValidationException>(() =>
+                service.CreateAsync(request, CancellationToken.None));
+        }
+    }
+
+    [Test]
+    public async Task Profile_environment_validation_uses_host_platform_name_equivalence()
+    {
+        var service = CreateService();
+        var request = NewRequest(UniqueName("Environment comparer")) with
+        {
+            AuthenticationMode = AgentTuiAuthenticationMode.ManagedEnvironment,
+            NonSecretEnvironment = new Dictionary<string, string> { ["SERVICE_TOKEN"] = "ordinary" },
+            SecretEnvironmentNames = ["service_token"]
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            await Should.ThrowAsync<ValidationException>(() =>
+                service.CreateAsync(request, CancellationToken.None));
+        }
+        else
+        {
+            (await service.CreateAsync(request, CancellationToken.None)).Revision.ShouldBe(1);
+        }
     }
 
     [Test]
@@ -364,7 +545,8 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
                     Env = new Dictionary<string, string>
                     {
                         ["RAW_PASSWORD"] = "synthetic-import-raw-canary"
-                    }
+                    },
+                    SecretEnvironmentNames = ["RAW_PASSWORD"]
                 },
                 ["claude-main"] = new()
                 {
@@ -375,7 +557,9 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
                     {
                         ["NORMAL_SETTING"] = "ordinary-value",
                         ["SERVICE_TOKEN"] = "synthetic-import-claude-canary"
-                    }
+                    },
+                    NonSecretEnvironmentNames = ["NORMAL_SETTING"],
+                    SecretEnvironmentNames = ["SERVICE_TOKEN"]
                 }
             }
         };
@@ -455,19 +639,56 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         backfilled.ModelId.ShouldBe("sonnet");
     }
 
+    [Test]
+    public async Task Import_rejects_unclassified_environment_without_exposing_its_value()
+    {
+        const string canary = "synthetic-import-unclassified-canary";
+        var settings = new AgentRegistrySettings
+        {
+            DefaultDefinition = "claude",
+            Definitions =
+            {
+                ["claude"] = new AgentDefinition
+                {
+                    Kind = "ClaudeCode",
+                    Exe = "synthetic-wrapper",
+                    Env = new Dictionary<string, string> { ["NORMAL_SETTING"] = canary }
+                }
+            }
+        };
+
+        var exception = await Should.ThrowAsync<ValidationException>(() =>
+            CreateImporter(settings, new HashingSecretProtector(), new FakeTimeProvider(FixedNow))
+                .ImportAsync(CancellationToken.None));
+
+        var validationText = string.Join(
+            "\n",
+            exception.Errors.SelectMany(error => error.Value));
+        validationText.ShouldContain("NORMAL_SETTING");
+        validationText.ShouldNotContain(canary);
+        exception.Message.ShouldNotContain(canary);
+        (await DbContext.AgentTuiProfiles.CountAsync()).ShouldBe(0);
+    }
+
     private AgentTuiProfileService CreateService(
         IAgentTuiSecretProtector? protector = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ICurrentUser? currentUser = null)
     {
+        currentUser ??= new TestCurrentUser(
+            new Guid("a0000000-0000-0000-0000-000000000001"),
+            "admin",
+            "203.0.113.42");
         var auditService = new AuditService(
             DbContext,
-            Options.Create(new AuditSettings { EnableFullContent = false, EnableIpLogging = false }));
+            Options.Create(new AuditSettings { EnableFullContent = false, EnableIpLogging = true }));
         return new AgentTuiProfileService(
             DbContext,
             protector ?? new HashingSecretProtector(),
             auditService,
             new AgentTuiRunnerCatalog(),
-            timeProvider ?? new FakeTimeProvider(FixedNow));
+            timeProvider ?? new FakeTimeProvider(FixedNow),
+            currentUser);
     }
 
     private AgentTuiProfileImporter CreateImporter(
@@ -538,4 +759,6 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         public string Unprotect(Guid profileId, string environmentName, string protectedValue) =>
             throw new InvalidOperationException("Cached reads must not invoke secret unprotection.");
     }
+
+    private sealed record TestCurrentUser(Guid UserId, string UserName, string IpAddress) : ICurrentUser;
 }

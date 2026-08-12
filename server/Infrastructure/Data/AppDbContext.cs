@@ -576,7 +576,10 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<AgentTuiProfile>(entity =>
         {
-            entity.ToTable("AgentTuiProfiles");
+            entity.ToTable("AgentTuiProfiles", table =>
+                table.HasCheckConstraint(
+                    "CK_AgentTuiProfiles_Kind_Valid",
+                    "\"Kind\" IN (0, 1, 2, 3)"));
             entity.HasKey(p => p.Id);
             entity.Property(p => p.Id).ValueGeneratedNever();
             entity.Property(p => p.DisplayName).IsRequired().HasMaxLength(200);
@@ -602,9 +605,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AgentTuiProfileRevision>(entity =>
         {
             entity.ToTable("AgentTuiProfileRevisions", table =>
+            {
                 table.HasCheckConstraint(
                     "CK_AgentTuiProfileRevisions_RevisionNumber_Positive",
-                    "\"RevisionNumber\" > 0"));
+                    "\"RevisionNumber\" > 0");
+                table.HasCheckConstraint(
+                    "CK_AgentTuiProfileRevisions_AuthenticationMode_Valid",
+                    "\"AuthenticationMode\" IN (0, 1)");
+            });
             entity.HasKey(r => r.Id);
             entity.HasAlternateKey(r => new { r.ProfileId, r.Id })
                 .HasName("AK_AgentTuiProfileRevisions_ProfileId_Id");
@@ -619,7 +627,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.NonSecretEnvironmentJson).IsRequired().HasColumnType("jsonb");
             entity.Property(r => r.SecretEnvironmentNamesJson).IsRequired().HasColumnType("jsonb");
             entity.Property(r => r.ModelArgumentName).HasMaxLength(100);
-            entity.Property(r => r.Guidance).IsRequired();
+            entity.Property(r => r.Guidance).IsRequired().HasMaxLength(4000);
             entity.Property(r => r.CreatedAt).IsRequired();
 
             entity.HasIndex(r => new { r.ProfileId, r.RevisionNumber })

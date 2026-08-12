@@ -138,7 +138,7 @@ public class AgentTuiPersistenceTests
         AssertProperty(revision, nameof(AgentTuiProfileRevision.SecretEnvironmentNamesJson), nullable: false,
             columnType: "jsonb");
         AssertProperty(revision, nameof(AgentTuiProfileRevision.ModelArgumentName), nullable: true, maxLength: 100);
-        AssertProperty(revision, nameof(AgentTuiProfileRevision.Guidance), nullable: false);
+        AssertProperty(revision, nameof(AgentTuiProfileRevision.Guidance), nullable: false, maxLength: 4000);
         AssertProperty(revision, nameof(AgentTuiProfileRevision.CreatedAt), nullable: false);
 
         AssertProperty(secret, nameof(AgentTuiSecret.Id), nullable: false);
@@ -187,6 +187,15 @@ public class AgentTuiPersistenceTests
         designRevision.GetCheckConstraints()
             .Single(check => check.Name == "CK_AgentTuiProfileRevisions_RevisionNumber_Positive")
             .Sql.ShouldContain("RevisionNumber");
+        designRevision.GetCheckConstraints()
+            .Single(check => check.Name == "CK_AgentTuiProfileRevisions_AuthenticationMode_Valid")
+            .Sql.ShouldContain("AuthenticationMode");
+        var designProfile = db.GetService<IDesignTimeModel>().Model
+            .FindEntityType(typeof(AgentTuiProfile));
+        designProfile.ShouldNotBeNull();
+        designProfile.GetCheckConstraints()
+            .Single(check => check.Name == "CK_AgentTuiProfiles_Kind_Valid")
+            .Sql.ShouldContain("Kind");
     }
 
     [Test]
@@ -262,12 +271,50 @@ public class AgentTuiPersistenceTests
     }
 
     [Test]
+    public async Task PostgreSql_rejects_undefined_profile_kind()
+    {
+        await using var db = NewDatabaseContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var profile = NewProfile("Kind constraint", DateTime.UtcNow);
+        profile.Kind = (AgentKind)999;
+        db.AgentTuiProfiles.Add(profile);
+
+        var exception = await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        var postgresException = exception.InnerException as PostgresException;
+        postgresException.ShouldNotBeNull();
+        postgresException.SqlState.ShouldBe(PostgresErrorCodes.CheckViolation);
+        postgresException.ConstraintName.ShouldBe("CK_AgentTuiProfiles_Kind_Valid");
+    }
+
+    [Test]
+    public async Task PostgreSql_rejects_undefined_profile_authentication_mode()
+    {
+        await using var db = NewDatabaseContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var now = DateTime.UtcNow;
+        var profile = NewProfile("Authentication constraint", now);
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+        var revision = NewRevision(profile.Id, now);
+        revision.AuthenticationMode = (AgentTuiAuthenticationMode)999;
+        db.AgentTuiProfileRevisions.Add(revision);
+
+        var exception = await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        var postgresException = exception.InnerException as PostgresException;
+        postgresException.ShouldNotBeNull();
+        postgresException.SqlState.ShouldBe(PostgresErrorCodes.CheckViolation);
+        postgresException.ConstraintName.ShouldBe("CK_AgentTuiProfileRevisions_AuthenticationMode_Valid");
+    }
+
+    [Test]
     public async Task Migration_applies_five_tables_four_columns_and_no_seed_operations()
     {
         await using var db = NewDatabaseContext();
 
         var applied = await db.Database.GetAppliedMigrationsAsync();
         applied.ShouldContain(migration => migration.EndsWith("_AddAgentTuiProfiles", StringComparison.Ordinal));
+        applied.ShouldContain(migration =>
+            migration.EndsWith("_EnforceAgentTuiProfileEnums", StringComparison.Ordinal));
 
         var tables = await db.Database.SqlQueryRaw<string>(
                 """
@@ -311,6 +358,14 @@ public class AgentTuiPersistenceTests
         migration.DownOperations.OfType<DropTableOperation>().Count().ShouldBe(5);
         migration.DownOperations.OfType<DropColumnOperation>().Count().ShouldBe(4);
         migration.DownOperations.ShouldNotContain(operation => operation is DeleteDataOperation);
+
+        var enumMigrationType = migrationsAssembly.Migrations
+            .Single(pair => pair.Key.EndsWith("_EnforceAgentTuiProfileEnums", StringComparison.Ordinal))
+            .Value;
+        var enumMigration = migrationsAssembly.CreateMigration(enumMigrationType, db.Database.ProviderName!);
+        enumMigration.UpOperations.OfType<AddCheckConstraintOperation>().Count().ShouldBe(2);
+        enumMigration.UpOperations.OfType<AlterColumnOperation>().Count().ShouldBe(1);
+        enumMigration.DownOperations.OfType<DropCheckConstraintOperation>().Count().ShouldBe(2);
     }
 
     [Test]

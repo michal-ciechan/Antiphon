@@ -3,36 +3,44 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTuiProfileService
 {
     private const string SecretProtectionVersion = "v1";
+    private const int MaximumArgumentLength = 2000;
+    private const int MaximumEnvironmentValueLength = 4000;
+    private const int MaximumGuidanceLength = 4000;
 
     private readonly AppDbContext _db;
     private readonly IAgentTuiSecretProtector _secretProtector;
     private readonly AuditService _auditService;
     private readonly AgentTuiRunnerCatalog _runnerCatalog;
     private readonly TimeProvider _timeProvider;
+    private readonly ICurrentUser _currentUser;
 
     public AgentTuiProfileService(
         AppDbContext db,
         IAgentTuiSecretProtector secretProtector,
         AuditService auditService,
         AgentTuiRunnerCatalog runnerCatalog,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ICurrentUser currentUser)
     {
         _db = db;
         _secretProtector = secretProtector;
         _auditService = auditService;
         _runnerCatalog = runnerCatalog;
         _timeProvider = timeProvider;
+        _currentUser = currentUser;
     }
 
     public async Task<IReadOnlyList<AgentTuiProfileDto>> ListAsync(CancellationToken cancellationToken)
@@ -117,6 +125,11 @@ public sealed class AgentTuiProfileService
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The agent TUI profile could not be created because its state changed.", exception);
         }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The agent TUI profile could not be created because its state changed.", exception);
+        }
         catch
         {
             await RollbackAsync(transaction, cancellationToken);
@@ -138,10 +151,12 @@ public sealed class AgentTuiProfileService
             var profile = await _db.AgentTuiProfiles
                 .Include(candidate => candidate.ActiveRevision)
                 .Include(candidate => candidate.Models)
+                .Include(candidate => candidate.Secrets)
                 .SingleOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken)
                 ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
             var activeRevision = RequireActiveRevision(profile);
             EnsureExpectedRevision(activeRevision, request.ExpectedRevision!.Value);
+            EnsureConfiguredSecretsRetained(profile.Secrets, request);
 
             if (await _db.AgentTuiProfiles.AnyAsync(
                     candidate => candidate.Id != profileId && candidate.DisplayName == request.DisplayName,
@@ -179,6 +194,11 @@ public sealed class AgentTuiProfileService
             return await GetAsync(profile.Id, cancellationToken);
         }
         catch (DbUpdateException exception)
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The profile revision conflicts with another update.", exception);
+        }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The profile revision conflicts with another update.", exception);
@@ -260,6 +280,11 @@ public sealed class AgentTuiProfileService
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The profile could not be duplicated because its state changed.", exception);
         }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The profile could not be duplicated because its state changed.", exception);
+        }
         catch
         {
             await RollbackAsync(transaction, cancellationToken);
@@ -302,6 +327,11 @@ public sealed class AgentTuiProfileService
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The profile is still in use and cannot be deleted.", exception);
         }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The profile is still in use and cannot be deleted.", exception);
+        }
         catch
         {
             await RollbackAsync(transaction, cancellationToken);
@@ -319,7 +349,6 @@ public sealed class AgentTuiProfileService
         if (string.IsNullOrEmpty(request.Value))
             throw new ValidationException(nameof(request.Value), "A non-empty secret value is required.");
 
-        var protectedValue = _secretProtector.Protect(profileId, environmentName, request.Value);
         var now = UtcNow();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
 
@@ -327,15 +356,19 @@ public sealed class AgentTuiProfileService
         {
             var profile = await _db.AgentTuiProfiles
                 .Include(candidate => candidate.ActiveRevision)
+                .Include(candidate => candidate.Secrets)
                 .SingleOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken)
                 ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
             var revision = RequireActiveRevision(profile);
             EnsureExpectedRevision(revision, request.ExpectedRevision);
-            EnsureDeclaredSecret(revision, environmentName);
+            var declaredName = RequireDeclaredManagedSecret(revision, environmentName);
 
-            var secret = await _db.AgentTuiSecrets.SingleOrDefaultAsync(
-                candidate => candidate.ProfileId == profileId && candidate.Name == environmentName,
-                cancellationToken);
+            var matchingSecrets = profile.Secrets
+                .Where(secret => EnvironmentNameComparer.Equals(secret.Name, declaredName))
+                .ToArray();
+            if (matchingSecrets.Length > 1)
+                throw new ConflictException("The profile contains ambiguous host-equivalent managed secrets.");
+            var secret = matchingSecrets.SingleOrDefault();
             var operation = secret is null ? "set" : "replace";
             if (secret is null)
             {
@@ -343,33 +376,37 @@ public sealed class AgentTuiProfileService
                 {
                     Id = Guid.NewGuid(),
                     ProfileId = profileId,
-                    Name = environmentName,
+                    Name = declaredName,
                     CreatedAt = now
                 };
                 _db.AgentTuiSecrets.Add(secret);
             }
 
-            secret.Ciphertext = protectedValue;
+            secret.Ciphertext = _secretProtector.Protect(profileId, declaredName, request.Value);
             secret.ProtectionVersion = SecretProtectionVersion;
             secret.UpdatedAt = now;
             profile.UpdatedAt = now;
 
             await RecordSecretAuditAsync(
                 profileId,
-                environmentName,
+                declaredName,
                 operation,
                 request.CorrelationId,
-                request.ActorId,
                 now,
                 cancellationToken);
             await CommitAsync(transaction, cancellationToken);
             return new AgentTuiSecretMutationDto(
-                environmentName,
+                declaredName,
                 true,
                 now,
                 revision.RevisionNumber);
         }
         catch (DbUpdateException exception)
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The secret could not be saved because the profile state changed.", exception);
+        }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The secret could not be saved because the profile state changed.", exception);
@@ -395,35 +432,47 @@ public sealed class AgentTuiProfileService
         {
             var profile = await _db.AgentTuiProfiles
                 .Include(candidate => candidate.ActiveRevision)
+                .Include(candidate => candidate.Secrets)
                 .SingleOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken)
                 ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
             var revision = RequireActiveRevision(profile);
             EnsureExpectedRevision(revision, request.ExpectedRevision);
-            EnsureDeclaredSecret(revision, environmentName);
 
-            var secret = await _db.AgentTuiSecrets.SingleOrDefaultAsync(
-                candidate => candidate.ProfileId == profileId && candidate.Name == environmentName,
-                cancellationToken);
+            var matchingSecrets = profile.Secrets
+                .Where(secret => EnvironmentNameComparer.Equals(secret.Name, environmentName))
+                .ToArray();
+            if (matchingSecrets.Length > 1)
+                throw new ConflictException("The profile contains ambiguous host-equivalent managed secrets.");
+            var secret = matchingSecrets.SingleOrDefault();
+            var declaredName = FindDeclaredSecret(revision, environmentName);
+            var canonicalName = secret?.Name ?? declaredName
+                ?? throw new ValidationException(
+                    nameof(environmentName),
+                    "The profile does not declare or store this managed secret.");
             if (secret is not null)
                 _db.AgentTuiSecrets.Remove(secret);
             profile.UpdatedAt = now;
 
             await RecordSecretAuditAsync(
                 profileId,
-                environmentName,
+                canonicalName,
                 "clear",
                 request.CorrelationId,
-                request.ActorId,
                 now,
                 cancellationToken);
             await CommitAsync(transaction, cancellationToken);
             return new AgentTuiSecretMutationDto(
-                environmentName,
+                canonicalName,
                 false,
                 now,
                 revision.RevisionNumber);
         }
         catch (DbUpdateException exception)
+        {
+            await RollbackAsync(transaction, cancellationToken);
+            throw new ConflictException("The secret could not be cleared because the profile state changed.", exception);
+        }
+        catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
             throw new ConflictException("The secret could not be cleared because the profile state changed.", exception);
@@ -448,10 +497,10 @@ public sealed class AgentTuiProfileService
         var arguments = DeserializeArray(revision.ArgumentsJson);
         var configuredSecrets = profile.Secrets.ToDictionary(
             secret => secret.Name,
-            StringComparer.Ordinal);
+            EnvironmentNameComparer);
         var secretNames = DeserializeArray(revision.SecretEnvironmentNamesJson)
             .Concat(configuredSecrets.Keys)
-            .Distinct(StringComparer.Ordinal)
+            .Distinct(EnvironmentNameComparer)
             .OrderBy(name => name, StringComparer.Ordinal)
             .Select(name => configuredSecrets.TryGetValue(name, out var secret)
                 ? new AgentTuiSecretMetadataDto(name, true, secret.UpdatedAt)
@@ -520,7 +569,6 @@ public sealed class AgentTuiProfileService
         string environmentName,
         string operation,
         string correlationId,
-        Guid? actorId,
         DateTime occurredAt,
         CancellationToken cancellationToken)
     {
@@ -533,8 +581,8 @@ public sealed class AgentTuiProfileService
             stageId: null,
             stageExecutionId: null,
             summary,
-            clientIp: null,
-            userId: actorId,
+            clientIp: _currentUser.IpAddress,
+            userId: _currentUser.UserId,
             gitTagName: null,
             fullContentJson: null,
             cancellationToken);
@@ -545,45 +593,45 @@ public sealed class AgentTuiProfileService
         int revisionNumber,
         AgentTuiProfileWriteRequest request,
         DateTime now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ProfileId = profileId,
-        RevisionNumber = revisionNumber,
-        Executable = request.Executable.Trim(),
-        ArgumentsJson = JsonSerializer.Serialize(request.Arguments),
-        DiscoveryArgumentsJson = JsonSerializer.Serialize(request.DiscoveryArguments),
-        VersionArgumentsJson = JsonSerializer.Serialize(request.VersionArguments),
-        WorkingDirectory = NullIfWhiteSpace(request.WorkingDirectory),
-        AuthenticationMode = request.AuthenticationMode,
-        NonSecretEnvironmentJson = JsonSerializer.Serialize(request.NonSecretEnvironment),
-        SecretEnvironmentNamesJson = JsonSerializer.Serialize(
-            request.SecretEnvironmentNames.Distinct(StringComparer.Ordinal).ToArray()),
-        ModelArgumentName = NullIfWhiteSpace(request.ModelArgumentName),
-        Guidance = request.Guidance ?? string.Empty,
-        CreatedAt = now
-    };
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profileId,
+            RevisionNumber = revisionNumber,
+            Executable = request.Executable.Trim(),
+            ArgumentsJson = JsonSerializer.Serialize(request.Arguments),
+            DiscoveryArgumentsJson = JsonSerializer.Serialize(request.DiscoveryArguments),
+            VersionArgumentsJson = JsonSerializer.Serialize(request.VersionArguments),
+            WorkingDirectory = NullIfWhiteSpace(request.WorkingDirectory),
+            AuthenticationMode = request.AuthenticationMode,
+            NonSecretEnvironmentJson = JsonSerializer.Serialize(request.NonSecretEnvironment),
+            SecretEnvironmentNamesJson = JsonSerializer.Serialize(
+            request.SecretEnvironmentNames.Distinct(EnvironmentNameComparer).ToArray()),
+            ModelArgumentName = NullIfWhiteSpace(request.ModelArgumentName),
+            Guidance = request.Guidance ?? string.Empty,
+            CreatedAt = now
+        };
 
     private static AgentTuiProfileRevision CopyRevision(
         AgentTuiProfileRevision source,
         Guid profileId,
         int revisionNumber,
         DateTime now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ProfileId = profileId,
-        RevisionNumber = revisionNumber,
-        Executable = source.Executable,
-        ArgumentsJson = source.ArgumentsJson,
-        DiscoveryArgumentsJson = source.DiscoveryArgumentsJson,
-        VersionArgumentsJson = source.VersionArgumentsJson,
-        WorkingDirectory = source.WorkingDirectory,
-        AuthenticationMode = source.AuthenticationMode,
-        NonSecretEnvironmentJson = source.NonSecretEnvironmentJson,
-        SecretEnvironmentNamesJson = source.SecretEnvironmentNamesJson,
-        ModelArgumentName = source.ModelArgumentName,
-        Guidance = source.Guidance,
-        CreatedAt = now
-    };
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profileId,
+            RevisionNumber = revisionNumber,
+            Executable = source.Executable,
+            ArgumentsJson = source.ArgumentsJson,
+            DiscoveryArgumentsJson = source.DiscoveryArgumentsJson,
+            VersionArgumentsJson = source.VersionArgumentsJson,
+            WorkingDirectory = source.WorkingDirectory,
+            AuthenticationMode = source.AuthenticationMode,
+            NonSecretEnvironmentJson = source.NonSecretEnvironmentJson,
+            SecretEnvironmentNamesJson = source.SecretEnvironmentNamesJson,
+            ModelArgumentName = source.ModelArgumentName,
+            Guidance = source.Guidance,
+            CreatedAt = now
+        };
 
     private void AddOperatorModels(
         AgentTuiProfile profile,
@@ -630,28 +678,82 @@ public sealed class AgentTuiProfileService
         bool requireExpectedRevision)
     {
         ValidateDisplayName(request.DisplayName);
+        if (!Enum.IsDefined(request.Kind))
+            throw new ValidationException(nameof(request.Kind), "The runner kind is invalid.");
+        if (!Enum.IsDefined(request.AuthenticationMode))
+            throw new ValidationException(nameof(request.AuthenticationMode), "The authentication mode is invalid.");
         if (string.IsNullOrWhiteSpace(request.Executable))
             throw new ValidationException(nameof(request.Executable), "An executable is required.");
         if (request.Executable.Length > 2000)
             throw new ValidationException(nameof(request.Executable), "The executable is too long.");
+        if (request.WorkingDirectory?.Length > 1000)
+            throw new ValidationException(nameof(request.WorkingDirectory), "The working directory is too long.");
+        if (request.ModelArgumentName?.Length > 100)
+            throw new ValidationException(nameof(request.ModelArgumentName), "The model argument name is too long.");
+        if (request.Guidance is null || request.Guidance.Length > MaximumGuidanceLength)
+            throw new ValidationException(nameof(request.Guidance), "The profile guidance is too long.");
         if (requireExpectedRevision && request.ExpectedRevision is null)
             throw new ValidationException(nameof(request.ExpectedRevision), "Expected revision is required.");
         if (request.ExpectedRevision is <= 0)
             throw new ValidationException(nameof(request.ExpectedRevision), "Expected revision must be positive.");
 
+        if (request.Arguments is null
+            || request.DiscoveryArguments is null
+            || request.VersionArguments is null)
+        {
+            throw new ValidationException(nameof(request.Arguments), "Argument collections are required.");
+        }
+        foreach (var argument in request.Arguments
+                     .Concat(request.DiscoveryArguments)
+                     .Concat(request.VersionArguments))
+        {
+            if (argument is null || argument.Length > MaximumArgumentLength)
+                throw new ValidationException(nameof(request.Arguments), "Every argument must be bounded.");
+        }
+
+        if (request.NonSecretEnvironment is null || request.SecretEnvironmentNames is null)
+            throw new ValidationException(nameof(request.NonSecretEnvironment), "Environment collections are required.");
         foreach (var name in request.NonSecretEnvironment.Keys.Concat(request.SecretEnvironmentNames))
             ValidateEnvironmentName(name);
-        if (request.SecretEnvironmentNames.Count != request.SecretEnvironmentNames.Distinct(StringComparer.Ordinal).Count())
+        if (request.SecretEnvironmentNames.Count
+            != request.SecretEnvironmentNames.Distinct(EnvironmentNameComparer).Count())
             throw new ValidationException(nameof(request.SecretEnvironmentNames), "Secret environment names must be unique.");
-        if (request.NonSecretEnvironment.Keys.Intersect(request.SecretEnvironmentNames, StringComparer.Ordinal).Any())
+        if (request.NonSecretEnvironment.Keys.Count()
+            != request.NonSecretEnvironment.Keys.Distinct(EnvironmentNameComparer).Count())
+        {
+            throw new ValidationException(
+                nameof(request.NonSecretEnvironment),
+                "Ordinary environment names must be unique for the host platform.");
+        }
+        if (request.NonSecretEnvironment.Keys.Intersect(
+                request.SecretEnvironmentNames,
+                EnvironmentNameComparer).Any())
             throw new ValidationException(nameof(request.NonSecretEnvironment), "An environment name cannot be both secret and ordinary.");
+        if (request.NonSecretEnvironment.Values.Any(value =>
+                value is null || value.Length > MaximumEnvironmentValueLength))
+        {
+            throw new ValidationException(
+                nameof(request.NonSecretEnvironment),
+                "Every ordinary environment value must be bounded.");
+        }
+        if (request.AuthenticationMode == AgentTuiAuthenticationMode.WrapperManaged
+            && request.SecretEnvironmentNames.Count > 0)
+        {
+            throw new ValidationException(
+                nameof(request.SecretEnvironmentNames),
+                "Wrapper-managed profiles cannot declare managed secrets.");
+        }
 
+        if (request.Models is null)
+            throw new ValidationException(nameof(request.Models), "The model collection is required.");
         foreach (var model in request.Models)
         {
             if (string.IsNullOrWhiteSpace(model.Identifier) || model.Identifier.Length > 500)
                 throw new ValidationException(nameof(request.Models), "Every model requires a bounded identifier.");
             if (string.IsNullOrWhiteSpace(model.DisplayName) || model.DisplayName.Length > 200)
                 throw new ValidationException(nameof(request.Models), "Every model requires a bounded display name.");
+            if (model.Family?.Length > 200)
+                throw new ValidationException(nameof(request.Models), "Every model family must be bounded.");
         }
     }
 
@@ -680,22 +782,54 @@ public sealed class AgentTuiProfileService
 
     private static void ValidateEnvironmentName(string environmentName)
     {
-        if (string.IsNullOrWhiteSpace(environmentName)
-            || environmentName.Length > 200
-            || !(char.IsAsciiLetter(environmentName[0]) || environmentName[0] == '_')
-            || environmentName.Skip(1).Any(character =>
-                !(char.IsAsciiLetterOrDigit(character) || character == '_')))
+        if (!AgentEnvironmentVariableNames.IsValid(environmentName))
         {
             throw new ValidationException(nameof(environmentName), "The environment-variable name is invalid.");
         }
     }
 
-    private static void EnsureDeclaredSecret(
+    private static string RequireDeclaredManagedSecret(
         AgentTuiProfileRevision revision,
         string environmentName)
     {
-        if (!DeserializeArray(revision.SecretEnvironmentNamesJson).Contains(environmentName, StringComparer.Ordinal))
-            throw new ValidationException(nameof(environmentName), "The profile does not declare this managed secret.");
+        if (revision.AuthenticationMode != AgentTuiAuthenticationMode.ManagedEnvironment)
+        {
+            throw new ValidationException(
+                nameof(environmentName),
+                "Wrapper-managed profiles cannot store managed secrets.");
+        }
+
+        return FindDeclaredSecret(revision, environmentName)
+            ?? throw new ValidationException(
+                nameof(environmentName),
+                "The profile does not declare this managed secret.");
+    }
+
+    private static string? FindDeclaredSecret(
+        AgentTuiProfileRevision revision,
+        string environmentName)
+    {
+        var matches = DeserializeArray(revision.SecretEnvironmentNamesJson)
+            .Where(name => EnvironmentNameComparer.Equals(name, environmentName))
+            .ToArray();
+        if (matches.Length > 1)
+            throw new ConflictException("The profile contains ambiguous host-equivalent secret declarations.");
+        return matches.SingleOrDefault();
+    }
+
+    private static void EnsureConfiguredSecretsRetained(
+        IEnumerable<AgentTuiSecret> configuredSecrets,
+        AgentTuiProfileWriteRequest request)
+    {
+        var removed = configuredSecrets
+            .Where(secret => !request.SecretEnvironmentNames.Contains(secret.Name, EnvironmentNameComparer))
+            .Select(secret => secret.Name)
+            .ToArray();
+        if (removed.Length > 0)
+        {
+            throw new ConflictException(
+                $"Configured managed secret '{removed[0]}' must be cleared before it is removed or wrapper-managed authentication is selected.");
+        }
     }
 
     private static AgentTuiProfileRevision RequireActiveRevision(AgentTuiProfile profile)
@@ -735,9 +869,38 @@ public sealed class AgentTuiProfileService
         IDbContextTransaction? transaction,
         CancellationToken cancellationToken)
     {
-        if (transaction is not null)
+        if (transaction is null)
+            return;
+        try
+        {
             await transaction.RollbackAsync(cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            // PostgreSQL completes an aborted serializable transaction before surfacing 40001/40P01.
+            // Preserve that authoritative failure instead of masking it with a second rollback error.
+        }
     }
+
+    private static bool IsTransactionConcurrencyFailure(Exception exception)
+    {
+        var current = exception;
+        while (current is not null)
+        {
+            if (current is PostgresException postgres)
+            {
+                return postgres.SqlState is PostgresErrorCodes.SerializationFailure
+                    or PostgresErrorCodes.DeadlockDetected;
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
+    }
+
+    private static StringComparer EnvironmentNameComparer =>
+        AgentEnvironmentVariableNames.ForCurrentPlatform();
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 

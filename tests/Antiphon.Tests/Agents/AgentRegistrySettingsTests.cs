@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Shouldly;
 using TUnit.Core;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 
 namespace Antiphon.Tests.Agents;
@@ -19,6 +20,9 @@ public class AgentRegistrySettingsTests
             ["Agents:Definitions:claude:Exe"] = "cl.bat",
             ["Agents:Definitions:claude:ArgsTemplate:0"] = "--print",
             ["Agents:Definitions:claude:Env:FOO"] = "bar",
+            ["Agents:Definitions:claude:Env:SERVICE_TOKEN"] = "synthetic-secret",
+            ["Agents:Definitions:claude:NonSecretEnvironmentNames:0"] = "FOO",
+            ["Agents:Definitions:claude:SecretEnvironmentNames:0"] = "SERVICE_TOKEN",
             ["Agents:Definitions:raw:Kind"] = "Raw",
             ["Agents:Definitions:raw:Exe"] = "pwsh.exe",
             ["Agents:Definitions:codex:Kind"] = "Codex",
@@ -39,6 +43,8 @@ public class AgentRegistrySettingsTests
         settings.Definitions["claude"].Exe.ShouldBe("cl.bat");
         settings.Definitions["claude"].ArgsTemplate.ShouldBe(new[] { "--print" });
         settings.Definitions["claude"].Env["FOO"].ShouldBe("bar");
+        settings.Definitions["claude"].NonSecretEnvironmentNames.ShouldBe(["FOO"]);
+        settings.Definitions["claude"].SecretEnvironmentNames.ShouldBe(["SERVICE_TOKEN"]);
         settings.Definitions["raw"].Kind.ShouldBe("Raw");
         settings.Definitions["codex"].Kind.ShouldBe("Codex");
         settings.Definitions["codex"].Exe.ShouldBe("pwsh.exe");
@@ -64,6 +70,138 @@ public class AgentRegistrySettingsTests
         var result = new AgentRegistrySettingsValidator().Validate(name: null, settings);
 
         result.Succeeded.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Validator_accepts_explicit_and_heuristic_environment_classification()
+    {
+        var settings = ValidSettings(new AgentDefinition
+        {
+            Kind = "ClaudeCode",
+            Exe = "cl.bat",
+            Env = new Dictionary<string, string>
+            {
+                ["NORMAL_SETTING"] = "ordinary",
+                ["MISLEADING_TOKEN"] = "explicitly-ordinary",
+                ["SERVICE_TOKEN"] = "heuristic-secret",
+                ["NON_OBVIOUS_CREDENTIAL"] = "explicit-secret"
+            },
+            NonSecretEnvironmentNames = ["NORMAL_SETTING", "MISLEADING_TOKEN"],
+            SecretEnvironmentNames = ["NON_OBVIOUS_CREDENTIAL"]
+        });
+
+        var result = new AgentRegistrySettingsValidator().Validate(name: null, settings);
+
+        result.Succeeded.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Validator_rejects_unclassified_environment_without_exposing_value()
+    {
+        const string canary = "synthetic-unclassified-value-canary";
+        var settings = ValidSettings(new AgentDefinition
+        {
+            Kind = "ClaudeCode",
+            Exe = "cl.bat",
+            Env = new Dictionary<string, string> { ["NORMAL_SETTING"] = canary }
+        });
+
+        var result = new AgentRegistrySettingsValidator().Validate(name: null, settings);
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("NORMAL_SETTING");
+        result.FailureMessage.ShouldNotContain(canary);
+    }
+
+    [Test]
+    public void Validator_rejects_missing_overlap_and_host_equivalent_classifications()
+    {
+        var definition = new AgentDefinition
+        {
+            Kind = "ClaudeCode",
+            Exe = "cl.bat",
+            Env = new Dictionary<string, string>
+            {
+                ["NORMAL_SETTING"] = "ordinary",
+                ["SERVICE_TOKEN"] = "secret"
+            },
+            NonSecretEnvironmentNames = ["NORMAL_SETTING", "SERVICE_TOKEN", "ABSENT_NAME"],
+            SecretEnvironmentNames = ["SERVICE_TOKEN"]
+        };
+        if (OperatingSystem.IsWindows())
+            definition.NonSecretEnvironmentNames.Add("normal_setting");
+        else
+            definition.NonSecretEnvironmentNames.Add("NORMAL_SETTING");
+
+        var result = new AgentRegistrySettingsValidator().Validate(
+            name: null,
+            ValidSettings(definition));
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("ABSENT_NAME");
+        result.FailureMessage.ShouldContain("both secret and ordinary");
+        result.FailureMessage.ShouldContain("duplicate");
+    }
+
+    [Test]
+    public void Validator_rejects_host_equivalent_environment_dictionary_keys()
+    {
+        var definition = new AgentDefinition
+        {
+            Kind = "ClaudeCode",
+            Exe = "cl.bat",
+            Env = new Dictionary<string, string>
+            {
+                ["DUPLICATE_NAME"] = "first",
+                [OperatingSystem.IsWindows() ? "duplicate_name" : "DUPLICATE_NAME "] = "second"
+            },
+            NonSecretEnvironmentNames = OperatingSystem.IsWindows()
+                ? ["DUPLICATE_NAME"]
+                : ["DUPLICATE_NAME", "DUPLICATE_NAME "]
+        };
+
+        var result = new AgentRegistrySettingsValidator().Validate(
+            name: null,
+            ValidSettings(definition));
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("environment name");
+    }
+
+    [Test]
+    public void Validator_rejects_unbounded_import_fields()
+    {
+        var result = new AgentRegistrySettingsValidator().Validate(
+            name: null,
+            ValidSettings(new AgentDefinition
+            {
+                Kind = "ClaudeCode",
+                Exe = new string('x', 2001),
+                ArgsTemplate = [new string('a', 2001)],
+                Env = new Dictionary<string, string>
+                {
+                    ["NORMAL_SETTING"] = new string('v', 4001)
+                },
+                NonSecretEnvironmentNames = ["NORMAL_SETTING"]
+            }));
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("Exe");
+        result.FailureMessage.ShouldContain("ArgsTemplate");
+        result.FailureMessage.ShouldContain("NORMAL_SETTING");
+    }
+
+    [Test]
+    [Arguments(AgentTuiPlatform.Windows, true)]
+    [Arguments(AgentTuiPlatform.Linux, false)]
+    [Arguments(AgentTuiPlatform.MacOS, false)]
+    public void Environment_name_comparer_matches_host_platform(
+        AgentTuiPlatform platform,
+        bool expectedEqual)
+    {
+        AgentEnvironmentVariableNames.ForPlatform(platform)
+            .Equals("SERVICE_TOKEN", "service_token")
+            .ShouldBe(expectedEqual);
     }
 
     [Test]
@@ -137,4 +275,10 @@ public class AgentRegistrySettingsTests
         result.FailureMessage.ShouldContain("CodexReadyQuietPeriodMs must be positive");
         result.FailureMessage.ShouldContain("CodexDoneQuietPeriodMs must be positive");
     }
+
+    private static AgentRegistrySettings ValidSettings(AgentDefinition definition) => new()
+    {
+        DefaultDefinition = "claude",
+        Definitions = { ["claude"] = definition }
+    };
 }

@@ -38,11 +38,27 @@ public sealed class AgentRegistrySettingsValidator : IValidateOptions<AgentRegis
             {
                 failures.Add($"Agents:Definitions:{defName}:Exe must not be empty.");
             }
+            else if (def.Exe.Length > 2000)
+            {
+                failures.Add($"Agents:Definitions:{defName}:Exe must not exceed 2000 characters.");
+            }
 
-            if (!Enum.TryParse<AgentKind>(def.Kind, ignoreCase: true, out _))
+            if (def.ArgsTemplate is null
+                || def.ArgsTemplate.Any(argument => argument is null || argument.Length > 2000))
+            {
+                failures.Add(
+                    $"Agents:Definitions:{defName}:ArgsTemplate entries must not exceed 2000 characters.");
+            }
+
+            if (!Enum.TryParse<AgentKind>(def.Kind, ignoreCase: true, out var kind)
+                || !Enum.IsDefined(kind))
             {
                 failures.Add($"Agents:Definitions:{defName}:Kind '{def.Kind}' is not a known AgentKind. Valid values: {string.Join(", ", Enum.GetNames<AgentKind>())}.");
             }
+
+            failures.AddRange(AgentEnvironmentVariableNames.Classify(
+                def,
+                $"Agents:Definitions:{defName}").Failures);
         }
 
         if (!string.IsNullOrWhiteSpace(options.DefaultDefinition)

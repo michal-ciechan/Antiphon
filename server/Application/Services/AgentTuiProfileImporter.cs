@@ -10,12 +10,14 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTuiProfileImporter
 {
     private const string SecretProtectionVersion = "v1";
+    private const int MaximumImportAttempts = 3;
     private readonly AppDbContext _db;
     private readonly IOptions<AgentRegistrySettings> _settings;
     private readonly IAgentTuiSecretProtector _secretProtector;
@@ -38,6 +40,35 @@ public sealed class AgentTuiProfileImporter
 
     public async Task<AgentTuiImportResultDto> ImportAsync(CancellationToken cancellationToken)
     {
+        for (var attempt = 1; attempt <= MaximumImportAttempts; attempt++)
+        {
+            try
+            {
+                return await ImportAttemptAsync(cancellationToken);
+            }
+            catch (Exception exception) when (IsImportConcurrencyFailure(exception))
+            {
+                _db.ChangeTracker.Clear();
+                if (attempt == MaximumImportAttempts)
+                {
+                    throw new ConflictException(
+                        "Agent TUI profile import conflicted with another database update.",
+                        exception);
+                }
+            }
+            catch (DbUpdateException exception)
+            {
+                throw new ConflictException(
+                    "Agent TUI profile import conflicted with another database update.",
+                    exception);
+            }
+        }
+
+        throw new InvalidOperationException("Agent TUI profile import retry loop exited unexpectedly.");
+    }
+
+    private async Task<AgentTuiImportResultDto> ImportAttemptAsync(CancellationToken cancellationToken)
+    {
         var profilesExist = await _db.AgentTuiProfiles.AnyAsync(cancellationToken);
         var plans = profilesExist ? [] : BuildImportPlans();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -56,11 +87,6 @@ public sealed class AgentTuiProfileImporter
 
             await CommitAsync(transaction, cancellationToken);
             return new AgentTuiImportResultDto(profilesCreated, agentsAssigned);
-        }
-        catch (DbUpdateException exception)
-        {
-            await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("Agent TUI profile import conflicted with another database update.", exception);
         }
         catch
         {
@@ -86,25 +112,46 @@ public sealed class AgentTuiProfileImporter
 
         return orderedDefinitions.Select((pair, index) =>
         {
-            if (!Enum.TryParse<AgentKind>(pair.Value.Kind, ignoreCase: true, out var kind))
+            if (!Enum.TryParse<AgentKind>(pair.Value.Kind, ignoreCase: true, out var kind)
+                || !Enum.IsDefined(kind))
             {
                 throw new ValidationException(
                     nameof(pair.Value.Kind),
                     $"Agent definition '{pair.Key}' has an unsupported runner kind.");
             }
+            if (string.IsNullOrWhiteSpace(pair.Value.Exe) || pair.Value.Exe.Length > 2000)
+            {
+                throw new ValidationException(
+                    nameof(pair.Value.Exe),
+                    $"Agent definition '{pair.Key}' requires a bounded executable.");
+            }
+            if (pair.Value.ArgsTemplate is null
+                || pair.Value.ArgsTemplate.Any(argument => argument is null || argument.Length > 2000))
+            {
+                throw new ValidationException(
+                    nameof(pair.Value.ArgsTemplate),
+                    $"Agent definition '{pair.Key}' requires bounded arguments.");
+            }
 
             var profileId = Guid.NewGuid();
-            var environment = pair.Value.Env
+            var classification = AgentEnvironmentVariableNames.Classify(
+                pair.Value,
+                $"Agents:Definitions:{pair.Key}");
+            if (classification.Failures.Count > 0)
+            {
+                throw new ValidationException(
+                    nameof(pair.Value.Env),
+                    string.Join(" ", classification.Failures));
+            }
+
+            var secretEnvironment = classification.Secrets
                 .OrderBy(entry => entry.Key, StringComparer.Ordinal)
-                .ToArray();
-            var secretEnvironment = environment
-                .Where(entry => IsSecretEnvironmentName(entry.Key))
                 .Select(entry => new ProtectedImportSecret(
                     entry.Key,
                     _secretProtector.Protect(profileId, entry.Key, entry.Value)))
                 .ToArray();
-            var nonSecretEnvironment = environment
-                .Where(entry => !IsSecretEnvironmentName(entry.Key))
+            var nonSecretEnvironment = classification.Ordinary
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
                 .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
 
             return new ImportPlan(
@@ -214,12 +261,23 @@ public sealed class AgentTuiProfileImporter
         return agents.Count;
     }
 
-    private static bool IsSecretEnvironmentName(string name) =>
-        name.Contains("KEY", StringComparison.OrdinalIgnoreCase)
-        || name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase)
-        || name.Contains("SECRET", StringComparison.OrdinalIgnoreCase)
-        || name.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase)
-        || name.Contains("CREDENTIAL", StringComparison.OrdinalIgnoreCase);
+    private static bool IsImportConcurrencyFailure(Exception exception)
+    {
+        var current = exception;
+        while (current is not null)
+        {
+            if (current is PostgresException postgres)
+            {
+                return postgres.SqlState is PostgresErrorCodes.UniqueViolation
+                    or PostgresErrorCodes.SerializationFailure
+                    or PostgresErrorCodes.DeadlockDetected;
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
+    }
 
     private async Task<IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken)
     {
@@ -240,8 +298,16 @@ public sealed class AgentTuiProfileImporter
         IDbContextTransaction? transaction,
         CancellationToken cancellationToken)
     {
-        if (transaction is not null)
+        if (transaction is null)
+            return;
+        try
+        {
             await transaction.RollbackAsync(cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            // PostgreSQL may already have completed a transaction rejected for concurrency.
+        }
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
