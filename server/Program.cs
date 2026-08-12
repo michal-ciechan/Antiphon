@@ -284,6 +284,9 @@ try
     if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
         builder.Services.AddHostedService<ChannelBridgeService>();
     builder.Services.AddScoped<AuditService>();
+    builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
+    builder.Services.AddScoped<AgentTuiProfileService>();
+    builder.Services.AddScoped<AgentTuiProfileImporter>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
@@ -383,6 +386,15 @@ try
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
+        var profileImport = await scope.ServiceProvider.GetRequiredService<AgentTuiProfileImporter>()
+            .ImportAsync(CancellationToken.None);
+        if (profileImport.ProfilesCreated > 0 || profileImport.AgentsAssigned > 0)
+        {
+            Log.Information(
+                "Imported {ProfileCount} agent TUI profile(s) and assigned {AgentCount} legacy agent(s)",
+                profileImport.ProfilesCreated,
+                profileImport.AgentsAssigned);
+        }
         // Every agent must have a default board (Add-Work and card routing rely on it) — create
         // boards for any agent that predates the rule or lost its link to the old update path.
         var backfilled = await scope.ServiceProvider.GetRequiredService<AgentService>()
