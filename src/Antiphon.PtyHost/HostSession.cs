@@ -133,7 +133,9 @@ public sealed class HostSession : IAsyncDisposable
             CreatedAtUtc = DateTime.UtcNow,
         };
         _manifest.SaveAtomic(_options.ManifestPath);
-        _log.Info($"Launched {launch.Exe} (child pid {childPid})");
+        // Which pseudoconsole this session got is the difference between a 43 KB body arriving whole
+        // and arriving clipped at 1 KB, and it is invisible everywhere else — record it per host.
+        _log.Info($"Launched {launch.Exe} (child pid {childPid}); pty backend: {_runner.Backend}");
 
         _ = ObserveExitAsync();
         return new LaunchedMessage(childPid, childStart);

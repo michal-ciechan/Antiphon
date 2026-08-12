@@ -128,6 +128,45 @@ public partial class ShadowCopyStoreTests
         await Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-0037. Once a deps.json is present the copy is filtered down to the host's dependency
+    /// closure, and the shipped pseudoconsole (conpty.dll + OpenConsole.exe) is a Content item that
+    /// deps.json never mentions. If it is dropped here, every detached host silently falls back to
+    /// the inbox conhost — which strips bracketed-paste markers and re-arms the 1 KB clipping the
+    /// inline ceilings exist for. Nothing downstream can tell the difference, so it has to be caught
+    /// at the copy.
+    /// </summary>
+    [Test]
+    public async Task Shipped_conpty_binaries_survive_the_deps_json_closure_filter()
+    {
+        var (root, source, store) = CreateFixture();
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(source, "Antiphon.PtyHost.deps.json"),
+                """{"targets":{".NETCoreApp,Version=v9.0":{"Antiphon.PtyHost/1.0.0":{"runtime":{"Antiphon.PtyHost.dll":{}}}}}}""");
+            var conptyDir = Path.Combine(source, "conpty", "win-x64");
+            Directory.CreateDirectory(conptyDir);
+            File.WriteAllText(Path.Combine(conptyDir, "conpty.dll"), "conpty-bytes");
+            File.WriteAllText(Path.Combine(conptyDir, "OpenConsole.exe"), "openconsole-bytes");
+            File.WriteAllText(Path.Combine(source, "Unrelated.Package.dll"), "not-in-the-closure");
+
+            var copy = store.EnsureCurrent(source);
+
+            File.Exists(Path.Combine(copy, "conpty", "win-x64", "conpty.dll"))
+                .ShouldBeTrue("the shadow copy must carry conpty.dll, at its relative path");
+            File.Exists(Path.Combine(copy, "conpty", "win-x64", "OpenConsole.exe"))
+                .ShouldBeTrue("and its OpenConsole.exe — conpty.dll falls back to the inbox conhost without it");
+            File.Exists(Path.Combine(copy, "Unrelated.Package.dll"))
+                .ShouldBeFalse("the closure filter must still be doing its job");
+        }
+        finally
+        {
+            Cleanup(root);
+        }
+        await Task.CompletedTask;
+    }
+
     [Test]
     public async Task TestResults_dir_does_not_affect_the_content_hash()
     {

@@ -237,6 +237,13 @@ public class PtyPasteMarkerExperiments
     /// Where the modern backend stops delivering, and whether pacing INSIDE one bracketed paste
     /// gets past it. 5 400 bytes arrives whole; 16 200 arrived as nothing at all, which is a wall,
     /// not the old partial loss — so the envelope needs measuring rather than assuming.
+    ///
+    /// <para>CARD-0037 step 2 runs this through the <b>shipped</b> path: the pseudoconsole is the
+    /// binary in <see cref="ConPtyRedistributable"/> (<see cref="ConPtyHost.FindRedistConPty"/>
+    /// prefers it), and the <c>production-*</c> rows drive <see cref="PtyAgentRunner"/> with
+    /// <c>backend: "modern"</c> — the same object the session runner and every pty-host use, writing
+    /// through the same <see cref="PtyInputEncoding"/>. A ceiling raised on numbers from a test-only
+    /// host would be a ceiling for a path we do not ship.</para>
     /// </summary>
     [Test]
     public async Task Real_claude_delivery_envelope()
@@ -244,8 +251,18 @@ public class PtyPasteMarkerExperiments
         ClSession.SkipIfNotEligible();
         var redist = ConPtyHost.FindRedistConPty();
         if (redist is null) throw new SkipTestException("no redistributable conpty.dll on this machine");
-
+        Line($"# pseudoconsole: {redist}");
+        Line($"# provenance ok: {ConPtyRedistributable.VerifyShippedHashes(redist)}");
         Line("case\tsentLines\tsentBytes\tchunk\tgapMs\tcaptured\tkept%\tverdict");
+
+        // The production object first: PtyAgentRunner on the modern backend, single write.
+        foreach (var lines in new[] { 600, 1600, 3200 })
+            for (var rep = 0; rep < 2; rep++)
+                await RunAsync("production-single-write", lines, 0, 0, viaRunner: true);
+
+        // Control on the inbox conhost through the same production object, so the table carries its
+        // own before/after rather than pointing at another document for it.
+        await RunAsync("production-inbox-control", 1600, 0, 0, viaRunner: true, inbox: true);
 
         foreach (var lines in new[] { 600, 1600, 3200 })
             for (var rep = 0; rep < 2; rep++)
@@ -258,9 +275,11 @@ public class PtyPasteMarkerExperiments
 
         Flush("E6-envelope");
 
-        async Task RunAsync(string label, int lines, int chunkBytes, int gapMs)
+        async Task RunAsync(string label, int lines, int chunkBytes, int gapMs,
+            bool viaRunner = false, bool inbox = false)
         {
-            var (captured, screen) = await ClaudeTrialAsync(redist, lines, chunkBytes: chunkBytes, gapMs: gapMs);
+            var (captured, screen) = await ClaudeTrialAsync(
+                inbox ? null : redist, lines, chunkBytes: chunkBytes, gapMs: gapMs, viaRunner: viaRunner);
             var pct = captured * 100 / lines;
             var verdict = captured >= lines ? "WHOLE" : captured <= 0 ? "NOTHING" : "LOST";
             Line($"{label}\t{lines}\t{lines * 27}\t{chunkBytes}\t{gapMs}\t{captured}\t{pct}\t{verdict}");
@@ -271,13 +290,22 @@ public class PtyPasteMarkerExperiments
     /// <summary>One trial = one fresh Claude process (a reused session makes the matrix alternate
     /// with the trial index — residue, not physics). Costs no model turns: the body is pasted into
     /// the composer and never submitted, and the composer's own counter is the oracle.</summary>
+    /// <param name="viaRunner">
+    /// Drive the PRODUCTION object (<see cref="PtyAgentRunner"/> on the selected backend) instead of
+    /// the bench's own <see cref="ConPtyHost"/>. Same pseudoconsole either way; this arm additionally
+    /// exercises the spawn, the write path and the encoding that actually ship.
+    /// </param>
     private static async Task<(int Captured, string Screen)> ClaudeTrialAsync(
         string? conptyDll, int lines, bool wrap = true, short cols = 120, short rows = 250,
-        int chunkBytes = 0, int gapMs = 0)
+        int chunkBytes = 0, int gapMs = 0, bool viaRunner = false)
     {
         var (app, args) = ClSession.BuildLaunch(ClSession.ResolveOrThrow(), "--dangerously-skip-permissions");
-        await using var host = ConPtyHost.Start(app, args, AppContext.BaseDirectory,
-            ClSession.HeadedSafeEnv(), cols: cols, rows: rows, conptyDllPath: conptyDll);
+        await using ITrialHost host = viaRunner
+            ? await RunnerTrialHost.StartAsync(
+                app, args, AppContext.BaseDirectory, ClSession.HeadedSafeEnv(), cols, rows,
+                backend: conptyDll is null ? "inbox" : "modern")
+            : ConPtyTrialHost.Start(ConPtyHost.Start(app, args, AppContext.BaseDirectory,
+                ClSession.HeadedSafeEnv(), cols: cols, rows: rows, conptyDllPath: conptyDll));
 
         // Readiness must be POSITIVE evidence, not a quiet period: a slow launch is silent, and a
         // quiet-only gate fires before the TUI has attached to stdin — the body then vanishes into
@@ -322,9 +350,84 @@ public class PtyPasteMarkerExperiments
         await host.WaitForQuietAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60));
 
         var screen = host.ScreenText;
-        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "TestOutput", "card-0030", "screens",
-            $"raw-{Guid.NewGuid():N}.txt"), host.OutputText);
+        // Created here, not left to SaveScreen: that runs after this and the raw dump is the more
+        // valuable artefact — a fresh output dir used to lose the whole trial to a DirectoryNotFound.
+        var rawDir = Path.Combine(AppContext.BaseDirectory, "TestOutput", "card-0030", "screens");
+        Directory.CreateDirectory(rawDir);
+        File.WriteAllText(Path.Combine(rawDir, $"raw-{Guid.NewGuid():N}.txt"), host.OutputText);
         return (CapturedLines(screen), screen);
+    }
+
+    /// <summary>
+    /// The two things a trial can be driven through, behind the handful of members the trial uses.
+    /// The bench's own <see cref="ConPtyHost"/> keeps every knob a variable (window size, pipe size,
+    /// creation flags); <see cref="RunnerTrialHost"/> is the shipped object with none of them.
+    /// </summary>
+    private interface ITrialHost : IAsyncDisposable
+    {
+        string ScreenText { get; }
+
+        string OutputText { get; }
+
+        Task<bool> WaitForScreenAsync(Func<string, bool> predicate, TimeSpan timeout);
+
+        Task<bool> WaitForQuietAsync(TimeSpan quiet, TimeSpan timeout);
+
+        void Write(string s);
+    }
+
+    private sealed class ConPtyTrialHost(ConPtyHost host) : ITrialHost
+    {
+        public static ConPtyTrialHost Start(ConPtyHost host) => new(host);
+
+        public string ScreenText => host.ScreenText;
+
+        public string OutputText => host.OutputText;
+
+        public Task<bool> WaitForScreenAsync(Func<string, bool> predicate, TimeSpan timeout) =>
+            host.WaitForScreenAsync(predicate, timeout);
+
+        public Task<bool> WaitForQuietAsync(TimeSpan quiet, TimeSpan timeout) =>
+            host.WaitForQuietAsync(quiet, timeout);
+
+        public void Write(string s) => host.Write(s);
+
+        public ValueTask DisposeAsync() => host.DisposeAsync();
+    }
+
+    private sealed class RunnerTrialHost(PtyAgentRunner runner) : ITrialHost
+    {
+        public static async Task<RunnerTrialHost> StartAsync(
+            string app, string[] args, string cwd, IDictionary<string, string> env,
+            short cols, short rows, string backend)
+        {
+            var runner = new PtyAgentRunner(backend);
+            await runner.StartAsync(app, args, cwd, env, cols, rows);
+            if (backend == "modern" && runner.Backend!.Backend != PtyBackend.ModernConPty)
+                throw new InvalidOperationException(
+                    "asked for the modern backend and did not get it: " + runner.Backend);
+            return new RunnerTrialHost(runner);
+        }
+
+        public string ScreenText => runner.SnapshotScreen();
+
+        public string OutputText => runner.SnapshotText();
+
+        public Task<bool> WaitForScreenAsync(Func<string, bool> predicate, TimeSpan timeout) =>
+            runner.WaitForScreenAsync(predicate, timeout);
+
+        public Task<bool> WaitForQuietAsync(TimeSpan quiet, TimeSpan timeout) =>
+            runner.WaitForQuietAsync(quiet, timeout);
+
+        // Synchronous by design: the production write is ONE WriteFile of the whole payload, and a
+        // fire-and-forget async write would let the trial race ahead of it.
+        public void Write(string s) => runner.WriteAsync(s).GetAwaiter().GetResult();
+
+        public async ValueTask DisposeAsync()
+        {
+            try { await runner.KillAsync(TimeSpan.FromSeconds(5)); } catch { /* teardown */ }
+            await runner.DisposeAsync();
+        }
     }
 
     /// <summary>What the composer actually holds: its own placeholder count when it collapsed the
