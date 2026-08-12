@@ -96,6 +96,24 @@ try
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
     builder.Services.Configure<DelegationSettings>(builder.Configuration.GetSection("Delegation"));
+
+    // The pty backend switch (CARD-0037), read from the SAME config key the session runner uses and
+    // exported into this process's environment — the server spawns in-proc ptys of its own
+    // (ClaudeAdapter/CodexAdapter/RawPtyAdapter), and PtyDeliveryProfile sizes every typed body
+    // against whatever this resolves to. An env var already set wins, so one machine can be flipped
+    // without editing config. Setting it here does NOT make the runner's ptys modern — that is the
+    // runner's own config, and PtyDeliveryProfile verifies the two agree before using the raised
+    // ceilings.
+    {
+        var configuredBackend = builder.Configuration[Antiphon.Agents.Pty.PtyBackendPolicy.ConfigKey];
+        if (!string.IsNullOrWhiteSpace(configuredBackend)
+            && string.IsNullOrEmpty(
+                Environment.GetEnvironmentVariable(Antiphon.Agents.Pty.PtyBackendPolicy.EnvVar)))
+        {
+            Environment.SetEnvironmentVariable(
+                Antiphon.Agents.Pty.PtyBackendPolicy.EnvVar, configuredBackend);
+        }
+    }
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
@@ -219,6 +237,9 @@ try
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
+    // Which delivery ceilings are in force, from the pseudoconsole actually serving the ptys
+    // (CARD-0037). Must be registered before anything that types into a terminal.
+    builder.Services.AddSingleton<PtyDeliveryProfile>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
@@ -307,6 +328,13 @@ try
     // and runs ValidateOnStart for AgentRegistrySettings. Throws here rather than at first use.
     _ = app.Services.GetRequiredService<AgentRegistry>();
     _ = app.Services.GetRequiredService<IAgentProtocolAdapterFactory>();
+
+    // Settle the delivery ceilings BEFORE anything can type into a terminal (CARD-0037). Resolved
+    // lazily this would leave a window where the first deliveries used this process's own guess at
+    // the backend while the runner's contradicting answer was still in flight — and that guess
+    // being wrong is a 43 KB body typed into a pty that clips at 1 KB. Best-effort: an unreachable
+    // runner is not evidence, so the local decision stands and the profile re-probes on its own.
+    await app.Services.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None);
 
     // Middleware pipeline order: CorrelationId → CurrentUser → ExceptionHandler → routing → endpoints
     app.UseMiddleware<CorrelationIdMiddleware>();

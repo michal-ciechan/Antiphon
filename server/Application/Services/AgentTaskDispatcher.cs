@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -30,6 +31,7 @@ public sealed class AgentTaskDispatcher
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskDispatcher> _logger;
+    private readonly PtyDeliveryProfile? _ptyProfile;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -42,8 +44,10 @@ public sealed class AgentTaskDispatcher
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        ILogger<AgentTaskDispatcher> logger)
+        ILogger<AgentTaskDispatcher> logger,
+        PtyDeliveryProfile? ptyProfile = null)
     {
+        _ptyProfile = ptyProfile;
         _db = db;
         _agentRegistry = agentRegistry;
         _launchQueue = launchQueue;
@@ -460,7 +464,7 @@ public sealed class AgentTaskDispatcher
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
         // that normalises line endings, wraps in a bracketed paste, and submits with a separate CR.
         // A raw multi-line write fragments into several turns (documented live miss).
-        var brief = FitBriefForTyping(claimed, _settings, _logger);
+        var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger);
         try
         {
             await _queue.EnqueueAsync(
@@ -505,15 +509,24 @@ public sealed class AgentTaskDispatcher
     /// end to end through a real ConPTY into a fake that CLIPS like the real TUI
     /// (<c>DelegationBriefCeilingPtyTests</c>, CARD-0028). A ceiling nobody has watched survive the
     /// transport is a number in a comment.</para>
+    ///
+    /// <para><paramref name="ceilings"/> is which pty is on the other end (CARD-0037). Null — every
+    /// caller that has no <see cref="PtyDeliveryProfile"/>, which is every test that predates it —
+    /// means the inbox conhost and the ceilings that shipped with it. The gate is never widened by
+    /// omission.</para>
     /// </summary>
     internal static string FitBriefForTyping(
-        AgentTask task, DelegationSettings settings, ILogger? logger = null)
+        AgentTask task,
+        DelegationSettings settings,
+        PtyDeliveryCeilings? ceilings = null,
+        ILogger? logger = null)
     {
-        var brief = DelegationReportFormatter.BuildBrief(task, settings);
+        var limits = ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+        var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars);
         // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
         // and an em-dash costs 3 of them (CARD-0027).
         var briefBytes = System.Text.Encoding.UTF8.GetByteCount(brief);
-        if (briefBytes <= settings.BriefInlineMaxBytes)
+        if (briefBytes <= limits.BriefInlineMaxBytes)
             return brief;
 
         string? spillPath = null;
@@ -536,9 +549,9 @@ public sealed class AgentTaskDispatcher
         }
 
         logger?.LogInformation(
-            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0}); delivering a pointer to {Where}",
-            DelegationReportFormatter.Short(task.Id), briefBytes, settings.BriefInlineMaxBytes,
-            spillPath ?? "the API");
+            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0} on {Backend}); delivering a pointer to {Where}",
+            DelegationReportFormatter.Short(task.Id), briefBytes, limits.BriefInlineMaxBytes,
+            limits.Backend, spillPath ?? "the API");
 
         return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length);
     }
@@ -820,7 +833,7 @@ public sealed class AgentTaskDispatcher
                     MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
             }
 
-            var brief = FitBriefForTyping(task, _settings, _logger);
+            var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger);
             await _queue.EnqueueAsync(
                 session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
         }

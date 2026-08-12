@@ -9,6 +9,6 @@
     Antiphon.SessionRunner past 10 minutes.
   -->
   <PropertyGroup>
-    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-verify/**;bin-ptyhost/**;bin-profile*/**;bin-c37/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-verify/**;bin-ptyhost/**;bin-profile*/**;bin-c37*/**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

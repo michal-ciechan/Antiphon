@@ -1,9 +1,21 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Interfaces;
 
 public interface ISessionRunnerClient
 {
+    /// <summary>
+    /// What the runner's pty-hosts are actually served by — the evidence <c>PtyDeliveryProfile</c>
+    /// needs before it will use the raised (paste-path) delivery ceilings.
+    ///
+    /// <para>Default implementation returns null, meaning "this client cannot say". Callers MUST
+    /// treat null as no evidence either way and never as proof of the modern backend: the in-proc
+    /// and fake clients used by tests all land here.</para>
+    /// </summary>
+    Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
+        Task.FromResult<RunnerCapabilitiesDto?>(null);
+
     Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct);
     Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct);
     Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);

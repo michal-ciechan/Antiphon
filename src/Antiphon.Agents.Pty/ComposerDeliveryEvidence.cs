@@ -17,7 +17,22 @@ namespace Antiphon.Agents.Pty;
 ///
 /// Evidence is therefore: the body's tail fragment, OR its head fragment, OR a paste placeholder
 /// that was NOT already on the screen before typing (transcript history can contain placeholders
-/// from previously submitted pastes, so only an INCREASE counts).
+/// from previously submitted pastes, so only a NEW one counts).
+///
+/// <para><b>On the modern pseudoconsole the placeholder arm stops being the fallback and becomes
+/// the usual case</b> (CARD-0037). With the bracketed-paste markers actually reaching the TUI, a
+/// large multi-line body is no longer typed — it is PASTED, and the composer collapses it to
+/// <c>[Pasted text #N +M lines]</c> alone. Neither the head nor the tail of the body is on the
+/// screen at all, by design, so head-or-tail matching would report a perfectly healthy 43 KB
+/// delivery as "no composer evidence", withhold the Enter, revert the message and — for an
+/// always-on agent — kill the session as wedged. Every large delivery, every time.</para>
+///
+/// <para>Counting placeholders was not enough for that load. The count is taken from the RENDERED
+/// SCREEN, which holds only the visible rows: a tall paste pushes the previous placeholder off the
+/// top as it adds its own, leaving the count equal and the delivery unverifiable. The placeholders
+/// are therefore identified by their <c>#N</c> index — Claude numbers them per session and never
+/// reuses one — so evidence is an index that was not there before. The count comparison is kept
+/// underneath as a fallback for a placeholder whose index cannot be read.</para>
 ///
 /// Matching must survive two rendering hazards observed on real screens:
 ///  * the composer wraps long lines at arbitrary points — including mid-token — and rows are
@@ -66,8 +81,49 @@ public static class ComposerDeliveryEvidence
         if (FragmentVisible(after, head))
             return true;
 
+        // A collapsed paste shows none of the body. Match on the placeholder's own identity: an
+        // index that was not on the screen before is a paste this delivery caused, and unlike a
+        // count it survives the older placeholder scrolling out of the viewport.
+        var indicesBefore = PlaceholderIndices(screenBefore);
+        if (PlaceholderIndices(screenAfter).Any(i => !indicesBefore.Contains(i)))
+            return true;
+
         var before = Normalize(screenBefore);
         return CountOccurrences(after, PastePlaceholder) > CountOccurrences(before, PastePlaceholder);
+    }
+
+    /// <summary>
+    /// The <c>#N</c> of every <c>[Pasted text #N +M lines]</c> on a rendered screen. Read from the
+    /// RAW screen, not the whitespace-stripped form, because the number is what identifies the
+    /// paste and the surrounding spaces are what delimit it. Tolerant of the composer's wrapping:
+    /// only "Pasted text #" followed by digits has to survive on one row, which it does — the
+    /// placeholder is short and the composer never breaks it across the ~20 characters involved in
+    /// any capture taken so far.
+    /// </summary>
+    private static HashSet<int> PlaceholderIndices(string screen)
+    {
+        var found = new HashSet<int>();
+        if (string.IsNullOrEmpty(screen))
+            return found;
+
+        const string prefix = "asted text #";
+        for (var i = screen.IndexOf(prefix, StringComparison.Ordinal);
+             i >= 0;
+             i = screen.IndexOf(prefix, i + prefix.Length, StringComparison.Ordinal))
+        {
+            var at = i + prefix.Length;
+            var value = 0;
+            var digits = 0;
+            while (at < screen.Length && char.IsAsciiDigit(screen[at]))
+            {
+                value = value * 10 + (screen[at] - '0');
+                at++;
+                digits++;
+            }
+            if (digits > 0)
+                found.Add(value);
+        }
+        return found;
     }
 
     // Sliding-window match: any WindowLength-sized window of the fragment (stride 5, walking from

@@ -157,3 +157,70 @@ Three things follow:
 - Steps 3 and 4 of CARD-0037 (raising `BriefInlineMaxBytes`, retiring spill-and-pointer, giving
   fakeclaude a non-clipping bracketed-paste arm) remain **gated on measurements taken with the flag
   ON**. Raising the ceilings without the binary re-opens the original bug.
+
+## Step 3 — the backend is ON here, and the ceilings follow the pty (2026-08-12)
+
+The flag still defaults OFF in code. What changed is this deployment: the session runner asks for
+`modern` in its own `appsettings.json` (its detached pty-hosts inherit that through the environment
+it exports), and the AppHost sets `ANTIPHON_PTY_BACKEND=modern` on the server. A standalone server
+started without that variable resolves `inbox` and keeps every old ceiling — which is the point.
+
+**The ceilings are resolved per delivery, from the backend actually serving the pty**, by
+`PtyDeliveryProfile` (`server/Application/Services`). Two facts have to agree before the raised set
+is used:
+
+1. this process's own `PtyBackendPolicy.Resolve()` — which is also what its in-proc pty adapters
+   spawn under, so the profile can never disagree with the ptys the server itself creates; and
+2. the session runner's answer to `GET /capabilities`, added here for the purpose. The runner is a
+   separate process with separate config and its pty-hosts inherit ITS environment, so a server told
+   `modern` in front of an inbox runner would type 43 KB briefs into a pty that clips at 1 KB — the
+   original failure, restored, with the logs claiming otherwise. A runner that answers
+   `InboxConhost` downgrades the ceilings and says why; a runner that cannot answer (an older build,
+   an in-proc client, every test fake) is no evidence either way and leaves fact 1 standing.
+
+| ceiling | inbox conhost | modern conpty | where the number comes from |
+|---|---|---|---|
+| `BriefInlineMaxBytes` | 900 B | **43 200 B** | whole 2/2 on both the bench and the production path, and the only size that also survived a *paced* delivery — a 2x margin under the largest single write measured |
+| `ReplyInlineMaxChars` | 3 000 | **14 400** | 43 200 / 3: this ceiling counts UTF-16 chars, the envelope counts UTF-8 bytes, and an em-dash costs 3 |
+| oversize tripwire | 1 024 B | **86 400 B** | the largest body measured to arrive whole, 2/2, single write, production path |
+
+Three constraints from the measurement, all honoured:
+
+- **Every raised ceiling is a SINGLE-WRITE ceiling.** 86 400 B paced read NOTHING while the same
+  86 400 B in one write was whole twice. Our path does not split a body: the queue issues one
+  `SendInputAsync`, the pty-host frame carries it whole (16 MB cap), and `PtyAgentRunner` does one
+  `WriteAsync`. That has to stay true for these numbers to mean anything.
+- **The oversize incident is kept as a tripwire, not removed** — only moved to the edge of the
+  evidence. A body past 86 400 B is past everything anyone has measured and still raises
+  `OversizedTerminalDelivery`; on the paste path the wording changes, because an abandoned paste
+  leaves nothing rather than a fragment.
+- **No ceiling is above what was measured**, and the brief ceiling is deliberately half of it,
+  because the envelope is one machine and one Claude version.
+
+The pointer path is *not* deleted. At 900 bytes every real brief spills (the reporting contract
+alone is 838 bytes, so `BuildBrief`'s floor is ~915) — that is the state a machine without the
+redistributable stays in, and `DelegationBriefCeilingPtyTests` still drives it.
+
+### What a working paste does to delivery verification
+
+`ComposerDeliveryEvidence` had a hole that would have fired on every large delivery the moment the
+markers started arriving. A real paste is COLLAPSED by the composer to `[Pasted text #N +M lines]`
+and the body is not rendered at all — no head, no tail, no fragment of a line — so head-or-tail
+matching finds nothing, the queue withholds the submitting Enter, reverts the message, and for an
+always-on agent kills the session as wedged. The placeholder arm already existed but counted
+occurrences on the *rendered screen*, which holds only the visible rows: a tall paste pushes the
+previous placeholder off the top as it draws its own, leaving the count unchanged. Placeholders are
+now identified by their `#N` (Claude numbers them per session and never reuses one), with the count
+comparison kept underneath as a fallback.
+
+### Step 4 — fakeclaude models both paths
+
+The clip model (CARD-0028) is a model of **typed** input, which is all the inbox conhost can
+deliver. fakeclaude now decides the input path before the clip model sees a byte: content inside a
+bracketed paste is exempt, and paste MODE persists from `ESC[200~` to `ESC[201~` across bursts
+because ConPTY splits one write over several reads. `ANTIPHON_FAKE_PASTE_PLACEHOLDER` (opt-in)
+additionally renders the collapsed placeholder instead of echoing the body, so the verification path
+above has a CI-runnable peer that can exhibit it. It stays opt-in: the line count at which real
+Claude collapses a paste has not been measured, and defaulting it on would model a guess.
+`FakeVsRealClipParityTests` now has an arm for each path — the typed one still has to lose a chunk in
+both peers, the pasted one must lose nothing in both, with clipping armed.

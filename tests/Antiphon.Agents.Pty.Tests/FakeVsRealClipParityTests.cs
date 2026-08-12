@@ -164,6 +164,58 @@ public class FakeVsRealClipParityTests
         Flush("R2-fake-vs-real-clip-shapes");
     }
 
+    /// <summary>
+    /// The SECOND arm (CARD-0037). Everything above runs on the inbox conhost, which strips the
+    /// bracketed-paste markers, so both peers are on the TYPING path — which is what the clip model
+    /// models and what the old ceilings were built for. Through the shipped modern pseudoconsole
+    /// the markers survive and the measured behaviour inverts: real Claude took 86 400 bytes in one
+    /// bracketed write with zero loss, 2/2.
+    ///
+    /// <para>The fake now has to match on this path too, and matching means NOT clipping — with the
+    /// clip model armed, which is the only way to tell "the paste path is exempt" from "clipping
+    /// was never on". If real Claude ever starts losing a paste here, the raised ceilings
+    /// (<c>DelegationSettings.ModernPty*</c>) have no measurement behind them any more and this
+    /// fails rather than letting them stand.</para>
+    /// </summary>
+    [Test]
+    public async Task Fake_and_real_claude_agree_that_a_bracketed_paste_is_not_clipped()
+    {
+        ClSession.SkipIfNotEligible();
+        if (!File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe}");
+        if (!ConPtyRedistributable.TryLocate(out _, out var why))
+            throw new SkipTestException("no shipped conpty.dll: " + why);
+
+        // 1 399 bytes is two read chunks — the size that loses a chunk on the typing arm above,
+        // every run, in both peers. Same body, same clip model, different pseudoconsole.
+        const int lines = 200;
+        const int reps = 2;
+
+        Line("peer\tbackend\tlines\tbodyBytes\tsurvivingRuns\tverdict");
+
+        var fake = await FakeAsync(lines, backend: "modern");
+        Line($"fake\tmodern\t{lines}\t{Bytes(lines)}\t{fake.Runs}\t{Verdict(fake, lines)}");
+
+        var real = new List<Survivors>();
+        for (var rep = 0; rep < reps; rep++)
+        {
+            var got = await RealClaudeAsync(lines, backend: "modern");
+            real.Add(got);
+            Line($"real#{rep}\tmodern\t{lines}\t{Bytes(lines)}\t{got.Runs}\t{Verdict(got, lines)}");
+        }
+
+        Flush("R3-fake-vs-real-paste-path");
+
+        fake.IsWhole(lines).ShouldBeTrue(
+            "with the markers delivered the fake must take the paste path and lose nothing — with "
+            + $"clipping ARMED, so this is an exemption and not an accident. Got: {fake.Runs}");
+        real.ShouldAllBe(r => r.IsWhole(lines),
+            $"real Claude took {Bytes(lines)} bytes whole 2/2 through a bracketed paste when "
+            + "measured (2026-08-12), and 86 400 bytes at that. If it clips one now, the paste path "
+            + "is not what the raised ceilings assume and DelegationSettings.ModernPtyBriefInlineMaxBytes "
+            + "must be re-derived before this is widened");
+    }
+
     private static int Bytes(int lines) => lines * MarkerBytes - 1; // the trailing newline is trimmed
 
     private static string Verdict(Survivors s, int lines) =>
@@ -205,9 +257,9 @@ public class FakeVsRealClipParityTests
     }
 
     /// <summary>The clipping fake, driven exactly as the contract tests drive it.</summary>
-    private static async Task<Survivors> FakeAsync(int lines)
+    private static async Task<Survivors> FakeAsync(int lines, string? backend = null)
     {
-        await using var runner = new PtyAgentRunner();
+        await using var runner = new PtyAgentRunner(backend);
         await runner.StartAsync(FakeClaudeExe, [], cols: 120, rows: 250,
             env: new Dictionary<string, string>
             {
@@ -233,9 +285,9 @@ public class FakeVsRealClipParityTests
     /// scrolled. Reusing a session made the earlier matrix alternate in lockstep with the trial
     /// index — residue, not physics.
     /// </summary>
-    private static async Task<Survivors> RealClaudeAsync(int lines)
+    private static async Task<Survivors> RealClaudeAsync(int lines, string? backend = null)
     {
-        await using var runner = new PtyAgentRunner();
+        await using var runner = new PtyAgentRunner(backend);
         var (app, args) = ClSession.BuildLaunch(
             ClSession.ResolveOrThrow(), "--dangerously-skip-permissions");
         await runner.StartAsync(app, args, cols: 120, rows: 250, env: ClSession.HeadedSafeEnv());

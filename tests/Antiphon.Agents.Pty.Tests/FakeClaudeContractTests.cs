@@ -723,6 +723,129 @@ public class FakeClaudeContractTests
             + $"run 1: {first.Note}\nrun 2: {second.Note}");
     }
 
+    // ------------------------------------------------------------------------------------------
+    // CARD-0037 — the OTHER input path. Everything above is TYPED input, which is all the inbox
+    // conhost can deliver: it strips ESC[200~/ESC[201~ before the child sees them, so the fake
+    // above never receives a marker and the clip model always applies.
+    //
+    // Through the SHIPPED modern pseudoconsole the markers arrive, and the measured behaviour is
+    // the opposite: real Claude took 86 400 bytes in ONE bracketed write with zero loss (2/2) while
+    // the identical body unwrapped on the same binary still lost 25%. A fake that kept clipping
+    // pastes would assert a defect production no longer has — the CARD-0028 drift, mirrored.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>The clipping fake behind the shipped modern pseudoconsole, so the markers survive.</summary>
+    private static async Task<PtyAgentRunner> LaunchClippingFakeOnModernPtyAsync(
+        params (string Key, string Value)[] extraEnv)
+    {
+        if (!ConPtyRedistributable.TryLocate(out _, out var why))
+            throw new SkipTestException("no shipped conpty.dll: " + why);
+
+        var env = new Dictionary<string, string>
+        {
+            ["ANTIPHON_FAKE_STDIN_CLIP"] = "1",
+            ["ANTIPHON_FAKE_BURST_MS"] = "80",
+        };
+        foreach (var (k, v) in extraEnv) env[k] = v;
+
+        var runner = new PtyAgentRunner("modern");
+        await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
+        runner.Backend!.Backend.ShouldBe(PtyBackend.ModernConPty,
+            "this test is meaningless on the inbox conhost — it would strip the markers and the fake "
+            + "would correctly clip");
+
+        // Every armed model announces itself, and the LAST banner is what says the startup writes
+        // are all in: waiting only for CLIP: and then clearing the buffer would race a later one
+        // out of existence.
+        var wantsPlaceholder = env.ContainsKey(PastePlaceholderVar);
+        var ready = await runner.WaitForOutputAsync(
+            s => s.Contains("Fake Claude ready")
+                 && s.Contains("CLIP:mode=")
+                 && (!wantsPlaceholder || s.Contains("PASTEPLACEHOLDER:")),
+            TimeSpan.FromSeconds(15));
+        ready.ShouldBeTrue(
+            "the fake must announce every model it was armed with (CLIP:mode=…"
+            + (wantsPlaceholder ? ", PASTEPLACEHOLDER:…" : "") + "): " + runner.SnapshotText());
+        runner.ClearLiveBuffer();
+        return runner;
+    }
+
+    private const string PastePlaceholderVar = "ANTIPHON_FAKE_PASTE_PLACEHOLDER";
+
+    /// <summary>
+    /// The step-4 contract: the SAME body, the SAME armed clip model, the SAME single write — and
+    /// because the markers reach the fake this time, nothing is dropped. Paired with
+    /// <see cref="A_body_spanning_two_chunks_arrives_as_its_final_whole_chunk"/> above, which sends
+    /// the identical body on the inbox backend and keeps 53 of its 200 markers.
+    /// </summary>
+    [Test]
+    public async Task A_bracketed_paste_is_not_clipped_even_with_the_clip_model_armed()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeOnModernPtyAsync();
+
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(200)); // 1 399 bytes = 2 chunks typed
+
+        got.Count.ShouldBe(200,
+            "a bracketed paste takes the composer's paste path, which has no per-turn discard. "
+            + $"Survivors: {Runs(got)} — {ClipNotes(runner.SnapshotText())}");
+        ClipNotes(runner.SnapshotText()).ShouldBeEmpty(
+            "and the model must not even have run: a CLIPPED note here means the exemption is "
+            + "deciding per-burst instead of per-paste");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// A paste far past the point where typed input is reduced to one chunk. 43 200 bytes is the
+    /// brief ceiling the modern backend carries (DelegationSettings.ModernPtyBriefInlineMaxBytes),
+    /// measured whole 2/2 against real Claude — so the fake has to carry it too, or the ceiling
+    /// tests above it are asserting against a peer that cannot do what production does.
+    /// </summary>
+    [Test]
+    public async Task A_43KB_bracketed_paste_arrives_whole_with_clipping_armed()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeOnModernPtyAsync();
+
+        const int lines = 6_171; // 6 171 x 7 = 43 197 bytes
+        var got = await PasteAndSubmitAsync(runner, MarkedBody(lines));
+
+        got.Count.ShouldBe(lines,
+            $"43 KB in one bracketed write must arrive whole. Survivors: {Runs(got)} — "
+            + ClipNotes(runner.SnapshotText()));
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// The paste path costs the composer echo, and delivery verification reads that echo. With the
+    /// placeholder model armed the fake renders what the real composer renders — the placeholder
+    /// and NOTHING of the body — and <see cref="ComposerDeliveryEvidence"/> still has to certify
+    /// the delivery. This is the CI proof that the verification fix works against a real screen and
+    /// not only against hand-written strings.
+    /// </summary>
+    [Test]
+    public async Task A_collapsed_paste_still_produces_composer_evidence()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchClippingFakeOnModernPtyAsync((PastePlaceholderVar, "1"));
+
+        var before = runner.SnapshotScreen();
+        var body = MarkedBody(200);
+        await runner.WriteAsync(PtyInputEncoding.EncodeBody(body));
+        (await runner.WaitForScreenAsync(s => s.Contains("Pasted text #"), TimeSpan.FromSeconds(15)))
+            .ShouldBeTrue("the composer must collapse the paste: " + runner.SnapshotText());
+
+        var after = runner.SnapshotScreen();
+        MarkersIn(after).ShouldBeEmpty("the collapsed paste shows none of the body — that is the point");
+        ComposerDeliveryEvidence.IsVisible(before, after, body).ShouldBeTrue(
+            "a collapsed paste must still verify as delivered, or the queue withholds its Enter and "
+            + "kills always-on sessions as wedged on every large delivery. Screen:\n" + after);
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,
     // so each must round-trip independently when delivered the correct (two-write) way.
     [Test]

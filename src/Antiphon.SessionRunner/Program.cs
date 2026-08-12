@@ -82,6 +82,18 @@ var app = builder.Build();
 
 app.MapHealthChecks("/health");
 
+// Which pseudoconsole every session here gets, on request. The server's delivery ceilings are
+// coupled to this answer (CARD-0037), and it is the one thing it cannot infer from its own
+// environment: runner and server are separate processes with separate config, so a server that
+// assumed they matched would size bodies for a pty that cannot carry them. Resolved live rather
+// than captured at startup so a runner restarted with a different flag reports the truth.
+app.MapGet("/capabilities", () =>
+{
+    var decision = PtyBackendPolicy.Resolve();
+    return Results.Ok(new RunnerCapabilitiesDto(
+        decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack));
+});
+
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
 
 app.MapGet("/sessions/{id:guid}", (Guid id, SessionRunnerRuntime runtime) => Results.Ok(runtime.Get(id)));

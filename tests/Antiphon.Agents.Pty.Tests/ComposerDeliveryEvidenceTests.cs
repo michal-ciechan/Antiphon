@@ -95,6 +95,53 @@ public class ComposerDeliveryEvidenceTests
         ComposerDeliveryEvidence.IsVisible(beforeWithHistory, withNewPlaceholder, body).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The modern-pseudoconsole case (CARD-0037), and the one that would have broken delivery
+    /// verification outright: with the bracketed-paste markers actually reaching the TUI, a large
+    /// body is PASTED, and the composer shows the placeholder and NOTHING of the body — no head, no
+    /// tail, no fragment of a line. Head-or-tail matching finds nothing, so without the placeholder
+    /// arm every large delivery on the paste path would report "no composer evidence", withhold its
+    /// Enter, revert the message and kill an always-on session as wedged.
+    /// </summary>
+    [Test]
+    public void A_collapsed_paste_showing_none_of_the_body_is_still_evidence()
+    {
+        var body = string.Join("\n", Enumerable.Range(0, 3_200).Select(i => $"Q{i:D5} of the pasted wall"));
+        var after = IdleScreen + "\n❯ [Pasted text #1 +3199 lines]";
+
+        ComposerDeliveryEvidence.IsVisible(IdleScreen, after, body).ShouldBeTrue(
+            "the composer collapsed the paste, so the body is not on the screen at all — the "
+            + "placeholder IS the evidence");
+    }
+
+    /// <summary>
+    /// Why the placeholder is matched by its #N and not by counting occurrences: the screen is the
+    /// VISIBLE rows, and a tall paste pushes the previous placeholder off the top as it renders its
+    /// own. The count is then unchanged and a perfectly good delivery has no evidence. Claude
+    /// numbers pastes per session and never reuses an index, so the index does not have this hole.
+    /// </summary>
+    [Test]
+    public void A_new_placeholder_that_scrolled_the_old_one_away_is_still_evidence()
+    {
+        var body = string.Join("\n", Enumerable.Range(0, 900).Select(i => $"Q{i:D5} second delivery"));
+        var before = IdleScreen + "\n❯ [Pasted text #7 +120 lines]";
+        var after = IdleScreen + "\n❯ [Pasted text #8 +899 lines]"; // #7 scrolled out of the viewport
+
+        ComposerDeliveryEvidence.IsVisible(before, after, body).ShouldBeTrue(
+            "one placeholder before, one after — the COUNT is unchanged, and only the index says a "
+            + "new paste landed");
+    }
+
+    /// <summary>The other side of it: the SAME placeholder still on screen is not a new delivery.</summary>
+    [Test]
+    public void The_same_placeholder_index_is_not_evidence_of_a_new_paste()
+    {
+        var before = IdleScreen + "\n❯ [Pasted text #7 +120 lines]";
+        var body = string.Join("\n", Enumerable.Range(0, 900).Select(i => $"Q{i:D5} second delivery"));
+
+        ComposerDeliveryEvidence.IsVisible(before, before, body).ShouldBeFalse();
+    }
+
     [Test]
     public void Body_shorter_than_fragment_length_matches_whole()
     {

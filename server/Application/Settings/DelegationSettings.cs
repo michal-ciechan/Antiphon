@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Settings;
@@ -89,6 +90,12 @@ public sealed class DelegationSettings
     /// <c>string.Length</c>. This gate shipped comparing UTF-16 chars, and briefs here are
     /// em-dash-heavy at 3 bytes each: a 900-CHARACTER brief can be 2 700 bytes, three chunks, and
     /// mangle exactly as before while passing the guard.
+    ///
+    /// <para>This number describes the INBOX CONHOST, which is where it came from: that binary
+    /// strips the bracketed-paste markers, so the body arrives as typing and one read chunk is the
+    /// boundary. On a pty served by the shipped modern pseudoconsole the boundary is somewhere else
+    /// entirely — see <see cref="ModernPtyBriefInlineMaxBytes"/> — and which one applies is decided
+    /// per delivery by <c>PtyDeliveryProfile</c>.</para>
     /// </summary>
     public int BriefInlineMaxBytes { get; set; } = 900;
 
@@ -127,8 +134,78 @@ public sealed class DelegationSettings
     /// <see cref="PtyInlineSafeChars"/>. That one is 4 000 CHARACTERS, so a body between roughly
     /// 1 KB and 4 KB was typed, clipped, and raised nothing at all — the exact window that
     /// swallowed four briefs on 2026-08-11 while the guard stayed quiet.
+    ///
+    /// <para>Also the inbox conhost's number, and the tripwire's threshold only there; on the modern
+    /// pseudoconsole it is <see cref="ModernPtySingleWriteMaxBytes"/>. The tripwire itself is never
+    /// removed — see that field for why an 86 400-byte limit is still a limit.</para>
     /// </summary>
     public int PtySingleChunkBytes { get; set; } = 1_024;
+
+    // ── The same three ceilings, for a pty served by the SHIPPED modern pseudoconsole ────────────
+    //
+    // Everything above this line describes the inbox conhost, which strips the bracketed-paste
+    // markers so every body arrives as typing. With conpty.dll + OpenConsole.exe in front of the
+    // pty the markers survive, the TUI takes its paste path, and the numbers change by two orders
+    // of magnitude. Which set is in force is decided per delivery by PtyDeliveryProfile from the
+    // backend ACTUALLY serving the pty — never by these values existing.
+
+    /// <summary>
+    /// <see cref="BriefInlineMaxBytes"/> on the modern backend.
+    ///
+    /// 43 200 bytes, measured: whole 2/2 through the bench host AND 2/2 through the production path
+    /// (<c>PtyAgentRunner</c> + <c>PtyInputEncoding</c>, one write, real Claude, 2026-08-12), and it
+    /// is the largest size that ALSO survived a PACED delivery. It therefore keeps a 2x margin under
+    /// <see cref="ModernPtySingleWriteMaxBytes"/> — which matters, because that envelope is one
+    /// machine and one Claude version.
+    ///
+    /// At the inbox ceiling of 900 the inline path is unreachable in practice (the reporting
+    /// contract alone is 838 bytes, so BuildBrief's floor is ~915 and EVERY brief spills). This is
+    /// the number that re-opens it — which is the payoff CARD-0037 was for.
+    /// </summary>
+    public int ModernPtyBriefInlineMaxBytes { get; set; } = 43_200;
+
+    /// <summary>
+    /// <see cref="ReplyInlineMaxChars"/> on the modern backend: 14 400 = 43 200 / 3.
+    ///
+    /// Derived, not chosen. This ceiling is counted in UTF-16 CHARS while the transport envelope is
+    /// UTF-8 BYTES, and an em-dash — which these reports are full of — costs 3 of them. Dividing by
+    /// the worst-case expansion is what keeps a report that passes this gate inside
+    /// <see cref="ModernPtyBriefInlineMaxBytes"/> on the wire. The char/byte confusion is not
+    /// hypothetical: <see cref="BriefInlineMaxBytes"/> shipped once comparing <c>string.Length</c>
+    /// and mangled four briefs that passed it.
+    /// </summary>
+    public int ModernPtyReplyInlineMaxChars { get; set; } = 14_400;
+
+    /// <summary>
+    /// <see cref="PtySingleChunkBytes"/>'s counterpart: the oversize tripwire on the modern backend.
+    ///
+    /// 86 400 bytes is the largest body MEASURED to arrive whole — 2/2 through the production write
+    /// path, versus the inbox control in the same run keeping 25%. It is a ceiling on ONE WRITE and
+    /// nothing else: the identical 86 400 bytes delivered PACED (1 KB chunks, 25 ms apart) read
+    /// NOTHING, so a delivery that gets split on its way to the pty has no evidence behind it at
+    /// any size. Our path does not split (SessionMessageQueueService issues one SendInputAsync for
+    /// the body, the pty-host frame carries it whole, and PtyAgentRunner does one WriteAsync), and
+    /// that must stay true for this number to mean anything.
+    ///
+    /// The tripwire is NOT deleted on the modern backend, only moved: anything past the measured
+    /// envelope is beyond all evidence and still raises
+    /// <c>AgentIncidentKind.OversizedTerminalDelivery</c>.
+    /// </summary>
+    public int ModernPtySingleWriteMaxBytes { get; set; } = 86_400;
+
+    /// <summary>
+    /// The ceilings for one pseudoconsole. <see cref="PtyBackend.InboxConhost"/> — the default, and
+    /// anything we are not sure about — returns exactly what shipped before CARD-0037.
+    /// </summary>
+    public PtyDeliveryCeilings CeilingsFor(PtyBackend backend, string reason) => backend switch
+    {
+        PtyBackend.ModernConPty => new PtyDeliveryCeilings(
+            backend, ModernPtyBriefInlineMaxBytes, ModernPtyReplyInlineMaxChars,
+            ModernPtySingleWriteMaxBytes, reason),
+        _ => new PtyDeliveryCeilings(
+            PtyBackend.InboxConhost, BriefInlineMaxBytes, ReplyInlineMaxChars,
+            PtySingleChunkBytes, reason),
+    };
 
     /// <summary>
     /// Directory prefixes a task may run in. A SECURITY BOUNDARY: without it an agent that can

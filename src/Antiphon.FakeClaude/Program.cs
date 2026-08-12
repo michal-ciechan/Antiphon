@@ -34,6 +34,14 @@ namespace Antiphon.FakeClaude;
 ///    ~1024-byte read chunk per event-loop turn and silently discards the rest, which is how briefs
 ///    arrived with their heads missing (CARD-0027). Default OFF: our transport is genuinely
 ///    lossless and <c>PtyLargeWriteTests</c> pins that. See <see cref="StdinClipModel"/>.
+///    <b>Clipping is a property of TYPED input only</b> (CARD-0030/0037): content inside a
+///    bracketed paste is exempt, because the composer accumulates from <c>ESC[200~</c> to
+///    <c>ESC[201~</c> without the per-turn discard, and real Claude took 86 400 bytes that way in
+///    ONE write with zero loss while the same body unwrapped on the same binary still clipped.
+///  * <b>Paste placeholder</b> (OPT-IN, <c>ANTIPHON_FAKE_PASTE_PLACEHOLDER</c>) — a real paste of
+///    any size collapses in the composer to <c>[Pasted text #N +M lines]</c> and the body is not
+///    rendered at all, which is what delivery verification has to survive
+///    (<c>ComposerDeliveryEvidence</c>).
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
 ///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>) line on turn end, in the shapes
 ///    <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
@@ -54,6 +62,9 @@ internal static class Program
     // OSC 0 ; U+2733 BEL — idle title, like Claude at turn end. (ConPTY usually consumes this; emitted anyway.)
     private const string IdleTitle = "\x1b]0;✳\x07";
 
+    /// <summary>Bracketed-paste opener, matched on the RAW bytes: the path decision precedes the decode.</summary>
+    private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
+
     // PINNED-BY: ClaudeCompactionCanaryTests — the screen line real Claude renders after a compaction.
     private const string CompactedScreenLine = "Compacted (ctrl+o to see full summary)";
 
@@ -67,6 +78,12 @@ internal static class Program
         // OPT-IN: models the real TUI dropping all but one read chunk per event-loop turn. Unset =
         // null = the fake stays the lossless peer PtyLargeWriteTests pins. See StdinClipModel.
         var clip = StdinClipModel.FromEnvironment();
+        // OPT-IN: collapse a bracketed paste to "[Pasted text #N +M lines]" instead of echoing it,
+        // the way the real composer does. Default OFF for two reasons — the exact line count at
+        // which real Claude collapses has not been MEASURED (defaulting it on would be modelling a
+        // guess), and every existing test that reads the fake's composer echo for the body it sent
+        // is a pin worth keeping. Tests that need the paste-path rendering ask for it.
+        var placeholder = PastePlaceholderModel.FromEnvironment();
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -82,6 +99,7 @@ internal static class Program
         // Printed only when clipping is on, and it carries the SEED: a non-deterministic failure is
         // only useful if it can be replayed.
         if (clip is not null) Write(clip.Describe() + "\r\n");
+        if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
         if (debugInput)
         {
             var h = GetStdHandle(STD_INPUT_HANDLE);
@@ -138,6 +156,9 @@ internal static class Program
         var turnCount = 0;
         // Inside a bracketed paste whose closing 201~ hasn't arrived yet (paste split across reads).
         var inPaste = false;
+        // What the current paste has accumulated, when the placeholder model is rendering it: the
+        // composer shows ONE placeholder for the whole paste, not one per read.
+        var pasteBuffer = new StringBuilder();
 
         while (true)
         {
@@ -195,11 +216,29 @@ internal static class Program
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
 
+            // WHICH INPUT PATH this burst is on, decided before the clip model sees a byte.
+            //
+            // Clipping is what happens to TYPING (CARD-0027/0028): the composer keeps one read
+            // chunk per event-loop turn and drops the rest. A bracketed paste is a DIFFERENT code
+            // path — the composer accumulates from ESC[200~ until ESC[201~ and the per-turn discard
+            // never applies to it — and the difference is measured, not assumed: through a modern
+            // pseudoconsole real Claude took 86 400 bytes in one bracketed write with zero loss
+            // (2/2), while the identical body unwrapped on the SAME binary still lost 25%
+            // (CARD-0030). Our writes only ever took the typing path because the inbox conhost ate
+            // the markers before the TUI could see them; with those markers delivered, a fake that
+            // clipped anyway would assert a behaviour production no longer has — which is the exact
+            // drift CARD-0028 exists to prevent, in the other direction.
+            //
+            // Paste MODE, not "this burst has a marker": ConPTY splits one bracketed write across
+            // several reads and the continuation bursts carry no markers at all, so the exemption
+            // has to persist from 200~ to 201~ the way the real TUI's does.
+            var burstIsPaste = inPaste || Contains(burst, PasteStartBytes);
+
             // The burst IS the event-loop turn: bytes that arrived without a quiet gap between
             // them. Clipping (opt-in) keeps one read chunk of it and discards the rest, in UTF-8
             // BYTES — before the string decode, because the read quantum the real TUI drops is
             // measured in bytes and a char-based cut would disagree on any multibyte body.
-            if (clip is not null)
+            if (clip is not null && !burstIsPaste)
             {
                 burst = clip.Apply(burst, out var clipNote);
                 if (clipNote is not null) Write(clipNote + "\r\n");
@@ -265,7 +304,20 @@ internal static class Program
                 // Wrapped content is always literal, CRs included.
                 var pasted = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
                 composer.Append(pasted);
-                Write(pasted.Replace("\n", "\r\n"));
+
+                if (placeholder is null)
+                {
+                    Write(pasted.Replace("\n", "\r\n"));
+                    return true;
+                }
+
+                // The real composer shows ONE placeholder for the whole paste, however many reads
+                // it took, and shows it once the paste closes — so accumulate until 201~.
+                pasteBuffer.Append(pasted);
+                if (inPaste) return true;
+
+                Write(placeholder.Render(pasteBuffer.ToString()) + "\r\n");
+                pasteBuffer.Clear();
                 return true;
             }
 
@@ -411,6 +463,18 @@ internal static class Program
         if (string.IsNullOrEmpty(path)) return;
         try { File.AppendAllText(path, jsonLine + "\n"); }
         catch { /* transcript emission is best-effort test plumbing */ }
+    }
+
+    private static bool Contains(byte[] haystack, byte[] needle)
+    {
+        for (var i = 0; i + needle.Length <= haystack.Length; i++)
+        {
+            var match = true;
+            for (var j = 0; j < needle.Length && match; j++)
+                match = haystack[i + j] == needle[j];
+            if (match) return true;
+        }
+        return false;
     }
 
     private static string? GetArg(string[] args, string name)

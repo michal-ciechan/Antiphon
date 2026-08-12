@@ -245,6 +245,26 @@ public static class TranscriptBindMethods
     public const string MigrationShim = "migration-shim";
 }
 
+/// <summary>
+/// What this runner's sessions are actually served by (<c>GET /capabilities</c>).
+///
+/// <para>The delivery ceilings are COUPLED to the pseudoconsole (CARD-0037): the inbox conhost
+/// strips the bracketed-paste markers and clips every body at ~1 KB, the shipped modern pair
+/// forwards them and takes 86 400 bytes in one write. The server sizes bodies against ONE of those
+/// two envelopes, so it must be able to ASK rather than assume its own environment matches the
+/// runner's — a server configured <c>modern</c> in front of an inbox runner would type bodies 48x
+/// larger than that pty can carry, silently.</para>
+/// </summary>
+/// <param name="PtyBackend"><c>InboxConhost</c> or <c>ModernConPty</c> — the resolved value, not the request.</param>
+/// <param name="PtyBackendRequested">The raw flag value that was resolved.</param>
+/// <param name="PtyBackendReason">Human-readable explanation, always populated.</param>
+/// <param name="PtyBackendFellBack">True when modern was asked for and the redistributable was not there.</param>
+public sealed record RunnerCapabilitiesDto(
+    string PtyBackend,
+    string PtyBackendRequested,
+    string PtyBackendReason,
+    bool PtyBackendFellBack);
+
 public static class SessionRunnerEventNames
 {
     public const string SessionStarted = "SessionStarted";

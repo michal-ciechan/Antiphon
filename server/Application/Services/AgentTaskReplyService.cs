@@ -30,20 +30,31 @@ public sealed class AgentTaskReplyService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskReplyService> _logger;
+    private readonly PtyDeliveryProfile? _ptyProfile;
 
     public AgentTaskReplyService(
         IServiceScopeFactory scopeFactory,
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        ILogger<AgentTaskReplyService> logger)
+        ILogger<AgentTaskReplyService> logger,
+        PtyDeliveryProfile? ptyProfile = null)
     {
+        _ptyProfile = ptyProfile;
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _logger = logger;
     }
+
+    /// <summary>
+    /// How much report is forwarded whole, from the pseudoconsole that will carry it (CARD-0037):
+    /// the note is TYPED into the caller's terminal, so its ceiling belongs to the pty, not to
+    /// taste. No profile — every test that predates one — means the conservative inbox number.
+    /// </summary>
+    private int ReplyInlineMaxChars =>
+        _ptyProfile?.Ceilings.ReplyInlineMaxChars ?? _settings.ReplyInlineMaxChars;
 
     /// <summary>
     /// A session finished a turn. If that session is running a delegated task and the turn was the
@@ -402,7 +413,8 @@ public sealed class AgentTaskReplyService
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
-        var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, report, workspaceNote);
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            task, _settings, report, workspaceNote, ReplyInlineMaxChars);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -493,7 +505,7 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private async Task<string?> ResolveSpillFileAsync(AgentTask task, string report, CancellationToken ct)
     {
-        if (report.Length <= _settings.ReplyInlineMaxChars)
+        if (report.Length <= ReplyInlineMaxChars)
             return null;
 
         var relative = Path.Combine(".antiphon", $"task-{DelegationReportFormatter.Short(task.Id)}.md");
