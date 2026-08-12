@@ -14,7 +14,6 @@ using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Interfaces;
@@ -204,14 +203,12 @@ internal static class AgentTuiDataProtectionSetup
             && EnsureKeyRingDirectory(keyRingPath, platform);
         if (directoryReady)
         {
-            dataProtection.Services.AddSingleton<IConfigureOptions<KeyManagementOptions>>(sp =>
+            dataProtection.Services.AddSingleton<IConfigureOptions<KeyManagementOptions>>(_ =>
             {
-                var loggerFactory = sp.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
                 return new ConfigureOptions<KeyManagementOptions>(options =>
                 {
                     options.XmlRepository = new CustodyEnforcingFileSystemXmlRepository(
                         new DirectoryInfo(keyRingPath!),
-                        loggerFactory,
                         platform);
                 });
             });
@@ -591,7 +588,6 @@ internal static class AgentTuiDataProtectionSetup
 
         public CustodyEnforcingFileSystemXmlRepository(
             DirectoryInfo directory,
-            ILoggerFactory loggerFactory,
             AgentTuiPlatform platform)
         {
             _directory = directory;
@@ -602,16 +598,23 @@ internal static class AgentTuiDataProtectionSetup
 
         public IReadOnlyCollection<XElement> GetAllElements()
         {
-            foreach (var path in Directory.EnumerateFiles(
-                         _directory.FullName,
-                         "*.xml",
-                         SearchOption.TopDirectoryOnly))
+            try
             {
-                if (!IsPersistedXmlFileOwnerOnly(path, _platform))
-                    throw new CryptographicException("Persisted key XML custody is invalid.");
-            }
+                foreach (var path in Directory.EnumerateFiles(
+                             _directory.FullName,
+                             "*.xml",
+                             SearchOption.TopDirectoryOnly))
+                {
+                    if (!IsPersistedXmlFileOwnerOnly(path, _platform))
+                        throw new CryptographicException("Persisted key XML custody is invalid.");
+                }
 
-            return _inner.GetAllElements();
+                return _inner.GetAllElements();
+            }
+            catch (Exception exception) when (IsExpectedRepositoryFailure(exception))
+            {
+                throw new CryptographicException("Persisted key XML could not be read.");
+            }
         }
 
         public void StoreElement(XElement element, string friendlyName)
@@ -619,14 +622,54 @@ internal static class AgentTuiDataProtectionSetup
             if (!IsSafeFileName(friendlyName))
                 throw new ArgumentException("Persisted key XML filename is invalid.", nameof(friendlyName));
 
-            _inner.StoreElement(element, friendlyName);
-            var path = Path.Combine(_directory.FullName, $"{friendlyName}.xml");
-            if (!EnsurePersistedXmlFileOwnerOnly(path, _platform))
-                throw new CryptographicException("Persisted key XML custody could not be secured.");
+            try
+            {
+                _inner.StoreElement(element, friendlyName);
+                var path = Path.Combine(_directory.FullName, $"{friendlyName}.xml");
+                if (!EnsurePersistedXmlFileOwnerOnly(path, _platform))
+                {
+                    throw new CryptographicException(
+                        "Persisted key XML custody could not be secured.");
+                }
+            }
+            catch (Exception exception) when (IsExpectedRepositoryFailure(exception))
+            {
+                throw new CryptographicException("Persisted key XML could not be stored.");
+            }
         }
 
-        public bool DeleteElements(Action<IReadOnlyCollection<IDeletableElement>> chooseElements) =>
-            _inner.DeleteElements(chooseElements);
+        public bool DeleteElements(Action<IReadOnlyCollection<IDeletableElement>> chooseElements)
+        {
+            Exception? expectedCallbackFailure = null;
+            try
+            {
+                return _inner.DeleteElements(elements =>
+                {
+                    try
+                    {
+                        chooseElements(elements);
+                    }
+                    catch (Exception exception) when (IsExpectedRepositoryFailure(exception))
+                    {
+                        expectedCallbackFailure = exception;
+                        throw;
+                    }
+                });
+            }
+            catch (Exception exception) when (
+                !ReferenceEquals(exception, expectedCallbackFailure)
+                && IsExpectedRepositoryFailure(exception))
+            {
+                throw new CryptographicException("Persisted key XML could not be deleted.");
+            }
+        }
+
+        private static bool IsExpectedRepositoryFailure(Exception exception) =>
+            exception is IOException
+                or UnauthorizedAccessException
+                or XmlException
+                or NotSupportedException
+                or System.Security.SecurityException;
 
         private static bool IsSafeFileName(string value) =>
             !string.IsNullOrEmpty(value)
@@ -669,10 +712,10 @@ internal static class AgentTuiDataProtectionSetup
         var comparison = platform is AgentTuiPlatform.Windows or AgentTuiPlatform.MacOS
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
-        var normalizedPath = canonicalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var normalizedDirectoryPath = canonicalDirectoryPath.TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
+        var normalizedPath = NormalizeCanonicalPathForComparison(canonicalPath, platform);
+        var normalizedDirectoryPath = NormalizeCanonicalPathForComparison(
+            canonicalDirectoryPath,
+            platform);
         if (normalizedPath.Equals(normalizedDirectoryPath, comparison))
             return false;
 
@@ -682,6 +725,18 @@ internal static class AgentTuiDataProtectionSetup
     }
 
     private static bool IsDirectorySeparator(char value) => value is '/' or '\\';
+
+    private static string NormalizeCanonicalPathForComparison(
+        string canonicalPath,
+        AgentTuiPlatform platform)
+    {
+        var trimmedPath = canonicalPath.TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+        return platform == AgentTuiPlatform.MacOS
+            ? trimmedPath.Normalize(NormalizationForm.FormC)
+            : trimmedPath;
+    }
 
     private static AgentTuiPlatform CurrentPlatform()
     {

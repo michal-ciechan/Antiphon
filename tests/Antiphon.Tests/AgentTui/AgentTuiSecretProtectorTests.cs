@@ -10,10 +10,10 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Xml;
 using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -322,14 +322,15 @@ public class AgentTuiSecretProtectorTests
     }
 
     [Test]
-    public void Configured_repository_logs_neither_key_ring_path_nor_file_names()
+    public void Configured_repository_logs_neither_secrets_nor_key_storage_details()
     {
         var root = NewTempPath();
         var keyRingPath = Path.Combine(root, "keys");
         var contentRootPath = Path.Combine(root, "repository");
         var certificatePath = Path.Combine(root, "key-protection.pfx");
-        var storedFriendlyName = $"confidential-key-{Guid.NewGuid():N}";
-        var malformedFileName = $"malformed-key-{Guid.NewGuid():N}.xml";
+        var logControl = $"application-log-control-{Guid.NewGuid():N}";
+        var plaintextCanary = $"plaintext-canary-{Guid.NewGuid():N}";
+        var failedFriendlyName = $"failed-key-{Guid.NewGuid():N}";
         try
         {
             Directory.CreateDirectory(contentRootPath);
@@ -349,30 +350,77 @@ public class AgentTuiSecretProtectorTests
                 keyRingPath,
                 contentRootPath).ShouldBeTrue();
             using var provider = services.BuildServiceProvider();
+            var applicationLogger = provider
+                .GetRequiredService<ILogger<AgentTuiSecretProtectorTests>>();
+            applicationLogger.LogInformation(
+                "Agent TUI confidentiality capture control {Control}",
+                logControl);
+            var ciphertext = provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(Guid.NewGuid(), "OPENAI_API_KEY", plaintextCanary);
+            var storedPath = Directory.GetFiles(keyRingPath, "key-*.xml")
+                .ShouldHaveSingleItem();
+            var storedFileName = Path.GetFileName(storedPath);
             var repository = provider
                 .GetRequiredService<IOptions<KeyManagementOptions>>()
                 .Value.XmlRepository;
             repository.ShouldNotBeNull();
+            repository.GetAllElements().ShouldNotBeEmpty();
 
-            var storedElement = new XElement(
-                "key",
-                new XAttribute("id", Guid.NewGuid()),
-                new XAttribute("version", 1));
-            var storedId = storedElement.Attribute("id")!.Value;
-            repository.StoreElement(storedElement, storedFriendlyName);
-            var storedPath = Path.Combine(keyRingPath, $"{storedFriendlyName}.xml");
-            File.Exists(storedPath).ShouldBeTrue();
-
-            var malformedPath = Path.Combine(keyRingPath, malformedFileName);
-            File.WriteAllText(malformedPath, "<key");
-            MakePersistedKeyFileOwnerOnly(malformedPath);
-            Should.Throw<XmlException>(() => repository.GetAllElements());
-            XDocument.Load(storedPath).Root!.Attribute("id")!.Value.ShouldBe(storedId);
+            Directory.Delete(keyRingPath, recursive: true);
+            File.WriteAllText(keyRingPath, "blocks-the-repository-directory");
+            var repositoryException = Should.Throw<CryptographicException>(() =>
+                repository.StoreElement(new XElement("key"), failedFriendlyName));
+            repositoryException.Message.ShouldBe("Persisted key XML could not be stored.");
+            repositoryException.InnerException.ShouldBeNull();
+            applicationLogger.LogWarning(
+                repositoryException,
+                "Agent TUI repository failure was sanitized");
 
             var captured = string.Join(Environment.NewLine, loggerProvider.Entries);
+            captured.ShouldContain(logControl, Case.Sensitive);
+            captured.ShouldNotContain(plaintextCanary, Case.Sensitive);
+            captured.ShouldNotContain(ciphertext, Case.Sensitive);
             captured.ShouldNotContain(keyRingPath, Case.Insensitive);
-            captured.ShouldNotContain(storedFriendlyName, Case.Insensitive);
-            captured.ShouldNotContain(malformedFileName, Case.Insensitive);
+            captured.ShouldNotContain(storedFileName, Case.Insensitive);
+            captured.ShouldNotContain(failedFriendlyName, Case.Insensitive);
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Repository_delete_callback_failures_are_not_sanitized()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            provider.GetRequiredService<IAgentTuiSecretProtector>()
+                .Protect(Guid.NewGuid(), "OPENAI_API_KEY", "callback-scope-secret");
+            var repository = provider
+                .GetRequiredService<IOptions<KeyManagementOptions>>()
+                .Value.XmlRepository as IDeletableXmlRepository;
+            repository.ShouldNotBeNull();
+            var callbackFailure = new IOException("Deletion callback failed.");
+
+            var observed = Should.Throw<IOException>(() =>
+                repository.DeleteElements(_ => throw callbackFailure));
+
+            ReferenceEquals(observed, callbackFailure).ShouldBeTrue();
         }
         finally
         {
@@ -700,6 +748,16 @@ public class AgentTuiSecretProtectorTests
         AgentTuiDataProtectionSetup.IsCanonicalPathOutsideDirectory(
                 "/Users/build/Repository/keys",
                 "/users/build/repository",
+                AgentTuiPlatform.MacOS)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void MacOS_canonical_path_containment_normalizes_equivalent_unicode()
+    {
+        AgentTuiDataProtectionSetup.IsCanonicalPathOutsideDirectory(
+                "/Users/build/Re\u0301pository/keys",
+                "/Users/build/R\u00E9pository",
                 AgentTuiPlatform.MacOS)
             .ShouldBeFalse();
     }
