@@ -4,5 +4,6 @@ public enum AgentKind
 {
     Raw = 0,
     ClaudeCode = 1,
-    Codex = 2
+    Codex = 2,
+    OpenCode = 3
 }

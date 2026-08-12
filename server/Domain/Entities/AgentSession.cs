@@ -10,6 +10,8 @@ public class AgentSession
     // When the session is working a card, this points at it; otherwise null.
     public Guid? CardId { get; set; }
     public Guid? WorktreeId { get; set; }
+    public Guid? TuiProfileRevisionId { get; set; }
+    public string? EffectiveModelId { get; set; }
     public string DefinitionName { get; set; } = string.Empty;
     public AgentKind AgentKind { get; set; }
     public SessionStatus Status { get; set; } = SessionStatus.Created;
@@ -44,5 +46,6 @@ public class AgentSession
 
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
+    public AgentTuiProfileRevision? TuiProfileRevision { get; set; }
     public ICollection<RunAttempt> RunAttempts { get; set; } = new List<RunAttempt>();
 }

@@ -10,6 +10,8 @@ public class Agent
     public string WorkingDirectory { get; set; } = string.Empty;
     public string Details { get; set; } = string.Empty;
     public Guid? DefaultWorkflowTemplateId { get; set; }
+    public Guid? TuiProfileId { get; set; }
+    public string? ModelId { get; set; }
     public AgentAssignmentPolicy AssignmentPolicy { get; set; } = AgentAssignmentPolicy.AutoPick;
     public AgentStatus Status { get; set; } = AgentStatus.Idle;
 
@@ -62,6 +64,7 @@ public class Agent
     public Guid? PoolReservedForRootTaskId { get; set; }
 
     public WorkflowTemplate? DefaultWorkflowTemplate { get; set; }
+    public AgentTuiProfile? TuiProfile { get; set; }
     public Card? CurrentCard { get; set; }
     public Board? Board { get; set; }
     public ICollection<Card> QueueCards { get; set; } = new List<Card>();

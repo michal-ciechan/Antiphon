@@ -50,6 +50,11 @@ public class AppDbContext : DbContext
     public DbSet<Alert> Alerts => Set<Alert>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
     public DbSet<AgentTaskEvent> AgentTaskEvents => Set<AgentTaskEvent>();
+    public DbSet<AgentTuiProfile> AgentTuiProfiles => Set<AgentTuiProfile>();
+    public DbSet<AgentTuiProfileRevision> AgentTuiProfileRevisions => Set<AgentTuiProfileRevision>();
+    public DbSet<AgentTuiSecret> AgentTuiSecrets => Set<AgentTuiSecret>();
+    public DbSet<AgentTuiModel> AgentTuiModels => Set<AgentTuiModel>();
+    public DbSet<AgentTuiValidationRun> AgentTuiValidationRuns => Set<AgentTuiValidationRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -569,6 +574,131 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<AgentTuiProfile>(entity =>
+        {
+            entity.ToTable("AgentTuiProfiles");
+            entity.HasKey(p => p.Id);
+            entity.Property(p => p.DisplayName).IsRequired().HasMaxLength(200);
+            entity.Property(p => p.Kind).IsRequired();
+            entity.Property(p => p.IsEnabled).IsRequired();
+            entity.Property(p => p.IsDefault).IsRequired();
+            entity.Property(p => p.Source).IsRequired();
+            entity.Property(p => p.SourceDefinitionName).HasMaxLength(200);
+            entity.Property(p => p.CreatedAt).IsRequired();
+            entity.Property(p => p.UpdatedAt).IsRequired();
+
+            entity.HasIndex(p => p.DisplayName)
+                .IsUnique()
+                .HasDatabaseName("IX_AgentTuiProfiles_DisplayName");
+
+            entity.HasOne(p => p.ActiveRevision)
+                .WithMany()
+                .HasForeignKey(p => p.ActiveRevisionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AgentTuiProfileRevision>(entity =>
+        {
+            entity.ToTable("AgentTuiProfileRevisions");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.ProfileId).IsRequired();
+            entity.Property(r => r.RevisionNumber).IsRequired();
+            entity.Property(r => r.Executable).IsRequired().HasMaxLength(2000);
+            entity.Property(r => r.ArgumentsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.DiscoveryArgumentsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.VersionArgumentsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.WorkingDirectory).HasMaxLength(1000);
+            entity.Property(r => r.AuthenticationMode).IsRequired();
+            entity.Property(r => r.NonSecretEnvironmentJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.SecretEnvironmentNamesJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.ModelArgumentName).HasMaxLength(100);
+            entity.Property(r => r.Guidance).IsRequired();
+            entity.Property(r => r.CreatedAt).IsRequired();
+
+            entity.HasIndex(r => new { r.ProfileId, r.RevisionNumber })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentTuiProfileRevisions_ProfileId_RevisionNumber");
+
+            entity.HasOne(r => r.Profile)
+                .WithMany(p => p.Revisions)
+                .HasForeignKey(r => r.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentTuiSecret>(entity =>
+        {
+            entity.ToTable("AgentTuiSecrets");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.ProfileId).IsRequired();
+            entity.Property(s => s.Name).IsRequired().HasMaxLength(200);
+            entity.Property(s => s.Ciphertext).IsRequired();
+            entity.Property(s => s.ProtectionVersion).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.CreatedAt).IsRequired();
+            entity.Property(s => s.UpdatedAt).IsRequired();
+
+            entity.HasIndex(s => new { s.ProfileId, s.Name })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentTuiSecrets_ProfileId_Name");
+
+            entity.HasOne(s => s.Profile)
+                .WithMany(p => p.Secrets)
+                .HasForeignKey(s => s.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentTuiModel>(entity =>
+        {
+            entity.ToTable("AgentTuiModels");
+            entity.HasKey(m => m.Id);
+            entity.Property(m => m.ProfileId).IsRequired();
+            entity.Property(m => m.Identifier).IsRequired().HasMaxLength(500);
+            entity.Property(m => m.DisplayName).IsRequired().HasMaxLength(200);
+            entity.Property(m => m.Family).HasMaxLength(200);
+            entity.Property(m => m.Source).IsRequired();
+            entity.Property(m => m.Availability).IsRequired();
+            entity.Property(m => m.RunnerVersion).HasMaxLength(200);
+            entity.Property(m => m.IsSuggestedDefault).IsRequired();
+            entity.Property(m => m.CreatedAt).IsRequired();
+            entity.Property(m => m.UpdatedAt).IsRequired();
+
+            entity.HasIndex(m => new { m.ProfileId, m.Identifier })
+                .IsUnique()
+                .HasDatabaseName("IX_AgentTuiModels_ProfileId_Identifier");
+
+            entity.HasOne(m => m.Profile)
+                .WithMany(p => p.Models)
+                .HasForeignKey(m => m.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentTuiValidationRun>(entity =>
+        {
+            entity.ToTable("AgentTuiValidationRuns");
+            entity.HasKey(v => v.Id);
+            entity.Property(v => v.ProfileId).IsRequired();
+            entity.Property(v => v.ProfileRevisionId).IsRequired();
+            entity.Property(v => v.Operation).IsRequired().HasMaxLength(50);
+            entity.Property(v => v.Status).IsRequired();
+            entity.Property(v => v.ResultsJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(v => v.CapabilitiesJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(v => v.RunnerVersion).HasMaxLength(200);
+            entity.Property(v => v.Summary).HasMaxLength(4000);
+            entity.Property(v => v.CreatedAt).IsRequired();
+
+            entity.HasIndex(v => new { v.ProfileId, v.CreatedAt })
+                .HasDatabaseName("IX_AgentTuiValidationRuns_ProfileId_CreatedAt");
+
+            entity.HasOne(v => v.Profile)
+                .WithMany(p => p.ValidationRuns)
+                .HasForeignKey(v => v.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(v => v.ProfileRevision)
+                .WithMany()
+                .HasForeignKey(v => v.ProfileRevisionId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
         modelBuilder.Entity<Agent>(entity =>
         {
             entity.ToTable("Agents");
@@ -586,6 +716,7 @@ public class AppDbContext : DbContext
             // every Frontier-dispatched delegate row read High). The entity's own initializer
             // keeps High as the default for creators that don't set it.
             entity.Property(a => a.ModelLevel).IsRequired();
+            entity.Property(a => a.ModelId).HasMaxLength(500);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();
@@ -593,6 +724,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(a => a.Slug).IsUnique().HasDatabaseName("IX_Agents_Slug");
             entity.HasIndex(a => a.Status).HasDatabaseName("IX_Agents_Status");
             entity.HasIndex(a => a.BoardId).HasDatabaseName("IX_Agents_BoardId");
+            entity.HasIndex(a => a.TuiProfileId).HasDatabaseName("IX_Agents_TuiProfileId");
 
             entity.HasOne(a => a.DefaultWorkflowTemplate)
                 .WithMany()
@@ -608,6 +740,11 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(a => a.BoardId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.TuiProfile)
+                .WithMany(p => p.Agents)
+                .HasForeignKey(a => a.TuiProfileId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Card>(entity =>
@@ -760,11 +897,13 @@ public class AppDbContext : DbContext
             entity.Property(s => s.LastSeenAt).IsRequired();
             entity.Property(s => s.FailureReason).HasMaxLength(2000);
             entity.Property(s => s.DelegationTokenHash).HasMaxLength(64);
+            entity.Property(s => s.EffectiveModelId).HasMaxLength(500);
 
             entity.HasIndex(s => s.DelegationTokenHash)
                 .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");
             entity.HasIndex(s => s.CardId).HasDatabaseName("IX_AgentSessions_CardId");
             entity.HasIndex(s => s.WorktreeId).HasDatabaseName("IX_AgentSessions_WorktreeId");
+            entity.HasIndex(s => s.TuiProfileRevisionId).HasDatabaseName("IX_AgentSessions_TuiProfileRevisionId");
             entity.HasIndex(s => new { s.CardId, s.Status })
                 .HasDatabaseName("IX_AgentSessions_CardId_Status");
 
@@ -778,6 +917,11 @@ public class AppDbContext : DbContext
                 .WithMany(w => w.AgentSessions)
                 .HasForeignKey(s => s.WorktreeId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(s => s.TuiProfileRevision)
+                .WithMany(r => r.Sessions)
+                .HasForeignKey(s => s.TuiProfileRevisionId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TranscriptEntry>(entity =>
