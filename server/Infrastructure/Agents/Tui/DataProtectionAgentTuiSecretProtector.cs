@@ -595,7 +595,8 @@ internal static class AgentTuiDataProtectionSetup
             AgentTuiPlatform platform)
         {
             _directory = directory;
-            _inner = new FileSystemXmlRepository(directory, loggerFactory);
+            // Framework repository messages include physical key-ring paths and filenames.
+            _inner = new FileSystemXmlRepository(directory, NullLoggerFactory.Instance);
             _platform = platform;
         }
 

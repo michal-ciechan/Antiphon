@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -9,10 +10,14 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -309,6 +314,65 @@ public class AgentTuiSecretProtectorTests
             readiness.IsReady.ShouldBeTrue();
             sut.Unprotect(profileId, "OPENAI_API_KEY", cipher)
                 .ShouldBe("initial-key-generation-secret");
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_repository_logs_neither_key_ring_path_nor_file_names()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var storedFriendlyName = $"confidential-key-{Guid.NewGuid():N}";
+        var malformedFileName = $"malformed-key-{Guid.NewGuid():N}.xml";
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var loggerProvider = new CapturingLoggerProvider();
+            var services = new ServiceCollection();
+            services.AddLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.SetMinimumLevel(LogLevel.Trace);
+                logging.AddProvider(loggerProvider);
+            });
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var repository = provider
+                .GetRequiredService<IOptions<KeyManagementOptions>>()
+                .Value.XmlRepository;
+            repository.ShouldNotBeNull();
+
+            var storedElement = new XElement(
+                "key",
+                new XAttribute("id", Guid.NewGuid()),
+                new XAttribute("version", 1));
+            var storedId = storedElement.Attribute("id")!.Value;
+            repository.StoreElement(storedElement, storedFriendlyName);
+            var storedPath = Path.Combine(keyRingPath, $"{storedFriendlyName}.xml");
+            File.Exists(storedPath).ShouldBeTrue();
+
+            var malformedPath = Path.Combine(keyRingPath, malformedFileName);
+            File.WriteAllText(malformedPath, "<key");
+            MakePersistedKeyFileOwnerOnly(malformedPath);
+            Should.Throw<XmlException>(() => repository.GetAllElements());
+            XDocument.Load(storedPath).Root!.Attribute("id")!.Value.ShouldBe(storedId);
+
+            var captured = string.Join(Environment.NewLine, loggerProvider.Entries);
+            captured.ShouldNotContain(keyRingPath, Case.Insensitive);
+            captured.ShouldNotContain(storedFriendlyName, Case.Insensitive);
+            captured.ShouldNotContain(malformedFileName, Case.Insensitive);
         }
         finally
         {
@@ -2054,6 +2118,40 @@ public class AgentTuiSecretProtectorTests
                 {
                     afterUnprotect?.Invoke();
                 }
+            }
+        }
+    }
+
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<string> _entries = new();
+
+        public IReadOnlyCollection<string> Entries => _entries.ToArray();
+
+        public ILogger CreateLogger(string categoryName) =>
+            new CapturingLogger(categoryName, _entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(
+            string categoryName,
+            ConcurrentQueue<string> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                entries.Enqueue(
+                    $"{categoryName}|{logLevel}|{eventId}|{formatter(state, exception)}|{exception}");
             }
         }
     }
