@@ -103,6 +103,87 @@ public class AgentTuiSecretProtectorTests
     }
 
     [Test]
+    public void Protect_rejects_first_key_created_and_deleted_during_cryptography()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var newKeyPath = Path.Combine(keyRingPath, "first-key.xml");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var callbackProvider = new CallbackDataProtectionProvider(
+                new EphemeralDataProtectionProvider(),
+                () =>
+                {
+                    File.WriteAllText(newKeyPath, "<key />");
+                    File.Delete(newKeyPath);
+                });
+            var sut = new DataProtectionAgentTuiSecretProtector(
+                callbackProvider,
+                provider.GetRequiredService<AgentTuiKeyProtectionReadiness>());
+
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(Guid.NewGuid(), "OPENAI_API_KEY", "rejected-secret"));
+            File.Exists(newKeyPath).ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_allows_and_observes_initial_key_generation()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            var readiness = provider.GetRequiredService<AgentTuiKeyProtectionReadiness>();
+            var profileId = Guid.NewGuid();
+
+            var cipher = sut.Protect(
+                profileId,
+                "OPENAI_API_KEY",
+                "initial-key-generation-secret");
+
+            Directory.GetFiles(keyRingPath, "*.xml", SearchOption.TopDirectoryOnly)
+                .ShouldNotBeEmpty();
+            readiness.IsReady.ShouldBeTrue();
+            sut.Unprotect(profileId, "OPENAI_API_KEY", cipher)
+                .ShouldBe("initial-key-generation-secret");
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
     public void Public_read_contract_serialization_does_not_expose_secret_value_properties()
     {
         var forbiddenNames = new HashSet<string>(StringComparer.Ordinal)
@@ -669,6 +750,95 @@ public class AgentTuiSecretProtectorTests
                 File.Delete(persistedKey);
 
             Directory.Exists(keyRingPath).ShouldBeTrue();
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));
+            Should.Throw<CryptographicException>(() =>
+                sut.Unprotect(profileId, "OPENAI_API_KEY", cipher));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_rejects_replaced_persisted_key_material()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            var profileId = Guid.NewGuid();
+            var cipher = sut.Protect(profileId, "OPENAI_API_KEY", "key-replacement-secret");
+            var persistedKey = Directory.GetFiles(
+                    keyRingPath,
+                    "*.xml",
+                    SearchOption.TopDirectoryOnly)
+                .ShouldHaveSingleItem();
+
+            File.WriteAllText(persistedKey, "<corrupted />");
+
+            provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
+            Should.Throw<CryptographicException>(() =>
+                sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));
+            Should.Throw<CryptographicException>(() =>
+                sut.Unprotect(profileId, "OPENAI_API_KEY", cipher));
+        }
+        finally
+        {
+            DeleteTempPath(root);
+        }
+    }
+
+    [Test]
+    public void Configured_protector_rejects_unreadable_persisted_key_material()
+    {
+        var root = NewTempPath();
+        var keyRingPath = Path.Combine(root, "keys");
+        var contentRootPath = Path.Combine(root, "repository");
+        var certificatePath = Path.Combine(root, "key-protection.pfx");
+        var rejectKeyReads = false;
+        byte[] ReadKeyFile(string path)
+        {
+            if (rejectKeyReads)
+                throw new UnauthorizedAccessException("Simulated unreadable key material.");
+
+            return File.ReadAllBytes(path);
+        }
+
+        try
+        {
+            Directory.CreateDirectory(contentRootPath);
+            WriteTestCertificate(certificatePath);
+            var services = new ServiceCollection();
+            AgentTuiDataProtectionSetup.Configure(
+                services,
+                CertificateSettings(certificatePath),
+                CurrentPlatform(),
+                keyRingPath,
+                contentRootPath,
+                keyFileReader: ReadKeyFile).ShouldBeTrue();
+            using var provider = services.BuildServiceProvider();
+            var sut = provider.GetRequiredService<IAgentTuiSecretProtector>();
+            var profileId = Guid.NewGuid();
+            var cipher = sut.Protect(profileId, "OPENAI_API_KEY", "unreadable-key-secret");
+
+            rejectKeyReads = true;
+
             provider.GetRequiredService<AgentTuiKeyProtectionReadiness>().IsReady.ShouldBeFalse();
             Should.Throw<CryptographicException>(() =>
                 sut.Protect(profileId, "OPENAI_API_KEY", "rejected-secret"));

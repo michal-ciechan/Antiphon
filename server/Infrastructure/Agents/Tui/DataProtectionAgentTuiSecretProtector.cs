@@ -41,7 +41,7 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
 
     private IDataProtector For(Guid profileId, string environmentName)
     {
-        if (!_readiness.RevalidateAndObserve())
+        if (!_readiness.RevalidateAndObserveBeforeOperation())
         {
             throw new CryptographicException(
                 "Agent TUI managed-secret protection is not ready.");
@@ -58,7 +58,7 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
 
     private void EnsureReadyAfterOperation()
     {
-        if (!_readiness.RevalidateAndObserve())
+        if (!_readiness.RevalidateAndObserveAfterOperation())
         {
             throw new CryptographicException(
                 "Agent TUI managed-secret protection is not ready.");
@@ -69,19 +69,27 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
 public sealed class AgentTuiKeyProtectionReadiness
 {
     private readonly Func<bool> _evaluate;
-    private readonly Func<bool> _revalidateAndObserve;
+    private readonly Func<bool> _revalidateAndObserveBeforeOperation;
+    private readonly Func<bool> _revalidateAndObserveAfterOperation;
 
     internal AgentTuiKeyProtectionReadiness(
         Func<bool> evaluate,
-        Func<bool>? revalidateAndObserve = null)
+        Func<bool>? revalidateAndObserveBeforeOperation = null,
+        Func<bool>? revalidateAndObserveAfterOperation = null)
     {
         _evaluate = evaluate ?? throw new ArgumentNullException(nameof(evaluate));
-        _revalidateAndObserve = revalidateAndObserve ?? evaluate;
+        _revalidateAndObserveBeforeOperation = revalidateAndObserveBeforeOperation ?? evaluate;
+        _revalidateAndObserveAfterOperation = revalidateAndObserveAfterOperation
+            ?? _revalidateAndObserveBeforeOperation;
     }
 
     public bool IsReady => TryEvaluate(_evaluate);
 
-    internal bool RevalidateAndObserve() => TryEvaluate(_revalidateAndObserve);
+    internal bool RevalidateAndObserveBeforeOperation() =>
+        TryEvaluate(_revalidateAndObserveBeforeOperation);
+
+    internal bool RevalidateAndObserveAfterOperation() =>
+        TryEvaluate(_revalidateAndObserveAfterOperation);
 
     private static bool TryEvaluate(Func<bool> evaluate)
     {
@@ -117,11 +125,13 @@ internal static class AgentTuiDataProtectionSetup
         AgentTuiPlatform platform,
         string? keyRingPath,
         string contentRootPath,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Func<string, byte[]>? keyFileReader = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(settings);
         timeProvider ??= TimeProvider.System;
+        keyFileReader ??= File.ReadAllBytes;
 
         var dataProtection = services.AddDataProtection()
             .SetApplicationName("Antiphon.AgentTui");
@@ -135,7 +145,7 @@ internal static class AgentTuiDataProtectionSetup
         }
 
         var persistedKeyReadiness = directoryReady
-            ? PersistedKeyRingReadiness.TryCreate(keyRingPath!, platform)
+            ? PersistedKeyRingReadiness.TryCreate(keyRingPath!, platform, keyFileReader)
             : null;
         var keyProtectionReadiness = directoryReady
             ? ConfigureKeyProtection(
@@ -159,7 +169,12 @@ internal static class AgentTuiDataProtectionSetup
                 && IsOutsideDirectory(keyRingPath!, contentRootPath)
                 && IsKeyRingDirectoryReady(keyRingPath!, platform)
                 && keyProtectionReadiness!()
-                && persistedKeyReadiness!.RevalidateAndObserve());
+                && persistedKeyReadiness!.RevalidateAndObserve(requireKey: false),
+            () => setupReady
+                && IsOutsideDirectory(keyRingPath!, contentRootPath)
+                && IsKeyRingDirectoryReady(keyRingPath!, platform)
+                && keyProtectionReadiness!()
+                && persistedKeyReadiness!.RevalidateAndObserve(requireKey: true));
         var protectionReady = readiness.IsReady;
         if (!protectionReady)
             dataProtection.DisableAutomaticKeyGeneration();
@@ -209,15 +224,18 @@ internal static class AgentTuiDataProtectionSetup
     private sealed class PersistedKeyRingReadiness
     {
         private readonly string _keyRingPath;
-        private readonly HashSet<string> _observedKeyFiles;
+        private readonly Func<string, byte[]> _readKeyFile;
+        private readonly Dictionary<string, byte[]> _observedKeyFiles;
         private readonly object _sync = new();
 
         private PersistedKeyRingReadiness(
             string keyRingPath,
-            AgentTuiPlatform platform)
+            AgentTuiPlatform platform,
+            Func<string, byte[]> readKeyFile)
         {
             _keyRingPath = keyRingPath;
-            _observedKeyFiles = EnumerateKeyFiles().ToHashSet(
+            _readKeyFile = readKeyFile;
+            _observedKeyFiles = SnapshotKeyFiles(
                 platform == AgentTuiPlatform.Windows
                     ? StringComparer.OrdinalIgnoreCase
                     : StringComparer.Ordinal);
@@ -225,11 +243,12 @@ internal static class AgentTuiDataProtectionSetup
 
         public static PersistedKeyRingReadiness? TryCreate(
             string keyRingPath,
-            AgentTuiPlatform platform)
+            AgentTuiPlatform platform,
+            Func<string, byte[]> readKeyFile)
         {
             try
             {
-                return new PersistedKeyRingReadiness(keyRingPath, platform);
+                return new PersistedKeyRingReadiness(keyRingPath, platform, readKeyFile);
             }
             catch (Exception exception) when (exception is IOException
                                               or UnauthorizedAccessException
@@ -244,33 +263,54 @@ internal static class AgentTuiDataProtectionSetup
         {
             lock (_sync)
             {
-                var currentKeyFiles = EnumerateKeyFiles().ToHashSet(
+                var currentKeyFiles = SnapshotKeyFiles(
                     _observedKeyFiles.Comparer);
-                return _observedKeyFiles.IsSubsetOf(currentKeyFiles);
+                return ObservedKeysMatch(currentKeyFiles);
             }
         }
 
-        public bool RevalidateAndObserve()
+        public bool RevalidateAndObserve(bool requireKey)
         {
             lock (_sync)
             {
-                var currentKeyFiles = EnumerateKeyFiles().ToHashSet(
+                var currentKeyFiles = SnapshotKeyFiles(
                     _observedKeyFiles.Comparer);
-                if (!_observedKeyFiles.IsSubsetOf(currentKeyFiles))
+                if (requireKey && currentKeyFiles.Count == 0)
+                    return false;
+                if (!ObservedKeysMatch(currentKeyFiles))
                     return false;
 
-                _observedKeyFiles.UnionWith(currentKeyFiles);
+                foreach (var currentKeyFile in currentKeyFiles)
+                    _observedKeyFiles.TryAdd(currentKeyFile.Key, currentKeyFile.Value);
                 return true;
             }
         }
 
-        private IEnumerable<string> EnumerateKeyFiles() =>
+        private bool ObservedKeysMatch(IReadOnlyDictionary<string, byte[]> currentKeyFiles)
+        {
+            foreach (var observedKeyFile in _observedKeyFiles)
+            {
+                if (!currentKeyFiles.TryGetValue(observedKeyFile.Key, out var currentFingerprint)
+                    || !CryptographicOperations.FixedTimeEquals(
+                        observedKeyFile.Value,
+                        currentFingerprint))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private Dictionary<string, byte[]> SnapshotKeyFiles(IEqualityComparer<string> comparer) =>
             Directory.EnumerateFiles(
                     _keyRingPath,
                     "*.xml",
                     SearchOption.TopDirectoryOnly)
-                .Select(Path.GetFileName)
-                .Where(fileName => !string.IsNullOrEmpty(fileName))!;
+                .ToDictionary(
+                    path => Path.GetFileName(path),
+                    path => SHA256.HashData(_readKeyFile(path)),
+                    comparer);
     }
 
     internal static bool IsOutsideDirectory(string path, string directoryPath)
