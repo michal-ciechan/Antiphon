@@ -16,6 +16,7 @@ using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Agents.Tui;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.ExternalChanges;
 using Antiphon.Server.Infrastructure.FileSystem;
@@ -100,6 +101,42 @@ try
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<AlertsSettings>(builder.Configuration.GetSection("Alerts"));
+    builder.Services.AddSingleton<IValidateOptions<AgentTuiSettings>, AgentTuiSettingsValidator>();
+    builder.Services.AddOptions<AgentTuiSettings>()
+        .Bind(builder.Configuration.GetSection("AgentTui"))
+        .ValidateOnStart();
+
+    var agentTuiSettings = builder.Configuration.GetSection("AgentTui").Get<AgentTuiSettings>()
+        ?? new AgentTuiSettings();
+    var agentTuiPlatform = OperatingSystem.IsWindows()
+        ? AgentTuiPlatform.Windows
+        : OperatingSystem.IsLinux()
+            ? AgentTuiPlatform.Linux
+            : OperatingSystem.IsMacOS()
+                ? AgentTuiPlatform.MacOS
+                : AgentTuiPlatform.Other;
+    var agentTuiPathEnvironment = new AgentTuiPathEnvironment(
+        agentTuiPlatform,
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Environment.GetEnvironmentVariable("XDG_DATA_HOME"),
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    string? agentTuiKeyRingPath = null;
+    try
+    {
+        agentTuiKeyRingPath = agentTuiSettings.ResolveKeyRingPath(agentTuiPathEnvironment);
+    }
+    catch (Exception exception) when (exception is InvalidOperationException
+                                      or PlatformNotSupportedException)
+    {
+        // Managed-secret operations fail closed through the readiness guard. Wrapper-managed
+        // profiles do not use the protector and remain available without a supported key path.
+    }
+    AgentTuiDataProtectionSetup.Configure(
+        builder.Services,
+        agentTuiSettings,
+        agentTuiPlatform,
+        agentTuiKeyRingPath,
+        builder.Environment.ContentRootPath);
 
     // Agent registry (E02) — typed config + fail-fast validator + adapter factory
     builder.Services.AddSingleton<IValidateOptions<AgentRegistrySettings>, AgentRegistrySettingsValidator>();

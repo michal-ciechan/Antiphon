@@ -42,6 +42,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 ["ConnectionStrings:DefaultConnection"] = TestDbFixture.ConnectionString,
                 ["Git:WorkspacePath"] = _workspacePath,
                 ["Git:WorktreeBasePath"] = Path.Combine(_workspacePath, "worktrees"),
+                ["AgentTui:KeyRingPath"] = Path.Combine(_workspacePath, "data-protection-keys"),
                 ["GitHub:Enabled"] = "false",
                 ["Agents:DefaultDefinition"] = "test-raw",
                 ["Agents:Definitions:test-raw:Kind"] = "Raw",
