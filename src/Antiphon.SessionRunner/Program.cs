@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Serilog;
@@ -41,7 +42,31 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
 builder.Services.AddHostedService<SessionCpuWatchdogService>();
 
+// The pty backend switch (CARD-0037), defaulting OFF. Exported into this process's environment so it
+// reaches the DETACHED pty-hosts for free: PtyHostLauncher starts them with UseShellExecute=false
+// and no environment override, so they inherit this block. An env var already set on the runner wins
+// over appsettings — that is how an operator flips one machine without editing config.
+{
+    var configured = builder.Configuration[PtyBackendPolicy.ConfigKey];
+    if (!string.IsNullOrWhiteSpace(configured)
+        && string.IsNullOrEmpty(Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar)))
+    {
+        Environment.SetEnvironmentVariable(PtyBackendPolicy.EnvVar, configured);
+    }
+}
+
 var app = builder.Build();
+
+// Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
+// request that fell back to the inbox conhost looks identical from everywhere else, and it silently
+// re-arms the 1 KB clipping the ceilings exist for.
+{
+    var decision = PtyBackendPolicy.Resolve();
+    if (decision.FellBack)
+        app.Logger.LogWarning("PTY backend: {Decision}", decision);
+    else
+        app.Logger.LogInformation("PTY backend: {Decision}", decision);
+}
 
 // Readiness gating: adopt pty-hosts that survived the previous runner BEFORE the HTTP API starts
 // listening. The server's reconciler treats "runner doesn't know this session" as fatal, so the

@@ -100,10 +100,14 @@ public sealed class NodeStdinProbe : IAsyncDisposable
         int cols = 120,
         int rows = 30,
         bool decset2004 = false,
-        int quietMs = 0)
+        int quietMs = 0,
+        string? backend = null)
     {
         var node = ResolveNode() ?? throw new InvalidOperationException("node.exe not on PATH");
-        var runner = new PtyAgentRunner();
+        // CARD-0037: the backend is a per-runner override rather than the process env var, because
+        // the contract needs BOTH arms measured in one test run — the inbox conhost stripping the
+        // markers and the shipped conpty.dll delivering them are two halves of the same fact.
+        var runner = new PtyAgentRunner(backend);
         var env = new Dictionary<string, string>
         {
             ["PROBE_RAW"] = raw ? "1" : "0",

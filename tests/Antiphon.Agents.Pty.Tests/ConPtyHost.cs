@@ -77,11 +77,19 @@ internal sealed class ConPtyHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// The redistributable ConPTY (conpty.dll + a sibling OpenConsole.exe) if one can be found on
-    /// this machine, else null. pty4j (JetBrains IDEs) and node-pty (VS Code) both ship the pair.
+    /// The redistributable ConPTY (conpty.dll + a sibling OpenConsole.exe) to measure against.
+    ///
+    /// <para>Since CARD-0037 the FIRST candidate is the one we actually ship
+    /// (<see cref="ConPtyRedistributable"/>, a Microsoft-signed NuGet package staged into the build
+    /// output), so every number this bench produces describes the shipped binary rather than
+    /// whichever build a locally installed IDE happens to carry. The IDE probes are kept as a
+    /// fallback for machines that predate the staging.</para>
     /// </summary>
     public static string? FindRedistConPty()
     {
+        if (ConPtyRedistributable.TryLocate(out var shipped, out _))
+            return shipped;
+
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var candidates = new[]
         {

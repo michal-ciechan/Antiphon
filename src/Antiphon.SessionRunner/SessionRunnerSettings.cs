@@ -45,6 +45,15 @@ public sealed class SessionRunnerSettings
     /// </summary>
     public string? PtyHostSourceDir { get; set; }
 
+    /// <summary>
+    /// Which pseudoconsole every session on this runner spawns under: <c>inbox</c> (default, the
+    /// kernel32/conhost path that strips bracketed-paste markers) or <c>modern</c> (the shipped
+    /// conpty.dll + OpenConsole.exe, which delivers them). Exported to <c>ANTIPHON_PTY_BACKEND</c>
+    /// at startup so the detached pty-hosts inherit it; an env var already set wins. A machine
+    /// without the redistributable falls back to <c>inbox</c> — see <c>PtyBackendPolicy</c>.
+    /// </summary>
+    public string? PtyBackend { get; set; }
+
     /// <summary>Seconds to wait for a freshly spawned host's pipe to accept the connection.</summary>
     public int PtyHostConnectTimeoutSec { get; set; } = 15;
 
