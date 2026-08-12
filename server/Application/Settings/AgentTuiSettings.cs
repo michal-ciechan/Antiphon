@@ -39,23 +39,33 @@ public sealed class AgentTuiSettings
                 "Antiphon",
                 "DataProtection-Keys"),
             AgentTuiPlatform.Linux or AgentTuiPlatform.MacOS => Combine(
-                environment.XdgDataHome is { } xdgDataHome
-                && IsAbsolutePath(xdgDataHome, environment.Platform)
-                    ? xdgDataHome
-                    : Combine(
-                        RequireAbsolutePath(
-                            environment.HomeDirectory,
-                            "home directory",
-                            environment.Platform),
-                        environment.Platform,
-                        ".local",
-                        "share"),
+                ResolveUnixDataRoot(environment),
                 environment.Platform,
                 "antiphon",
                 "data-protection-keys"),
             _ => throw new PlatformNotSupportedException(
                 "Agent TUI key-ring path resolution is not supported on this platform.")
         };
+    }
+
+    private static string ResolveUnixDataRoot(AgentTuiPathEnvironment environment)
+    {
+        if (string.IsNullOrEmpty(environment.XdgDataHome))
+        {
+            return Combine(
+                RequireAbsolutePath(
+                    environment.HomeDirectory,
+                    "home directory",
+                    environment.Platform),
+                environment.Platform,
+                ".local",
+                "share");
+        }
+
+        if (!IsAbsolutePath(environment.XdgDataHome, environment.Platform))
+            throw new InvalidOperationException("The XDG_DATA_HOME path must be absolute.");
+
+        return environment.XdgDataHome;
     }
 
     public static AgentTuiDirectoryPermissionStrategy GetDirectoryPermissionStrategy(

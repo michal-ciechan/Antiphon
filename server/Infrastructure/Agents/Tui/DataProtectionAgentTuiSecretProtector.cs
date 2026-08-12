@@ -26,18 +26,22 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
     public string Protect(Guid profileId, string environmentName, string plaintext)
     {
         ArgumentNullException.ThrowIfNull(plaintext);
-        return For(profileId, environmentName).Protect(plaintext);
+        var protectedValue = For(profileId, environmentName).Protect(plaintext);
+        EnsureReadyAfterOperation();
+        return protectedValue;
     }
 
     public string Unprotect(Guid profileId, string environmentName, string protectedValue)
     {
         ArgumentNullException.ThrowIfNull(protectedValue);
-        return For(profileId, environmentName).Unprotect(protectedValue);
+        var plaintext = For(profileId, environmentName).Unprotect(protectedValue);
+        EnsureReadyAfterOperation();
+        return plaintext;
     }
 
     private IDataProtector For(Guid profileId, string environmentName)
     {
-        if (!_readiness.IsReady)
+        if (!_readiness.RevalidateAndObserve())
         {
             throw new CryptographicException(
                 "Agent TUI managed-secret protection is not ready.");
@@ -51,16 +55,50 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
             profileId.ToString("D"),
             environmentName);
     }
+
+    private void EnsureReadyAfterOperation()
+    {
+        if (!_readiness.RevalidateAndObserve())
+        {
+            throw new CryptographicException(
+                "Agent TUI managed-secret protection is not ready.");
+        }
+    }
 }
 
 public sealed class AgentTuiKeyProtectionReadiness
 {
-    internal AgentTuiKeyProtectionReadiness(bool isReady)
+    private readonly Func<bool> _evaluate;
+    private readonly Func<bool> _revalidateAndObserve;
+
+    internal AgentTuiKeyProtectionReadiness(
+        Func<bool> evaluate,
+        Func<bool>? revalidateAndObserve = null)
     {
-        IsReady = isReady;
+        _evaluate = evaluate ?? throw new ArgumentNullException(nameof(evaluate));
+        _revalidateAndObserve = revalidateAndObserve ?? evaluate;
     }
 
-    public bool IsReady { get; }
+    public bool IsReady => TryEvaluate(_evaluate);
+
+    internal bool RevalidateAndObserve() => TryEvaluate(_revalidateAndObserve);
+
+    private static bool TryEvaluate(Func<bool> evaluate)
+    {
+        try
+        {
+            return evaluate();
+        }
+        catch (Exception exception) when (exception is CryptographicException
+                                          or IOException
+                                          or UnauthorizedAccessException
+                                          or PlatformNotSupportedException
+                                          or System.Security.SecurityException
+                                          or ArgumentException)
+        {
+            return false;
+        }
+    }
 }
 
 internal static class AgentTuiDataProtectionSetup
@@ -78,10 +116,12 @@ internal static class AgentTuiDataProtectionSetup
         AgentTuiSettings settings,
         AgentTuiPlatform platform,
         string? keyRingPath,
-        string contentRootPath)
+        string contentRootPath,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(settings);
+        timeProvider ??= TimeProvider.System;
 
         var dataProtection = services.AddDataProtection()
             .SetApplicationName("Antiphon.AgentTui");
@@ -94,17 +134,36 @@ internal static class AgentTuiDataProtectionSetup
             dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyRingPath!));
         }
 
-        var protectionReady = directoryReady
-            && ConfigureKeyProtection(
+        var persistedKeyReadiness = directoryReady
+            ? PersistedKeyRingReadiness.TryCreate(keyRingPath!, platform)
+            : null;
+        var keyProtectionReadiness = directoryReady
+            ? ConfigureKeyProtection(
                 dataProtection,
                 settings.KeyProtection,
                 platform,
                 keyRingPath!,
-                contentRootPath);
+                contentRootPath,
+                timeProvider)
+            : null;
+        var setupReady = directoryReady
+            && persistedKeyReadiness is not null
+            && keyProtectionReadiness is not null;
+        var readiness = new AgentTuiKeyProtectionReadiness(
+            () => setupReady
+                && IsOutsideDirectory(keyRingPath!, contentRootPath)
+                && IsKeyRingDirectoryReady(keyRingPath!, platform)
+                && persistedKeyReadiness!.IsReady()
+                && keyProtectionReadiness!(),
+            () => setupReady
+                && IsOutsideDirectory(keyRingPath!, contentRootPath)
+                && IsKeyRingDirectoryReady(keyRingPath!, platform)
+                && keyProtectionReadiness!()
+                && persistedKeyReadiness!.RevalidateAndObserve());
+        var protectionReady = readiness.IsReady;
         if (!protectionReady)
             dataProtection.DisableAutomaticKeyGeneration();
 
-        var readiness = new AgentTuiKeyProtectionReadiness(protectionReady);
         services.AddSingleton(readiness);
         services.AddSingleton<IAgentTuiSecretProtector, DataProtectionAgentTuiSecretProtector>();
         return protectionReady;
@@ -130,6 +189,88 @@ internal static class AgentTuiDataProtectionSetup
         {
             return false;
         }
+    }
+
+    private static bool IsKeyRingDirectoryReady(string path, AgentTuiPlatform platform)
+    {
+        if (!Directory.Exists(path))
+            return false;
+
+        return AgentTuiSettings.GetDirectoryPermissionStrategy(platform) switch
+        {
+            AgentTuiDirectoryPermissionStrategy.WindowsAccessControl when OperatingSystem.IsWindows() =>
+                IsWindowsDirectoryOwnerOnly(path),
+            AgentTuiDirectoryPermissionStrategy.UnixOwnerOnly when !OperatingSystem.IsWindows() =>
+                File.GetUnixFileMode(path) == OwnerOnlyUnixMode,
+            _ => false
+        };
+    }
+
+    private sealed class PersistedKeyRingReadiness
+    {
+        private readonly string _keyRingPath;
+        private readonly HashSet<string> _observedKeyFiles;
+        private readonly object _sync = new();
+
+        private PersistedKeyRingReadiness(
+            string keyRingPath,
+            AgentTuiPlatform platform)
+        {
+            _keyRingPath = keyRingPath;
+            _observedKeyFiles = EnumerateKeyFiles().ToHashSet(
+                platform == AgentTuiPlatform.Windows
+                    ? StringComparer.OrdinalIgnoreCase
+                    : StringComparer.Ordinal);
+        }
+
+        public static PersistedKeyRingReadiness? TryCreate(
+            string keyRingPath,
+            AgentTuiPlatform platform)
+        {
+            try
+            {
+                return new PersistedKeyRingReadiness(keyRingPath, platform);
+            }
+            catch (Exception exception) when (exception is IOException
+                                              or UnauthorizedAccessException
+                                              or System.Security.SecurityException
+                                              or ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        public bool IsReady()
+        {
+            lock (_sync)
+            {
+                var currentKeyFiles = EnumerateKeyFiles().ToHashSet(
+                    _observedKeyFiles.Comparer);
+                return _observedKeyFiles.IsSubsetOf(currentKeyFiles);
+            }
+        }
+
+        public bool RevalidateAndObserve()
+        {
+            lock (_sync)
+            {
+                var currentKeyFiles = EnumerateKeyFiles().ToHashSet(
+                    _observedKeyFiles.Comparer);
+                if (!_observedKeyFiles.IsSubsetOf(currentKeyFiles))
+                    return false;
+
+                _observedKeyFiles.UnionWith(currentKeyFiles);
+                return true;
+            }
+        }
+
+        private IEnumerable<string> EnumerateKeyFiles() =>
+            Directory.EnumerateFiles(
+                    _keyRingPath,
+                    "*.xml",
+                    SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(fileName => !string.IsNullOrEmpty(fileName))!;
     }
 
     internal static bool IsOutsideDirectory(string path, string directoryPath)
@@ -188,12 +329,13 @@ internal static class AgentTuiDataProtectionSetup
         return Path.GetFullPath(currentPath);
     }
 
-    private static bool ConfigureKeyProtection(
+    private static Func<bool>? ConfigureKeyProtection(
         IDataProtectionBuilder builder,
         AgentTuiKeyProtectionSettings settings,
         AgentTuiPlatform platform,
         string keyRingPath,
-        string contentRootPath)
+        string contentRootPath,
+        TimeProvider timeProvider)
     {
         try
         {
@@ -202,10 +344,10 @@ internal static class AgentTuiDataProtectionSetup
             {
                 case AgentTuiKeyProtectionMode.DpapiCurrentUser when OperatingSystem.IsWindows():
                     ProtectWithDpapi(builder, protectToLocalMachine: false);
-                    return true;
+                    return static () => true;
                 case AgentTuiKeyProtectionMode.DpapiLocalMachine when OperatingSystem.IsWindows():
                     ProtectWithDpapi(builder, protectToLocalMachine: true);
-                    return true;
+                    return static () => true;
                 case AgentTuiKeyProtectionMode.X509Certificate:
                     if (!EnsureCertificateKeyCustody(
                             settings,
@@ -213,17 +355,24 @@ internal static class AgentTuiDataProtectionSetup
                             keyRingPath,
                             contentRootPath))
                     {
-                        return false;
+                        return null;
                     }
 
-                    var certificate = LoadCertificate(settings);
+                    var certificate = LoadCertificate(settings, timeProvider.GetUtcNow());
                     if (certificate is null)
-                        return false;
+                        return null;
+                    var certificateHash = certificate.GetCertHash(HashAlgorithmName.SHA256);
                     builder.Services.AddSingleton(certificate);
                     builder.ProtectKeysWithCertificate(certificate);
-                    return true;
+                    return () => IsCertificateProtectionReady(
+                        settings,
+                        platform,
+                        keyRingPath,
+                        contentRootPath,
+                        timeProvider,
+                        certificateHash);
                 default:
-                    return false;
+                    return null;
             }
         }
         catch (Exception exception) when (exception is CryptographicException
@@ -233,8 +382,32 @@ internal static class AgentTuiDataProtectionSetup
                                           or System.Security.SecurityException
                                           or ArgumentException)
         {
+            return null;
+        }
+    }
+
+    private static bool IsCertificateProtectionReady(
+        AgentTuiKeyProtectionSettings settings,
+        AgentTuiPlatform platform,
+        string keyRingPath,
+        string contentRootPath,
+        TimeProvider timeProvider,
+        byte[] configuredCertificateHash)
+    {
+        if (!IsCertificateKeyCustodyReady(
+                settings,
+                platform,
+                keyRingPath,
+                contentRootPath))
+        {
             return false;
         }
+
+        using var certificate = LoadCertificate(settings, timeProvider.GetUtcNow());
+        return certificate is not null
+            && CryptographicOperations.FixedTimeEquals(
+                configuredCertificateHash,
+                certificate.GetCertHash(HashAlgorithmName.SHA256));
     }
 
     private static AgentTuiKeyProtectionMode ResolveProtectionMode(
@@ -294,7 +467,45 @@ internal static class AgentTuiDataProtectionSetup
         };
     }
 
-    private static X509Certificate2? LoadCertificate(AgentTuiKeyProtectionSettings settings)
+    private static bool IsCertificateKeyCustodyReady(
+        AgentTuiKeyProtectionSettings settings,
+        AgentTuiPlatform platform,
+        string keyRingPath,
+        string contentRootPath)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.CertificateThumbprint))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(settings.CertificatePath)
+            || !Path.IsPathFullyQualified(settings.CertificatePath))
+        {
+            return false;
+        }
+
+        var privateKeyPath = string.IsNullOrWhiteSpace(settings.CertificatePrivateKeyPath)
+            ? settings.CertificatePath
+            : settings.CertificatePrivateKeyPath;
+        if (!Path.IsPathFullyQualified(privateKeyPath)
+            || !File.Exists(privateKeyPath)
+            || !IsOutsideDirectory(privateKeyPath, contentRootPath)
+            || !IsOutsideDirectory(privateKeyPath, keyRingPath))
+        {
+            return false;
+        }
+
+        return AgentTuiSettings.GetDirectoryPermissionStrategy(platform) switch
+        {
+            AgentTuiDirectoryPermissionStrategy.WindowsAccessControl when OperatingSystem.IsWindows() =>
+                IsWindowsFileOwnerOnly(privateKeyPath),
+            AgentTuiDirectoryPermissionStrategy.UnixOwnerOnly when !OperatingSystem.IsWindows() =>
+                IsUnixPrivateKeyModeOwnerOnly(File.GetUnixFileMode(privateKeyPath)),
+            _ => false
+        };
+    }
+
+    private static X509Certificate2? LoadCertificate(
+        AgentTuiKeyProtectionSettings settings,
+        DateTimeOffset utcNow)
     {
         X509Certificate2? certificate = null;
         if (!string.IsNullOrWhiteSpace(settings.CertificateThumbprint))
@@ -342,8 +553,8 @@ internal static class AgentTuiDataProtectionSetup
 
         if (certificate is null
             || !certificate.HasPrivateKey
-            || certificate.NotBefore.ToUniversalTime() > DateTime.UtcNow
-            || certificate.NotAfter.ToUniversalTime() <= DateTime.UtcNow)
+            || certificate.NotBefore.ToUniversalTime() > utcNow.UtcDateTime
+            || certificate.NotAfter.ToUniversalTime() <= utcNow.UtcDateTime)
         {
             certificate?.Dispose();
             return null;
@@ -388,6 +599,18 @@ internal static class AgentTuiDataProtectionSetup
         var directory = new DirectoryInfo(path);
         directory.SetAccessControl(security);
 
+        return IsWindowsDirectoryOwnerOnly(path);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsWindowsDirectoryOwnerOnly(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        var user = identity.User;
+        if (user is null)
+            return false;
+
+        var directory = new DirectoryInfo(path);
         var applied = directory.GetAccessControl(
             AccessControlSections.Access | AccessControlSections.Owner);
         var appliedOwner = applied.GetOwner(typeof(SecurityIdentifier));
@@ -429,6 +652,18 @@ internal static class AgentTuiDataProtectionSetup
         var file = new FileInfo(path);
         file.SetAccessControl(security);
 
+        return IsWindowsFileOwnerOnly(path);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsWindowsFileOwnerOnly(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        var user = identity.User;
+        if (user is null)
+            return false;
+
+        var file = new FileInfo(path);
         var applied = file.GetAccessControl(
             AccessControlSections.Access | AccessControlSections.Owner);
         var appliedOwner = applied.GetOwner(typeof(SecurityIdentifier));
