@@ -575,14 +575,44 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
 
     private static string RedactCredentialAssignments(string value)
     {
-        return CredentialAssignmentRegex().Replace(value, match =>
+        var matches = CredentialAssignmentRegex().Matches(value);
+        StringBuilder? redacted = null;
+        var copiedThrough = 0;
+
+        for (var index = 0; index < matches.Count; index++)
         {
+            var match = matches[index];
             if (!IsCredentialName(match.Groups["name"].Value))
-                return match.Value;
+                continue;
 
             var assignment = match.Groups["assignment"];
-            return match.Value[..(assignment.Index - match.Index)] + "*";
-        });
+            var redactionEnd = assignment.Index + assignment.Length;
+            if (match.Groups["unquotedValue"].Success)
+                redactionEnd = FindUnquotedCredentialEnd(value, matches, index + 1, redactionEnd);
+
+            redacted ??= new StringBuilder(value.Length);
+            redacted.Append(value, copiedThrough, assignment.Index - copiedThrough);
+            redacted.Append('*');
+            copiedThrough = redactionEnd;
+        }
+
+        if (redacted is null)
+            return value;
+        redacted.Append(value, copiedThrough, value.Length - copiedThrough);
+        return redacted.ToString();
+    }
+
+    private static int FindUnquotedCredentialEnd(
+        string value,
+        MatchCollection matches,
+        int nextMatchIndex,
+        int tokenEnd)
+    {
+        var lineEndOffset = value.AsSpan(tokenEnd).IndexOfAny('\r', '\n');
+        var lineEnd = lineEndOffset < 0 ? value.Length : tokenEnd + lineEndOffset;
+        return nextMatchIndex < matches.Count && matches[nextMatchIndex].Index < lineEnd
+            ? matches[nextMatchIndex].Index
+            : lineEnd;
     }
 
     private static bool IsCredentialName(string name) =>
@@ -743,7 +773,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
-        @"(?:\A|[^A-Za-z0-9_])(?<assignment>[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?[ \t]*[:=][ \t]*(?:""(?:\\[^\r\n]|[^""\\\r\n])*""|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,;&|}\]]+))",
+        @"(?:\A|[^A-Za-z0-9_])(?<assignment>[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?[ \t]*[:=][ \t]*(?<value>(?<quotedValue>""(?:\\[^\r\n]|[^""\\\r\n])*""|'(?:\\[^\r\n]|[^'\\\r\n])*')|(?<unquotedValue>[^\s,;&|}\]]+)))",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
     private static partial Regex CredentialAssignmentRegex();
 

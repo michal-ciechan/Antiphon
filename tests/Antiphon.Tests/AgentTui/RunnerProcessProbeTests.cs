@@ -755,6 +755,46 @@ public sealed class RunnerProcessProbeTests
         "note='clientPassword=ordinary;clientApiKey=ordinary'|clientSecret=synthetic-credential-embedded|status=ok",
         "note='clientPassword=ordinary;clientApiKey=ordinary'|*|status=ok",
         false)]
+    [Arguments(
+        "Password=synthetic-credential-correct synthetic-credential-horse synthetic-credential-battery!",
+        "*",
+        false)]
+    [Arguments(
+        "Password=\"synthetic-credential-unterminated synthetic-credential-tail",
+        "*",
+        false)]
+    [Arguments(
+        "clientSecret='synthetic-credential-unterminated synthetic-credential-tail",
+        "*",
+        true)]
+    [Arguments(
+        "clientSecret=synthetic-credential-alpha\tsynthetic-credential-beta\t synthetic-credential-gamma?",
+        "*",
+        true)]
+    [Arguments(
+        "Password=synthetic-credential-first synthetic-credential-value status=ok mode=read",
+        "* status=ok mode=read",
+        false)]
+    [Arguments(
+        "status=ok Password=synthetic-credential-middle synthetic-credential-value mode=read",
+        "status=ok * mode=read",
+        true)]
+    [Arguments(
+        "status=ok mode=read clientSecret=synthetic-credential-last synthetic-credential-value!",
+        "status=ok mode=read *",
+        false)]
+    [Arguments(
+        "status=ok Password=synthetic-credential-one synthetic-credential-two clientApiKey=synthetic-credential-three synthetic-credential-four mode=read",
+        "status=ok * * mode=read",
+        false)]
+    [Arguments(
+        "Password=synthetic-credential-before synthetic-credential-semicolon;Server=db",
+        "*;Server=db",
+        false)]
+    [Arguments(
+        "Password=synthetic-credential-line-one synthetic-credential-suffix\nstatus=ok clientSecret=synthetic-credential-line-two synthetic-credential-suffix\nnote=done",
+        "*\nstatus=ok *\nnote=done",
+        true)]
     public async Task Probe_redacts_each_credential_assignment_without_consuming_neighbors(
         string output,
         string expected,
