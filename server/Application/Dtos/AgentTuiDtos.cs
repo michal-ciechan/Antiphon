@@ -108,3 +108,37 @@ public sealed record AgentTuiProfileDto(
 public sealed record AgentTuiImportResultDto(
     int ProfilesCreated,
     int AgentsAssigned);
+
+public enum AgentTuiValidationStageStatus
+{
+    Passed = 0,
+    Failed = 1,
+    Skipped = 2,
+    Degraded = 3
+}
+
+public sealed record AgentTuiValidationStageDto(
+    string Name,
+    AgentTuiValidationStageStatus Status,
+    string Message);
+
+public sealed record AgentTuiSuitabilityDto(
+    bool Interactive,
+    bool Queued,
+    bool Delegated,
+    bool Resumable);
+
+public sealed record AgentTuiValidationRunDto(
+    Guid Id,
+    Guid ProfileId,
+    Guid ProfileRevisionId,
+    string Operation,
+    AgentTuiValidationStatus Status,
+    IReadOnlyList<AgentTuiValidationStageDto> Stages,
+    IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
+    string? RunnerVersion,
+    string Summary,
+    AgentTuiSuitabilityDto Suitability,
+    DateTime CreatedAt,
+    DateTime? StartedAt,
+    DateTime? CompletedAt);
