@@ -1661,7 +1661,7 @@ public sealed partial class AgentTuiProfileService
     private static partial Regex CodexRunnerVersionRegex();
 
     [GeneratedRegex(
-        @"^\s*opencode(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
+        @"^\s*(?:opencode(?:\s+version)?\s+v?)?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OpenCodeRunnerVersionRegex();
 

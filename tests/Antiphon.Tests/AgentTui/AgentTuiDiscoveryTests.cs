@@ -421,6 +421,32 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    public async Task Validation_normalizes_the_bare_opencode_version_emitted_by_the_installed_runner()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("1.18.16\n"));
+        probe.Enqueue(Success("provider/bare-version\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            null,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.RunnerVersion.ShouldBe("OpenCode 1.18.16");
+        run.Stages.Single(stage => stage.Name == "versionCapabilities").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        (await ReadModelsAsync(provider, profile.Id))
+            .Single(model => model.Identifier == "provider/bare-version")
+            .RunnerVersion.ShouldBe("OpenCode 1.18.16");
+    }
+
+    [Test]
     public async Task Validation_rejects_unrecognized_version_diagnostics_without_persisting_them()
     {
         var probe = new RecordingRunnerProcessProbe();
