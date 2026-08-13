@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>011 — Board state graph mockup</title>
+<style>
+  :root {
+    --bg: #f4f4f2; --surface: #ffffff; --ink: #1f2328; --ink2: #59626e; --ink3: #8b939e;
+    --line: #e3e5e8;
+    --backlog: #64748b; --inprog: #2563eb; --review: #b45309; --done: #15803d;
+    --p0: #9f1239; --p1: #c2647a; --p2: #dba6b2; --p3: #f1dade;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink);
+         font: 13px/1.45 "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .note { color: var(--ink2); max-width: 72ch; margin-bottom: 24px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink2);
+       margin: 32px 0 10px; }
+  .frame { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+           box-shadow: 0 1px 3px rgb(0 0 0 / .06); overflow: hidden; }
+  .desktop { max-width: 1080px; }
+  .phones { display: flex; gap: 24px; flex-wrap: wrap; }
+  .phone { width: 340px; }
+
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+            border-bottom: 1px solid var(--line); }
+  .topbar .board { font-weight: 600; }
+  .search { flex: 1; max-width: 260px; margin-left: auto; border: 1px solid var(--line);
+            border-radius: 6px; padding: 4px 10px; color: var(--ink3); }
+  .btn { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-weight: 600;
+         color: var(--ink2); white-space: nowrap; }
+
+  /* shape strip */
+  .strip { display: flex; align-items: stretch; justify-content: center; gap: 0;
+           padding: 22px 16px 6px; }
+  .node { width: 168px; border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px;
+          position: relative; }
+  .node.selected { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent);
+                   border-color: var(--accent); }
+  .node.empty { border-style: dashed; color: var(--ink3); }
+  .node .name { font-size: 11px; font-weight: 700; letter-spacing: .05em;
+                color: var(--accent); display: flex; gap: 6px; align-items: center; }
+  .node.empty .name { color: var(--ink3); }
+  .node .count { font-size: 30px; font-weight: 700; line-height: 1.15; }
+  .node .sig { font-size: 11px; color: var(--ink2); margin-top: 2px; }
+  .flag { font-size: 10px; font-weight: 600; color: var(--ink3); border: 1px solid var(--line);
+          border-radius: 4px; padding: 0 4px; margin-left: auto; }
+  .mix { display: flex; gap: 2px; height: 6px; margin: 6px 0 4px; }
+  .mix span { border-radius: 2px; }
+  .edge { align-self: center; width: 46px; text-align: center; color: var(--ink3);
+          font-size: 15px; }
+  .caption { text-align: center; color: var(--ink3); font-size: 11px; font-style: italic;
+             padding: 0 0 14px; }
+
+  /* card list */
+  .list { border-top: 1px solid var(--line); padding: 10px 16px 16px; }
+  .group { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 4px;
+           font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--ink2); }
+  .group .rule { flex: 1; border-top: 1px solid var(--line); }
+  .row { display: flex; align-items: baseline; gap: 10px; padding: 6px 8px;
+         border-radius: 6px; }
+  .row:hover { background: #f6f7f8; }
+  .row .id { font-weight: 700; font-variant-numeric: tabular-nums; width: 34px;
+             color: var(--ink2); flex: none; }
+  .row .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pbadge { flex: none; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 1px 5px;
+            color: #fff; }
+  .p0 { background: var(--p0); } .p1 { background: var(--p1); }
+  .p2 { background: var(--p2); color: var(--ink); } .p3 { background: var(--p3); color: var(--ink); }
+  .lab { flex: none; font-size: 10px; color: var(--ink3); }
+  .age { flex: none; font-size: 11px; color: var(--ink3); width: 56px; text-align: right;
+         font-variant-numeric: tabular-nums; }
+  .sess { flex: none; font-size: 11px; color: var(--done); }
+  .collapsed { color: var(--ink3); padding: 6px 8px; font-size: 12px; }
+  .chiprow { display: flex; gap: 8px; padding: 10px 8px 0; align-items: center; }
+  .chip { font-size: 11px; border: 1px solid var(--line); border-radius: 12px; padding: 2px 10px;
+          color: var(--ink2); }
+
+  /* phone */
+  .phone .topbar { padding: 8px 12px; }
+  .dots { display: flex; gap: 14px; justify-content: center; padding: 10px 0 2px;
+          align-items: center; color: var(--ink3); }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink3);
+            display: inline-block; }
+  .dots i.on { background: var(--accent, var(--ink2)); border-color: var(--accent, var(--ink2));
+               width: 10px; height: 10px; }
+  .conn { margin: 10px 12px; border: 1px dashed var(--line); border-radius: 8px;
+          padding: 8px 12px; color: var(--ink2); font-size: 12px; display: flex; gap: 8px;
+          align-items: center; background: #fafafa; }
+  .conn b { color: var(--ink); }
+  .statehead { display: flex; align-items: baseline; gap: 8px; padding: 4px 16px;
+               font-weight: 700; }
+  .statehead .n { font-size: 22px; }
+  .phone .row { flex-wrap: wrap; padding: 8px 4px; border-top: 1px solid var(--line); }
+  .phone .row .title { white-space: normal; flex-basis: 100%; order: 2; padding-left: 44px;
+                       margin-top: -2px; }
+  .phone .list { border-top: none; padding: 0 12px 8px; }
+  .emptybody { text-align: center; color: var(--ink2); padding: 40px 24px; }
+  .emptybody .big { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+  .allstates { text-align: center; padding: 10px; color: var(--ink2); font-size: 12px;
+               border-top: 1px solid var(--line); }
+  .fnote { color: var(--ink3); font-size: 11px; margin-top: 8px; max-width: 72ch; }
+</style>
+</head>
+<body>
+
+<h1>011 — Board state graph</h1>
+<p class="note">Static layout mockup for CARD-0042, using the Antiphon board exactly as fetched
+on 2026-08-13: <b>Backlog 32 (8 P0 · 10 P1 · 12 P2 · 2 P3) · In Progress 0 · Review 4 ·
+Done 6</b>. Communication aid, not a pixel spec — the build uses Mantine components and the
+app's existing status hues. Color never carries identity alone: every node and badge is worded.</p>
+
+<h2>Desktop — default (no node selected; Review expanded as the first non-empty group needing eyes)</h2>
+<div class="frame desktop">
+  <div class="topbar">
+    <span class="board">Antiphon ▾</span>
+    <span class="search">⌕ search cards…</span>
+    <span class="btn">+ Card</span><span class="btn">⚙ Workflow</span>
+  </div>
+
+  <div class="strip">
+    <div class="node" style="--accent: var(--backlog)">
+      <div class="name">BACKLOG</div>
+      <div class="count">32</div>
+      <div class="mix">
+        <span style="flex:8;  background: var(--p0)"></span>
+        <span style="flex:10; background: var(--p1)"></span>
+        <span style="flex:12; background: var(--p2)"></span>
+        <span style="flex:2;  background: var(--p3)"></span>
+      </div>
+      <div class="sig">8 P0 · oldest 3d</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node empty" style="--accent: var(--inprog)">
+      <div class="name" style="color: var(--inprog)">IN PROGRESS <span class="flag">active</span></div>
+      <div class="count">0</div>
+      <div class="mix"><span style="flex:1; background: var(--line)"></span></div>
+      <div class="sig">—</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node" style="--accent: var(--review)">
+      <div class="name">REVIEW</div>
+      <div class="count">4</div>
+      <div class="mix"><span style="flex:4; background: var(--p0)"></span></div>
+      <div class="sig">oldest #1 · 11d</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node" style="--accent: var(--done)">
+      <div class="name">DONE <span class="flag">terminal</span></div>
+      <div class="count">6</div>
+      <div class="mix">
+        <span style="flex:4; background: var(--p0)"></span>
+        <span style="flex:2; background: var(--p1)"></span>
+      </div>
+      <div class="sig">all closed 08-13</div>
+    </div>
+  </div>
+  <div class="caption">edges show the usual path — any card can move directly between any live states</div>
+
+  <div class="list">
+    <div class="group">▸ BACKLOG · 32 <span class="rule"></span></div>
+    <div class="group">▸ IN PROGRESS · 0 <span class="rule"></span></div>
+    <div class="group">▾ REVIEW · 4 <span class="rule"></span></div>
+    <div class="row"><span class="id">#1</span><span class="title">Agent Screen - Working Label - Always Working</span><span class="pbadge p0">P0</span><span class="sess">● 7 sessions</span><span class="age">11d</span></div>
+    <div class="row"><span class="id">#3</span><span class="title">Surface launch and delivery errors instead of leaving a task silently Dispatched</span><span class="pbadge p0">P0</span><span class="lab">reliability · ui</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#16</span><span class="title">A delegated task's model tier never reaches the agent it spawns</span><span class="pbadge p0">P0</span><span class="lab">bug · delegation</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#18</span><span class="title">First prompt races the pty-host connection and is lost with no retry</span><span class="pbadge p0">P0</span><span class="lab">bug · pty</span><span class="age">3d</span></div>
+    <div class="group">▸ DONE · 6 <span class="rule"></span></div>
+  </div>
+</div>
+
+<h2>Desktop — overloaded (Backlog node selected: 32 cards, priority-banded, lower bands collapsed)</h2>
+<div class="frame desktop">
+  <div class="topbar">
+    <span class="board">Antiphon ▾</span>
+    <span class="search">⌕ search cards…</span>
+    <span class="btn">+ Card</span><span class="btn">⚙ Workflow</span>
+  </div>
+
+  <div class="strip">
+    <div class="node selected" style="--accent: var(--backlog)">
+      <div class="name">BACKLOG</div>
+      <div class="count">32</div>
+      <div class="mix">
+        <span style="flex:8;  background: var(--p0)"></span>
+        <span style="flex:10; background: var(--p1)"></span>
+        <span style="flex:12; background: var(--p2)"></span>
+        <span style="flex:2;  background: var(--p3)"></span>
+      </div>
+      <div class="sig">8 P0 · oldest 3d</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node empty" style="--accent: var(--inprog)">
+      <div class="name" style="color: var(--inprog)">IN PROGRESS <span class="flag">active</span></div>
+      <div class="count">0</div>
+      <div class="mix"><span style="flex:1; background: var(--line)"></span></div>
+      <div class="sig">—</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node" style="--accent: var(--review)">
+      <div class="name">REVIEW</div>
+      <div class="count">4</div>
+      <div class="mix"><span style="flex:4; background: var(--p0)"></span></div>
+      <div class="sig">oldest #1 · 11d</div>
+    </div>
+    <div class="edge">⟶</div>
+    <div class="node" style="--accent: var(--done)">
+      <div class="name">DONE <span class="flag">terminal</span></div>
+      <div class="count">6</div>
+      <div class="mix">
+        <span style="flex:4; background: var(--p0)"></span>
+        <span style="flex:2; background: var(--p1)"></span>
+      </div>
+      <div class="sig">all closed 08-13</div>
+    </div>
+  </div>
+  <div class="caption">edges show the usual path — any card can move directly between any live states</div>
+
+  <div class="list">
+    <div class="chiprow"><span class="chip">state: Backlog ✕</span></div>
+    <div class="group">P0 — 8 <span class="rule"></span></div>
+    <div class="row"><span class="id">#19</span><span class="title">A card cannot be edited or deleted, so the record cannot be corrected</span><span class="pbadge p0">P0</span><span class="lab">bug · blocker</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#20</span><span class="title">Addendum to CARD-0003: the stall backstop cannot fire, and a phase-aware deadline</span><span class="pbadge p0">P0</span><span class="lab">reliability</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#21</span><span class="title">A task outlives its dead session, and a stolen transcript hides it from the watchdog</span><span class="pbadge p0">P0</span><span class="lab">reliability</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#22</span><span class="title">Notice usage-limit exhaustion, show what's left and when it resets, resume after</span><span class="pbadge p0">P0</span><span class="lab">observability</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#29</span><span class="title">A task handed to a reused warm delegate can be swallowed, and the stale report reads as real</span><span class="pbadge p0">P0</span><span class="lab">warm-pool</span><span class="age">1d</span></div>
+    <div class="row"><span class="id">#31</span><span class="title">UX: a project status view that answers what is happening right now</span><span class="pbadge p0">P0</span><span class="lab">ux · home</span><span class="age">1d</span></div>
+    <div class="row"><span class="id">#35</span><span class="title">UX: a diagnostic view for work that is stuck</span><span class="pbadge p0">P0</span><span class="lab">ux · reliability</span><span class="age">1d</span></div>
+    <div class="row"><span class="id">#41</span><span class="title">A compacted session reads Working forever - two post-compaction records escape the rule</span><span class="pbadge p0">P0</span><span class="lab">session</span><span class="age">0d</span></div>
+    <div class="group">P1 — 10 <span class="rule"></span></div>
+    <div class="row"><span class="id">#2</span><span class="title">Tasks section on the home rail - unified cards for board Cards and delegations</span><span class="pbadge p1">P1</span><span class="lab">ui · home</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#5</span><span class="title">Card identifiers are reused after a delete</span><span class="pbadge p1">P1</span><span class="lab">bug · cards</span><span class="age">3d</span></div>
+    <div class="row"><span class="id">#40</span><span class="title">Cards never move themselves - automate the column transitions from signals we already have</span><span class="pbadge p1">P1</span><span class="lab">automation</span><span class="age">0d</span></div>
+    <div class="row"><span class="id">#42</span><span class="title">UX: the board should show the shape of the work - state graph on desktop, one state at a time on mobile</span><span class="pbadge p1">P1</span><span class="lab">ux · board</span><span class="age">0d</span></div>
+    <div class="collapsed">… 6 more P1 — show all</div>
+    <div class="collapsed">▸ P2 — 12 cards — expand</div>
+    <div class="collapsed">▸ P3 — 2 cards — expand</div>
+  </div>
+</div>
+
+<h2>Mobile — one state at a time</h2>
+<div class="phones">
+
+  <div class="frame phone" style="--accent: var(--review)">
+    <div class="topbar"><span>☰</span><span class="board">Antiphon ▾</span><span class="search" style="max-width:34px">⌕</span></div>
+    <div class="dots"><i></i><i></i><i class="on"></i><i></i></div>
+    <div class="conn">▲ from <b>IN PROGRESS · 0</b></div>
+    <div class="statehead" style="color: var(--review)">REVIEW <span class="n">4</span></div>
+    <div class="list">
+      <div class="row"><span class="id">#1</span><span class="pbadge p0">P0</span><span class="sess">● 7 sessions</span><span class="age">11d</span><span class="title">Agent Screen - Working Label - Always Working</span></div>
+      <div class="row"><span class="id">#3</span><span class="pbadge p0">P0</span><span class="lab">reliability · ui</span><span class="age">3d</span><span class="title">Surface launch and delivery errors instead of leaving a task silently Dispatched</span></div>
+      <div class="row"><span class="id">#16</span><span class="pbadge p0">P0</span><span class="lab">bug · delegation</span><span class="age">3d</span><span class="title">A delegated task's model tier never reaches the agent it spawns</span></div>
+      <div class="row"><span class="id">#18</span><span class="pbadge p0">P0</span><span class="lab">bug · pty</span><span class="age">3d</span><span class="title">First prompt races the pty-host connection and is lost with no retry</span></div>
+    </div>
+    <div class="conn">▼ to <b>DONE · 6</b></div>
+    <div class="allstates">all states ⌗</div>
+  </div>
+
+  <div class="frame phone" style="--accent: var(--inprog)">
+    <div class="topbar"><span>☰</span><span class="board">Antiphon ▾</span><span class="search" style="max-width:34px">⌕</span></div>
+    <div class="dots"><i></i><i class="on"></i><i></i><i></i></div>
+    <div class="conn">▲ from <b>BACKLOG · 32</b></div>
+    <div class="statehead" style="color: var(--inprog)">IN PROGRESS <span class="n">0</span> <span class="flag">active</span></div>
+    <div class="emptybody">
+      <div class="big">Nothing is in progress.</div>
+      Cards land here when a session starts on them —<br>
+      moving a card here spawns an agent.
+    </div>
+    <div class="conn">▼ to <b>REVIEW · 4</b></div>
+    <div class="allstates">all states ⌗</div>
+  </div>
+
+</div>
+
+<p class="fnote">Connectors navigate the usual flow; they are not the move rule — the “all
+states” sheet and each card’s Move menu offer every legal target (any live state; none out of
+Done/Canceled). Swiping left/right moves along the same spine as the dot rail.</p>
+
+</body>
+</html>
