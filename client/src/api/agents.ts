@@ -90,6 +90,19 @@ export interface AgentSummaryDto {
    * which only means the agent was started — this is what deserves a spinner.
    */
   working: boolean
+  tuiProfileId?: string | null
+  modelId?: string | null
+  configuredSelection?: {
+    tuiProfileId: string | null
+    modelId: string | null
+    profileDisplayName: string | null
+    profileRevision: number | null
+  } | null
+  liveSessionSelection?: {
+    tuiProfileRevisionId: string | null
+    effectiveModelId: string | null
+    pendingRestart: boolean
+  } | null
 }
 
 export interface AgentSupervisionDto {
@@ -154,6 +167,8 @@ export interface CreateAgentRequest {
   createWorkingDirectory?: boolean
   /** Omit/null = High (the default level — the Opus tier — unless picked otherwise). */
   modelLevel?: AgentModelLevel | null
+  tuiProfileId?: string | null
+  modelId?: string | null
 }
 
 export interface UpdateAgentRequest {
@@ -171,6 +186,9 @@ export interface UpdateAgentRequest {
   systemPromptAppend?: string | null
   /** Omit/null = leave unchanged. */
   modelLevel?: AgentModelLevel | null
+  /** When set, also applies modelId (null clears exact model). */
+  tuiProfileId?: string | null
+  modelId?: string | null
 }
 
 export interface DraftAgentRequest {

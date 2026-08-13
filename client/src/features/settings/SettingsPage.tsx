@@ -3,6 +3,7 @@ import { TemplateManager } from './TemplateManager'
 import { ProviderConfig } from './ProviderConfig'
 import { ProjectConfig } from './ProjectConfig'
 import { StatusTab } from './StatusTab'
+import { AgentTuiConfig } from './AgentTuiConfig'
 
 export function SettingsPage() {
   return (
@@ -16,6 +17,7 @@ export function SettingsPage() {
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>
             <Tabs.Tab value="projects">Projects</Tabs.Tab>
+            <Tabs.Tab value="agent-tui">AI Agent TUI</Tabs.Tab>
             <Tabs.Tab value="status">Status</Tabs.Tab>
           </Tabs.List>
 
@@ -29,6 +31,10 @@ export function SettingsPage() {
 
           <Tabs.Panel value="projects" pt="md">
             <ProjectConfig />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="agent-tui" pt="md">
+            <AgentTuiConfig />
           </Tabs.Panel>
 
           <Tabs.Panel value="status" pt="md">

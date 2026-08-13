@@ -2,11 +2,12 @@ import { Button, Divider, Group, Modal, Select, Stack, TextInput, Textarea } fro
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentModelLevel } from '../../api/agents'
+import type { AgentAssignmentPolicy } from '../../api/agents'
 import { useCreateAgent, useDraftAgent } from '../../api/agents'
-import { ModelLevelSelect } from './ModelLevelSelect'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
+import { AgentTuiSelection } from './AgentTuiSelection'
+import { useAgentTuiProfiles } from '../../api/agentTui'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -29,7 +30,9 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [pathMissing, setPathMissing] = useState(false)
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
-  const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
+  const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
+  const [modelId, setModelId] = useState<string | null>(null)
+  const { data: profiles } = useAgentTuiProfiles()
 
   const reset = () => {
     setDraftDescription('')
@@ -39,7 +42,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setPathMissing(false)
     setDetails('')
     setAssignmentPolicy('AutoPick')
-    setModelLevel('High')
+    setTuiProfileId(null)
+    setModelId(null)
     draftAgent.reset()
   }
 
@@ -54,14 +58,19 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const handleSubmit = () => {
     if (!name.trim() || !workingDirectory.trim() || blockedByMissingDir) return
 
+    const profileId =
+      tuiProfileId ?? profiles?.find((profile) => profile.isDefault)?.id ?? null
+    if (!profileId) return
+
     createAgent.mutate(
       {
         name: name.trim(),
         workingDirectory: workingDirectory.trim(),
         details: details.trim() || null,
         assignmentPolicy,
-        modelLevel,
         createWorkingDirectory: createDir,
+        tuiProfileId: profileId,
+        modelId,
       },
       {
         onSuccess: () => {
@@ -150,7 +159,14 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onChange={(value) => setAssignmentPolicy((value as AgentAssignmentPolicy | null) ?? 'AutoPick')}
           allowDeselect={false}
         />
-        <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
+        <AgentTuiSelection
+          tuiProfileId={
+            tuiProfileId ?? profiles?.find((profile) => profile.isDefault)?.id ?? null
+          }
+          modelId={modelId}
+          onProfileChange={setTuiProfileId}
+          onModelChange={setModelId}
+        />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={handleClose}>
             Cancel
@@ -159,7 +175,11 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
             onClick={handleSubmit}
             loading={createAgent.isPending}
             disabled={
-              !name.trim() || !workingDirectory.trim() || draftAgent.isPending || blockedByMissingDir
+              !name.trim() ||
+              !workingDirectory.trim() ||
+              draftAgent.isPending ||
+              blockedByMissingDir ||
+              !(tuiProfileId ?? profiles?.find((profile) => profile.isDefault)?.id)
             }
           >
             Create

@@ -2,11 +2,11 @@ import { Button, Divider, Group, Modal, Select, Stack, Switch, Text, TextInput, 
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentModelLevel, AgentSummaryDto } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentSummaryDto } from '../../api/agents'
 import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
-import { ModelLevelSelect } from './ModelLevelSelect'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
+import { AgentTuiSelection } from './AgentTuiSelection'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -31,7 +31,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [details, setDetails] = useState('')
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
-  const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
+  const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
+  const [modelId, setModelId] = useState<string | null>(null)
   const [boardId, setBoardId] = useState<string | null>(null)
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
@@ -46,7 +47,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setWorkingDirectory(agent.workingDirectory)
     setDetails(agent.details)
     setAssignmentPolicy(agent.assignmentPolicy)
-    setModelLevel(agent.modelLevel ?? 'High')
+    setTuiProfileId(agent.tuiProfileId ?? null)
+    setModelId(agent.modelId ?? null)
     setBoardId(agent.boardId)
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
@@ -81,12 +83,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         details: details.trim() || null,
         defaultWorkflowTemplateId: agent.defaultWorkflowTemplateId,
         assignmentPolicy,
-        modelLevel,
         boardId,
         alwaysOn,
         remoteControlEnabled,
         // Empty string clears the preamble server-side; null would mean "leave unchanged".
         systemPromptAppend: systemPromptAppend.trim(),
+        tuiProfileId,
+        modelId,
       },
       {
         onSuccess: () => {
@@ -145,7 +148,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           disabled={boards.isLoading}
           searchable
         />
-        <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
+        <AgentTuiSelection
+          tuiProfileId={tuiProfileId}
+          modelId={modelId}
+          onProfileChange={setTuiProfileId}
+          onModelChange={setModelId}
+          liveSessionSelection={agent?.liveSessionSelection}
+        />
         <Select
           label="Assignment policy"
           data={ASSIGNMENT_POLICIES}
