@@ -270,3 +270,14 @@ way that should be recorded accurately** — the test was checkout-path dependen
 prefix is the cwd, so the echoed prompt wrapped at 129 columns from a worktree and 110 from
 `C:\src\Antiphon`), not load-flaky, and `f078dd2` fixed the underlying `CodexResponseAnalyzer`
 defect rather than the test. The correction should say that, not merely retract the old note.
+
+---
+
+## AMENDED 2026-08-13 — see `2026-08-13-card-0019-amendment-1.md`
+
+The text above is unchanged and predates commits `cdabe32` (`MoveCardRequest.Reason`; moves
+become a second `CardRevision` writer) and `b48f928` (state machine widened; reopen explicitly
+deferred to this card). The amendment adds a `Kind` discriminator to `CardRevision`, a reopen
+endpoint, CARD-0040 to slice 3, resequences slice 1 to land first and alone (it is on feature
+011's critical path and its history is non-retroactive), and relaxes the 20k-cap caller
+condition in light of CARD-0037's modern ConPTY backend. Read the amendment before implementing.
