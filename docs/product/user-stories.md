@@ -142,6 +142,38 @@ currently invisible until someone reads a report.
 
 ---
 
+## S7 — "Show me the accurate state of every card, at a glance"
+
+**As** anyone opening the board,
+**I want** to see where all the work actually is — every card, in its real state — in a form I can
+read in one look on a laptop and navigate one state at a time on a phone,
+**so that** the board is the trustworthy record of the world rather than a list I have to
+reconcile against reality.
+
+**This is a key requirement, not a nicety.** Cards are the record (decided 2026-08-09), and on
+2026-08-13 the board showed **0 In Progress, 0 Done and one legacy completed item** while six
+Backlog cards were finished and landed on master. A record nobody can read accurately is not a
+record, and every other surface — the project cockpit (S1), prioritisation (CARD-0039), automatic
+transitions (CARD-0040) — is built on top of this one being true.
+
+Direction (detail on the card):
+
+- **Desktop:** a *graph of states* as the primary object, with the card list beneath it. The shape
+  of the work — how much sits where, what is stuck, where the flow stops — should be visible before
+  any individual card is read. Columns of stacked tickets show position but not shape.
+- **Mobile:** one state at a time, with connectors to adjacent states — previous states entering at
+  the top, next states leaving at the bottom — so navigating the board is moving along the flow
+  rather than scrolling a wall.
+- **Identity:** a card should be citable in running text as `#41`. `CARD-0041` is nine characters
+  to say a number, and the identifier is spoken and typed constantly.
+
+**Relationship to S1:** S1 is the *project cockpit* — what needs me right now, scoped to one
+project and one session's worth of attention. S7 is the *record* — all cards, all states, correct.
+They are different jobs and should not be collapsed; S1 answers "what do I do next", S7 answers
+"what is true".
+
+---
+
 ## Deliberately not stories yet
 
 - **Multi-user / handoff.** No auth, no principals; `EditedBy` is honest free text (CARD-0019).
