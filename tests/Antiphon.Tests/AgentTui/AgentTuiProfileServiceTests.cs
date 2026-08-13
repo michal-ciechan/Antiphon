@@ -880,6 +880,16 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             .ImportAsync(CancellationToken.None);
 
         secondPass.ProfilesCreated.ShouldBe(0);
+        var importedProfileIds = importedProfiles.Select(profile => profile.Id).ToArray();
+        var retainedImportedProfiles = await DbContext.AgentTuiProfiles.AsNoTracking()
+            .Where(profile => importedProfileIds.Contains(profile.Id))
+            .OrderBy(profile => profile.SourceDefinitionName)
+            .Select(profile => new { profile.Id, profile.Source, profile.SourceDefinitionName })
+            .ToListAsync();
+        retainedImportedProfiles
+            .Select(profile => (profile.Id, profile.Source, profile.SourceDefinitionName))
+            .ShouldBe(importedProfiles.Select(profile =>
+                (profile.Id, profile.Source, profile.SourceDefinitionName)));
         var secondPassDefinitionNames = changedSettings.Definitions.Keys.ToArray();
         var profilesMatchingSecondPassDefinitions = await DbContext.AgentTuiProfiles.AsNoTracking()
             .Where(profile => profile.Source == AgentTuiProfileSource.ImportedFile
