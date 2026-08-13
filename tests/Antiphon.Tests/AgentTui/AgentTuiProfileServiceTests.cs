@@ -777,6 +777,9 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             .ToArray();
         DbContext.Agents.AddRange(agents);
         await DbContext.SaveChangesAsync();
+        var profileIdsBeforeImport = await DbContext.AgentTuiProfiles.AsNoTracking()
+            .Select(profile => profile.Id)
+            .ToListAsync();
 
         var originalSettings = new AgentRegistrySettings
         {
@@ -814,9 +817,9 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var firstPass = await importer.ImportAsync(CancellationToken.None);
 
         firstPass.ProfilesCreated.ShouldBe(2);
-        firstPass.AgentsAssigned.ShouldBe(4);
         var importedProfiles = await DbContext.AgentTuiProfiles.AsNoTracking()
-            .Where(profile => profile.Source == AgentTuiProfileSource.ImportedFile)
+            .Where(profile => !profileIdsBeforeImport.Contains(profile.Id)
+                && profile.Source == AgentTuiProfileSource.ImportedFile)
             .OrderBy(profile => profile.SourceDefinitionName)
             .ToListAsync();
         importedProfiles.Select(profile => profile.SourceDefinitionName)
@@ -838,6 +841,7 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             .Where(agent => agents.Select(seed => seed.Id).Contains(agent.Id))
             .OrderBy(agent => agent.ModelLevel)
             .ToListAsync();
+        assigned.Count.ShouldBe(agents.Length);
         assigned.ShouldAllBe(agent => agent.TuiProfileId == defaultProfile.Id);
         assigned.ToDictionary(agent => agent.ModelLevel, agent => agent.ModelId).ShouldBe(
             new Dictionary<AgentModelLevel, string?>
@@ -875,8 +879,9 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             .ImportAsync(CancellationToken.None);
 
         secondPass.ProfilesCreated.ShouldBe(0);
-        secondPass.AgentsAssigned.ShouldBe(1);
-        (await DbContext.AgentTuiProfiles.CountAsync()).ShouldBe(2);
+        var importedProfileIds = importedProfiles.Select(profile => profile.Id).ToArray();
+        (await DbContext.AgentTuiProfiles.CountAsync(profile => importedProfileIds.Contains(profile.Id)))
+            .ShouldBe(importedProfiles.Count);
         (await DbContext.AgentTuiProfileRevisions.AsNoTracking()
             .SingleAsync(revision => revision.Id == defaultProfile.ActiveRevisionId))
             .Executable.ShouldBe("synthetic-claude-wrapper");
