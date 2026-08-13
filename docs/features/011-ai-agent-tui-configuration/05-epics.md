@@ -2,7 +2,7 @@
 
 ### E-01 — Secure Profile Foundation And Migration
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Persist profile identities and immutable revisions, protect managed environment secrets with externally protected key custody, import current file definitions once with provenance, establish the installation default, and preserve existing agents and rollback behaviour.
 
@@ -15,7 +15,7 @@
 
 ### E-02 — Runner Catalogue, Discovery, And Validation API
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Deliver runner-type metadata, profile lifecycle operations, model catalogues with provenance and staleness, bounded discovery, capability snapshots, staged sanitized validation, and write-only secret operations through the accepted public contract.
 
@@ -29,7 +29,7 @@
 
 ### E-03 — Profile-Aware Launch And OpenCode Runtime
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Resolve every new session from the agent's selected profile revision and optional exact model, add a dedicated OpenCode adapter and capability-aware behaviour, retain Claude Code and Codex semantics, and record the effective revision/model on the session.
 
@@ -43,7 +43,7 @@
 
 ### E-04 — AI Agent TUI Configuration Experience
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Add the browser administration area for listing, creating, duplicating, editing, enabling, disabling, testing, and deleting profiles, with command previews, auth-mode controls, secret set/missing state, model provenance, capabilities, guidance, and pending revision feedback.
 
@@ -57,7 +57,7 @@
 
 ### E-05 — Per-Agent Runner And Model Selection
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Add profile and optional exact-model selection to agent creation and settings, expose configured versus live-session selection, retain compatibility for callers that omit new fields, and prevent invalid or capability-incompatible assignments.
 
@@ -71,7 +71,7 @@
 
 ### E-06 — Local OpenCode Gateway End-To-End Proof
 
-**Status:** [ ]
+**Status:** [~]
 
 **Outcome.** Create this installation's editable `OpenCode Gateway` profile using `ocg.ps1`, preserve wrapper-managed gateway authentication, prove automatic model discovery and Grok 4.5 fallback, assign Atlas to the profile, and complete a real message round trip with and without an explicit model.
 
@@ -111,7 +111,7 @@
 
 ### E-09 — Documentation and Operational Readiness
 
-**Status:** [ ]
+**Status:** [x]
 
 **Outcome.** Publish operator and user guidance for profile setup, direct and wrapper launches, supported runner capabilities, model discovery, managed secret key custody and recovery, migration/rollback, validation, regression smoke procedures, metrics, dashboard use, and actionable failure response.
 

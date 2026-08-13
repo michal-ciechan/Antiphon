@@ -72,7 +72,19 @@
     "CodexReadyQuietPeriodMs": 1000,
     "CodexReadyMaxWaitMs": 60000,
     "CodexDoneQuietPeriodMs": 3000,
-    "CodexDoneMaxWaitMs": 300000
+    "CodexDoneMaxWaitMs": 300000,
+    "OpenCodeReadyQuietPeriodMs": 1000,
+    "OpenCodeReadyMaxWaitMs": 60000,
+    "OpenCodeDoneQuietPeriodMs": 3000,
+    "OpenCodeDoneMaxWaitMs": 300000
+  },
+  "AgentTui": {
+    "ProbeTimeoutSeconds": 30,
+    "MaxProbeOutputBytes": 65536,
+    "KeyRingPath": "",
+    "KeyProtection": {
+      "Mode": "Auto"
+    }
   },
   "Logging": {
     "LogLevel": {
