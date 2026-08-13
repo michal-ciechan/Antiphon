@@ -16,6 +16,10 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private const int MaximumArgumentLength = 2000;
     private const int MaximumEnvironmentEntries = 256;
     private const int MaximumEnvironmentValueLength = 4000;
+    private const int MaximumSecretValues = MaximumEnvironmentEntries;
+    // Supports 64 maximum-length secrets or all 256 entries averaging 1 KiB
+    // while independently bounding the exact-match automaton allocation.
+    private const int MaximumSecretMaterialLength = 256 * 1024;
     private const int CleanupGraceMilliseconds = 200;
     private const int GracefulSignalMilliseconds = 500;
     private const uint WindowsFileReadData = 0x0001;
@@ -537,8 +541,17 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         {
             return "The probe environment is invalid or too large.";
         }
-        if (request.SecretValues.Any(value => value is null || value.Length > MaximumEnvironmentValueLength))
+        if (request.SecretValues.Count > MaximumSecretValues)
             return "The probe redaction values are invalid or too large.";
+        var secretMaterialLength = 0;
+        foreach (var value in request.SecretValues)
+        {
+            if (value is null || value.Length > MaximumEnvironmentValueLength)
+                return "The probe redaction values are invalid or too large.";
+            secretMaterialLength += value.Length;
+            if (secretMaterialLength > MaximumSecretMaterialLength)
+                return "The probe redaction values are invalid or too large.";
+        }
         return null;
     }
 
@@ -548,18 +561,17 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         IReadOnlyList<string> secretValues)
     {
         var sensitive = false;
-        var exactSecrets = secretValues
-            .Where(value => !string.IsNullOrEmpty(value))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        standardOutput = RedactOutput(standardOutput, exactSecrets, ref sensitive);
-        standardError = RedactOutput(standardError, exactSecrets, ref sensitive);
+        if (!ExactSecretMatcher.TryCreate(secretValues, out var exactSecretMatcher))
+            return new SanitizedOutput(string.Empty, string.Empty, SensitiveOutputDetected: true);
+
+        standardOutput = RedactOutput(standardOutput, exactSecretMatcher, ref sensitive);
+        standardError = RedactOutput(standardError, exactSecretMatcher, ref sensitive);
         return new SanitizedOutput(standardOutput, standardError, sensitive);
     }
 
     private static string RedactOutput(
         string value,
-        IReadOnlyList<string> exactSecrets,
+        ExactSecretMatcher exactSecretMatcher,
         ref bool sensitive)
     {
         if (value.Length == 0)
@@ -568,35 +580,12 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var redactionDeltas = new int[value.Length + 1];
         var detected = CollectCredentialAssignmentRedactions(value, redactionDeltas);
         detected |= CollectBearerCredentialRedactions(value, redactionDeltas);
-        detected |= CollectExactSecretRedactions(value, exactSecrets, redactionDeltas);
+        detected |= exactSecretMatcher.CollectRedactions(value, redactionDeltas);
         if (!detected)
             return value;
 
         sensitive = true;
         return RenderRedactions(value, redactionDeltas);
-    }
-
-    private static bool CollectExactSecretRedactions(
-        string value,
-        IReadOnlyList<string> exactSecrets,
-        int[] redactionDeltas)
-    {
-        var detected = false;
-        foreach (var secret in exactSecrets)
-        {
-            var searchStart = 0;
-            while (searchStart < value.Length)
-            {
-                var occurrence = value.IndexOf(secret, searchStart, StringComparison.Ordinal);
-                if (occurrence < 0)
-                    break;
-
-                detected = true;
-                AddRedaction(redactionDeltas, occurrence, occurrence + secret.Length);
-                searchStart = occurrence + 1;
-            }
-        }
-        return detected;
     }
 
     private static bool CollectBearerCredentialRedactions(string value, int[] redactionDeltas)
@@ -893,6 +882,156 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
         int mode,
         int flags);
+
+    private sealed class ExactSecretMatcher
+    {
+        private readonly List<SecretMatchState> _states;
+        private readonly List<SecretMatchEdge> _edges;
+        private readonly Dictionary<SecretTransition, int> _transitions;
+
+        private ExactSecretMatcher(int maximumStateCount)
+        {
+            _states = new List<SecretMatchState>(maximumStateCount)
+            {
+                new() { FirstEdge = -1 }
+            };
+            _edges = new List<SecretMatchEdge>(Math.Max(0, maximumStateCount - 1));
+            _transitions = new Dictionary<SecretTransition, int>(Math.Max(0, maximumStateCount - 1));
+        }
+
+        public static bool TryCreate(
+            IReadOnlyList<string> secrets,
+            out ExactSecretMatcher matcher)
+        {
+            matcher = null!;
+            if (secrets.Count > MaximumSecretValues)
+                return false;
+
+            var secretMaterialLength = 0;
+            var distinctSecrets = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var secret in secrets)
+            {
+                if (secret is null || secret.Length > MaximumEnvironmentValueLength)
+                    return false;
+                secretMaterialLength += secret.Length;
+                if (secretMaterialLength > MaximumSecretMaterialLength)
+                    return false;
+                if (secret.Length > 0)
+                    distinctSecrets.Add(secret);
+            }
+
+            matcher = new ExactSecretMatcher(secretMaterialLength + 1);
+            foreach (var secret in distinctSecrets)
+                matcher.Add(secret);
+            matcher.BuildFailureLinks();
+            return true;
+        }
+
+        public bool CollectRedactions(string value, int[] redactionDeltas)
+        {
+            var stateIndex = 0;
+            var detected = false;
+            for (var index = 0; index < value.Length; index++)
+            {
+                var character = value[index];
+                while (stateIndex != 0 && !TryTransition(stateIndex, character, out _))
+                    stateIndex = _states[stateIndex].Failure;
+
+                if (TryTransition(stateIndex, character, out var nextState))
+                    stateIndex = nextState;
+                else
+                    stateIndex = 0;
+
+                var matchLength = _states[stateIndex].MaximumMatchLength;
+                if (matchLength == 0)
+                    continue;
+
+                AddRedaction(redactionDeltas, index + 1 - matchLength, index + 1);
+                detected = true;
+            }
+            return detected;
+        }
+
+        private void Add(string secret)
+        {
+            var stateIndex = 0;
+            foreach (var character in secret)
+            {
+                var transition = new SecretTransition(stateIndex, character);
+                if (!_transitions.TryGetValue(transition, out var nextState))
+                {
+                    nextState = _states.Count;
+                    _states.Add(new SecretMatchState { FirstEdge = -1 });
+                    var parent = _states[stateIndex];
+                    _edges.Add(new SecretMatchEdge(
+                        character,
+                        nextState,
+                        parent.FirstEdge));
+                    parent.FirstEdge = _edges.Count - 1;
+                    _states[stateIndex] = parent;
+                    _transitions.Add(transition, nextState);
+                }
+                stateIndex = nextState;
+            }
+
+            var terminal = _states[stateIndex];
+            terminal.MaximumMatchLength = Math.Max(
+                terminal.MaximumMatchLength,
+                secret.Length);
+            _states[stateIndex] = terminal;
+        }
+
+        private void BuildFailureLinks()
+        {
+            var pending = new Queue<int>(_states.Count);
+            for (var edgeIndex = _states[0].FirstEdge;
+                 edgeIndex >= 0;
+                 edgeIndex = _edges[edgeIndex].NextEdge)
+            {
+                pending.Enqueue(_edges[edgeIndex].TargetState);
+            }
+
+            while (pending.TryDequeue(out var stateIndex))
+            {
+                var state = _states[stateIndex];
+                for (var edgeIndex = state.FirstEdge;
+                     edgeIndex >= 0;
+                     edgeIndex = _edges[edgeIndex].NextEdge)
+                {
+                    var edge = _edges[edgeIndex];
+                    var failure = state.Failure;
+                    while (failure != 0 && !TryTransition(failure, edge.Character, out _))
+                        failure = _states[failure].Failure;
+                    if (TryTransition(failure, edge.Character, out var fallback))
+                        failure = fallback;
+
+                    var child = _states[edge.TargetState];
+                    child.Failure = failure;
+                    child.MaximumMatchLength = Math.Max(
+                        child.MaximumMatchLength,
+                        _states[failure].MaximumMatchLength);
+                    _states[edge.TargetState] = child;
+                    pending.Enqueue(edge.TargetState);
+                }
+            }
+        }
+
+        private bool TryTransition(int state, char character, out int nextState) =>
+            _transitions.TryGetValue(new SecretTransition(state, character), out nextState);
+
+        private struct SecretMatchState
+        {
+            public int FirstEdge;
+            public int Failure;
+            public int MaximumMatchLength;
+        }
+
+        private readonly record struct SecretMatchEdge(
+            char Character,
+            int TargetState,
+            int NextEdge);
+        private readonly record struct SecretTransition(int State, char Character);
+    }
 
     private sealed class CombinedOutputCapture
     {

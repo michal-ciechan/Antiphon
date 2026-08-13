@@ -743,6 +743,107 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    public void Exact_secret_redaction_handles_repetitive_adversarial_input_within_linear_budget()
+    {
+        const int outputLength = 64 * 1024;
+        const int secretCount = 64;
+        const int maximumSecretLength = 4_000;
+        var output = new string('a', outputLength);
+        var secrets = Enumerable.Range(0, secretCount)
+            .Select(index => new string('a', maximumSecretLength - index))
+            .ToArray();
+        var sanitize = typeof(RunnerProcessProbe).GetMethod(
+            "Sanitize",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        sanitize.ShouldNotBeNull();
+
+        sanitize.Invoke(null, ["aaaa", string.Empty, new[] { "aa" }]);
+        var baseline = Stopwatch.StartNew();
+        sanitize.Invoke(null, [output, string.Empty, new[] { secrets[0] }]);
+        baseline.Stop();
+
+        var adversarial = Stopwatch.StartNew();
+        var result = sanitize.Invoke(null, [output, string.Empty, secrets]);
+        adversarial.Stop();
+
+        result.ShouldNotBeNull();
+        var resultType = result.GetType();
+        resultType.GetProperty("SensitiveOutputDetected")!.GetValue(result).ShouldBe(true);
+        resultType.GetProperty("StandardOutput")!.GetValue(result).ShouldBe("*");
+        var comparativeBudget = TimeSpan.FromTicks(Math.Max(
+            TimeSpan.FromMilliseconds(750).Ticks,
+            baseline.Elapsed.Ticks * 12));
+        adversarial.Elapsed.ShouldBeLessThan(
+            comparativeBudget,
+            $"adversarial {adversarial.Elapsed.TotalMilliseconds:F0} ms; "
+            + $"single-pattern baseline {baseline.Elapsed.TotalMilliseconds:F0} ms");
+        adversarial.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2.5));
+    }
+
+    [Test]
+    public async Task Probe_rejects_more_redaction_values_than_environment_entries_before_start()
+    {
+        var startCalls = 0;
+        var probe = CreateProbe(
+            new RunnerProcessReaper(),
+            seams: new RunnerProcessProbeSeams
+            {
+                StartProcessAsync = (_, _) =>
+                {
+                    startCalls++;
+                    return Task.FromResult(false);
+                }
+            });
+        var request = new RunnerProcessRequest(
+            "unused",
+            [],
+            null,
+            new Dictionary<string, string>(),
+            Enumerable.Range(0, 257).Select(index => $"secret-{index}").ToArray());
+
+        var result = await probe.RunAsync(request, CancellationToken.None);
+
+        result.Started.ShouldBeFalse();
+        result.StandardOutput.ShouldBeEmpty();
+        result.StandardError.ShouldBeEmpty();
+        result.Error.ShouldBe("The probe redaction values are invalid or too large.");
+        startCalls.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Probe_rejects_excessive_aggregate_redaction_material_before_start()
+    {
+        var startCalls = 0;
+        var probe = CreateProbe(
+            new RunnerProcessReaper(),
+            seams: new RunnerProcessProbeSeams
+            {
+                StartProcessAsync = (_, _) =>
+                {
+                    startCalls++;
+                    return Task.FromResult(false);
+                }
+            });
+        var secrets = Enumerable.Range(0, 66)
+            .Select(index => new string('s', 3_996) + index.ToString("D4"))
+            .ToArray();
+        var request = new RunnerProcessRequest(
+            "unused",
+            [],
+            null,
+            new Dictionary<string, string>(),
+            secrets);
+
+        var result = await probe.RunAsync(request, CancellationToken.None);
+
+        result.Started.ShouldBeFalse();
+        result.StandardOutput.ShouldBeEmpty();
+        result.StandardError.ShouldBeEmpty();
+        result.Error.ShouldBe("The probe redaction values are invalid or too large.");
+        startCalls.ShouldBe(0);
+    }
+
+    [Test]
     [Arguments(
         "clientApiKey=synthetic-credential-first status=ready note='ordinary value !@#$%^&*()'",
         "* status=ready note='ordinary value !@#$%^&*()'",
