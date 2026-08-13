@@ -342,6 +342,207 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    [Arguments("launch", "-File")]
+    [Arguments("discovery", "-file")]
+    [Arguments("version", "-FILE")]
+    public async Task Validation_resolves_relative_wrapper_files_against_the_profile_working_directory(
+        string argumentSet,
+        string fileSwitch)
+    {
+        const string relativeWrapper = "relative-wrapper.ps1";
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "task4-relative-wrapper");
+        var wrapperArguments = new[] { fileSwitch, relativeWrapper };
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 relative wrapper {argumentSet} {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = argumentSet == "launch" ? wrapperArguments : [],
+                DiscoveryArguments = argumentSet == "discovery" ? wrapperArguments : [],
+                VersionArguments = argumentSet == "version" ? wrapperArguments : [],
+                WorkingDirectory = workingDirectory
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Stages.Single(stage => stage.Name == "arguments").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        probe.CheckedFiles.ShouldBe([Path.GetFullPath(relativeWrapper, workingDirectory)]);
+    }
+
+    [Test]
+    public async Task Unrelated_server_cwd_wrapper_cannot_make_a_missing_effective_wrapper_pass_validation()
+    {
+        const string relativeWrapper = "same-name-wrapper.ps1";
+        var workingDirectory = Path.Combine(Path.GetTempPath(), "task4-missing-effective-wrapper");
+        var effectiveWrapper = Path.GetFullPath(relativeWrapper, workingDirectory);
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation."),
+            FileHandler = (path, _) => Task.FromResult(
+                string.Equals(path, relativeWrapper, StringComparison.Ordinal)
+                    ? new RunnerPathCheck(true, "An unrelated server-cwd file exists.")
+                    : new RunnerPathCheck(false, "The effective wrapper is unavailable."))
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 unrelated cwd wrapper {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = ["-File", relativeWrapper],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = workingDirectory
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Stages.Single(stage => stage.Name == "arguments").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Failed);
+        probe.CheckedFiles.ShouldBe([effectiveWrapper]);
+    }
+
+    [Test]
+    public async Task Validation_preserves_an_absolute_wrapper_file_path()
+    {
+        var absoluteWrapper = Path.Combine(Path.GetTempPath(), "task4-absolute-wrapper.ps1");
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 absolute wrapper {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = ["-File", absoluteWrapper],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = null
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Stages.Single(stage => stage.Name == "arguments").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        probe.CheckedFiles.ShouldBe([absoluteWrapper]);
+    }
+
+    [Test]
+    public async Task Validation_rejects_a_relative_wrapper_without_a_profile_working_directory()
+    {
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 missing wrapper cwd {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = ["-File", "relative-wrapper.ps1"],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = null
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        var stage = run.Stages.Single(candidate => candidate.Name == "arguments");
+        stage.Status.ShouldBe(AgentTuiValidationStageStatus.Failed);
+        stage.Message.ShouldBe("A relative wrapper file could not be resolved against a valid working directory.");
+        probe.CheckedFiles.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Validation_rejects_a_relative_wrapper_with_a_nonabsolute_working_directory()
+    {
+        const string relativeWorkingDirectory = "relative-working-directory";
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 invalid wrapper cwd {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = ["-File", "relative-wrapper.ps1"],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = relativeWorkingDirectory
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        var stage = run.Stages.Single(candidate => candidate.Name == "arguments");
+        stage.Status.ShouldBe(AgentTuiValidationStageStatus.Failed);
+        stage.Message.ShouldBe("A relative wrapper file could not be resolved against a valid working directory.");
+        stage.Message.ShouldNotContain(relativeWorkingDirectory);
+        probe.CheckedFiles.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Validation_rejects_a_relative_wrapper_whose_resolved_path_exceeds_the_probe_bound()
+    {
+        var workingDirectory = Path.Combine(Path.GetTempPath(), new string('w', 800));
+        var relativeWrapper = new string('r', 1500) + ".ps1";
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 expanded wrapper bound {Guid.NewGuid():N}", AgentKind.OpenCode) with
+            {
+                Arguments = ["-File", relativeWrapper],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = workingDirectory
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        var stage = run.Stages.Single(candidate => candidate.Name == "arguments");
+        stage.Status.ShouldBe(AgentTuiValidationStageStatus.Failed);
+        stage.Message.ShouldBe("A relative wrapper file could not be resolved against a valid working directory.");
+        stage.Message.ShouldNotContain(relativeWrapper);
+        stage.Message.ShouldNotContain(workingDirectory);
+        probe.CheckedFiles.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Validation_does_not_reinterpret_an_unsupported_positional_shell_script_argument()
+    {
+        var probe = new RecordingRunnerProcessProbe
+        {
+            ExecutableCheck = new RunnerPathCheck(false, "Stop after path validation.")
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(
+            provider,
+            NewRequest($"Task 4 positional shell script {Guid.NewGuid():N}", AgentKind.Raw) with
+            {
+                Executable = "sh",
+                Arguments = ["wrapper.sh"],
+                DiscoveryArguments = [],
+                VersionArguments = [],
+                WorkingDirectory = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar)
+            });
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Stages.Single(stage => stage.Name == "arguments").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        probe.CheckedFiles.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task Validation_persists_sanitized_stages_capabilities_version_and_suitability()
     {
         var probe = new RecordingRunnerProcessProbe();
@@ -1286,6 +1487,15 @@ public sealed class AgentTuiDiscoveryTests
             CancellationToken.None);
     }
 
+    private static async Task<AgentTuiProfileDto> CreateProfileAsync(
+        ServiceProvider provider,
+        AgentTuiProfileWriteRequest request)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>()
+            .CreateAsync(request, CancellationToken.None);
+    }
+
     private static AgentTuiProfileWriteRequest NewRequest(string displayName, AgentKind kind) => new(
         displayName,
         kind,
@@ -1346,7 +1556,9 @@ public sealed class AgentTuiDiscoveryTests
         private readonly ConcurrentQueue<RunnerProcessResult> _results = new();
 
         public List<RunnerProcessRequest> Requests { get; } = [];
+        public List<string> CheckedFiles { get; } = [];
         public Func<RunnerProcessRequest, CancellationToken, Task<RunnerProcessResult>>? Handler { get; set; }
+        public Func<string, CancellationToken, Task<RunnerPathCheck>>? FileHandler { get; set; }
         public RunnerPathCheck ExecutableCheck { get; set; } = new(true, "Executable is available.");
         public RunnerPathCheck FileCheck { get; set; } = new(true, "Wrapper is available.");
         public RunnerPathCheck DirectoryCheck { get; set; } = new(true, "Working directory is available.");
@@ -1359,7 +1571,11 @@ public sealed class AgentTuiDiscoveryTests
 
         public Task<RunnerPathCheck> CheckFileAsync(
             string path,
-            CancellationToken cancellationToken) => Task.FromResult(FileCheck);
+            CancellationToken cancellationToken)
+        {
+            CheckedFiles.Add(path);
+            return FileHandler?.Invoke(path, cancellationToken) ?? Task.FromResult(FileCheck);
+        }
 
         public Task<RunnerPathCheck> CheckDirectoryAsync(
             string path,

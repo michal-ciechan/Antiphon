@@ -1098,7 +1098,36 @@ public sealed partial class AgentTuiProfileService
                         false,
                         "A wrapper file argument is missing its separate path value.");
                 }
-                wrapperPaths.Add(argumentSet[index + 1]);
+                var wrapperPath = argumentSet[index + 1];
+                if (!Path.IsPathFullyQualified(wrapperPath))
+                {
+                    if (snapshot.WorkingDirectory is null
+                        || !Path.IsPathFullyQualified(snapshot.WorkingDirectory))
+                    {
+                        return new RunnerPathCheck(
+                            false,
+                            "A relative wrapper file could not be resolved against a valid working directory.");
+                    }
+                    try
+                    {
+                        wrapperPath = Path.GetFullPath(wrapperPath, snapshot.WorkingDirectory);
+                    }
+                    catch (Exception exception) when (exception is ArgumentException
+                                                      or IOException
+                                                      or NotSupportedException)
+                    {
+                        return new RunnerPathCheck(
+                            false,
+                            "A relative wrapper file could not be resolved against a valid working directory.");
+                    }
+                    if (wrapperPath.Length > MaximumArgumentLength)
+                    {
+                        return new RunnerPathCheck(
+                            false,
+                            "A relative wrapper file could not be resolved against a valid working directory.");
+                    }
+                }
+                wrapperPaths.Add(wrapperPath);
             }
         }
         var distinctWrapperPaths = wrapperPaths.Distinct(StringComparer.Ordinal).ToArray();
