@@ -89,7 +89,14 @@ public sealed record CreateCardRequest(
     int Priority = 0,
     IReadOnlyList<string>? Labels = null);
 
-public sealed record MoveCardRequest(Guid BoardColumnId, Guid ConcurrencyToken);
+/// <param name="TerminalReason">
+/// Why this card is being closed, when the target column is terminal. Optional, and the whole
+/// point of allowing Backlog -&gt; Done: "no longer wanted" and "fixed as part of CARD-nnnn" are
+/// different closes and a board that records neither cannot tell them apart later. Ignored for
+/// non-terminal columns; omitted falls back to the generic note.
+/// </param>
+public sealed record MoveCardRequest(
+    Guid BoardColumnId, Guid ConcurrencyToken, string? TerminalReason = null);
 
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,
