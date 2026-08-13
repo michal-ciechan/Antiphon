@@ -360,6 +360,11 @@ public class AntiphonAppFixture
                     settings["Serilog:MinimumLevel:Override:Microsoft.EntityFrameworkCore.Database.Command"] = "Warning";
                     settings["Serilog:MinimumLevel:Override:Microsoft.AspNetCore.Routing"] = "Warning";
                     settings["Serilog:MinimumLevel:Override:Microsoft.AspNetCore.Http.Result"] = "Warning";
+                    // RE-ARMED for tests: appsettings.json turns this down to Warning because it was
+                    // 26% of a 40 MB/hour production log (CARD-0043). Here the file is per-test and
+                    // tiny, and the session-runner request/response trace is precisely what you read
+                    // when a test fails with "did not reach Running status".
+                    settings["Serilog:MinimumLevel:Override:System.Net.Http.HttpClient"] = "Information";
                 }
 
                 config.AddInMemoryCollection(settings);

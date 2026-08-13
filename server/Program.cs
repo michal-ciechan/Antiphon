@@ -46,6 +46,9 @@ try
                 ctx.Configuration["Serilog:ConsoleMinimumLevel"], ignoreCase: true, out var parsed)
                 ? parsed
                 : Serilog.Events.LogEventLevel.Verbose;
+        var retention =
+            Antiphon.Server.Infrastructure.Logging.FileLogRetentionPolicy.FromConfiguration(
+                ctx.Configuration);
         lc
             .ReadFrom.Configuration(ctx.Configuration)
             .Enrich.FromLogContext()
@@ -56,11 +59,14 @@ try
             .WriteTo.File(
                 Path.Combine(logPath, "antiphon-.log"),
                 rollingInterval: RollingInterval.Day,
-                // Cap each day's file and roll within the day if exceeded; keep a bounded window of files
-                // so logs can never run the disk out (they previously rolled daily but were never deleted).
-                fileSizeLimitBytes: 100 * 1024 * 1024,
+                // Cap each day's file and roll within the day if exceeded. Retention is by TIME
+                // (5 days) — the file COUNT cap is only a disk backstop, because counting files is
+                // not counting days: before CARD-0043 turned the noisy sources down, 14 files was
+                // between 5 and 45 hours of history, not 14 days. See FileLogRetentionPolicy.
+                fileSizeLimitBytes: retention.FileSizeLimitBytes,
                 rollOnFileSizeLimit: true,
-                retainedFileCountLimit: 14,
+                retainedFileCountLimit: retention.RetainedFileCountLimit,
+                retainedFileTimeLimit: retention.RetainedFileTimeLimit,
                 outputTemplate:
                     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
             )
