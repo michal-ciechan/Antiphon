@@ -40,6 +40,35 @@ machine further than asked is a decision for the operator, not an inference.
 
 ---
 
+## 2026-08-13 — Moving a card into In Progress SPAWNS AN AGENT
+
+**Discovered by walking into it.** `CardService.ApplyColumnMove` ends with:
+
+```csharp
+if (targetColumn.IsActive && card.OwnerSessionId is null)
+    await SpawnAsync(card.Id, new SpawnCardRequest(), ct);
+```
+
+Six already-completed cards were moved Backlog → Done to make the board honest. The state machine
+routes that through In Progress, so the move **launched six agent sessions** (`229f3bf9`,
+`6c19f8fd`, `7ee35818`, `775447a9`, `2f8ad7c0`, `1759d0b9`, all 05:23:5x), created six git
+worktrees, and six branches. All six sessions ended `Failed`, so nothing ran away — but on a
+healthy system that is six Claude agents starting work on cards that were already finished, from
+an operation whose entire intent was bookkeeping.
+
+**This is a hard constraint on CARD-0040.** Automatic Backlog → In Progress does not just change a
+column; it starts real, billable work. Any auto-transition design must either separate "the column
+says active" from "start an agent", or be explicit that the trigger is the work starting rather
+than the reverse. The current coupling means a reconciler that tidies stale columns would spawn an
+agent per card it tidied.
+
+It also argues that a **bookkeeping move needs a way to say "do not spawn"** — the same shape as
+`MoveCardRequest.Reason`: the caller knows why it is moving the card, and "because it was already
+done" should not launch anything. Note the `card.OwnerSessionId is null` guard is not enough,
+because a completed card whose session has been cleaned up has no owner.
+
+---
+
 ## 2026-08-13 — Auto-transition stops at Review, conditionally
 
 **Not implemented — this is a constraint on CARD-0040.**
