@@ -220,13 +220,17 @@ public sealed class RunnerProcessProbeTests
             await reaperEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await reaper.StopAsync(shutdown.Token);
+            var stopping = reaper.StopAsync(shutdown.Token);
             var pids = await ReadPidsAsync(pidPath);
             foreach (var pid in pids)
                 await AssertProcessExitedAsync(pid);
+            await Task.Delay(100);
+            stopping.IsCompleted.ShouldBeFalse();
 
             releaseReaper.TrySetResult();
+            await stopping;
             await reaper.WaitForEmptyAsync(TimeSpan.FromSeconds(5));
+            reaper.TrackedProcessCount.ShouldBe(0);
         }
         finally
         {
@@ -236,11 +240,12 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
-    public async Task Reaper_shutdown_closes_admission_and_prevents_a_pending_late_start()
+    public async Task Reaper_shutdown_waits_for_a_starting_guard_then_kills_and_rejects_future_starts()
     {
         var scratch = CreateScratch();
         var startEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startedPid = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var startCalls = 0;
         try
         {
@@ -252,6 +257,13 @@ public sealed class RunnerProcessProbeTests
                 timeoutSeconds: 1,
                 seams: new RunnerProcessProbeSeams
                 {
+                    StartProcessAsync = async (guard, _) => await Task.Run(() =>
+                    {
+                        var started = guard.TryStart();
+                        if (started)
+                            startedPid.TrySetResult(guard.Process.Id);
+                        return started;
+                    }),
                     StartCommitted = () =>
                     {
                         Interlocked.Increment(ref startCalls);
@@ -264,13 +276,17 @@ public sealed class RunnerProcessProbeTests
                 Request(script, ["tree", pidPath]),
                 CancellationToken.None);
             await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            (await operation).CleanupConfirmed.ShouldBeFalse();
 
             using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var stopping = reaper.StopAsync(shutdown.Token);
+            stopping.IsCompleted.ShouldBeFalse();
+
             releaseStart.TrySetResult();
+            var startedProcessId = await startedPid.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await AssertProcessExitedAsync(startedProcessId);
+            await operation.WaitAsync(TimeSpan.FromSeconds(5));
             await stopping;
-            await reaper.WaitForEmptyAsync(TimeSpan.FromSeconds(5));
+            reaper.TrackedProcessCount.ShouldBe(0);
             if (File.Exists(pidPath))
             {
                 foreach (var pid in await ReadPidsAsync(pidPath))

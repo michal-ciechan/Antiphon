@@ -13,6 +13,7 @@ public sealed class RunnerProcessReaper : IHostedService
     private bool _stopping;
     private int _activeAdmissions;
     private TaskCompletionSource? _admissionsDrained;
+    private Task? _shutdownTask;
 
     public RunnerProcessReaper()
         : this(RunnerProcessCleanup.StopTreeAsync)
@@ -42,41 +43,49 @@ public sealed class RunnerProcessReaper : IHostedService
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        Task admissionsDrained;
+        Task shutdownTask;
         lock (_lifecycleGate)
         {
             _stopping = true;
-            if (_activeAdmissions == 0)
+            if (_shutdownTask is not null)
             {
-                admissionsDrained = Task.CompletedTask;
+                shutdownTask = _shutdownTask;
             }
             else
             {
-                _admissionsDrained ??= new TaskCompletionSource(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                admissionsDrained = _admissionsDrained.Task;
+                Task admissionsDrained;
+                if (_activeAdmissions == 0)
+                {
+                    admissionsDrained = Task.CompletedTask;
+                }
+                else
+                {
+                    _admissionsDrained ??= new TaskCompletionSource(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    admissionsDrained = _admissionsDrained.Task;
+                }
+                shutdownTask = StopAdmittedProcessesAsync(admissionsDrained);
+                _shutdownTask = shutdownTask;
             }
         }
 
-        try
+        await shutdownTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task StopAdmittedProcessesAsync(Task admissionsDrained)
+    {
+        await admissionsDrained;
+        var tracked = _tracked.ToArray();
+        foreach (var entry in tracked)
+            entry.Value.StopOrPreventStart();
+
+        while (tracked.Any(entry =>
+                   _tracked.TryGetValue(entry.Key, out var current)
+                   && ReferenceEquals(current, entry.Value)))
         {
-            while (true)
-            {
-                var tracked = _tracked.Values.ToArray();
-                foreach (var process in tracked)
-                    process.StopOrPreventStart();
-                if (admissionsDrained.IsCompleted
-                    && tracked.All(process => process.IsSettled))
-                {
-                    return;
-                }
-                await Task.Delay(RetryDelay, cancellationToken);
-            }
-        }
-        finally
-        {
-            foreach (var process in _tracked.Values)
-                process.StopOrPreventStart();
+            foreach (var entry in tracked)
+                entry.Value.StopOrPreventStart();
+            await Task.Delay(RetryDelay);
         }
     }
 

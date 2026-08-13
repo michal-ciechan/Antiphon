@@ -227,6 +227,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var process = new Process { StartInfo = startInfo };
         var startGuard = new RunnerProcessStartGuard(process, _startCommitted);
         var trackingId = _reaper.Register(startGuard);
+        admission.Dispose();
         Task<bool>? startTask = null;
         try
         {

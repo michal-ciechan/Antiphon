@@ -308,13 +308,25 @@ public sealed partial class AgentTuiProfileService
             var oldOperatorModels = profile.Models
                 .Where(model => model.Source == AgentTuiModelSource.Operator)
                 .ToArray();
-            _db.AgentTuiModels.RemoveRange(oldOperatorModels);
-            AddOperatorModels(profile, request.Models, now);
-            foreach (var discoveredModel in profile.Models
-                         .Where(model => model.Source == AgentTuiModelSource.Discovered))
+            foreach (var model in profile.Models.Where(IsRevisionBoundModel))
             {
-                discoveredModel.Availability = AgentTuiModelAvailability.Stale;
-                discoveredModel.UpdatedAt = now;
+                model.Availability = AgentTuiModelAvailability.Stale;
+                model.UpdatedAt = now;
+            }
+            _db.AgentTuiModels.RemoveRange(oldOperatorModels);
+            var newOperatorModels = AddOperatorModels(profile, request.Models, now);
+            foreach (var newOperatorModel in newOperatorModels)
+            {
+                var previous = oldOperatorModels.SingleOrDefault(
+                    model => string.Equals(
+                        model.Identifier,
+                        newOperatorModel.Identifier,
+                        StringComparison.Ordinal));
+                if (previous is null || !HasDiscoveryEvidence(previous))
+                    continue;
+                newOperatorModel.Availability = AgentTuiModelAvailability.Stale;
+                newOperatorModel.DiscoveredAt = previous.DiscoveredAt;
+                newOperatorModel.RunnerVersion = previous.RunnerVersion;
             }
 
             profile.DisplayName = request.DisplayName.Trim();
@@ -1781,16 +1793,17 @@ public sealed partial class AgentTuiProfileService
             CreatedAt = now
         };
 
-    private void AddOperatorModels(
+    private IReadOnlyList<AgentTuiModel> AddOperatorModels(
         AgentTuiProfile profile,
         IReadOnlyList<AgentTuiModelWriteDto> models,
         DateTime now)
     {
+        var added = new List<AgentTuiModel>();
         foreach (var model in models
                      .GroupBy(candidate => candidate.Identifier, StringComparer.Ordinal)
                      .Select(group => group.Last()))
         {
-            _db.AgentTuiModels.Add(new AgentTuiModel
+            var entity = new AgentTuiModel
             {
                 Id = Guid.NewGuid(),
                 ProfileId = profile.Id,
@@ -1803,9 +1816,20 @@ public sealed partial class AgentTuiProfileService
                 CreatedAt = now,
                 UpdatedAt = now,
                 Profile = profile
-            });
+            };
+            _db.AgentTuiModels.Add(entity);
+            added.Add(entity);
         }
+        return added;
     }
+
+    private static bool IsRevisionBoundModel(AgentTuiModel model) =>
+        model.Source == AgentTuiModelSource.Discovered || HasDiscoveryEvidence(model);
+
+    private static bool HasDiscoveryEvidence(AgentTuiModel model) =>
+        model.DiscoveredAt.HasValue
+        || !string.IsNullOrEmpty(model.RunnerVersion)
+        || model.Availability is AgentTuiModelAvailability.Verified or AgentTuiModelAvailability.Stale;
 
     private async Task ClearOtherDefaultsAsync(
         Guid? exceptProfileId,

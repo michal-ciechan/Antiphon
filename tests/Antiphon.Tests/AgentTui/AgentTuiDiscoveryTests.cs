@@ -508,6 +508,89 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    public async Task Profile_update_stales_only_curated_and_operator_models_with_discovery_evidence()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("llmgateway/grok-4-5\noperator/custom-model\n"));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+        await using (var db = _fixture.CreateDbContext())
+        {
+            db.AgentTuiModels.Add(new AgentTuiModel
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profile.Id,
+                Identifier = "operator/plain-model",
+                DisplayName = "Plain operator model",
+                Source = AgentTuiModelSource.Operator,
+                Availability = AgentTuiModelAvailability.Unverified,
+                CreatedAt = FixedNow.UtcDateTime,
+                UpdatedAt = FixedNow.UtcDateTime
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var verified = await RefreshAsync(provider, profile.Id);
+        verified.Single(model => model.Identifier == "llmgateway/grok-4-5").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
+        verified.Single(model => model.Identifier == "operator/custom-model").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
+        await using (var db = _fixture.CreateDbContext())
+        {
+            db.AgentTuiModels.Add(new AgentTuiModel
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profile.Id,
+                Identifier = "curated/plain-model",
+                DisplayName = "Plain curated model",
+                Source = AgentTuiModelSource.Curated,
+                Availability = AgentTuiModelAvailability.Unverified,
+                CreatedAt = FixedNow.UtcDateTime,
+                UpdatedAt = FixedNow.UtcDateTime
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>().UpdateAsync(
+                profile.Id,
+                NewRequest(profile.DisplayName, AgentKind.OpenCode) with
+                {
+                    ExpectedRevision = profile.Revision,
+                    Arguments = ["--new-revision-launch"],
+                    Models =
+                    [
+                        new AgentTuiModelWriteDto("operator/custom-model", "Operator label"),
+                        new AgentTuiModelWriteDto("operator/plain-model", "Plain operator model")
+                    ]
+                },
+                CancellationToken.None);
+        }
+
+        var models = await ReadModelsAsync(provider, profile.Id);
+        var curatedEvidence = models.Single(model => model.Identifier == "llmgateway/grok-4-5");
+        curatedEvidence.Source.ShouldBe(AgentTuiModelSource.Curated);
+        curatedEvidence.Availability.ShouldBe(AgentTuiModelAvailability.Stale);
+        curatedEvidence.DiscoveredAt.ShouldBe(FixedNow.UtcDateTime);
+
+        var operatorEvidence = models.Single(model => model.Identifier == "operator/custom-model");
+        operatorEvidence.Source.ShouldBe(AgentTuiModelSource.Operator);
+        operatorEvidence.Availability.ShouldBe(AgentTuiModelAvailability.Stale);
+        operatorEvidence.DiscoveredAt.ShouldBe(FixedNow.UtcDateTime);
+
+        var plainCurated = models.Single(model => model.Identifier == "curated/plain-model");
+        plainCurated.Source.ShouldBe(AgentTuiModelSource.Curated);
+        plainCurated.Availability.ShouldBe(AgentTuiModelAvailability.Unverified);
+        plainCurated.DiscoveredAt.ShouldBeNull();
+
+        var plainOperator = models.Single(model => model.Identifier == "operator/plain-model");
+        plainOperator.Source.ShouldBe(AgentTuiModelSource.Operator);
+        plainOperator.Availability.ShouldBe(AgentTuiModelAvailability.Unverified);
+        plainOperator.DiscoveredAt.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Operator_label_and_source_survive_discovery_verification_omission_and_failure()
     {
         var probe = new RecordingRunnerProcessProbe();
