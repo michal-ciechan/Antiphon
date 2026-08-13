@@ -104,6 +104,11 @@ export interface CreateCardRequest {
 export interface MoveCardRequest {
   boardColumnId: string
   concurrencyToken: string
+  /**
+   * Why the card is moving. The server keeps it as `TerminalReason` on a move into a terminal
+   * column and drops it otherwise, pending CARD-0019's card history — send one regardless.
+   */
+  reason?: string | null
 }
 
 export interface SpawnCardRequest {

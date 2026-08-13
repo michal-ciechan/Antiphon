@@ -141,7 +141,7 @@ public class BoardE2ETests
                 NameRegex = new Regex(cardTitle)
             })).ToBeVisibleAsync();
 
-            await DragToAndWaitForMoveAsync(page, page.GetByLabel("Drag CARD-0001"), reviewColumn);
+            await MoveCardViaUiAsync(page, "CARD-0001", "review", "ready for review");
 
             await Expect(reviewColumn.GetByRole(AriaRole.Article, new LocatorGetByRoleOptions
             {
@@ -190,7 +190,7 @@ public class BoardE2ETests
                 NameRegex = new Regex(cardTitle)
             })).ToBeVisibleAsync();
 
-            await DragToAndWaitForMoveAsync(page, page.GetByLabel("Drag CARD-0001"), activeColumn);
+            await MoveCardViaUiAsync(page, "CARD-0001", "in-progress", "starting work");
 
             var movedCard = activeColumn.GetByRole(AriaRole.Article, new LocatorGetByRoleOptions
             {
@@ -1064,29 +1064,26 @@ public class BoardE2ETests
         }
     }
 
-    private static async Task DragToAsync(IPage page, ILocator source, ILocator target)
+    /// <summary>
+    /// Moves a card through the board's only move surface: the row kebab, a target state, an
+    /// optional reason and an explicit confirm. Drag-and-drop is gone (feature 011 §2.3) — a move
+    /// carries a reason now, and moving into an active column spawns an agent session, which is
+    /// not a thing a drag gesture should be able to do.
+    /// </summary>
+    private static async Task MoveCardViaUiAsync(IPage page, string identifier, string stateKey, string reason)
     {
-        var sourceBox = await source.BoundingBoxAsync();
-        sourceBox.ShouldNotBeNull();
-        var targetBox = await target.BoundingBoxAsync();
-        targetBox.ShouldNotBeNull();
+        await page.GetByLabel($"Actions for {identifier}").ClickAsync();
+        await page.GetByTestId($"move-to-{stateKey}").ClickAsync();
 
-        var startX = sourceBox!.X + sourceBox.Width / 2;
-        var startY = sourceBox.Y + sourceBox.Height / 2;
-        var endX = targetBox!.X + targetBox.Width / 2;
-        var endY = targetBox.Y + Math.Min(120, targetBox.Height / 2);
+        var dialog = page.GetByRole(AriaRole.Dialog);
+        await dialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Reason" }).FillAsync(reason);
 
-        await page.Mouse.MoveAsync(startX, startY);
-        await page.Mouse.DownAsync();
-        await page.Mouse.MoveAsync(startX + 10, startY + 10, new MouseMoveOptions { Steps = 5 });
-        await page.Mouse.MoveAsync(endX, endY, new MouseMoveOptions { Steps = 20 });
-        await page.Mouse.UpAsync();
-    }
-
-    private static async Task DragToAndWaitForMoveAsync(IPage page, ILocator source, ILocator target)
-    {
         var response = await page.RunAndWaitForResponseAsync(
-            () => DragToAsync(page, source, target),
+            () => dialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions
+            {
+                Name = "Move",
+                Exact = true
+            }).ClickAsync(),
             response => response.Url.Contains("/api/cards/", StringComparison.Ordinal)
                 && response.Request.Method.Equals("PATCH", StringComparison.OrdinalIgnoreCase));
         if (response.Status >= 300)

@@ -268,10 +268,40 @@ public sealed class CardService
         }
     }
 
+    /// <summary>
+    /// The next identifier for a board: one past the HIGHEST suffix already handed out.
+    /// </summary>
+    /// <remarks>
+    /// This used to be <c>count + 1</c>, which reused an identifier after a delete (CARD-0005):
+    /// remove CARD-0007 from a seven-card board and the next create hands out CARD-0007 again,
+    /// silently pointing every existing reference — commit messages, docs, other cards' terminal
+    /// reasons — at a different card. Identifiers are cited outside the database, so the sequence
+    /// has to move forward even when rows leave. Suffixes that do not parse (a board synced from a
+    /// foreign tracker) are ignored rather than blocking allocation.
+    ///
+    /// <para>This closes the collision but not the whole hole: deleting the CURRENT HIGHEST card
+    /// still frees its number, because the only record that it was ever taken is the row itself.
+    /// Full monotonicity needs CARD-0019's archive-instead-of-delete (or a per-board counter), and
+    /// that is where it belongs — a card that is cited should not vanish in the first place.</para>
+    /// </remarks>
     private async Task<string> NextIdentifierAsync(Guid boardId, CancellationToken ct)
     {
-        var count = await _db.Cards.CountAsync(c => c.BoardId == boardId, ct);
-        return $"CARD-{count + 1:0000}";
+        var identifiers = await _db.Cards
+            .Where(c => c.BoardId == boardId)
+            .Select(c => c.Identifier)
+            .ToListAsync(ct);
+
+        var highest = 0;
+        foreach (var identifier in identifiers)
+        {
+            if (string.IsNullOrEmpty(identifier))
+                continue;
+            var suffix = identifier.AsSpan(identifier.LastIndexOf('-') + 1);
+            if (int.TryParse(suffix, out var value) && value > highest)
+                highest = value;
+        }
+
+        return $"CARD-{highest + 1:0000}";
     }
 
     private static string BuildPrompt(Card card, BoardWorkflowDefinition? activeDefinition)

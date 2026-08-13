@@ -1,12 +1,18 @@
 import {
+  ActionIcon,
   Alert,
+  Badge,
   Box,
   Button,
+  Chip,
+  CloseButton,
   Group,
   Loader,
   Modal,
+  MultiSelect,
   NumberInput,
   Paper,
+  Popover,
   ScrollArea,
   Select,
   Stack,
@@ -15,27 +21,34 @@ import {
   Textarea,
   Title,
 } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
-import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { useMemo, useState } from 'react'
-import { TbAlertCircle, TbFileCode, TbPlus } from 'react-icons/tb'
+import { TbAlertCircle, TbFileCode, TbFilter, TbPlus, TbSearch } from 'react-icons/tb'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
   type BoardColumnDto,
   type BoardDetailDto,
-  type CardDto,
   type CardStatus,
   useAllBoardDetails,
   useBoard,
   useBoards,
   useCreateBoard,
   useCreateCard,
-  useMoveCard,
 } from '../../api/boards'
 import { BoardColumn } from './BoardColumn'
+import { CardListSection } from './CardListSection'
 import { CardModal } from './CardModal'
+import { ShapeStrip } from './ShapeStrip'
+import { StatePager } from './StatePager'
 import { WorkflowEditor } from './WorkflowEditor'
+import {
+  PRIORITIES,
+  type BoardFilter,
+  buildBoardShape,
+  defaultExpandedState,
+  isFilterActive,
+} from './boardShapeModel'
 
 interface BoardRouteParams {
   id?: string
@@ -66,12 +79,11 @@ export function BoardPage() {
   const boardIds = useMemo(() => (boards ?? []).map((item) => item.id), [boards])
   const allBoards = useAllBoardDetails(boardIds, !id && !boardsLoading)
   const selectedBoardLoading = !!id && boardLoading
-  const moveCard = useMoveCard(id ?? '')
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const selectedCardId = searchParams.get('card')
   const [newBoardOpen, setNewBoardOpen] = useState(false)
   const [newCardOpen, setNewCardOpen] = useState(false)
   const [workflowOpen, setWorkflowOpen] = useState(false)
+  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
 
   const selectedCard = useMemo(() => {
     if (!board || !selectedCardId) return null
@@ -91,30 +103,6 @@ export function BoardPage() {
     ],
     [boards],
   )
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    if (!board || !event.over || event.active.id === event.over.id) return
-    const card = findCard(board.columns.flatMap((column) => column.cards), String(event.active.id))
-    if (!card || card.boardColumnId === event.over.id) return
-
-    moveCard.mutate(
-      {
-        cardId: card.id,
-        request: {
-          boardColumnId: String(event.over.id),
-          concurrencyToken: card.concurrencyToken,
-        },
-      },
-      {
-        onError: (mutationError) => {
-          notifications.show({
-            color: 'red',
-            message: mutationError instanceof Error ? mutationError.message : 'Move failed',
-          })
-        },
-      },
-    )
-  }
 
   const handleBoardSelection = (value: string | null) => {
     if (!value) return
@@ -152,6 +140,7 @@ export function BoardPage() {
           <CardModal
             boardId={board.id}
             card={selectedCard}
+            columns={board.columns}
             opened={!!selectedCard}
             onClose={closeCard}
           />
@@ -166,48 +155,89 @@ export function BoardPage() {
         <CardModal
           boardId={selectedAllCard.boardId}
           card={selectedAllCard}
+          columns={[]}
           opened
           onClose={closeCard}
         />
       )}
 
-      <Group justify="space-between" mb="md" align="flex-end">
-        <Stack gap={2}>
-          <Title order={2}>Boards</Title>
-          {board && (
-            <Text size="sm" c="dimmed">
-              {board.projectName} / {board.name}
-            </Text>
-          )}
-          {!board && !boardsLoading && boards && boards.length > 0 && (
-            <Text size="sm" c="dimmed">
-              All cards
-            </Text>
-          )}
-        </Stack>
-        <Group>
+      {/*
+        On a phone the chrome has to earn its height: the pager needs the screen, so the title
+        block, the board picker and the actions collapse into one row of icons rather than three
+        rows of labelled buttons.
+      */}
+      <Group justify="space-between" mb="md" align="flex-end" wrap="nowrap">
+        {!isMobile && (
+          <Stack gap={2}>
+            <Title order={2}>Boards</Title>
+            {board && (
+              <Text size="sm" c="dimmed">
+                {board.projectName} / {board.name}
+              </Text>
+            )}
+            {!board && !boardsLoading && boards && boards.length > 0 && (
+              <Text size="sm" c="dimmed">
+                All cards
+              </Text>
+            )}
+          </Stack>
+        )}
+        <Group gap="xs" wrap="nowrap" style={{ flex: isMobile ? 1 : undefined }}>
           <Select
             placeholder="Select board"
             data={boardOptions}
             value={id ?? ALL_BOARDS_VALUE}
             onChange={handleBoardSelection}
-            w={320}
+            w={isMobile ? undefined : 320}
+            style={isMobile ? { flex: 1, minWidth: 0 } : undefined}
             searchable
             maxDropdownHeight={420}
           />
-          <Button leftSection={<TbPlus size={16} />} variant="light" onClick={() => setNewBoardOpen(true)}>
-            New Board
-          </Button>
-          {board && (
-            <>
-              <Button leftSection={<TbFileCode size={16} />} variant="light" onClick={() => setWorkflowOpen(true)}>
-                Workflow
-              </Button>
-              <Button leftSection={<TbPlus size={16} />} onClick={() => setNewCardOpen(true)}>
-                New Card
-              </Button>
-            </>
-          )}
+          {isMobile
+            ? (
+              <>
+                <ActionIcon
+                  variant="light"
+                  size="lg"
+                  aria-label="New Board"
+                  onClick={() => setNewBoardOpen(true)}
+                >
+                  <TbPlus size={18} />
+                </ActionIcon>
+                {board && (
+                  <>
+                    <ActionIcon
+                      variant="light"
+                      size="lg"
+                      aria-label="Workflow"
+                      onClick={() => setWorkflowOpen(true)}
+                    >
+                      <TbFileCode size={18} />
+                    </ActionIcon>
+                    <ActionIcon size="lg" aria-label="New Card" onClick={() => setNewCardOpen(true)}>
+                      <TbPlus size={18} />
+                    </ActionIcon>
+                  </>
+                )}
+              </>
+            )
+            : (
+              <>
+                <Button leftSection={<TbPlus size={16} />} variant="light" onClick={() => setNewBoardOpen(true)}>
+                  New Board
+                </Button>
+                {board && (
+                  <>
+                    <Button leftSection={<TbFileCode size={16} />} variant="light" onClick={() => setWorkflowOpen(true)}>
+                      Workflow
+                    </Button>
+                    <Button leftSection={<TbPlus size={16} />} onClick={() => setNewCardOpen(true)}>
+                      New Card
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
         </Group>
       </Group>
 
@@ -229,17 +259,7 @@ export function BoardPage() {
         </Alert>
       )}
 
-      {board && (
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <ScrollArea type="auto" offsetScrollbars>
-            <Group align="flex-start" wrap="nowrap" gap="md" pb="sm">
-              {board.columns.map((column) => (
-                <BoardColumn key={column.id} column={column} onOpenCard={openCard} />
-              ))}
-            </Group>
-          </ScrollArea>
-        </DndContext>
-      )}
+      {board && <BoardShapeView board={board} isMobile={isMobile} onOpenCard={openCard} />}
 
       {!id && !boardsLoading && boards && boards.length > 0 && (
         <AllCardsBoard
@@ -249,6 +269,274 @@ export function BoardPage() {
           onOpenCard={openCard}
         />
       )}
+    </Box>
+  )
+}
+
+/**
+ * The single-board surface: a graph of the board's states with the card list beneath it on
+ * desktop, one state at a time on a phone. Everything below is derived client-side from the
+ * `BoardDetailDto` the page already holds — no server projection exists or is needed at this
+ * scale (feature 011 §5).
+ */
+function BoardShapeView({
+  board,
+  isMobile,
+  onOpenCard,
+}: {
+  board: BoardDetailDto
+  isMobile: boolean
+  onOpenCard: (cardId: string) => void
+}) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
+  const [toggledStates, setToggledStates] = useState<Record<string, boolean>>({})
+  const [expandedBands, setExpandedBands] = useState<ReadonlySet<string>>(() => new Set<string>())
+
+  const selectedState = searchParams.get('state')
+  const priorities = useMemo(
+    () => (searchParams.get('p') ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map(Number)
+      .filter((value) => Number.isInteger(value)),
+    [searchParams],
+  )
+  const labels = useMemo(
+    () => (searchParams.get('labels') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+    [searchParams],
+  )
+
+  const filter: BoardFilter = useMemo(
+    () => ({ query, state: selectedState, priorities, labels }),
+    [query, selectedState, priorities, labels],
+  )
+  // One clock for the whole render, so every age on screen is measured from the same instant.
+  // Deriving the shape per render is deliberate and cheap: it is a single pass over the board's
+  // cards (45 today; the deferred server projection in §5 is what a thousand-card board needs).
+  const now = new Date()
+  const shape = buildBoardShape(board, filter, now)
+  const filtered = isFilterActive(filter)
+  const defaultKey = defaultExpandedState(shape.states)
+
+  const setParam = (key: string, value: string | null) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value) next.set(key, value)
+      else next.delete(key)
+      return next
+    }, { replace: true })
+  }
+
+  const toggleState = (stateKey: string) => {
+    setToggledStates((current) => ({
+      ...current,
+      [stateKey]: !(current[stateKey] ?? stateKey === defaultKey),
+    }))
+  }
+
+  const toggleBand = (bandKey: string) => {
+    setExpandedBands((current) => {
+      const next = new Set(current)
+      if (next.has(bandKey)) next.delete(bandKey)
+      else next.add(bandKey)
+      return next
+    })
+  }
+
+  const pagerState = selectedState && shape.states.some((state) => state.stateKey === selectedState)
+    ? selectedState
+    : defaultKey ?? shape.states[0]?.stateKey ?? ''
+
+  const clearFilters = () => {
+    setQuery('')
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      for (const key of ['q', 'p', 'labels', 'state']) next.delete(key)
+      return next
+    }, { replace: true })
+  }
+
+  const priorityChips = (
+    <Chip.Group
+      multiple
+      value={priorities.map(String)}
+      onChange={(value) => setParam('p', value.length ? [...value].sort().join(',') : null)}
+    >
+      <Group gap={4}>
+        {PRIORITIES.map((priority) => (
+          <Chip key={priority} value={String(priority)} size="xs" variant="outline">
+            P{priority}
+          </Chip>
+        ))}
+      </Group>
+    </Chip.Group>
+  )
+
+  const labelSelect = (
+    <MultiSelect
+      placeholder={labels.length ? undefined : 'Labels'}
+      aria-label="Filter by label"
+      data={shape.labels}
+      value={labels}
+      onChange={(value) => setParam('labels', value.length ? value.join(',') : null)}
+      searchable
+      clearable
+      w={isMobile ? '100%' : 240}
+      maxDropdownHeight={280}
+    />
+  )
+
+  const filterControls = (
+    <Group gap="xs" wrap={isMobile ? 'nowrap' : 'wrap'} mb="xs">
+      <TextInput
+        placeholder="Search cards…"
+        aria-label="Search cards"
+        leftSection={<TbSearch size={14} />}
+        value={query}
+        w={isMobile ? undefined : 260}
+        style={isMobile ? { flex: 1, minWidth: 0 } : undefined}
+        onChange={(event) => {
+          setQuery(event.currentTarget.value)
+          setParam('q', event.currentTarget.value || null)
+        }}
+        rightSection={query
+          ? <CloseButton size="sm" aria-label="Clear search" onClick={() => { setQuery(''); setParam('q', null) }} />
+          : null}
+      />
+      {/* On a phone the priority and label controls fold into a popover so the pager keeps the screen. */}
+      {isMobile
+        ? (
+          <Popover position="bottom-end" withinPortal shadow="md">
+            <Popover.Target>
+              <ActionIcon variant="light" size="lg" aria-label="Filters">
+                <TbFilter size={18} />
+              </ActionIcon>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap="xs" w={260}>
+                {priorityChips}
+                {labelSelect}
+                {(filtered || selectedState) && (
+                  <Button size="xs" variant="subtle" onClick={clearFilters}>Clear filters</Button>
+                )}
+                <Text size="xs" c="dimmed">
+                  {filtered ? `${shape.filteredCount} of ${shape.totalCount} cards` : `${shape.totalCount} cards`}
+                </Text>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        )
+        : (
+          <>
+            {priorityChips}
+            {labelSelect}
+            {(filtered || selectedState) && (
+              <Button size="xs" variant="subtle" onClick={clearFilters}>Clear filters</Button>
+            )}
+            <Text size="xs" c="dimmed">
+              {filtered ? `${shape.filteredCount} of ${shape.totalCount} cards` : `${shape.totalCount} cards`}
+            </Text>
+          </>
+        )}
+    </Group>
+  )
+
+  const emptyResult = shape.filteredCount === 0 && filtered && (
+    <Paper withBorder p="lg" mt="sm">
+      <Stack gap="xs" align="center">
+        <Text c="dimmed">No cards match the current filter.</Text>
+        <Button size="xs" variant="light" onClick={clearFilters}>Clear filters</Button>
+      </Stack>
+    </Paper>
+  )
+
+  if (isMobile) {
+    return (
+      <Box>
+        {filterControls}
+        <StatePager
+          states={shape.states}
+          stateKey={pagerState}
+          boardId={board.id}
+          columns={board.columns}
+          now={now}
+          filtered={filtered}
+          onSelectState={(stateKey) => setParam('state', stateKey)}
+          onOpenCard={onOpenCard}
+          expandedBands={expandedBands}
+          onToggleBand={toggleBand}
+        />
+      </Box>
+    )
+  }
+
+  const selected = shape.states.find((state) => state.stateKey === selectedState) ?? null
+
+  return (
+    <Box>
+      {filterControls}
+      <ShapeStrip
+        states={shape.states}
+        selected={selectedState}
+        filtered={filtered}
+        onSelect={(stateKey) => setParam('state', stateKey === selectedState ? null : stateKey)}
+      />
+
+      {selected
+        ? (
+          <Box>
+            <Group gap="xs" mb={4}>
+              <Text size="sm" fw={700} tt="uppercase">{selected.name}</Text>
+              <Badge size="sm" variant="outline" color="gray">
+                {filtered ? `${selected.filteredCount} of ${selected.totalCount}` : selected.filteredCount}
+              </Badge>
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                onClick={() => setParam('state', null)}
+              >
+                clear state filter
+              </Button>
+            </Group>
+            <CardListSection
+              state={selected}
+              boardId={board.id}
+              columns={board.columns}
+              now={now}
+              filtered={filtered}
+              collapsible={false}
+              expanded
+              onToggle={toggleState}
+              onOpenCard={onOpenCard}
+              expandedBands={expandedBands}
+              onToggleBand={toggleBand}
+            />
+          </Box>
+        )
+        : (
+          <Stack gap={0}>
+            {shape.states.map((state) => (
+              <CardListSection
+                key={state.columnId}
+                state={state}
+                boardId={board.id}
+                columns={board.columns}
+                now={now}
+                filtered={filtered}
+                collapsible
+                expanded={toggledStates[state.stateKey] ?? state.stateKey === defaultKey}
+                onToggle={toggleState}
+                onOpenCard={onOpenCard}
+                expandedBands={expandedBands}
+                onToggleBand={toggleBand}
+              />
+            ))}
+          </Stack>
+        )}
+
+      {emptyResult}
     </Box>
   )
 }
@@ -317,15 +605,13 @@ function AllCardsBoard({
   }
 
   return (
-    <DndContext>
-      <ScrollArea type="auto" offsetScrollbars>
-        <Group align="flex-start" wrap="nowrap" gap="md" pb="sm">
-          {columns.map((column) => (
-            <BoardColumn key={column.id} column={column} onOpenCard={onOpenCard} />
-          ))}
-        </Group>
-      </ScrollArea>
-    </DndContext>
+    <ScrollArea type="auto" offsetScrollbars>
+      <Group align="flex-start" wrap="nowrap" gap="md" pb="sm">
+        {columns.map((column) => (
+          <BoardColumn key={column.id} column={column} onOpenCard={onOpenCard} />
+        ))}
+      </Group>
+    </ScrollArea>
   )
 }
 
@@ -439,8 +725,4 @@ function CardCreateModal({
       </Stack>
     </Modal>
   )
-}
-
-function findCard(cards: CardDto[], cardId: string) {
-  return cards.find((card) => card.id === cardId)
 }

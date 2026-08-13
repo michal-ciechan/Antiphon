@@ -1,6 +1,6 @@
 # 011 — Board state graph: the shape of the work
 
-**Status: proposed** (design only — nothing here is implemented)
+**Status: implemented** 2026-08-13 — see §11 for what shipped and what did not
 **Card**: CARD-0042 · **Story**: S7 in `docs/product/user-stories.md`
 **Replaces**: the stacked-column kanban rendering of `client/src/features/board/BoardPage.tsx`
 (single-board view). The all-boards view and `CardModal` are touched only lightly (§6).
@@ -511,3 +511,48 @@ Mantine components and the app's existing status hues.
    (§7), revisit with CARD-0031's design.
 4. **Edge weights and time-in-state** — designed-for but blocked on CARD-0019's transition
    records; the strip and signal lines have their slots reserved (§3).
+
+## 11. What shipped (2026-08-13)
+
+Built against the live board (45 cards — Backlog 31, In Progress 0, Review 1, Done 13), verified in
+a real browser at both widths.
+
+| Piece | File |
+|---|---|
+| Pure aggregate model + filters + legal-move rule | `client/src/features/board/boardShapeModel.ts` |
+| `#41` display form + search-form equivalence | `client/src/shared/cardIdentifier.ts` |
+| Strip, node, list, row, move menu, mobile pager | `ShapeStrip.tsx`, `StateNode.tsx`, `CardListSection.tsx`, `CardRow.tsx`, `MoveMenu.tsx`, `StatePager.tsx` |
+| State colours + priority ramp | `boardVisuals.ts` |
+| CARD-0005 allocator fix | `server/Application/Services/CardService.cs` |
+
+Departures from §1–§10, all deliberate:
+
+1. **Default expansion has a fallback.** §2.1's rule ("first non-empty non-terminal group after
+   Backlog") opens *nothing* on a board whose only cards are in Backlog — which is most new boards.
+   It now falls back to the first populated state (`defaultExpandedState`).
+2. **The signal line for a terminal state is `last closed <date>`**, from `max(CompletedAt)`, rather
+   than the oldest-card rule. Card age in Done is noise; the mockup already showed the closed date.
+3. **`BoardColumn.tsx` / `BoardCard.tsx` are NOT retired.** §6 said retire them, but §6 also keeps
+   the all-boards view unchanged in v1, and that view is what renders them. They lost their
+   drag/drop wiring and adopted `displayIdentifier`; the single-board surface no longer uses them.
+   Retiring them is the all-boards view's card, not this one.
+4. **The list rows keep the CANONICAL identifier as their accessible name** (`CARD-0041 <title>`)
+   while rendering `#41`. Spoken and grepped forms stay citable; E2E keeps its selector.
+5. **Priority bands are keyed off the state's own card count (>20), not off node selection**, so a
+   30-card group banded inside the default all-states list too.
+6. **CARD-0005 is fixed but not closed.** Max-suffix+1 stops the collision (delete a middle card and
+   the next create no longer duplicates a live identifier). Deleting the *current highest* card
+   still frees its number — the row is the only record that it was taken. Closing that needs
+   CARD-0019's archive-instead-of-delete.
+7. **The mobile chrome collapses** (icon-only actions, filters behind a popover). Not in the design;
+   the labelled header cost ~60% of a 390px screen before the pager began.
+
+Not built, and why:
+
+- **Per-edge flow counts and time-in-state** — no transition history exists (§3). Blocked on
+  CARD-0019's `CardRevision`. Nothing on screen implies either number.
+- **A reason on a non-terminal move is still dropped by the server.** The UI collects and sends it
+  (and says so under the field); `CardService.ApplyColumnMove` has nowhere to put it yet. Same
+  dependency.
+- **`?labels=` uses AND over the label vocabulary as designed; there is no OR mode.** Not deferred
+  — just not asked for.

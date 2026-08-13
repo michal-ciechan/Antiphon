@@ -40,6 +40,8 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
     costUsd: 0.031,
     costPricingVersion: 2,
     subtreeCostUsd: 0.031,
+    worktreePath: null,
+    worktreeBranch: null,
     childCount: 0,
     ...overrides,
   }

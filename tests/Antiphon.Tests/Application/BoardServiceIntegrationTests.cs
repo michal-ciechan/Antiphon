@@ -114,6 +114,55 @@ public class BoardServiceIntegrationTests
         }
     }
 
+    // CARD-0005 regression pin: the allocator used to be count+1, so removing any card shifted the
+    // sequence backwards — delete CARD-0002 from a three-card board and the next create handed out
+    // CARD-0003, which was already taken. Identifiers are cited in commit messages and docs, so
+    // allocation is now max-suffix+1. (Deleting the CURRENT HIGHEST card still frees its number;
+    // only CARD-0019's archive-instead-of-delete closes that, and this test says so by scope.)
+    [Test]
+    public async Task Card_identifier_allocation_skips_a_freed_number_instead_of_reusing_it()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot, []);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Identifier board"), CancellationToken.None);
+
+            var first = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "First"), CancellationToken.None);
+            var second = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Second"), CancellationToken.None);
+            var third = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Third"), CancellationToken.None);
+            first.Identifier.ShouldBe("CARD-0001");
+            second.Identifier.ShouldBe("CARD-0002");
+            third.Identifier.ShouldBe("CARD-0003");
+
+            await using (var deleteDb = CreateContext())
+            {
+                var row = await deleteDb.Cards.SingleAsync(c => c.Id == second.Id);
+                deleteDb.Cards.Remove(row);
+                await deleteDb.SaveChangesAsync();
+            }
+
+            var fourth = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Fourth"), CancellationToken.None);
+
+            // count+1 would have produced CARD-0003 here — a duplicate of a live card.
+            fourth.Identifier.ShouldBe("CARD-0004");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task Card_move_rejects_stale_concurrency_token()
     {

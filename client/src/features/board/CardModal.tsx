@@ -2,21 +2,25 @@ import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, 
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbInfoCircle, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
-import type { CardDto } from '../../api/boards'
+import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
+import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { DiffReview } from './DiffReview'
+import { MoveMenu } from './MoveMenu'
 import { SessionTabs } from './SessionTabs'
 import './CardModal.css'
 
 interface CardModalProps {
   boardId: string
   card: CardDto | null
+  /** The board's states, so the card can be moved from here. Empty on the all-boards view. */
+  columns?: BoardColumnDto[]
   opened: boolean
   onClose: () => void
 }
 
-export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
+export function CardModal({ boardId, card, columns = [], opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
   const spawnCard = useSpawnCard(boardId)
   const hasActiveSession = useMemo(
@@ -71,7 +75,9 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
         <Group className="card-page__header" justify="space-between" wrap="nowrap">
           <Stack gap={2} className="card-page__titleBlock">
             <Group gap={6} wrap="nowrap" className="card-page__titleLine">
-              <Badge color="gray" variant="outline">{card.identifier}</Badge>
+              <Badge color="gray" variant="outline" title={card.identifier}>
+                {displayIdentifier(card.identifier)}
+              </Badge>
               <Title order={3} className="card-page__title">
                 {card.title}
               </Title>
@@ -90,6 +96,9 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap" className="card-page__actions">
+            {columns.length > 0 && (
+              <MoveMenu boardId={boardId} card={card} columns={columns} variant="button" />
+            )}
             <AgentPicker value={definitionName} onChange={setDefinitionName} compact />
             <Button
               size="xs"
