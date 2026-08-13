@@ -743,7 +743,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
-        @"(?:\A|[^A-Za-z0-9_])(?<assignment>[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?[ \t]*[:=][ \t]*(?:""(?:\\[^\r\n]|[^""\\\r\n])*""|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,}\]]+))",
+        @"(?:\A|[^A-Za-z0-9_])(?<assignment>[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?[ \t]*[:=][ \t]*(?:""(?:\\[^\r\n]|[^""\\\r\n])*""|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,;&|}\]]+))",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
     private static partial Regex CredentialAssignmentRegex();
 

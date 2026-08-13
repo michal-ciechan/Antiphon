@@ -723,6 +723,38 @@ public sealed class RunnerProcessProbeTests
         """{"clientApiKey":"synthetic-credential-json-one","status":"ok","clientPassword":"synthetic-credential-json-two"}""",
         """{*,"status":"ok",*}""",
         false)]
+    [Arguments(
+        "Password=synthetic-credential-semicolon-first;Server=db;Encrypt=true",
+        "*;Server=db;Encrypt=true",
+        false)]
+    [Arguments(
+        "Server=db;servicePasswordPolicy=standard;Password=synthetic-credential-semicolon-middle;Encrypt=true",
+        "Server=db;servicePasswordPolicy=standard;*;Encrypt=true",
+        false)]
+    [Arguments(
+        "Server=db;User=app;clientSecret=synthetic-credential-semicolon-last",
+        "Server=db;User=app;*",
+        true)]
+    [Arguments(
+        "Server=db;Password=synthetic-credential-semicolon-one;clientApiKey=synthetic-credential-semicolon-two;Mode=read",
+        "Server=db;*;*;Mode=read",
+        false)]
+    [Arguments(
+        "status=ok&clientAuthToken=synthetic-credential-query&mode=read",
+        "status=ok&*&mode=read",
+        false)]
+    [Arguments(
+        "status=ok|clientPrivateKey=synthetic-credential-log|mode=read",
+        "status=ok|*|mode=read",
+        true)]
+    [Arguments(
+        "status=ok;clientPassword=\"synthetic-credential-quoted;&|value\";mode=read",
+        "status=ok;*;mode=read",
+        false)]
+    [Arguments(
+        "note='clientPassword=ordinary;clientApiKey=ordinary'|clientSecret=synthetic-credential-embedded|status=ok",
+        "note='clientPassword=ordinary;clientApiKey=ordinary'|*|status=ok",
+        false)]
     public async Task Probe_redacts_each_credential_assignment_without_consuming_neighbors(
         string output,
         string expected,
