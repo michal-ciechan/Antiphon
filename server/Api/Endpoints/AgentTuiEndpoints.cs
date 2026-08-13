@@ -91,22 +91,33 @@ public static class AgentTuiEndpoints
             string environmentName,
             AgentTuiSecretPutApiRequest request,
             AgentTuiProfileService service,
+            AgentTuiSecretIdempotencyCache idempotencyCache,
             AgentTuiMetrics metrics) =>
         {
             const AgentTuiSecretMetricOperation operation = AgentTuiSecretMetricOperation.Write;
             try
             {
                 ValidateSecretPutRequest(context, request);
-                var result = await service.PutSecretAsync(
+                context.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeaders);
+                var idempotencyKey = idempotencyHeaders.Count > 0
+                    ? idempotencyHeaders.ToString()
+                    : null;
+                var result = await idempotencyCache.ExecuteAsync(
+                    idempotencyKey,
                     profileId,
                     environmentName,
-                    new AgentTuiSecretWriteRequest(
-                        request.Value!,
-                        request.ExpectedRevision,
-                        ServerCorrelationIdentity()),
+                    () => service.PutSecretAsync(
+                        profileId,
+                        environmentName,
+                        new AgentTuiSecretWriteRequest(
+                            request.Value!,
+                            request.ExpectedRevision,
+                            ServerCorrelationIdentity()),
+                        context.RequestAborted),
                     context.RequestAborted);
-                metrics.RecordSecret(operation, AgentTuiMetricOutcome.Succeeded);
-                return Results.Ok(result);
+                if (result.IsOriginalExecution)
+                    metrics.RecordSecret(operation, AgentTuiMetricOutcome.Succeeded);
+                return Results.Ok(result.Result);
             }
             catch (HttpException exception)
             {
@@ -168,12 +179,10 @@ public static class AgentTuiEndpoints
                     profileId,
                     context.RequestAborted);
                 metrics.RecordDiscovery(
-                    result.Run.Id,
+                    result.Id,
                     profile.Kind,
-                    result.Run.Status,
-                    result.Run.Stages.Any(stage =>
-                        stage.Name == "discovery"
-                        && stage.Status == AgentTuiValidationStageStatus.Passed),
+                    result.Status,
+                    catalogueRefreshed: !result.CachedResultsRetained,
                     Stopwatch.GetElapsedTime(startedAt));
                 return Results.Ok(result);
             }

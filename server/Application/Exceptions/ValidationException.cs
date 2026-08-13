@@ -8,13 +8,13 @@ public class ValidationException : HttpException
     public Dictionary<string, string[]> Errors { get; }
 
     public ValidationException(Dictionary<string, string[]> errors)
-        : base(422, "One or more validation errors occurred.")
+        : base(422, "One or more validation errors occurred.", "validation_failed")
     {
         Errors = errors;
     }
 
     public ValidationException(string field, string error)
-        : base(422, "One or more validation errors occurred.")
+        : base(422, "One or more validation errors occurred.", "validation_failed")
     {
         Errors = new Dictionary<string, string[]>
         {

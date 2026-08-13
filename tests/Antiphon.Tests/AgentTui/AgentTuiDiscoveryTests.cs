@@ -1269,8 +1269,8 @@ public sealed class AgentTuiDiscoveryTests
             .GetCapabilitiesAsync(profile.Id, CancellationToken.None);
 
         run.Status.ShouldBe(AgentTuiValidationStatus.Failed);
-        capabilities.ShouldNotBeEmpty();
-        capabilities.Single(capability => capability.Name == "structuredActivity").State
+        capabilities.Capabilities.ShouldNotBeEmpty();
+        capabilities.Capabilities.Single(capability => capability.Name == "structuredActivity").State
             .ShouldBe(AgentTuiCapabilityState.Degraded);
     }
 
@@ -1432,8 +1432,8 @@ public sealed class AgentTuiDiscoveryTests
         {
             var capabilities = await scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>()
                 .GetCapabilitiesAsync(profile.Id, CancellationToken.None);
-            capabilities.ShouldNotBeEmpty();
-            capabilities.Single(capability => capability.Name == "structuredActivity").State
+            capabilities.Capabilities.ShouldNotBeEmpty();
+            capabilities.Capabilities.Single(capability => capability.Name == "structuredActivity").State
                 .ShouldBe(AgentTuiCapabilityState.Degraded);
         }
         release.TrySetResult();

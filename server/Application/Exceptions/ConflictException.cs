@@ -5,7 +5,7 @@ namespace Antiphon.Server.Application.Exceptions;
 /// </summary>
 public class ConflictException : HttpException
 {
-    public ConflictException(string message) : base(409, message)
+    public ConflictException(string message) : base(409, message, "conflict")
     {
     }
 
@@ -20,7 +20,7 @@ public class ConflictException : HttpException
     /// misdiagnosis. Both the log and the problem-details stack trace walk inner exceptions.
     /// </summary>
     public ConflictException(string message, Exception innerException)
-        : base(409, message, innerException)
+        : base(409, message, innerException, "conflict")
     {
     }
 

@@ -292,6 +292,7 @@ try
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
     builder.Services.AddSingleton<AgentTuiMetrics>();
+    builder.Services.AddSingleton<AgentTuiSecretIdempotencyCache>();
     builder.Services.AddSingleton<RunnerProcessReaper>();
     builder.Services.AddHostedService(provider => provider.GetRequiredService<RunnerProcessReaper>());
     builder.Services.AddSingleton<IRunnerProcessProbe, RunnerProcessProbe>();

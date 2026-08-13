@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -51,6 +52,12 @@ public sealed class AgentTuiApiTests
         created.GetProperty("commandPreview").GetProperty("arguments").EnumerateArray()
             .Select(value => value.GetString()).ShouldBe(["--task5-argument"]);
         created.GetProperty("commandPreview").TryGetProperty("environment", out _).ShouldBeFalse();
+        var neverRun = created.GetProperty("validationSummary");
+        neverRun.GetProperty("status").GetString().ShouldBe("NeverRun");
+        neverRun.GetProperty("profileRevisionId").ValueKind.ShouldBe(JsonValueKind.Null);
+        neverRun.GetProperty("isCurrentRevision").GetBoolean().ShouldBeFalse();
+        neverRun.GetProperty("runnerVersion").ValueKind.ShouldBe(JsonValueKind.Null);
+        neverRun.GetProperty("probedAt").ValueKind.ShouldBe(JsonValueKind.Null);
 
         var list = await client.GetAsync("/api/agent-tui/profiles");
         list.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -220,6 +227,281 @@ public sealed class AgentTuiApiTests
     }
 
     [Test]
+    public async Task Profile_validation_summary_is_cached_and_marks_a_prior_revision_stale_without_probing()
+    {
+        using var client = _factory.CreateClient();
+        var name = $"Task 5 validation summary {Guid.NewGuid():N}";
+        var create = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(
+                name,
+                kind: "OpenCode",
+                discoveryArguments: ["models"],
+                versionArguments: ["--version"]));
+        create.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var created = await ReadJsonAsync(create);
+        var profileId = created.GetProperty("id").GetGuid();
+        var originalRevisionId = created.GetProperty("revisionId").GetGuid();
+
+        var callsBeforeFallbackReads = _factory.Probe.RunCalls;
+        (await client.GetAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await client.GetAsync("/api/agent-tui/profiles"))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        _factory.Probe.RunCalls.ShouldBe(callsBeforeFallbackReads);
+
+        var validate = await client.PostAsync($"/api/agent-tui/profiles/{profileId}/validate", null);
+        validate.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var validation = await ReadJsonAsync(validate);
+        var validationStatus = validation.GetProperty("status").GetString();
+        var probedAt = validation.GetProperty("completedAt").GetDateTime();
+
+        var current = await ReadJsonAsync(
+            await client.GetAsync($"/api/agent-tui/profiles/{profileId}"));
+        var currentSummary = current.GetProperty("validationSummary");
+        currentSummary.GetProperty("status").GetString().ShouldBe(validationStatus);
+        currentSummary.GetProperty("profileRevisionId").GetGuid().ShouldBe(originalRevisionId);
+        currentSummary.GetProperty("isCurrentRevision").GetBoolean().ShouldBeTrue();
+        currentSummary.GetProperty("runnerVersion").GetString().ShouldBe("OpenCode 1.2.3");
+        currentSummary.GetProperty("probedAt").GetDateTime().ShouldBe(probedAt);
+
+        var callsBeforePatch = _factory.Probe.RunCalls;
+        var patch = await SendJsonAsync(
+            client,
+            HttpMethod.Patch,
+            $"/api/agent-tui/profiles/{profileId}",
+            ProfileRequest(
+                name + " updated",
+                expectedRevision: 1,
+                kind: "OpenCode",
+                discoveryArguments: ["models"],
+                versionArguments: ["--version"]));
+        patch.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var updated = await ReadJsonAsync(patch);
+        var staleSummary = updated.GetProperty("validationSummary");
+        staleSummary.GetProperty("status").GetString().ShouldBe(validationStatus);
+        staleSummary.GetProperty("profileRevisionId").GetGuid().ShouldBe(originalRevisionId);
+        staleSummary.GetProperty("isCurrentRevision").GetBoolean().ShouldBeFalse();
+        staleSummary.GetProperty("runnerVersion").GetString().ShouldBe("OpenCode 1.2.3");
+        staleSummary.GetProperty("probedAt").GetDateTime().ShouldBe(probedAt);
+        _factory.Probe.RunCalls.ShouldBe(callsBeforePatch);
+
+        (await client.DeleteAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task Capability_reads_return_typed_fallback_and_cached_snapshots_without_probing()
+    {
+        using var client = _factory.CreateClient();
+        var name = $"Task 5 capability snapshot {Guid.NewGuid():N}";
+        var create = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(
+                name,
+                kind: "OpenCode",
+                discoveryArguments: ["models"],
+                versionArguments: ["--version"]));
+        var profileId = (await ReadJsonAsync(create)).GetProperty("id").GetGuid();
+
+        var fallback = await client.GetAsync($"/api/agent-tui/profiles/{profileId}/capabilities");
+        fallback.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var fallbackJson = await ReadJsonAsync(fallback);
+        fallbackJson.GetProperty("capabilities").GetArrayLength().ShouldBeGreaterThan(0);
+        fallbackJson.GetProperty("runnerVersion").ValueKind.ShouldBe(JsonValueKind.Null);
+        fallbackJson.GetProperty("probedAt").ValueKind.ShouldBe(JsonValueKind.Null);
+        _factory.Probe.RunCalls.ShouldBe(0);
+
+        var validate = await client.PostAsync($"/api/agent-tui/profiles/{profileId}/validate", null);
+        validate.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var validation = await ReadJsonAsync(validate);
+        var callsAfterValidation = _factory.Probe.RunCalls;
+
+        var cached = await client.GetAsync($"/api/agent-tui/profiles/{profileId}/capabilities");
+        cached.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var cachedJson = await ReadJsonAsync(cached);
+        cachedJson.GetProperty("capabilities").GetArrayLength().ShouldBeGreaterThan(0);
+        cachedJson.GetProperty("runnerVersion").GetString().ShouldBe("OpenCode 1.2.3");
+        cachedJson.GetProperty("probedAt").GetDateTime()
+            .ShouldBe(validation.GetProperty("completedAt").GetDateTime());
+        _factory.Probe.RunCalls.ShouldBe(callsAfterValidation);
+
+        (await client.DeleteAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task Concurrent_idempotent_secret_put_protects_audits_and_counts_once_without_leaking_the_secret()
+    {
+        using var client = _factory.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N");
+        var canary = $"TASK5_IDEMPOTENCY_CANARY_{suffix}";
+        var profileName = $"Task 5 idempotent secret {suffix}";
+        const string environmentName = "TASK5_IDEMPOTENT_TOKEN";
+        var create = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(
+                profileName,
+                authenticationMode: "ManagedEnvironment",
+                secretEnvironmentNames: [environmentName]));
+        var profileId = (await ReadJsonAsync(create)).GetProperty("id").GetGuid();
+        var metricBefore = await ReadMetricAsync(
+            client,
+            "antiphon_agent_tui_secret_operations_total{operation=\"write\",outcome=\"succeeded\"}");
+
+        _factory.SecretProtector.BlockProtection();
+        var idempotencyKey = $"task5-{Guid.NewGuid():N}";
+        var firstTask = PutSecretWithIdempotencyKeyAsync(
+            client,
+            profileId,
+            environmentName,
+            canary,
+            idempotencyKey);
+        await _factory.SecretProtector.WaitForProtectionAsync();
+        var secondTask = PutSecretWithIdempotencyKeyAsync(
+            client,
+            profileId,
+            environmentName,
+            canary,
+            idempotencyKey);
+        _factory.SecretProtector.ReleaseProtection();
+        var responses = await Task.WhenAll(firstTask, secondTask);
+
+        responses.ShouldAllBe(response => response.StatusCode == HttpStatusCode.OK);
+        var firstBody = await responses[0].Content.ReadAsStringAsync();
+        var secondBody = await responses[1].Content.ReadAsStringAsync();
+        firstBody.ShouldBe(secondBody);
+        firstBody.ShouldNotContain(canary);
+        _factory.SecretProtector.ProtectCalls.ShouldBe(1);
+
+        string ciphertext;
+        int auditCount;
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            ciphertext = await db.AgentTuiSecrets
+                .Where(secret => secret.ProfileId == profileId && secret.Name == environmentName)
+                .Select(secret => secret.Ciphertext)
+                .SingleAsync();
+            auditCount = await db.AuditRecords.CountAsync(record =>
+                record.Summary.Contains(profileId.ToString())
+                && record.Summary.Contains($"environmentName={environmentName}")
+                && record.Summary.Contains("operation=set"));
+        }
+        auditCount.ShouldBe(1);
+        ciphertext.ShouldNotContain(canary);
+
+        var metrics = await client.GetStringAsync("/metrics/agent-tui");
+        var metricAfter = ReadMetric(
+            metrics,
+            "antiphon_agent_tui_secret_operations_total{operation=\"write\",outcome=\"succeeded\"}");
+        (metricAfter - metricBefore).ShouldBe(1);
+        metrics.ShouldNotContain(canary);
+        _factory.ReadLogs().ShouldNotContain(canary);
+
+        var clear = await SendJsonAsync(
+            client,
+            HttpMethod.Delete,
+            $"/api/agent-tui/profiles/{profileId}/secrets/{environmentName}",
+            new { expectedRevision = 1 });
+        clear.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await client.DeleteAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task Invalid_idempotency_keys_return_a_sanitized_stable_code_without_protecting_the_secret()
+    {
+        using var client = _factory.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N");
+        var canary = $"TASK5_INVALID_KEY_CANARY_{suffix}";
+        const string environmentName = "TASK5_INVALID_KEY_TOKEN";
+        var create = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(
+                $"Task 5 invalid key {suffix}",
+                authenticationMode: "ManagedEnvironment",
+                secretEnvironmentNames: [environmentName]));
+        var profileId = (await ReadJsonAsync(create)).GetProperty("id").GetGuid();
+
+        var invalid = await PutSecretWithIdempotencyKeyAsync(
+            client,
+            profileId,
+            environmentName,
+            canary,
+            "contains space");
+        var overlong = await PutSecretWithIdempotencyKeyAsync(
+            client,
+            profileId,
+            environmentName,
+            canary,
+            new string('x', 201));
+
+        foreach (var response in new[] { invalid, overlong })
+        {
+            response.StatusCode.ShouldBe((HttpStatusCode)422);
+            var body = await ReadJsonAsync(response);
+            body.GetProperty("code").GetString().ShouldBe("invalid_idempotency_key");
+            body.ToString().ShouldNotContain(canary);
+            body.ToString().ShouldNotContain("stackTrace");
+        }
+        _factory.SecretProtector.ProtectCalls.ShouldBe(0);
+        _factory.ReadLogs().ShouldNotContain(canary);
+
+        (await client.DeleteAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task Task_5_http_errors_always_include_stable_codes_without_stack_traces_or_secret_values()
+    {
+        using var client = _factory.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N");
+        var canary = $"TASK5_PROBLEM_CANARY_{suffix}";
+        var profileName = $"Task 5 problem details {suffix}";
+        var create = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(
+                profileName,
+                authenticationMode: "ManagedEnvironment",
+                secretEnvironmentNames: ["TASK5_DECLARED_TOKEN"]));
+        var profileId = (await ReadJsonAsync(create)).GetProperty("id").GetGuid();
+
+        var notFound = await client.GetAsync($"/api/agent-tui/profiles/{Guid.NewGuid()}");
+        var validation = await client.PutAsJsonAsync(
+            $"/api/agent-tui/profiles/{profileId}/secrets/TASK5_UNDECLARED_TOKEN",
+            new { value = canary, expectedRevision = 1 });
+        var conflict = await client.PostAsJsonAsync(
+            "/api/agent-tui/profiles",
+            ProfileRequest(profileName));
+        var profiles = await ReadJsonAsync(await client.GetAsync("/api/agent-tui/profiles"));
+        var defaultProfileId = profiles.EnumerateArray()
+            .Single(profile => profile.GetProperty("isDefault").GetBoolean())
+            .GetProperty("id")
+            .GetGuid();
+        var inUse = await client.DeleteAsync($"/api/agent-tui/profiles/{defaultProfileId}");
+
+        var codedResponses = new[]
+        {
+            (Response: notFound, Code: "not_found"),
+            (Response: validation, Code: "validation_failed"),
+            (Response: conflict, Code: "conflict"),
+            (Response: inUse, Code: "profile_in_use")
+        };
+        foreach (var (response, code) in codedResponses)
+        {
+            var body = await ReadJsonAsync(response);
+            body.GetProperty("code").GetString().ShouldBe(code);
+            var text = body.ToString();
+            text.ShouldNotContain("stackTrace");
+            text.ShouldNotContain(canary);
+        }
+
+        (await client.DeleteAsync($"/api/agent-tui/profiles/{profileId}"))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Test]
     public async Task Concurrent_model_refresh_joins_one_bounded_run_and_validation_run_is_readable()
     {
         using var client = _factory.CreateClient();
@@ -238,12 +520,31 @@ public sealed class AgentTuiApiTests
         refreshes.ShouldAllBe(response => response.StatusCode == HttpStatusCode.OK);
         var first = await ReadJsonAsync(refreshes[0]);
         var second = await ReadJsonAsync(refreshes[1]);
-        first.GetProperty("run").GetProperty("id").GetGuid()
-            .ShouldBe(second.GetProperty("run").GetProperty("id").GetGuid());
+        first.TryGetProperty("run", out _).ShouldBeFalse();
+        first.GetProperty("id").GetGuid().ShouldBe(second.GetProperty("id").GetGuid());
+        first.GetProperty("operation").GetString().ShouldBe("discovery");
+        first.GetProperty("status").GetString().ShouldBe("Succeeded");
+        first.GetProperty("cachedResultsRetained").GetBoolean().ShouldBeFalse();
         first.GetProperty("models").EnumerateArray()
             .Select(item => item.GetProperty("identifier").GetString()).ShouldContain(model);
         _factory.Probe.DiscoveryCalls.ShouldBe(1);
 
+        _factory.Probe.FailDiscovery = true;
+        _factory.Probe.DelayDiscovery = false;
+        var failedRefresh = await client.PostAsync(
+            $"/api/agent-tui/profiles/{profileId}/models/refresh",
+            null);
+        failedRefresh.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var failed = await ReadJsonAsync(failedRefresh);
+        failed.GetProperty("operation").GetString().ShouldBe("discovery");
+        failed.GetProperty("status").GetString().ShouldBe("Failed");
+        failed.GetProperty("cachedResultsRetained").GetBoolean().ShouldBeTrue();
+        failed.GetProperty("models").EnumerateArray()
+            .ShouldContain(item => item.GetProperty("identifier").GetString() == model
+                                   && item.GetProperty("availability").GetString() == "Stale");
+        _factory.Probe.DiscoveryCalls.ShouldBe(2);
+
+        _factory.Probe.FailDiscovery = false;
         _factory.Probe.DelayDiscovery = false;
         var validate = await client.PostAsync($"/api/agent-tui/profiles/{profileId}/validate", null);
         validate.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -256,8 +557,14 @@ public sealed class AgentTuiApiTests
 
         var models = await client.GetAsync($"/api/agent-tui/profiles/{profileId}/models");
         models.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var callsBeforeCachedReads = _factory.Probe.RunCalls;
         var capabilities = await client.GetAsync($"/api/agent-tui/profiles/{profileId}/capabilities");
         capabilities.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var capabilitySnapshot = await ReadJsonAsync(capabilities);
+        capabilitySnapshot.GetProperty("capabilities").GetArrayLength().ShouldBeGreaterThan(0);
+        capabilitySnapshot.GetProperty("runnerVersion").GetString().ShouldBe("OpenCode 1.2.3");
+        capabilitySnapshot.GetProperty("probedAt").GetDateTime().ShouldBeGreaterThan(DateTime.MinValue);
+        _factory.Probe.RunCalls.ShouldBe(callsBeforeCachedReads);
         var metrics = await client.GetStringAsync("/metrics/agent-tui");
         metrics.ShouldContain("antiphon_agent_tui_discovery_runs_total{runner_type=\"open_code\",outcome=\"succeeded\",cache_result=\"refreshed\"}");
         metrics.ShouldContain("antiphon_agent_tui_discovery_duration_seconds{runner_type=\"open_code\",outcome=\"succeeded\"}");
@@ -375,6 +682,35 @@ public sealed class AgentTuiApiTests
         return await client.SendAsync(request);
     }
 
+    private static async Task<HttpResponseMessage> PutSecretWithIdempotencyKeyAsync(
+        HttpClient client,
+        Guid profileId,
+        string environmentName,
+        string value,
+        string idempotencyKey)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/agent-tui/profiles/{profileId}/secrets/{environmentName}")
+        {
+            Content = JsonContent.Create(new { value, expectedRevision = 1 })
+        };
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey).ShouldBeTrue();
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<long> ReadMetricAsync(HttpClient client, string sampleName) =>
+        ReadMetric(await client.GetStringAsync("/metrics/agent-tui"), sampleName);
+
+    private static long ReadMetric(string metrics, string sampleName)
+    {
+        var sample = metrics.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .SingleOrDefault(line => line.StartsWith(sampleName + " ", StringComparison.Ordinal));
+        if (sample is null)
+            return 0;
+        return long.Parse(sample[(sample.LastIndexOf(' ') + 1)..], CultureInfo.InvariantCulture);
+    }
+
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response)
     {
         var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
@@ -390,6 +726,7 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
         Guid.NewGuid().ToString("N"));
 
     public RecordingApiRunnerProcessProbe Probe { get; } = new();
+    public RecordingApiSecretProtector SecretProtector { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -406,11 +743,14 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
     {
         services.RemoveAll<IRunnerProcessProbe>();
         services.AddSingleton<IRunnerProcessProbe>(Probe);
+        services.RemoveAll<IAgentTuiSecretProtector>();
+        services.AddSingleton<IAgentTuiSecretProtector>(SecretProtector);
     }
 
     public override Task ResetAsync()
     {
         Probe.Reset();
+        SecretProtector.Reset();
         return base.ResetAsync();
     }
 
@@ -440,16 +780,21 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
 public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
 {
     private int _discoveryCalls;
+    private int _runCalls;
 
     public bool DelayDiscovery { get; set; }
+    public bool FailDiscovery { get; set; }
     public string DiscoveredModel { get; set; } = "provider/task5-default";
     public int DiscoveryCalls => Volatile.Read(ref _discoveryCalls);
+    public int RunCalls => Volatile.Read(ref _runCalls);
 
     public void Reset()
     {
         DelayDiscovery = false;
+        FailDiscovery = false;
         DiscoveredModel = "provider/task5-default";
         Volatile.Write(ref _discoveryCalls, 0);
+        Volatile.Write(ref _runCalls, 0);
     }
 
     public Task<RunnerPathCheck> CheckExecutableAsync(
@@ -467,11 +812,14 @@ public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
         RunnerProcessRequest request,
         CancellationToken cancellationToken)
     {
+        Interlocked.Increment(ref _runCalls);
         if (request.Arguments.Contains("models", StringComparer.Ordinal))
         {
             Interlocked.Increment(ref _discoveryCalls);
             if (DelayDiscovery)
                 await Task.Delay(150, cancellationToken);
+            if (FailDiscovery)
+                return new RunnerProcessResult(1, string.Empty, "Discovery failed.", TimedOut: false);
             return Success(DiscoveredModel);
         }
         if (request.Arguments.Contains("--version", StringComparer.Ordinal))
@@ -481,4 +829,43 @@ public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
 
     private static RunnerProcessResult Success(string output) =>
         new(0, output, string.Empty, TimedOut: false, Started: true, CleanlyStopped: true);
+}
+
+public sealed class RecordingApiSecretProtector : IAgentTuiSecretProtector
+{
+    private int _protectCalls;
+    private ManualResetEventSlim _releaseProtection = new(initialState: true);
+    private TaskCompletionSource _protectionStarted = NewSignal();
+
+    public int ProtectCalls => Volatile.Read(ref _protectCalls);
+
+    public void Reset()
+    {
+        _releaseProtection.Set();
+        _releaseProtection = new ManualResetEventSlim(initialState: true);
+        _protectionStarted = NewSignal();
+        Volatile.Write(ref _protectCalls, 0);
+    }
+
+    public void BlockProtection() => _releaseProtection.Reset();
+
+    public async Task WaitForProtectionAsync() =>
+        await _protectionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    public void ReleaseProtection() => _releaseProtection.Set();
+
+    public string Protect(Guid profileId, string environmentName, string plaintext)
+    {
+        Interlocked.Increment(ref _protectCalls);
+        _protectionStarted.TrySetResult();
+        if (!_releaseProtection.Wait(TimeSpan.FromSeconds(5)))
+            throw new TimeoutException("The test secret protector was not released.");
+        return $"test-protected-{profileId:N}-{environmentName}";
+    }
+
+    public string Unprotect(Guid profileId, string environmentName, string protectedValue) =>
+        "test-managed-secret";
+
+    private static TaskCompletionSource NewSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

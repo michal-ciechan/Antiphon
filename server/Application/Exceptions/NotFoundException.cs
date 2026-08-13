@@ -9,7 +9,7 @@ public class NotFoundException : HttpException
     public object EntityId { get; }
 
     public NotFoundException(string entityName, object id)
-        : base(404, $"{entityName} with id '{id}' was not found.")
+        : base(404, $"{entityName} with id '{id}' was not found.", "not_found")
     {
         EntityName = entityName;
         EntityId = id;

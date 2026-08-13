@@ -125,7 +125,14 @@ public sealed partial class AgentTuiProfileService
         var profiles = await ProfileReadQuery()
             .OrderBy(profile => profile.DisplayName)
             .ToListAsync(cancellationToken);
-        return profiles.Select(MapProfile).ToArray();
+        var summaries = await LoadValidationSummariesAsync(
+            profiles.Select(profile => profile.Id).ToArray(),
+            cancellationToken);
+        return profiles
+            .Select(profile => MapProfile(
+                profile,
+                summaries.GetValueOrDefault(profile.Id)))
+            .ToArray();
     }
 
     public async Task<AgentTuiProfileDto> GetAsync(Guid profileId, CancellationToken cancellationToken)
@@ -133,7 +140,8 @@ public sealed partial class AgentTuiProfileService
         var profile = await ProfileReadQuery()
             .SingleOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken)
             ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
-        return MapProfile(profile);
+        var summaries = await LoadValidationSummariesAsync([profileId], cancellationToken);
+        return MapProfile(profile, summaries.GetValueOrDefault(profileId));
     }
 
     public async Task<IReadOnlyList<AgentTuiModelDto>> GetModelsAsync(
@@ -174,7 +182,27 @@ public sealed partial class AgentTuiProfileService
             ?? throw new ConflictException(
                 "The discovery outcome is not available.",
                 "discovery_run_unavailable");
-        return new AgentTuiModelRefreshDto(MapValidationRun(run), models);
+        var mapped = MapValidationRun(run);
+        var cachedResultsRetained = run.Status is not AgentTuiValidationStatus.Succeeded
+            || models.Any(model =>
+                model.Source == AgentTuiModelSource.Discovered
+                && model.Availability == AgentTuiModelAvailability.Stale);
+        return new AgentTuiModelRefreshDto(
+            mapped.Id,
+            mapped.ProfileId,
+            mapped.ProfileRevisionId,
+            mapped.Operation,
+            mapped.Status,
+            mapped.Stages,
+            mapped.Capabilities,
+            mapped.RunnerVersion,
+            mapped.Summary,
+            mapped.Suitability,
+            mapped.CreatedAt,
+            mapped.StartedAt,
+            mapped.CompletedAt,
+            cachedResultsRetained,
+            models);
     }
 
     public Task<AgentTuiValidationRunDto> ValidateAsync(
@@ -182,7 +210,7 @@ public sealed partial class AgentTuiProfileService
         CancellationToken cancellationToken) =>
         RequireOperationCoordinator().ValidateAsync(profileId, cancellationToken);
 
-    public async Task<IReadOnlyList<AgentTuiCapabilityDto>> GetCapabilitiesAsync(
+    public async Task<AgentTuiCapabilitySnapshotDto> GetCapabilitiesAsync(
         Guid profileId,
         CancellationToken cancellationToken)
     {
@@ -199,12 +227,23 @@ public sealed partial class AgentTuiProfileService
                           && run.Operation == "validation"
                           && run.Status != AgentTuiValidationStatus.Running)
             .OrderByDescending(run => run.CreatedAt)
-            .Select(run => run.CapabilitiesJson)
+            .Select(run => new
+            {
+                run.CapabilitiesJson,
+                run.RunnerVersion,
+                run.CompletedAt,
+                run.StartedAt,
+                run.CreatedAt
+            })
             .FirstOrDefaultAsync(cancellationToken);
-        var cachedCapabilities = DeserializeCapabilities(cached);
-        return cachedCapabilities is { Count: > 0 }
-            ? cachedCapabilities
-            : _runnerCatalog.Get(profile.Kind, DeserializeArray(revision.ArgumentsJson)).Capabilities;
+        var staticCapabilities = _runnerCatalog
+            .Get(profile.Kind, DeserializeArray(revision.ArgumentsJson))
+            .Capabilities;
+        var cachedCapabilities = DeserializeCapabilities(cached?.CapabilitiesJson);
+        return new AgentTuiCapabilitySnapshotDto(
+            cachedCapabilities is { Count: > 0 } ? cachedCapabilities : staticCapabilities,
+            cached?.RunnerVersion,
+            cached?.CompletedAt ?? cached?.StartedAt ?? cached?.CreatedAt);
     }
 
     public async Task<AgentTuiValidationRunDto> GetValidationRunAsync(
@@ -1796,7 +1835,57 @@ public sealed partial class AgentTuiProfileService
         .Include(profile => profile.Models)
         .AsSplitQuery();
 
-    private AgentTuiProfileDto MapProfile(AgentTuiProfile profile)
+    private async Task<IReadOnlyDictionary<Guid, AgentTuiValidationSummaryDto>> LoadValidationSummariesAsync(
+        IReadOnlyCollection<Guid> profileIds,
+        CancellationToken cancellationToken)
+    {
+        if (profileIds.Count == 0)
+            return new Dictionary<Guid, AgentTuiValidationSummaryDto>();
+
+        var runs = await _db.AgentTuiValidationRuns
+            .AsNoTracking()
+            .Where(run => profileIds.Contains(run.ProfileId)
+                          && run.Operation == "validation"
+                          && run.Status != AgentTuiValidationStatus.Running)
+            .OrderByDescending(run => run.CreatedAt)
+            .Select(run => new
+            {
+                run.ProfileId,
+                run.ProfileRevisionId,
+                run.Status,
+                run.RunnerVersion,
+                run.CompletedAt,
+                run.StartedAt,
+                run.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        var activeRevisions = await _db.AgentTuiProfiles
+            .AsNoTracking()
+            .Where(profile => profileIds.Contains(profile.Id))
+            .Select(profile => new { profile.Id, profile.ActiveRevisionId })
+            .ToDictionaryAsync(profile => profile.Id, profile => profile.ActiveRevisionId, cancellationToken);
+
+        var summaries = new Dictionary<Guid, AgentTuiValidationSummaryDto>();
+        foreach (var run in runs)
+        {
+            if (summaries.ContainsKey(run.ProfileId))
+                continue;
+            var activeRevisionId = activeRevisions.GetValueOrDefault(run.ProfileId);
+            summaries[run.ProfileId] = new AgentTuiValidationSummaryDto(
+                run.Status,
+                run.ProfileRevisionId,
+                activeRevisionId == run.ProfileRevisionId,
+                run.RunnerVersion,
+                run.CompletedAt ?? run.StartedAt ?? run.CreatedAt);
+        }
+
+        return summaries;
+    }
+
+    private AgentTuiProfileDto MapProfile(
+        AgentTuiProfile profile,
+        AgentTuiValidationSummaryDto? validationSummary = null)
     {
         var revision = RequireActiveRevision(profile);
         var arguments = DeserializeArray(revision.ArgumentsJson);
@@ -1844,6 +1933,12 @@ public sealed partial class AgentTuiProfileService
             secretNames,
             MergeModels(profile.Kind, profile.Models),
             runner.Capabilities,
+            validationSummary ?? new AgentTuiValidationSummaryDto(
+                AgentTuiValidationStatus.NeverRun,
+                null,
+                false,
+                null,
+                null),
             profile.CreatedAt,
             profile.UpdatedAt);
     }
@@ -2262,7 +2357,11 @@ public sealed partial class AgentTuiProfileService
         return false;
     }
 
-    private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+    private DateTime UtcNow()
+    {
+        var utc = _timeProvider.GetUtcNow().UtcDateTime;
+        return new DateTime(utc.Ticks - (utc.Ticks % TimeSpan.TicksPerMillisecond), DateTimeKind.Utc);
+    }
 
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

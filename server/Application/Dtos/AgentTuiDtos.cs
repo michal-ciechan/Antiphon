@@ -93,6 +93,18 @@ public sealed record AgentTuiRunnerTypeDto(
     IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
     string Guidance);
 
+public sealed record AgentTuiValidationSummaryDto(
+    AgentTuiValidationStatus Status,
+    Guid? ProfileRevisionId,
+    bool IsCurrentRevision,
+    string? RunnerVersion,
+    DateTime? ProbedAt);
+
+public sealed record AgentTuiCapabilitySnapshotDto(
+    IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
+    string? RunnerVersion,
+    DateTime? ProbedAt);
+
 public sealed record AgentTuiProfileDto(
     Guid Id,
     string DisplayName,
@@ -108,6 +120,7 @@ public sealed record AgentTuiProfileDto(
     IReadOnlyList<AgentTuiSecretMetadataDto> SecretEnvironment,
     IReadOnlyList<AgentTuiModelDto> Models,
     IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
+    AgentTuiValidationSummaryDto ValidationSummary,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
@@ -150,5 +163,18 @@ public sealed record AgentTuiValidationRunDto(
     DateTime? CompletedAt);
 
 public sealed record AgentTuiModelRefreshDto(
-    AgentTuiValidationRunDto Run,
+    Guid Id,
+    Guid ProfileId,
+    Guid ProfileRevisionId,
+    string Operation,
+    AgentTuiValidationStatus Status,
+    IReadOnlyList<AgentTuiValidationStageDto> Stages,
+    IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
+    string? RunnerVersion,
+    string Summary,
+    AgentTuiSuitabilityDto Suitability,
+    DateTime CreatedAt,
+    DateTime? StartedAt,
+    DateTime? CompletedAt,
+    bool CachedResultsRetained,
     IReadOnlyList<AgentTuiModelDto> Models);
