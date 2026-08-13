@@ -24,17 +24,33 @@ public class CardStateMachineTests
                           + "already fixed as part of another card");
     }
 
+    /// <summary>
+    /// Every live state reaches every other one DIRECTLY (widened 2026-08-13). The reason is not a
+    /// preference for permissiveness: a transition has side effects — moving into an ACTIVE column
+    /// spawns an agent — so forcing a path makes the caller pay for every state on the way. Moving
+    /// six finished cards to Done for bookkeeping launched six agent sessions, six worktrees and
+    /// six branches, purely because the only legal route ran through InProgress.
+    /// </summary>
     [Test]
-    public void CardStateMachine_legal_transitions_match_spec()
+    [Arguments(CardStatus.Backlog)]
+    [Arguments(CardStatus.InProgress)]
+    [Arguments(CardStatus.Review)]
+    [Arguments(CardStatus.Blocked)]
+    public void Every_live_state_reaches_every_other_directly(CardStatus from)
     {
-        CardStateMachine.GetAvailableTransitions(CardStatus.Backlog)
-            .ShouldBe([CardStatus.InProgress, CardStatus.Blocked, CardStatus.Done, CardStatus.Canceled]);
+        foreach (var to in Enum.GetValues<CardStatus>())
+        {
+            if (to == from)
+            {
+                CardStateMachine.CanTransition(from, to)
+                    .ShouldBeFalse($"{from} -> {from} is not a move");
+                continue;
+            }
 
-        CardStateMachine.GetAvailableTransitions(CardStatus.InProgress)
-            .ShouldBe([CardStatus.Review, CardStatus.Blocked, CardStatus.Canceled]);
-
-        CardStateMachine.GetAvailableTransitions(CardStatus.Review)
-            .ShouldBe([CardStatus.InProgress, CardStatus.Done, CardStatus.Blocked, CardStatus.Canceled]);
+            CardStateMachine.CanTransition(from, to)
+                .ShouldBeTrue($"{from} -> {to} must not require passing through another state, "
+                              + "because transiting a state has side effects");
+        }
     }
 
     [Test]
