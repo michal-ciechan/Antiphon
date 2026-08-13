@@ -13,8 +13,11 @@ vi.mock('@mantine/notifications', () => ({
   },
 }))
 
-// jsdom typing + Mantine portals (menu dropdown, modals) regularly overrun the 5s default on a
-// loaded machine — these are interaction-heavy tests, not unit checks.
+// jsdom typing is slow and these are interaction-heavy tests, not unit checks.
+// NB the original note here also blamed "Mantine portals overrunning" for this file's flakiness;
+// that was wrong. The dropdown was rendering `display: none` via Floating UI's hide() middleware
+// and never becoming visible, so no timeout could have helped. Fixed by `env="test"` on the
+// MantineProvider in test/utils.ts — see the comment there.
 vi.setConfig({ testTimeout: 20_000 })
 
 const agentSummary: AgentSummaryDto = {
