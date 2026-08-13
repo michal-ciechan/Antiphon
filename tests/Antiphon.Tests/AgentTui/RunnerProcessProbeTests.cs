@@ -587,6 +587,102 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    [Arguments("ApiKey")]
+    [Arguments("ApiToken")]
+    [Arguments("AccessToken")]
+    [Arguments("RefreshToken")]
+    [Arguments("SecretAccessKey")]
+    [Arguments("PrivateKey")]
+    [Arguments("DatabaseUrl")]
+    [Arguments("ConnectionString")]
+    [Arguments("AuthToken")]
+    [Arguments("Authorization")]
+    [Arguments("Password")]
+    [Arguments("Secret")]
+    public async Task Probe_redacts_camel_case_credential_suffixes_in_plain_and_json_assignments(
+        string suffix)
+    {
+        const string plainValue = "synthetic-camel-plain-value";
+        const string jsonValue = "synthetic-camel-json-value";
+        var credentialName = $"client{suffix}";
+        var output = $"{credentialName}={plainValue}\n{{\"{credentialName}\":\"{jsonValue}\"}}";
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["raw-value", output]),
+                CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            result.StandardOutput.ShouldNotContain(credentialName);
+            result.StandardOutput.ShouldNotContain(plainValue);
+            result.StandardOutput.ShouldNotContain(jsonValue);
+            result.StandardError.ShouldNotContain(credentialName);
+            result.StandardError.ShouldNotContain(plainValue);
+            result.StandardError.ShouldNotContain(jsonValue);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    [Arguments("CLIENT_API_KEY")]
+    [Arguments("client-api-token")]
+    public async Task Probe_preserves_snake_and_dash_credential_redaction(string credentialName)
+    {
+        const string plainValue = "synthetic-delimited-plain-value";
+        const string jsonValue = "synthetic-delimited-json-value";
+        var output = $"{credentialName}={plainValue}\n{{\"{credentialName}\":\"{jsonValue}\"}}";
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["raw-value", output]),
+                CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            result.StandardOutput.ShouldNotContain(credentialName);
+            result.StandardOutput.ShouldNotContain(plainValue);
+            result.StandardOutput.ShouldNotContain(jsonValue);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    [Arguments("clientSecretHint")]
+    [Arguments("authTokenType")]
+    [Arguments("servicePasswordPolicy")]
+    [Arguments("apiKeyLabel")]
+    [Arguments("notasecret")]
+    public async Task Probe_leaves_non_credential_near_misses_unchanged(string name)
+    {
+        var output = $"{name}=synthetic-near-miss-plain\n{{\"{name}\":\"synthetic-near-miss-json\"}}";
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["raw-value", output]),
+                CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeFalse();
+            result.StandardOutput.ShouldBe(output);
+            result.StandardError.ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Executable_path_rejects_an_existing_non_executable_file()
     {
         var scratch = CreateScratch();

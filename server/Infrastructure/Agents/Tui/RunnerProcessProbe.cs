@@ -566,12 +566,18 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
 
     private static string RedactCredentialShapes(string value, ref bool sensitive)
     {
-        var redacted = CredentialAssignmentRegex().Replace(value, "*");
+        var redacted = CredentialAssignmentRegex().Replace(
+            value,
+            match => IsCredentialName(match.Groups["name"].Value) ? "*" : match.Value);
         redacted = BearerCredentialRegex().Replace(redacted, "*");
         if (!string.Equals(redacted, value, StringComparison.Ordinal))
             sensitive = true;
         return redacted;
     }
+
+    private static bool IsCredentialName(string name) =>
+        ExactOrDelimitedCredentialNameRegex().IsMatch(name)
+        || CamelCaseCredentialSuffixRegex().IsMatch(name);
 
     private static bool ContainsDirectorySeparator(string executable) =>
         executable.IndexOf(Path.DirectorySeparatorChar) >= 0
@@ -727,9 +733,19 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
-        @"(?im)(?<![A-Za-z0-9_])[""']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|private[_-]?key|database[_-]?url|connection[_-]?string|token|password|secret|authorization)[""']?\s*[:=]\s*[^\r\n]+",
+        @"(?im)(?<![A-Za-z0-9_])[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?\s*[:=]\s*[^\r\n]+",
         RegexOptions.CultureInvariant)]
     private static partial Regex CredentialAssignmentRegex();
+
+    [GeneratedRegex(
+        @"(?i)\A(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|private[_-]?key|database[_-]?url|connection[_-]?string|token|password|secret|authorization)\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ExactOrDelimitedCredentialNameRegex();
+
+    [GeneratedRegex(
+        @"[a-z0-9](?:ApiKey|ApiToken|AccessToken|RefreshToken|SecretAccessKey|PrivateKey|DatabaseUrl|ConnectionString|AuthToken|Authorization|Token|Password|Secret)\z",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex CamelCaseCredentialSuffixRegex();
 
     [GeneratedRegex(@"(?im)\bbearer\s+[^\s\r\n]+", RegexOptions.CultureInvariant)]
     private static partial Regex BearerCredentialRegex();
