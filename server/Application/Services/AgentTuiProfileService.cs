@@ -305,29 +305,12 @@ public sealed partial class AgentTuiProfileService
                 now);
             _db.AgentTuiProfileRevisions.Add(revision);
 
-            var oldOperatorModels = profile.Models
-                .Where(model => model.Source == AgentTuiModelSource.Operator)
-                .ToArray();
             foreach (var model in profile.Models.Where(IsRevisionBoundModel))
             {
                 model.Availability = AgentTuiModelAvailability.Stale;
                 model.UpdatedAt = now;
             }
-            _db.AgentTuiModels.RemoveRange(oldOperatorModels);
-            var newOperatorModels = AddOperatorModels(profile, request.Models, now);
-            foreach (var newOperatorModel in newOperatorModels)
-            {
-                var previous = oldOperatorModels.SingleOrDefault(
-                    model => string.Equals(
-                        model.Identifier,
-                        newOperatorModel.Identifier,
-                        StringComparison.Ordinal));
-                if (previous is null || !HasDiscoveryEvidence(previous))
-                    continue;
-                newOperatorModel.Availability = AgentTuiModelAvailability.Stale;
-                newOperatorModel.DiscoveredAt = previous.DiscoveredAt;
-                newOperatorModel.RunnerVersion = previous.RunnerVersion;
-            }
+            ReconcileOperatorModels(profile, request.Models, now);
 
             profile.DisplayName = request.DisplayName.Trim();
             profile.Kind = request.Kind;
@@ -810,7 +793,7 @@ public sealed partial class AgentTuiProfileService
                 BuildProcessRequest(snapshot, snapshot.VersionArguments, auth),
                 cancellationToken);
             timedOut |= versionResult.TimedOut || versionResult.Cancelled;
-            runnerVersion = ParseRunnerVersion(versionResult);
+            runnerVersion = ParseRunnerVersion(snapshot.Kind, versionResult);
             if (runnerVersion is null)
             {
                 stages.Add(Stage(
@@ -1517,7 +1500,9 @@ public sealed partial class AgentTuiProfileService
             "Clean-stop verification was skipped after an earlier mandatory failure."));
     }
 
-    private static string? ParseRunnerVersion(RunnerProcessResult result)
+    private static string? ParseRunnerVersion(
+        AgentKind kind,
+        RunnerProcessResult result)
     {
         if (!result.Started
             || result.ExitCode != 0
@@ -1529,13 +1514,34 @@ public sealed partial class AgentTuiProfileService
         {
             return null;
         }
-        var version = result.StandardOutput.ReplaceLineEndings("\n")
+        var versions = result.StandardOutput.ReplaceLineEndings("\n")
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim())
-            .FirstOrDefault(line => line.Length > 0);
-        return version is { Length: <= MaximumRunnerVersionLength }
+            .Where(line => line.Length > 0)
+            .Select(line => NormalizeRunnerVersion(kind, line))
+            .Where(version => version is not null)
+            .ToArray();
+        return versions is [{ Length: <= MaximumRunnerVersionLength } version]
             ? version
             : null;
+    }
+
+    private static string? NormalizeRunnerVersion(AgentKind kind, string line)
+    {
+        var (displayName, match) = kind switch
+        {
+            AgentKind.ClaudeCode => ("Claude Code", ClaudeRunnerVersionRegex().Match(line)),
+            AgentKind.Codex => ("Codex", CodexRunnerVersionRegex().Match(line)),
+            AgentKind.OpenCode => ("OpenCode", OpenCodeRunnerVersionRegex().Match(line)),
+            _ => (string.Empty, Match.Empty)
+        };
+        if (!match.Success)
+            return null;
+
+        var version = match.Groups["version"].Success
+            ? match.Groups["version"].Value
+            : match.Groups["suffixVersion"].Value;
+        return $"{displayName} {version}";
     }
 
     private static string ProbeFailureMessage(RunnerProcessResult result, string fallback)
@@ -1643,6 +1649,21 @@ public sealed partial class AgentTuiProfileService
         @"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:/-]*$",
         RegexOptions.CultureInvariant)]
     private static partial Regex ModelIdentifierRegex();
+
+    [GeneratedRegex(
+        @"^\s*(?:claude(?:[\s-]+code)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)|v?(?<suffixVersion>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s+\(claude code\))\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ClaudeRunnerVersionRegex();
+
+    [GeneratedRegex(
+        @"^\s*codex(?:-cli)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex CodexRunnerVersionRegex();
+
+    [GeneratedRegex(
+        @"^\s*opencode(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex OpenCodeRunnerVersionRegex();
 
     private IQueryable<AgentTuiProfile> ProfileReadQuery() => _db.AgentTuiProfiles
         .AsNoTracking()
@@ -1821,6 +1842,44 @@ public sealed partial class AgentTuiProfileService
             added.Add(entity);
         }
         return added;
+    }
+
+    private void ReconcileOperatorModels(
+        AgentTuiProfile profile,
+        IReadOnlyList<AgentTuiModelWriteDto> models,
+        DateTime now)
+    {
+        var requested = models
+            .GroupBy(candidate => candidate.Identifier, StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .ToArray();
+        var requestedIdentifiers = requested
+            .Select(model => model.Identifier)
+            .ToHashSet(StringComparer.Ordinal);
+        _db.AgentTuiModels.RemoveRange(profile.Models.Where(model =>
+            model.Source == AgentTuiModelSource.Operator
+            && !requestedIdentifiers.Contains(model.Identifier)));
+
+        foreach (var model in requested)
+        {
+            var existing = profile.Models.SingleOrDefault(candidate =>
+                string.Equals(candidate.Identifier, model.Identifier, StringComparison.Ordinal));
+            if (existing is null)
+            {
+                AddOperatorModels(profile, [model], now);
+                continue;
+            }
+
+            var hasDiscoveryEvidence = HasDiscoveryEvidence(existing);
+            existing.DisplayName = model.DisplayName;
+            existing.Family = NullIfWhiteSpace(model.Family);
+            existing.Source = AgentTuiModelSource.Operator;
+            existing.Availability = hasDiscoveryEvidence
+                ? AgentTuiModelAvailability.Stale
+                : AgentTuiModelAvailability.Unverified;
+            existing.IsSuggestedDefault = model.IsSuggestedDefault;
+            existing.UpdatedAt = now;
+        }
     }
 
     private static bool IsRevisionBoundModel(AgentTuiModel model) =>

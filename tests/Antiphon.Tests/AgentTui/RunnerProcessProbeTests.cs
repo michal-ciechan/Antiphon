@@ -13,6 +13,31 @@ namespace Antiphon.Tests.AgentTui;
 public sealed class RunnerProcessProbeTests
 {
     [Test]
+    public async Task Probe_excludes_undeclared_host_environment_and_keeps_declared_values()
+    {
+        const string hostCanaryName = "ANTIPHON_PROBE_HOST_CANARY";
+        var previous = Environment.GetEnvironmentVariable(hostCanaryName);
+        var scratch = CreateScratch();
+        try
+        {
+            Environment.SetEnvironmentVariable(hostCanaryName, "synthetic-host-only-value");
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["environment", hostCanaryName, "PROBE_ORDINARY"]),
+                CancellationToken.None);
+
+            result.ExitCode.ShouldBe(0);
+            result.StandardOutput.ReplaceLineEndings("\n").TrimEnd('\n')
+                .ShouldBe("host=False\ndeclared=True");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(hostCanaryName, previous);
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Probe_preserves_argument_boundaries_without_shell_interpretation()
     {
         var scratch = CreateScratch();
@@ -63,6 +88,54 @@ public sealed class RunnerProcessProbeTests
             (Encoding.UTF8.GetByteCount(result.StandardOutput)
              + Encoding.UTF8.GetByteCount(result.StandardError)).ShouldBeLessThanOrEqualTo(1024);
             result.ExitCode.ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Truncated_output_is_discarded_instead_of_returning_secret_fragments()
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var syntheticValue = new string('S', 256);
+            var request = Request(script, ["raw-value", syntheticValue]) with
+            {
+                SecretValues = [syntheticValue]
+            };
+
+            var result = await CreateProbe(maxOutputBytes: 32).RunAsync(
+                request,
+                CancellationToken.None);
+
+            result.OutputTruncated.ShouldBeTrue();
+            result.StandardOutput.ShouldBeEmpty();
+            result.StandardError.ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Invalid_utf8_output_is_discarded_as_unusable()
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["invalid-utf8"]),
+                CancellationToken.None);
+
+            result.OutputTruncated.ShouldBeTrue();
+            result.StandardOutput.ShouldBeEmpty();
+            result.StandardError.ShouldBeEmpty();
         }
         finally
         {
@@ -309,6 +382,47 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    public async Task Unexpected_exception_after_registration_transfers_process_to_reaper_cleanup()
+    {
+        var scratch = CreateScratch();
+        var pidPath = Path.Combine(scratch, "unexpected-exception-pids.txt");
+        try
+        {
+            var script = WriteHelper(scratch);
+            var reaper = new RunnerProcessReaper();
+            var probe = CreateProbe(
+                reaper,
+                seams: new RunnerProcessProbeSeams
+                {
+                    StartProcessAsync = async (guard, _) =>
+                    {
+                        guard.TryStart().ShouldBeTrue();
+                        await WaitForFileAsync(pidPath);
+                        throw new ApplicationException("synthetic unexpected post-registration failure");
+                    }
+                });
+
+            await Should.ThrowAsync<ApplicationException>(() => probe.RunAsync(
+                Request(script, ["tree", pidPath]),
+                CancellationToken.None));
+
+            await reaper.WaitForEmptyAsync(TimeSpan.FromSeconds(2));
+            reaper.TrackedProcessCount.ShouldBe(0);
+            foreach (var processId in await ReadPidsAsync(pidPath))
+                await AssertProcessExitedAsync(processId);
+        }
+        finally
+        {
+            if (File.Exists(pidPath))
+            {
+                foreach (var processId in await ReadPidsAsync(pidPath))
+                    StopProcessIfRunning(processId);
+            }
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Blocking_path_inspection_observes_the_one_second_deadline()
     {
         var probe = CreateProbe(
@@ -445,6 +559,120 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    public async Task Probe_redacts_common_credential_names_in_assignments_and_json()
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["common-credentials"]),
+                CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            result.StandardOutput.ShouldNotContain("AWS_SECRET_ACCESS_KEY", Case.Insensitive);
+            result.StandardOutput.ShouldNotContain("DATABASE_URL", Case.Insensitive);
+            result.StandardError.ShouldNotContain("PRIVATE_KEY", Case.Insensitive);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Executable_path_rejects_an_existing_non_executable_file()
+    {
+        var scratch = CreateScratch();
+        var path = Path.Combine(scratch, OperatingSystem.IsWindows() ? "not-executable.txt" : "not-executable");
+        try
+        {
+            await File.WriteAllTextAsync(path, "ordinary");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            var result = await CreateProbe().CheckExecutableAsync(path, CancellationToken.None);
+
+            result.IsAvailable.ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Required_file_rejects_a_file_without_read_access()
+    {
+        var scratch = CreateScratch();
+        var path = Path.Combine(scratch, "locked-wrapper.ps1");
+        try
+        {
+            await File.WriteAllTextAsync(path, "ordinary");
+            await using var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+            var result = await CreateProbe().CheckFileAsync(path, CancellationToken.None);
+
+            result.IsAvailable.ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Working_directory_requires_search_access_on_unix_and_exists_on_windows()
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(scratch, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            var result = await CreateProbe().CheckDirectoryAsync(scratch, CancellationToken.None);
+
+            result.IsAvailable.ShouldBe(OperatingSystem.IsWindows());
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    scratch,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Helper_resolves_the_current_powershell_executable_cross_platform()
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            (await File.ReadAllTextAsync(script)).ShouldNotContain("pwsh.exe", Case.Insensitive);
+
+            var result = await CreateProbe().RunAsync(
+                Request(script, ["child-executable"]),
+                CancellationToken.None);
+
+            result.ExitCode.ShouldBe(0);
+            var executable = result.StandardOutput.Trim();
+            File.Exists(executable).ShouldBeTrue();
+            Path.GetFileName(executable).ShouldBe(
+                OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh",
+                StringCompareShould.IgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Bounded_startup_reports_forced_tree_termination_as_not_clean()
     {
         var scratch = CreateScratch();
@@ -529,6 +757,11 @@ public sealed class RunnerProcessProbeTests
         File.WriteAllText(path, """
             $ErrorActionPreference = 'Stop'
             $mode = $args[0]
+            if ($mode -eq 'environment') {
+                [Console]::Out.WriteLine(('host=' + [bool](Test-Path ('Env:' + $args[1]))))
+                [Console]::Out.WriteLine(('declared=' + ([Environment]::GetEnvironmentVariable($args[2]) -eq 'ordinary')))
+                exit 0
+            }
             if ($mode -eq 'arguments') {
                 for ($i = 2; $i -lt $args.Count; $i++) {
                     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$args[$i])
@@ -541,6 +774,17 @@ public sealed class RunnerProcessProbeTests
                 [Console]::Error.Write(('E' * 8192))
                 exit 0
             }
+            if ($mode -eq 'raw-value') {
+                [Console]::Out.Write($args[1])
+                exit 0
+            }
+            if ($mode -eq 'invalid-utf8') {
+                $bytes = [byte[]](0xC3, 0x28)
+                $stream = [Console]::OpenStandardOutput()
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+                exit 0
+            }
             if ($mode -eq 'credential') {
                 [Console]::Out.WriteLine(('API_TOKEN=' + $args[1]))
                 [Console]::Out.WriteLine(('OPENAI_API_KEY=' + $args[1]))
@@ -550,8 +794,18 @@ public sealed class RunnerProcessProbeTests
                 [Console]::Error.WriteLine(('{"SERVICE_TOKEN":"' + $args[1] + '"}'))
                 exit 0
             }
+            if ($mode -eq 'common-credentials') {
+                [Console]::Out.WriteLine('AWS_SECRET_ACCESS_KEY=synthetic-common-value')
+                [Console]::Out.WriteLine('{"DATABASE_URL":"synthetic-json-value"}')
+                [Console]::Error.WriteLine('PRIVATE_KEY=synthetic-private-value')
+                exit 0
+            }
+            if ($mode -eq 'child-executable') {
+                [Console]::Out.WriteLine([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+                exit 0
+            }
             if ($mode -eq 'tree' -or $mode -eq 'tree-with-secret') {
-                $pwsh = Join-Path $PSHOME 'pwsh.exe'
+                $pwsh = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
                 $child = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 60') -PassThru
                 [IO.File]::WriteAllText($args[1], ($PID.ToString() + ',' + $child.Id.ToString()))
                 if ($mode -eq 'tree-with-secret') {
@@ -609,5 +863,19 @@ public sealed class RunnerProcessProbeTests
 
         using var survivor = Process.GetProcessById(pid);
         survivor.HasExited.ShouldBeTrue($"Probe process {pid} survived cancellation or timeout.");
+    }
+
+    private static void StopProcessIfRunning(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (ArgumentException)
+        {
+            // The process already exited.
+        }
     }
 }

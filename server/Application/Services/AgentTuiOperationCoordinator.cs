@@ -62,6 +62,7 @@ public sealed class AgentTuiOperationCoordinator
         OperationKey key,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var operation = _operations.GetOrAdd(
             key,
             operationKey => new Lazy<Task<object>>(

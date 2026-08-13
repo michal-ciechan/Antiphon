@@ -395,6 +395,61 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    public async Task Validation_normalizes_a_recognized_runner_specific_version()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("opencode version 1.2.3\n"));
+        probe.Enqueue(Success("provider/normalized-version\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            null,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.RunnerVersion.ShouldBe("OpenCode 1.2.3");
+        run.Stages.Single(stage => stage.Name == "versionCapabilities").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        (await ReadModelsAsync(provider, profile.Id))
+            .Single(model => model.Identifier == "provider/normalized-version")
+            .RunnerVersion.ShouldBe("OpenCode 1.2.3");
+    }
+
+    [Test]
+    public async Task Validation_rejects_unrecognized_version_diagnostics_without_persisting_them()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("diagnostic output from a wrapper path\n"));
+        probe.Enqueue(Success("provider/no-diagnostic-version\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            null,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.RunnerVersion.ShouldBeNull();
+        run.Stages.Single(stage => stage.Name == "versionCapabilities").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Failed);
+        (await ReadModelsAsync(provider, profile.Id))
+            .Single(model => model.Identifier == "provider/no-diagnostic-version")
+            .RunnerVersion.ShouldBeNull();
+        await using var db = _fixture.CreateDbContext();
+        (await db.AgentTuiValidationRuns.AsNoTracking().SingleAsync(candidate => candidate.Id == run.Id))
+            .RunnerVersion.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Validation_uses_the_active_immutable_revision_captured_at_start()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -588,6 +643,49 @@ public sealed class AgentTuiDiscoveryTests
         plainOperator.Source.ShouldBe(AgentTuiModelSource.Operator);
         plainOperator.Availability.ShouldBe(AgentTuiModelAvailability.Unverified);
         plainOperator.DiscoveredAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Profile_update_promotes_matching_discovered_model_to_operator_without_duplicate()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("provider/promoted-model\n"));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+        await RefreshAsync(provider, profile.Id);
+        Guid discoveredId;
+        await using (var db = _fixture.CreateDbContext())
+        {
+            discoveredId = await db.AgentTuiModels
+                .Where(model => model.ProfileId == profile.Id
+                                && model.Identifier == "provider/promoted-model")
+                .Select(model => model.Id)
+                .SingleAsync();
+        }
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>().UpdateAsync(
+                profile.Id,
+                NewRequest(profile.DisplayName, AgentKind.OpenCode) with
+                {
+                    ExpectedRevision = profile.Revision,
+                    Models = [new AgentTuiModelWriteDto("provider/promoted-model", "Operator promoted")]
+                },
+                CancellationToken.None);
+        }
+
+        await using var verifyDb = _fixture.CreateDbContext();
+        var persisted = await verifyDb.AgentTuiModels.AsNoTracking()
+            .Where(model => model.ProfileId == profile.Id
+                            && model.Identifier == "provider/promoted-model")
+            .ToArrayAsync();
+        persisted.ShouldHaveSingleItem();
+        persisted[0].Id.ShouldBe(discoveredId);
+        persisted[0].Source.ShouldBe(AgentTuiModelSource.Operator);
+        persisted[0].DisplayName.ShouldBe("Operator promoted");
+        persisted[0].Availability.ShouldBe(AgentTuiModelAvailability.Stale);
+        persisted[0].DiscoveredAt.ShouldBe(FixedNow.UtcDateTime);
     }
 
     [Test]

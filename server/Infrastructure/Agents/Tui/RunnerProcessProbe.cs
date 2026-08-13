@@ -106,7 +106,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         try
         {
             if (Path.IsPathRooted(executable) || ContainsDirectorySeparator(executable))
-                return File.Exists(executable)
+                return IsExecutableFile(executable)
                     ? Available("The executable is available.")
                     : Unavailable("The executable is unavailable.");
 
@@ -118,7 +118,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             {
                 foreach (var extension in extensions)
                 {
-                    if (File.Exists(Path.Combine(directory, executable + extension)))
+                    if (IsExecutableFile(Path.Combine(directory, executable + extension)))
                         return Available("The executable is available.");
                 }
             }
@@ -139,7 +139,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             return Unavailable("The required file is invalid or unavailable.");
         try
         {
-            return File.Exists(path)
+            return IsReadableFile(path)
                 ? Available("The required file is available.")
                 : Unavailable("The required file is unavailable.");
         }
@@ -157,7 +157,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             return Unavailable("The working directory is invalid or unavailable.");
         try
         {
-            return Directory.Exists(path)
+            return HasDirectorySearchAccess(path)
                 ? Available("The working directory is available.")
                 : Unavailable("The working directory is unavailable.");
         }
@@ -210,8 +210,13 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         foreach (var argument in request.Arguments)
             startInfo.ArgumentList.Add(argument);
 
-        var childEnvironment = startInfo.Environment
-            .ToDictionary(entry => entry.Key, entry => entry.Value ?? string.Empty, StringComparer.Ordinal);
+        var childEnvironment = new Dictionary<string, string>(EnvironmentNameComparer());
+        foreach (var name in BootstrapEnvironmentNames())
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (value is not null)
+                childEnvironment[name] = value;
+        }
         foreach (var entry in request.Environment)
             childEnvironment[entry.Key] = entry.Value;
         if (childEnvironment.Count > MaximumEnvironmentEntries
@@ -231,116 +236,113 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         Task<bool>? startTask = null;
         try
         {
-            linked.Token.ThrowIfCancellationRequested();
-            startTask = _startProcessAsync(startGuard, linked.Token);
-            if (!await startTask.WaitAsync(linked.Token))
+            try
             {
-                _reaper.Release(trackingId);
+                linked.Token.ThrowIfCancellationRequested();
+                startTask = _startProcessAsync(startGuard, linked.Token);
+                if (!await startTask.WaitAsync(linked.Token))
+                    return Failure("The probe process could not be started.");
+            }
+            catch (OperationCanceledException)
+            {
+                var startCancelled = cancellationToken.IsCancellationRequested;
+                var startTimedOut = !startCancelled && timeout.IsCancellationRequested;
+                if (linked.IsCancellationRequested && !startCancelled && !startTimedOut)
+                    startTimedOut = true;
+                return InterruptedBeforeStart(startTimedOut, startCancelled, startTask is null);
+            }
+            catch (Exception exception) when (exception is Win32Exception
+                                              or InvalidOperationException
+                                              or IOException
+                                              or UnauthorizedAccessException)
+            {
                 return Failure("The probe process could not be started.");
             }
-        }
-        catch (OperationCanceledException)
-        {
-            var startCancelled = cancellationToken.IsCancellationRequested;
-            var startTimedOut = !startCancelled && timeout.IsCancellationRequested;
-            if (linked.IsCancellationRequested && !startCancelled && !startTimedOut)
-                startTimedOut = true;
-            if (startTask is not null)
-                _reaper.AdoptPendingStart(trackingId, startTask);
-            else
-                _reaper.Release(trackingId);
-            return InterruptedBeforeStart(startTimedOut, startCancelled, startTask is null);
-        }
-        catch (Exception exception) when (exception is Win32Exception
-                                          or InvalidOperationException
-                                          or IOException
-                                          or UnauthorizedAccessException)
-        {
-            _reaper.Release(trackingId);
-            return Failure("The probe process could not be started.");
-        }
 
-        var capture = new CombinedOutputCapture(_maxOutputBytes);
-        var stdoutDrain = DrainAsync(process.StandardOutput.BaseStream, capture, isStandardError: false);
-        var stderrDrain = DrainAsync(process.StandardError.BaseStream, capture, isStandardError: true);
-        var timedOut = false;
-        var cancelled = false;
-        var cleanlyStopped = true;
-        var cleanupConfirmed = true;
+            var capture = new CombinedOutputCapture(_maxOutputBytes);
+            var stdoutDrain = DrainAsync(process.StandardOutput.BaseStream, capture, isStandardError: false);
+            var stderrDrain = DrainAsync(process.StandardError.BaseStream, capture, isStandardError: true);
+            var timedOut = false;
+            var cancelled = false;
+            var cleanlyStopped = true;
+            var cleanupConfirmed = true;
 
-        try
-        {
-            var waitForExit = process.WaitForExitAsync(CancellationToken.None);
-            if (request.StopAfter is { } stopAfter)
+            try
             {
-                var boundedStopAfter = stopAfter <= TimeSpan.Zero || stopAfter > _timeout
-                    ? _timeout
-                    : stopAfter;
-                var stopDelay = Task.Delay(boundedStopAfter, linked.Token);
-                var completed = await Task.WhenAny(waitForExit, stopDelay);
-                if (completed == stopDelay && !linked.IsCancellationRequested)
+                var waitForExit = process.WaitForExitAsync(CancellationToken.None);
+                if (request.StopAfter is { } stopAfter)
                 {
-                    var cleanup = await TryCleanStopAsync(
-                        process,
-                        waitForExit,
-                        linked.Token);
-                    cleanlyStopped = cleanup.CleanlyStopped;
-                    cleanupConfirmed = cleanup.CleanupConfirmed;
+                    var boundedStopAfter = stopAfter <= TimeSpan.Zero || stopAfter > _timeout
+                        ? _timeout
+                        : stopAfter;
+                    var stopDelay = Task.Delay(boundedStopAfter, linked.Token);
+                    var completed = await Task.WhenAny(waitForExit, stopDelay);
+                    if (completed == stopDelay && !linked.IsCancellationRequested)
+                    {
+                        var cleanup = await TryCleanStopAsync(
+                            process,
+                            waitForExit,
+                            linked.Token);
+                        cleanlyStopped = cleanup.CleanlyStopped;
+                        cleanupConfirmed = cleanup.CleanupConfirmed;
+                    }
+                    else
+                    {
+                        await waitForExit.WaitAsync(linked.Token);
+                    }
                 }
                 else
                 {
                     await waitForExit.WaitAsync(linked.Token);
                 }
             }
-            else
+            catch (OperationCanceledException)
             {
-                await waitForExit.WaitAsync(linked.Token);
+                cancelled = cancellationToken.IsCancellationRequested;
+                timedOut = !cancelled && timeout.IsCancellationRequested;
+                cleanupConfirmed = await StopTreeSafelyAsync(process);
+                cleanlyStopped = false;
             }
-        }
-        catch (OperationCanceledException)
-        {
-            cancelled = cancellationToken.IsCancellationRequested;
-            timedOut = !cancelled && timeout.IsCancellationRequested;
-            cleanupConfirmed = await StopTreeSafelyAsync(process);
-            cleanlyStopped = false;
-        }
-        catch (Exception exception) when (exception is InvalidOperationException
-                                          or Win32Exception
-                                          or IOException)
-        {
-            cleanupConfirmed = await StopTreeSafelyAsync(process);
-            cleanlyStopped = false;
-        }
+            catch (Exception exception) when (exception is InvalidOperationException
+                                              or Win32Exception
+                                              or IOException)
+            {
+                cleanupConfirmed = await StopTreeSafelyAsync(process);
+                cleanlyStopped = false;
+            }
 
-        await DrainSafelyAsync(stdoutDrain, stderrDrain);
-        var rawOutput = capture.GetOutput();
-        var sanitized = Sanitize(rawOutput.StandardOutput, rawOutput.StandardError, request.SecretValues);
-        var exitCode = TryGetExitCode(process, timedOut || cancelled || !cleanupConfirmed);
-        var result = new RunnerProcessResult(
-            exitCode,
-            sanitized.StandardOutput,
-            sanitized.StandardError,
-            timedOut,
-            capture.WasTruncated,
-            cancelled,
-            Started: true,
-            cleanlyStopped,
-            cleanupConfirmed,
-            sanitized.SensitiveOutputDetected,
-            !cleanupConfirmed
-                ? "The probe process cleanup could not be confirmed; background cleanup is continuing."
-                : timedOut
-                    ? "The probe timed out."
-                : cancelled
-                    ? "The probe was cancelled."
-                    : cleanlyStopped
-                        ? null
-                        : "The probe process required forced cleanup.");
-        if (cleanupConfirmed)
-            _reaper.Release(trackingId);
-        else
-            _reaper.AdoptStarted(trackingId);
-        return result;
+            await DrainSafelyAsync(stdoutDrain, stderrDrain);
+            var rawOutput = capture.GetOutput();
+            var outputUnusable = capture.WasTruncated || !rawOutput.IsValidUtf8;
+            var sanitized = outputUnusable
+                ? new SanitizedOutput(string.Empty, string.Empty, false)
+                : Sanitize(rawOutput.StandardOutput, rawOutput.StandardError, request.SecretValues);
+            var exitCode = TryGetExitCode(process, timedOut || cancelled || !cleanupConfirmed);
+            return new RunnerProcessResult(
+                exitCode,
+                sanitized.StandardOutput,
+                sanitized.StandardError,
+                timedOut,
+                outputUnusable,
+                cancelled,
+                Started: true,
+                cleanlyStopped,
+                cleanupConfirmed,
+                sanitized.SensitiveOutputDetected,
+                !cleanupConfirmed
+                    ? "The probe process cleanup could not be confirmed; background cleanup is continuing."
+                    : timedOut
+                        ? "The probe timed out."
+                    : cancelled
+                        ? "The probe was cancelled."
+                        : cleanlyStopped
+                            ? null
+                            : "The probe process required forced cleanup.");
+        }
+        finally
+        {
+            TransferRegisteredProcess(trackingId, startGuard, startTask);
+        }
     }
 
     private static async Task DrainAsync(
@@ -562,6 +564,65 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         executable.IndexOf(Path.DirectorySeparatorChar) >= 0
         || executable.IndexOf(Path.AltDirectorySeparatorChar) >= 0;
 
+    private static bool IsExecutableFile(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+        if (OperatingSystem.IsWindows())
+        {
+            var extension = Path.GetExtension(path);
+            return extension.Length > 0
+                   && ExecutableExtensions(string.Empty)
+                       .Any(candidate => string.Equals(candidate, extension, StringComparison.OrdinalIgnoreCase));
+        }
+
+        const UnixFileMode executable = UnixFileMode.UserExecute
+                                        | UnixFileMode.GroupExecute
+                                        | UnixFileMode.OtherExecute;
+        return (File.GetUnixFileMode(path) & executable) != 0;
+    }
+
+    private static bool IsReadableFile(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+        if (!OperatingSystem.IsWindows())
+        {
+            const UnixFileMode readable = UnixFileMode.UserRead
+                                          | UnixFileMode.GroupRead
+                                          | UnixFileMode.OtherRead;
+            if ((File.GetUnixFileMode(path) & readable) == 0)
+                return false;
+        }
+
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        return stream.CanRead;
+    }
+
+    private static bool HasDirectorySearchAccess(string path)
+    {
+        if (!Directory.Exists(path))
+            return false;
+        if (OperatingSystem.IsWindows())
+            return true;
+
+        const UnixFileMode searchable = UnixFileMode.UserExecute
+                                        | UnixFileMode.GroupExecute
+                                        | UnixFileMode.OtherExecute;
+        return (File.GetUnixFileMode(path) & searchable) != 0;
+    }
+
+    private static StringComparer EnvironmentNameComparer() =>
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    private static IReadOnlyList<string> BootstrapEnvironmentNames() => OperatingSystem.IsWindows()
+        ? ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE"]
+        : ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"];
+
     private static string[] ExecutableExtensions(string executable)
     {
         if (Path.HasExtension(executable))
@@ -570,6 +631,31 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             ?.Split(';', StringSplitOptions.RemoveEmptyEntries)
             ?? [".COM", ".EXE", ".BAT", ".CMD"];
         return [string.Empty, .. pathExtensions];
+    }
+
+    private void TransferRegisteredProcess(
+        Guid trackingId,
+        RunnerProcessStartGuard startGuard,
+        Task<bool>? startTask)
+    {
+        if (startGuard.HasStarted)
+        {
+            if (startGuard.IsSettled)
+                _reaper.Release(trackingId);
+            else
+                _reaper.AdoptStarted(trackingId);
+            return;
+        }
+
+        if (startGuard.IsSettled
+            || startTask is null
+            || (startTask.IsCompletedSuccessfully && !startTask.Result))
+        {
+            _reaper.Release(trackingId);
+            return;
+        }
+
+        _reaper.AdoptPendingStart(trackingId, startTask);
     }
 
     private static RunnerPathCheck Available(string message) => new(true, message);
@@ -598,7 +684,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
-        @"(?im)(?<![A-Za-z0-9_])[""']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)[""']?\s*[:=]\s*[^\r\n]+",
+        @"(?im)(?<![A-Za-z0-9_])[""']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|private[_-]?key|database[_-]?url|connection[_-]?string|token|password|secret|authorization)[""']?\s*[:=]\s*[^\r\n]+",
         RegexOptions.CultureInvariant)]
     private static partial Regex CredentialAssignmentRegex();
 
@@ -641,14 +727,28 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         {
             lock (_sync)
             {
-                return new CapturedOutput(
-                    Encoding.UTF8.GetString(_standardOutput.ToArray()),
-                    Encoding.UTF8.GetString(_standardError.ToArray()));
+                try
+                {
+                    var strictUtf8 = new UTF8Encoding(
+                        encoderShouldEmitUTF8Identifier: false,
+                        throwOnInvalidBytes: true);
+                    return new CapturedOutput(
+                        strictUtf8.GetString(_standardOutput.ToArray()),
+                        strictUtf8.GetString(_standardError.ToArray()),
+                        IsValidUtf8: true);
+                }
+                catch (DecoderFallbackException)
+                {
+                    return new CapturedOutput(string.Empty, string.Empty, IsValidUtf8: false);
+                }
             }
         }
     }
 
-    private sealed record CapturedOutput(string StandardOutput, string StandardError);
+    private sealed record CapturedOutput(
+        string StandardOutput,
+        string StandardError,
+        bool IsValidUtf8);
     private sealed record CleanupOutcome(bool CleanlyStopped, bool CleanupConfirmed);
     private sealed record SanitizedOutput(
         string StandardOutput,
