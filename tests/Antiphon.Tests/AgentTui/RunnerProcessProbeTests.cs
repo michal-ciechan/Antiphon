@@ -1,11 +1,17 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.Tui;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.AgentTui;
 
@@ -602,6 +608,42 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    public async Task Executable_path_rejects_execute_access_denied_to_current_identity()
+    {
+        var scratch = CreateScratch();
+        var path = Path.Combine(scratch, OperatingSystem.IsWindows() ? "denied.exe" : "denied");
+        FileSystemAccessRule? denyRule = null;
+        try
+        {
+            await File.WriteAllTextAsync(path, "ordinary");
+            if (OperatingSystem.IsWindows())
+            {
+                denyRule = DenyCurrentWindowsFileAccess(path, FileSystemRights.ExecuteFile);
+                if (CanOpenWindowsPath(path, WindowsFileExecute, directory: false))
+                    throw new SkipTestException("The current Windows identity retained execute access after an explicit deny ACL.");
+            }
+            else
+            {
+                SkipIfPrivilegedUnixIdentity();
+                File.SetUnixFileMode(
+                    path,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite
+                    | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            }
+
+            var result = await CreateProbe().CheckExecutableAsync(path, CancellationToken.None);
+
+            result.IsAvailable.ShouldBeFalse();
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows() && denyRule is not null)
+                RestoreWindowsFileAccess(path, denyRule);
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Required_file_rejects_a_file_without_read_access()
     {
         var scratch = CreateScratch();
@@ -622,6 +664,41 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    public async Task Required_file_rejects_read_access_denied_to_current_identity()
+    {
+        var scratch = CreateScratch();
+        var path = Path.Combine(scratch, "denied-wrapper.ps1");
+        FileSystemAccessRule? denyRule = null;
+        try
+        {
+            await File.WriteAllTextAsync(path, "ordinary");
+            if (OperatingSystem.IsWindows())
+            {
+                denyRule = DenyCurrentWindowsFileAccess(path, FileSystemRights.ReadData);
+                if (CanOpenWindowsPath(path, WindowsFileReadData, directory: false))
+                    throw new SkipTestException("The current Windows identity retained read access after an explicit deny ACL.");
+            }
+            else
+            {
+                SkipIfPrivilegedUnixIdentity();
+                File.SetUnixFileMode(
+                    path,
+                    UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            }
+
+            var result = await CreateProbe().CheckFileAsync(path, CancellationToken.None);
+
+            result.IsAvailable.ShouldBeFalse();
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows() && denyRule is not null)
+                RestoreWindowsFileAccess(path, denyRule);
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Working_directory_requires_search_access_on_unix_and_exists_on_windows()
     {
         var scratch = CreateScratch();
@@ -637,6 +714,54 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    scratch,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Working_directory_rejects_traverse_access_denied_to_current_identity()
+    {
+        var scratch = CreateScratch();
+        FileSystemAccessRule? denyRule = null;
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                denyRule = DenyCurrentWindowsDirectoryAccess(
+                    scratch,
+                    FileSystemRights.ListDirectory | FileSystemRights.Traverse);
+                if (CanOpenWindowsPath(
+                        scratch,
+                        WindowsFileListDirectory | WindowsFileTraverse,
+                        directory: true))
+                {
+                    throw new SkipTestException(
+                        "The current Windows identity retained directory traversal access after an explicit deny ACL.");
+                }
+            }
+            else
+            {
+                SkipIfPrivilegedUnixIdentity();
+                File.SetUnixFileMode(
+                    scratch,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite
+                    | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            }
+
+            var result = await CreateProbe().CheckDirectoryAsync(scratch, CancellationToken.None);
+
+            result.IsAvailable.ShouldBeFalse();
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows() && denyRule is not null)
+                RestoreWindowsDirectoryAccess(scratch, denyRule);
+            else if (!OperatingSystem.IsWindows() && Directory.Exists(scratch))
             {
                 File.SetUnixFileMode(
                     scratch,
@@ -725,6 +850,133 @@ public sealed class RunnerProcessProbeTests
             }),
             reaper,
             seams);
+
+    private const uint WindowsFileReadData = 0x0001;
+    private const uint WindowsFileListDirectory = 0x0001;
+    private const uint WindowsFileExecute = 0x0020;
+    private const uint WindowsFileTraverse = 0x0020;
+    private const uint WindowsFileFlagBackupSemantics = 0x02000000;
+
+    [SupportedOSPlatform("windows")]
+    private static FileSystemAccessRule DenyCurrentWindowsFileAccess(
+        string path,
+        FileSystemRights rights)
+    {
+        var info = new FileInfo(path);
+        FileSystemAccessRule? rule = null;
+        try
+        {
+            var restricted = info.GetAccessControl(AccessControlSections.Access);
+            rule = new FileSystemAccessRule(
+                CurrentWindowsUser(),
+                rights,
+                AccessControlType.Deny);
+            restricted.AddAccessRule(rule);
+            info.SetAccessControl(restricted);
+            return rule;
+        }
+        catch (Exception exception) when (exception is IOException
+                                          or UnauthorizedAccessException
+                                          or PlatformNotSupportedException)
+        {
+            if (rule is not null)
+                RestoreWindowsFileAccess(path, rule);
+            throw new SkipTestException($"A Windows file deny ACL could not be constructed: {exception.Message}");
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static FileSystemAccessRule DenyCurrentWindowsDirectoryAccess(
+        string path,
+        FileSystemRights rights)
+    {
+        var info = new DirectoryInfo(path);
+        FileSystemAccessRule? rule = null;
+        try
+        {
+            var restricted = info.GetAccessControl(AccessControlSections.Access);
+            rule = new FileSystemAccessRule(
+                CurrentWindowsUser(),
+                rights,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Deny);
+            restricted.AddAccessRule(rule);
+            info.SetAccessControl(restricted);
+            return rule;
+        }
+        catch (Exception exception) when (exception is IOException
+                                          or UnauthorizedAccessException
+                                          or PlatformNotSupportedException)
+        {
+            if (rule is not null)
+                RestoreWindowsDirectoryAccess(path, rule);
+            throw new SkipTestException($"A Windows directory deny ACL could not be constructed: {exception.Message}");
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static SecurityIdentifier CurrentWindowsUser()
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+        return identity.User
+               ?? throw new SkipTestException("The current Windows user SID is unavailable.");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RestoreWindowsFileAccess(string path, FileSystemAccessRule denyRule)
+    {
+        var info = new FileInfo(path);
+        var security = info.GetAccessControl(AccessControlSections.Access);
+        security.RemoveAccessRuleSpecific(denyRule);
+        info.SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RestoreWindowsDirectoryAccess(string path, FileSystemAccessRule denyRule)
+    {
+        var info = new DirectoryInfo(path);
+        var security = info.GetAccessControl(AccessControlSections.Access);
+        security.RemoveAccessRuleSpecific(denyRule);
+        info.SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool CanOpenWindowsPath(string path, uint access, bool directory)
+    {
+        using var handle = CreateFileW(
+            path,
+            access,
+            FileShare.ReadWrite | FileShare.Delete,
+            IntPtr.Zero,
+            FileMode.Open,
+            directory ? WindowsFileFlagBackupSemantics : 0,
+            IntPtr.Zero);
+        return !handle.IsInvalid;
+    }
+
+    [UnsupportedOSPlatform("windows")]
+    private static void SkipIfPrivilegedUnixIdentity()
+    {
+        if (GetEffectiveUserId() == 0)
+        {
+            throw new SkipTestException(
+                "The privileged Unix identity cannot be denied access by owner mode bits.");
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        FileShare shareMode,
+        IntPtr securityAttributes,
+        FileMode creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("libc", EntryPoint = "geteuid")]
+    private static extern uint GetEffectiveUserId();
 
     private static RunnerProcessRequest Request(string script, IReadOnlyList<string> helperArguments) =>
         new(

@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Options;
+using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Server.Infrastructure.Agents.Tui;
 
@@ -16,6 +18,17 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private const int MaximumEnvironmentValueLength = 4000;
     private const int CleanupGraceMilliseconds = 200;
     private const int GracefulSignalMilliseconds = 500;
+    private const uint WindowsFileReadData = 0x0001;
+    private const uint WindowsFileListDirectory = 0x0001;
+    private const uint WindowsFileExecute = 0x0020;
+    private const uint WindowsFileTraverse = 0x0020;
+    private const uint WindowsFileFlagBackupSemantics = 0x02000000;
+    private const int UnixReadAccess = 4;
+    private const int UnixExecuteAccess = 1;
+    private const int LinuxAtCurrentWorkingDirectory = -100;
+    private const int LinuxAtEffectiveAccess = 0x0200;
+    private const int MacOsAtCurrentWorkingDirectory = -2;
+    private const int MacOsAtEffectiveAccess = 0x0010;
     private readonly TimeSpan _timeout;
     private readonly int _maxOutputBytes;
     private readonly RunnerProcessReaper _reaper;
@@ -573,27 +586,21 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             var extension = Path.GetExtension(path);
             return extension.Length > 0
                    && ExecutableExtensions(string.Empty)
-                       .Any(candidate => string.Equals(candidate, extension, StringComparison.OrdinalIgnoreCase));
+                       .Any(candidate => string.Equals(candidate, extension, StringComparison.OrdinalIgnoreCase))
+                   && HasWindowsPathAccess(path, WindowsFileExecute, directory: false);
         }
 
-        const UnixFileMode executable = UnixFileMode.UserExecute
-                                        | UnixFileMode.GroupExecute
-                                        | UnixFileMode.OtherExecute;
-        return (File.GetUnixFileMode(path) & executable) != 0;
+        return HasUnixPathAccess(path, UnixExecuteAccess);
     }
 
     private static bool IsReadableFile(string path)
     {
         if (!File.Exists(path))
             return false;
-        if (!OperatingSystem.IsWindows())
-        {
-            const UnixFileMode readable = UnixFileMode.UserRead
-                                          | UnixFileMode.GroupRead
-                                          | UnixFileMode.OtherRead;
-            if ((File.GetUnixFileMode(path) & readable) == 0)
-                return false;
-        }
+        if (OperatingSystem.IsWindows()
+                ? !HasWindowsPathAccess(path, WindowsFileReadData, directory: false)
+                : !HasUnixPathAccess(path, UnixReadAccess))
+            return false;
 
         using var stream = new FileStream(
             path,
@@ -608,12 +615,48 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         if (!Directory.Exists(path))
             return false;
         if (OperatingSystem.IsWindows())
-            return true;
+        {
+            return HasWindowsPathAccess(
+                path,
+                WindowsFileListDirectory | WindowsFileTraverse,
+                directory: true);
+        }
 
-        const UnixFileMode searchable = UnixFileMode.UserExecute
-                                        | UnixFileMode.GroupExecute
-                                        | UnixFileMode.OtherExecute;
-        return (File.GetUnixFileMode(path) & searchable) != 0;
+        return HasUnixPathAccess(path, UnixExecuteAccess);
+    }
+
+    private static bool HasWindowsPathAccess(string path, uint access, bool directory)
+    {
+        using var handle = CreateFileW(
+            path,
+            access,
+            FileShare.ReadWrite | FileShare.Delete,
+            IntPtr.Zero,
+            FileMode.Open,
+            directory ? WindowsFileFlagBackupSemantics : 0,
+            IntPtr.Zero);
+        return !handle.IsInvalid;
+    }
+
+    private static bool HasUnixPathAccess(string path, int mode)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            return FileAccessAt(
+                       LinuxAtCurrentWorkingDirectory,
+                       path,
+                       mode,
+                       LinuxAtEffectiveAccess) == 0;
+        }
+        if (OperatingSystem.IsMacOS())
+        {
+            return FileAccessAt(
+                       MacOsAtCurrentWorkingDirectory,
+                       path,
+                       mode,
+                       MacOsAtEffectiveAccess) == 0;
+        }
+        return false;
     }
 
     private static StringComparer EnvironmentNameComparer() =>
@@ -690,6 +733,23 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
 
     [GeneratedRegex(@"(?im)\bbearer\s+[^\s\r\n]+", RegexOptions.CultureInvariant)]
     private static partial Regex BearerCredentialRegex();
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        FileShare shareMode,
+        IntPtr securityAttributes,
+        FileMode creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("libc", EntryPoint = "faccessat", SetLastError = true)]
+    private static extern int FileAccessAt(
+        int directoryFileDescriptor,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int mode,
+        int flags);
 
     private sealed class CombinedOutputCapture
     {

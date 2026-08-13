@@ -1510,19 +1510,31 @@ public sealed partial class AgentTuiProfileService
             || result.Cancelled
             || result.OutputTruncated
             || !result.CleanupConfirmed
-            || result.SensitiveOutputDetected)
+            || result.SensitiveOutputDetected
+            || result.StandardError.Length != 0)
         {
             return null;
         }
-        var versions = result.StandardOutput.ReplaceLineEndings("\n")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim())
-            .Where(line => line.Length > 0)
-            .Select(line => NormalizeRunnerVersion(kind, line))
-            .Where(version => version is not null)
-            .ToArray();
-        return versions is [{ Length: <= MaximumRunnerVersionLength } version]
+        var record = SingleOutputRecord(result.StandardOutput);
+        if (record is null)
+            return null;
+        var version = NormalizeRunnerVersion(kind, record);
+        return version is { Length: <= MaximumRunnerVersionLength }
             ? version
+            : null;
+    }
+
+    private static string? SingleOutputRecord(string output)
+    {
+        if (output.EndsWith("\r\n", StringComparison.Ordinal))
+            output = output[..^2];
+        else if (output.EndsWith('\r') || output.EndsWith('\n'))
+            output = output[..^1];
+
+        return output is { Length: > 0 and <= MaximumRunnerVersionLength }
+               && !output.Contains('\r')
+               && !output.Contains('\n')
+            ? output
             : null;
     }
 
@@ -1651,17 +1663,17 @@ public sealed partial class AgentTuiProfileService
     private static partial Regex ModelIdentifierRegex();
 
     [GeneratedRegex(
-        @"^\s*(?:claude(?:[\s-]+code)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)|v?(?<suffixVersion>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s+\(claude code\))\s*$",
+        @"^(?:claude(?:[\s-]+code)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)|v?(?<suffixVersion>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s+\(claude code\))$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex ClaudeRunnerVersionRegex();
 
     [GeneratedRegex(
-        @"^\s*codex(?:-cli)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
+        @"^codex(?:-cli)?(?:\s+version)?\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex CodexRunnerVersionRegex();
 
     [GeneratedRegex(
-        @"^\s*(?:opencode(?:\s+version)?\s+v?)?(?<version>[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)\s*$",
+        @"^(?:opencode(?:\s+version)?\s+v?)?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OpenCodeRunnerVersionRegex();
 

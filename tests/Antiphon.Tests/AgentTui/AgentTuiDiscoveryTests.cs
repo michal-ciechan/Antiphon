@@ -421,10 +421,17 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
-    public async Task Validation_normalizes_the_bare_opencode_version_emitted_by_the_installed_runner()
+    [Arguments("1.18.16", "OpenCode 1.18.16")]
+    [Arguments("1.18.16\n", "OpenCode 1.18.16")]
+    [Arguments("1.18.16\r", "OpenCode 1.18.16")]
+    [Arguments("1.18.16\r\n", "OpenCode 1.18.16")]
+    [Arguments("1.18.16-alpha.1+build.5", "OpenCode 1.18.16-alpha.1+build.5")]
+    public async Task Validation_normalizes_strict_bare_opencode_semver(
+        string output,
+        string expectedVersion)
     {
         var probe = new RecordingRunnerProcessProbe();
-        probe.Enqueue(Success("1.18.16\n"));
+        probe.Enqueue(Success(output));
         probe.Enqueue(Success("provider/bare-version\n"));
         probe.Enqueue(new RunnerProcessResult(
             null,
@@ -438,12 +445,61 @@ public sealed class AgentTuiDiscoveryTests
 
         var run = await ValidateAsync(provider, profile.Id);
 
-        run.RunnerVersion.ShouldBe("OpenCode 1.18.16");
+        run.RunnerVersion.ShouldBe(expectedVersion);
         run.Stages.Single(stage => stage.Name == "versionCapabilities").Status
             .ShouldBe(AgentTuiValidationStageStatus.Passed);
         (await ReadModelsAsync(provider, profile.Id))
             .Single(model => model.Identifier == "provider/bare-version")
-            .RunnerVersion.ShouldBe("OpenCode 1.18.16");
+            .RunnerVersion.ShouldBe(expectedVersion);
+    }
+
+    [Test]
+    [Arguments("1.18.16\nsecond line", "")]
+    [Arguments("1.18.16\n\n", "")]
+    [Arguments("1.18.16", "diagnostic stderr")]
+    [Arguments("C:\\tools\\1.18.16", "")]
+    [Arguments("version=1.18.16", "")]
+    [Arguments("1.18.16 trailing", "")]
+    [Arguments("2026.08.13", "")]
+    [Arguments("1.18", "")]
+    [Arguments("1.18.16.4", "")]
+    [Arguments("1.18.16-..", "")]
+    [Arguments("1.18.16-alpha..1", "")]
+    [Arguments("1.18.16+..", "")]
+    [Arguments("1.18.16+build..1", "")]
+    [Arguments("01.18.16", "")]
+    [Arguments("1.018.16", "")]
+    [Arguments("1.18.016", "")]
+    [Arguments("1.18.16-01", "")]
+    [Arguments(" 1.18.16", "")]
+    public async Task Validation_rejects_noncanonical_or_diagnostic_bare_opencode_versions(
+        string standardOutput,
+        string standardError)
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(new RunnerProcessResult(0, standardOutput, standardError, TimedOut: false));
+        probe.Enqueue(Success("provider/rejected-version\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            null,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.RunnerVersion.ShouldBeNull();
+        run.Stages.Single(stage => stage.Name == "versionCapabilities").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Failed);
+        (await ReadModelsAsync(provider, profile.Id))
+            .Single(model => model.Identifier == "provider/rejected-version")
+            .RunnerVersion.ShouldBeNull();
+        await using var db = _fixture.CreateDbContext();
+        (await db.AgentTuiValidationRuns.AsNoTracking().SingleAsync(candidate => candidate.Id == run.Id))
+            .RunnerVersion.ShouldBeNull();
     }
 
     [Test]
@@ -977,7 +1033,7 @@ public sealed class AgentTuiDiscoveryTests
             Handler = (_, _) => Interlocked.Increment(ref call) == 1
                 ? throw new InvalidOperationException("C:\\sensitive\\runner-path synthetic failure")
                 : Task.FromResult(call == 2
-                    ? Success("OpenCode 3.0\n")
+                    ? Success("OpenCode 3.0.0\n")
                     : call == 3
                         ? Success("provider/after-failure\n")
                         : new RunnerProcessResult(null, string.Empty, string.Empty, false, Started: true, CleanlyStopped: true))
@@ -1099,7 +1155,7 @@ public sealed class AgentTuiDiscoveryTests
         probe.Enqueue(new RunnerProcessResult(9, string.Empty, string.Empty, false));
         probe.Enqueue(Success("provider/failed-validation-model\n"));
         probe.Enqueue(new RunnerProcessResult(null, string.Empty, string.Empty, false, Started: true, CleanlyStopped: true));
-        probe.Enqueue(Success("OpenCode 2.0\n"));
+        probe.Enqueue(Success("OpenCode 2.0.0\n"));
         probe.Enqueue(Success("provider/retry-model\n"));
         probe.Enqueue(new RunnerProcessResult(null, string.Empty, string.Empty, false, Started: true, CleanlyStopped: true));
         await using var provider = BuildProvider(probe);
