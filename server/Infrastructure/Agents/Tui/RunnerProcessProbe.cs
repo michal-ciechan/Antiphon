@@ -548,20 +548,77 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         IReadOnlyList<string> secretValues)
     {
         var sensitive = false;
-        foreach (var secret in secretValues.Where(value => !string.IsNullOrEmpty(value)).Distinct())
-        {
-            if (standardOutput.Contains(secret, StringComparison.Ordinal)
-                || standardError.Contains(secret, StringComparison.Ordinal))
-            {
-                sensitive = true;
-            }
-            standardOutput = standardOutput.Replace(secret, "*", StringComparison.Ordinal);
-            standardError = standardError.Replace(secret, "*", StringComparison.Ordinal);
-        }
-
         standardOutput = RedactCredentialShapes(standardOutput, ref sensitive);
         standardError = RedactCredentialShapes(standardError, ref sensitive);
+        var exactSecrets = secretValues
+            .Where(value => !string.IsNullOrEmpty(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        standardOutput = RedactExactSecretOccurrences(standardOutput, exactSecrets, ref sensitive);
+        standardError = RedactExactSecretOccurrences(standardError, exactSecrets, ref sensitive);
         return new SanitizedOutput(standardOutput, standardError, sensitive);
+    }
+
+    private static string RedactExactSecretOccurrences(
+        string value,
+        IReadOnlyList<string> exactSecrets,
+        ref bool sensitive)
+    {
+        if (value.Length == 0 || exactSecrets.Count == 0)
+            return value;
+
+        var redactionDeltas = new int[value.Length + 1];
+        var detected = false;
+        foreach (var secret in exactSecrets)
+        {
+            var searchStart = 0;
+            while (searchStart < value.Length)
+            {
+                var occurrence = value.IndexOf(secret, searchStart, StringComparison.Ordinal);
+                if (occurrence < 0)
+                    break;
+
+                detected = true;
+                redactionDeltas[occurrence]++;
+                redactionDeltas[occurrence + secret.Length]--;
+                searchStart = occurrence + 1;
+            }
+        }
+
+        if (!detected)
+            return value;
+        sensitive = true;
+
+        var redacted = new StringBuilder(value.Length);
+        var copiedThrough = 0;
+        var redactionStart = -1;
+        var coverage = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            coverage += redactionDeltas[index];
+            if (coverage > 0)
+            {
+                if (redactionStart < 0)
+                    redactionStart = index;
+                continue;
+            }
+
+            if (redactionStart < 0)
+                continue;
+            redacted.Append(value, copiedThrough, redactionStart - copiedThrough);
+            redacted.Append('*');
+            copiedThrough = index;
+            redactionStart = -1;
+        }
+
+        if (redactionStart >= 0)
+        {
+            redacted.Append(value, copiedThrough, redactionStart - copiedThrough);
+            redacted.Append('*');
+            copiedThrough = value.Length;
+        }
+        redacted.Append(value, copiedThrough, value.Length - copiedThrough);
+        return redacted.ToString();
     }
 
     private static string RedactCredentialShapes(string value, ref bool sensitive)
@@ -576,6 +633,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private static string RedactCredentialAssignments(string value)
     {
         var matches = CredentialAssignmentRegex().Matches(value);
+        var lineEnds = IndexLineEnds(value);
+        var lineEndIndex = 0;
         StringBuilder? redacted = null;
         var copiedThrough = 0;
 
@@ -586,9 +645,22 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 continue;
 
             var assignment = match.Groups["assignment"];
+            if (assignment.Index < copiedThrough)
+                continue;
             var redactionEnd = assignment.Index + assignment.Length;
-            if (match.Groups["unquotedValue"].Success)
-                redactionEnd = FindUnquotedCredentialEnd(value, matches, index + 1, redactionEnd);
+            var unquotedValue = match.Groups["unquotedValue"];
+            if (unquotedValue.Success)
+            {
+                while (lineEnds[lineEndIndex] < redactionEnd)
+                    lineEndIndex++;
+                var lineEnd = lineEnds[lineEndIndex];
+                var malformedQuotedValue = unquotedValue.Value[0] is '"' or '\'';
+                redactionEnd = !malformedQuotedValue
+                               && index + 1 < matches.Count
+                               && matches[index + 1].Index < lineEnd
+                    ? matches[index + 1].Index
+                    : lineEnd;
+            }
 
             redacted ??= new StringBuilder(value.Length);
             redacted.Append(value, copiedThrough, assignment.Index - copiedThrough);
@@ -602,17 +674,15 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         return redacted.ToString();
     }
 
-    private static int FindUnquotedCredentialEnd(
-        string value,
-        MatchCollection matches,
-        int nextMatchIndex,
-        int tokenEnd)
+    private static int[] IndexLineEnds(string value)
     {
-        var lineEndOffset = value.AsSpan(tokenEnd).IndexOfAny('\r', '\n');
-        var lineEnd = lineEndOffset < 0 ? value.Length : tokenEnd + lineEndOffset;
-        return nextMatchIndex < matches.Count && matches[nextMatchIndex].Index < lineEnd
-            ? matches[nextMatchIndex].Index
-            : lineEnd;
+        var lineEnds = new List<int>();
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] is '\r' or '\n')
+                lineEnds.Add(index);
+        }
+        return [.. lineEnds, value.Length];
     }
 
     private static bool IsCredentialName(string name) =>

@@ -683,6 +683,48 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    [Arguments("clientSecret=unknown-secret", "*", false, "=", "", "")]
+    [Arguments("prefix abcdef suffix", "prefix * suffix", false, "abc", "abcdef", "")]
+    [Arguments("prefix abcdef suffix", "prefix * suffix", true, "abcdef", "abc", "")]
+    [Arguments("abcabcdef", "*", false, "bcde", "abc", "abcdef")]
+    [Arguments("aaaaa", "*", true, "aaa", "", "")]
+    public async Task Probe_redacts_the_union_of_exact_secret_occurrences_without_order_or_overlap_leaks(
+        string output,
+        string expected,
+        bool writeToStandardError,
+        string firstSecret,
+        string secondSecret,
+        string thirdSecret)
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var request = Request(
+                script,
+                [writeToStandardError ? "raw-error" : "raw-value", output]) with
+            {
+                SecretValues = new[] { firstSecret, secondSecret, thirdSecret }
+                    .Where(secret => secret.Length > 0)
+                    .ToArray()
+            };
+
+            var result = await CreateProbe().RunAsync(request, CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            var actual = writeToStandardError ? result.StandardError : result.StandardOutput;
+            actual.ShouldBe(expected);
+            foreach (var secret in request.SecretValues)
+                actual.ShouldNotContain(secret);
+            (writeToStandardError ? result.StandardOutput : result.StandardError).ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments(
         "clientApiKey=synthetic-credential-first status=ready note='ordinary value !@#$%^&*()'",
         "* status=ready note='ordinary value !@#$%^&*()'",
@@ -768,6 +810,18 @@ public sealed class RunnerProcessProbeTests
         "*",
         true)]
     [Arguments(
+        "Password=\"synthetic-credential-top-secret status=synthetic-credential-still-secret tail",
+        "*",
+        false)]
+    [Arguments(
+        "clientSecret='synthetic-credential-top-secret mode=synthetic-credential-still-secret tail",
+        "*",
+        true)]
+    [Arguments(
+        "Password=\"synthetic-credential-top-secret clientSecret=synthetic-credential-still-secret tail",
+        "*",
+        false)]
+    [Arguments(
         "clientSecret=synthetic-credential-alpha\tsynthetic-credential-beta\t synthetic-credential-gamma?",
         "*",
         true)]
@@ -817,6 +871,102 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Probe_redacts_many_same_line_assignments_near_the_output_limit_within_budget()
+    {
+        const int repetitionCount = 4_000;
+        const int benchmarkIterations = 100;
+        const int benchmarkRounds = 5;
+        const string assignment = "token=synthetic ";
+        const string lineDelimitedAssignment = "token=synthetic\n";
+        var rawOutputBytes = Encoding.UTF8.GetByteCount(assignment) * repetitionCount;
+        rawOutputBytes.ShouldBeGreaterThan(60 * 1024);
+        rawOutputBytes.ShouldBeLessThan(AgentTuiSettings.MaximumProbeOutputBytes);
+        (Encoding.UTF8.GetByteCount(lineDelimitedAssignment) * repetitionCount).ShouldBe(rawOutputBytes);
+
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var elapsed = Stopwatch.StartNew();
+            var result = await CreateProbe(timeoutSeconds: 10).RunAsync(
+                Request(script, ["repeated-raw-value", assignment, repetitionCount.ToString()]),
+                CancellationToken.None);
+            elapsed.Stop();
+
+            result.OutputTruncated.ShouldBeFalse();
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            result.StandardOutput.ShouldNotBeEmpty();
+            result.StandardOutput.All(character => character is '*' or ' ').ShouldBeTrue();
+            result.StandardOutput.ShouldNotContain("token", Case.Insensitive);
+            result.StandardOutput.ShouldNotContain("synthetic", Case.Insensitive);
+            result.StandardError.ShouldBeEmpty();
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+
+            var redactorMethod = typeof(RunnerProcessProbe).GetMethod(
+                "RedactCredentialAssignments",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            redactorMethod.ShouldNotBeNull();
+            var redact = redactorMethod.CreateDelegate<Func<string, string>>();
+            var sameLineOutput = string.Concat(Enumerable.Repeat(assignment, repetitionCount));
+            var lineDelimitedOutput = string.Concat(
+                Enumerable.Repeat(lineDelimitedAssignment, repetitionCount));
+            redact(sameLineOutput).ShouldNotContain("synthetic", Case.Insensitive);
+            redact(lineDelimitedOutput).ShouldNotContain("synthetic", Case.Insensitive);
+
+            for (var warmup = 0; warmup < 20; warmup++)
+            {
+                redact(lineDelimitedOutput);
+                redact(sameLineOutput);
+            }
+
+            var bestLineDelimited = TimeSpan.MaxValue;
+            var bestSameLine = TimeSpan.MaxValue;
+            for (var round = 0; round < benchmarkRounds; round++)
+            {
+                var lineFirst = round % 2 == 0;
+                var first = MeasureRedaction(
+                    redact,
+                    lineFirst ? lineDelimitedOutput : sameLineOutput,
+                    benchmarkIterations);
+                var second = MeasureRedaction(
+                    redact,
+                    lineFirst ? sameLineOutput : lineDelimitedOutput,
+                    benchmarkIterations);
+                bestLineDelimited = TimeSpan.FromTicks(Math.Min(
+                    bestLineDelimited.Ticks,
+                    (lineFirst ? first : second).Ticks));
+                bestSameLine = TimeSpan.FromTicks(Math.Min(
+                    bestSameLine.Ticks,
+                    (lineFirst ? second : first).Ticks));
+            }
+
+            bestLineDelimited.ShouldBeLessThan(TimeSpan.FromSeconds(10));
+            bestSameLine.ShouldBeLessThan(TimeSpan.FromSeconds(10));
+            var linearBudget = TimeSpan.FromTicks((long)(bestLineDelimited.Ticks * 1.35));
+            bestSameLine.ShouldBeLessThan(
+                linearBudget,
+                $"same-line {bestSameLine.TotalMilliseconds:F0} ms; "
+                + $"line-delimited {bestLineDelimited.TotalMilliseconds:F0} ms");
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+
+        static TimeSpan MeasureRedaction(
+            Func<string, string> redact,
+            string output,
+            int iterations)
+        {
+            var measurement = Stopwatch.StartNew();
+            for (var iteration = 0; iteration < iterations; iteration++)
+                redact(output);
+            measurement.Stop();
+            return measurement.Elapsed;
         }
     }
 
@@ -1266,6 +1416,10 @@ public sealed class RunnerProcessProbeTests
             }
             if ($mode -eq 'raw-error') {
                 [Console]::Error.Write($args[1])
+                exit 0
+            }
+            if ($mode -eq 'repeated-raw-value') {
+                [Console]::Out.Write(([string]$args[1]) * [int]$args[2])
                 exit 0
             }
             if ($mode -eq 'invalid-utf8') {
