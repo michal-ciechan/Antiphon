@@ -33,6 +33,7 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
             _sessionRunnerClient, _options, _supervisionSettings,
             _loggerFactory?.CreateLogger<RunnerClaudeAdapter>()),
         AgentKind.Codex => new RunnerCodexAdapter(_sessionRunnerClient, _options),
+        AgentKind.OpenCode => new RunnerOpenCodeAdapter(_sessionRunnerClient, _options),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, $"No adapter is registered for AgentKind '{kind}'."),
     };
 }

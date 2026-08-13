@@ -299,6 +299,7 @@ try
     builder.Services.AddSingleton<AgentTuiOperationCoordinator>();
     builder.Services.AddScoped<AgentTuiProfileService>();
     builder.Services.AddScoped<AgentTuiProfileImporter>();
+    builder.Services.AddScoped<AgentTuiLaunchResolver>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 

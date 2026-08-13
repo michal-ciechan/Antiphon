@@ -28,6 +28,7 @@ public sealed class AgentControlService
     private readonly CardService _cardService;
     private readonly AgentSessionService _agentSessionService;
     private readonly AgentRegistry _agentRegistry;
+    private readonly AgentTuiLaunchResolver _launchResolver;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
@@ -40,6 +41,7 @@ public sealed class AgentControlService
         CardService cardService,
         AgentSessionService agentSessionService,
         AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver launchResolver,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider,
@@ -51,6 +53,7 @@ public sealed class AgentControlService
         _cardService = cardService;
         _agentSessionService = agentSessionService;
         _agentRegistry = agentRegistry;
+        _launchResolver = launchResolver;
         _launchQueue = launchQueue;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
@@ -125,32 +128,33 @@ public sealed class AgentControlService
         if (!Directory.Exists(cwd))
             throw new ConflictException($"Agent '{agent.Name}' working directory does not exist: {cwd}");
 
-        var definitionName = _agentRegistry.Settings.DefaultDefinition;
+        // Session-scoped delegation credential — the same env contract the task dispatcher gives
+        // delegates, so scripts/delegate.ps1 works unchanged from inside this session. The token
+        // authenticates the session to POST /api/agent-tasks as ITSELF: its delegates inherit ITS
+        // working directory (not the server process's cwd) and their reports return into THIS
+        // session (AgentTaskService.AuthenticateAsync, session fallback). Re-minted every launch;
+        // only the hash is stored.
+        var (delegationToken, delegationTokenHash) = AgentTaskService.NewToken();
+        var extraEnv = new Dictionary<string, string>
+        {
+            ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
+            ["ANTIPHON_AGENT_ID"] = agent.Id.ToString("D"),
+            ["ANTIPHON_TASK_TOKEN"] = delegationToken,
+        };
 
-        // Channel preamble: rendered into --append-system-prompt for ClaudeCode launches when the
-        // agent has one configured. The kind gate reads the DEFINITION (Resolve is what produces
-        // spec.Kind, so gating on the spec would be circular). Rendered at launch time — channel
-        // bindings added later flow in as of the NEXT launch, not live.
-        var isClaudeCode = Enum.TryParse<AgentKind>(
-                _agentRegistry.LookupByName(definitionName).Kind, ignoreCase: true, out var defKind)
-            && defKind == AgentKind.ClaudeCode;
+        var profileKind = await PeekProfileKindAsync(agent, ct);
+        var isClaudeCode = profileKind == AgentKind.ClaudeCode;
         var extraArgs = new List<string>();
         if (isClaudeCode)
         {
-            // Name the session at launch (shown in /resume + Recents + terminal title) so it reads
-            // as e.g. "Family", not the first message's text. A launch flag is robust where the
-            // post-launch /rename slash command is not — interactive Claude forks --session-id, and
-            // --name carries to the forked session; it also covers agents without remote control
-            // (which never send /rename at all).
             var sessionName = agent.Name.Trim();
             if (sessionName.Length > 0)
                 extraArgs.AddRange(["--name", sessionName]);
 
-            // Generic capability level mapped to the Claude family ALIAS (Frontier→fable,
-            // High→opus, Medium→sonnet, Low→haiku) — deliberately not a full versioned model id,
-            // so every launch picks up the current model of that family. Per-invocation like
-            // --name, so it applies to fresh launches AND resumes.
-            extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
+            // Prefer an exact selected model; fall back to the legacy ModelLevel alias only when
+            // the agent has no exact ModelId (migration compatibility).
+            if (string.IsNullOrWhiteSpace(agent.ModelId))
+                extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
 
             if (!string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
             {
@@ -166,36 +170,21 @@ public sealed class AgentControlService
             }
         }
 
-        // Session-scoped delegation credential — the same env contract the task dispatcher gives
-        // delegates, so scripts/delegate.ps1 works unchanged from inside this session. The token
-        // authenticates the session to POST /api/agent-tasks as ITSELF: its delegates inherit ITS
-        // working directory (not the server process's cwd) and their reports return into THIS
-        // session (AgentTaskService.AuthenticateAsync, session fallback). Re-minted every launch;
-        // only the hash is stored.
-        var (delegationToken, delegationTokenHash) = AgentTaskService.NewToken();
-        var extraEnv = new Dictionary<string, string>
-        {
-            ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
-            ["ANTIPHON_AGENT_ID"] = agent.Id.ToString("D"),
-            ["ANTIPHON_TASK_TOKEN"] = delegationToken,
-        };
-
-        var spec = _agentRegistry.Resolve(
-            definitionName,
+        var resolved = await _launchResolver.ResolveForAgentAsync(
+            agent,
             new AgentLaunchOptions(
-                Cols: 120, Rows: 30,
+                Cols: 120,
+                Rows: 30,
                 ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
-                ExtraEnv: extraEnv));
+                ExtraEnv: extraEnv),
+            ct);
+        var spec = resolved.Spec;
+        var definitionName = spec.DefinitionName;
 
-        // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
-        // path picks FreshBody vs ResumeBody where the fresh/resume/fallback truth lives.
         var notes = isClaudeCode && !string.IsNullOrWhiteSpace(agent.SystemPromptAppend)
             ? new LaunchNotes(ChannelPreamble.BootstrapBody, ChannelPreamble.RestartResumeBody)
             : null;
 
-        // Reject an unspawnable executable NOW, before the agent is flipped to Running or any
-        // session row exists — otherwise the launch fails in the background and the UI shows a
-        // phantom "Running" agent with no process behind it (the claude.cmd → claude.exe incident).
         AgentExecutableResolver.Default.EnsureSpawnable(spec.Exe);
 
         if (!fresh)
@@ -212,6 +201,8 @@ public sealed class AgentControlService
                 previous.ExitCode = null;
                 previous.FailureReason = null;
                 previous.DelegationTokenHash = delegationTokenHash;
+                previous.TuiProfileRevisionId = resolved.ProfileRevisionId;
+                previous.EffectiveModelId = resolved.EffectiveModelId;
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(
@@ -235,7 +226,9 @@ public sealed class AgentControlService
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
-            DelegationTokenHash = delegationTokenHash
+            DelegationTokenHash = delegationTokenHash,
+            TuiProfileRevisionId = resolved.ProfileRevisionId,
+            EffectiveModelId = resolved.EffectiveModelId
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -257,6 +250,22 @@ public sealed class AgentControlService
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);
         return session.Id;
+    }
+
+    private async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
+    {
+        if (agent.TuiProfileId is { } profileId)
+        {
+            return await _db.AgentTuiProfiles.AsNoTracking()
+                .Where(profile => profile.Id == profileId)
+                .Select(profile => (AgentKind?)profile.Kind)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return await _db.AgentTuiProfiles.AsNoTracking()
+            .Where(profile => profile.IsDefault)
+            .Select(profile => (AgentKind?)profile.Kind)
+            .FirstOrDefaultAsync(ct);
     }
 
     // The agent's last interactive session is resumable when it is the same Claude-kind definition,

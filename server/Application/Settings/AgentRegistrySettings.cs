@@ -13,6 +13,10 @@ public class AgentRegistrySettings
     public int CodexReadyMaxWaitMs { get; set; } = 60000;
     public int CodexDoneQuietPeriodMs { get; set; } = 3000;
     public int CodexDoneMaxWaitMs { get; set; } = 300000;
+    public int OpenCodeReadyQuietPeriodMs { get; set; } = 1000;
+    public int OpenCodeReadyMaxWaitMs { get; set; } = 60000;
+    public int OpenCodeDoneQuietPeriodMs { get; set; } = 3000;
+    public int OpenCodeDoneMaxWaitMs { get; set; } = 300000;
 }
 
 public class AgentDefinition

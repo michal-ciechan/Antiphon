@@ -1,0 +1,288 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Tui;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.AgentTui;
+
+public sealed class AgentTuiLaunchResolverTests
+{
+    [Test]
+    public async Task Resolve_omits_model_argument_when_agent_has_no_exact_model()
+    {
+        await using var provider = BuildProvider();
+        var (profile, revision) = await SeedProfileAsync(provider, AgentKind.OpenCode);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Atlas",
+            TuiProfileId = profile.Id,
+            ModelId = null
+        };
+
+        var resolved = await ResolveAsync(provider, agent);
+
+        resolved.Spec.Args.ShouldNotContain("--model");
+        resolved.EffectiveModelId.ShouldBeNull();
+        resolved.ProfileRevisionId.ShouldBe(revision.Id);
+        resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
+    }
+
+    [Test]
+    public async Task Resolve_appends_exact_model_as_separate_arguments()
+    {
+        await using var provider = BuildProvider();
+        var (profile, revision) = await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            models: ["llmgateway/grok-4-5"]);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Atlas",
+            TuiProfileId = profile.Id,
+            ModelId = "llmgateway/grok-4-5"
+        };
+
+        var resolved = await ResolveAsync(provider, agent);
+
+        resolved.Spec.Args.TakeLast(2).ShouldBe(new[] { "--model", "llmgateway/grok-4-5" });
+        resolved.EffectiveModelId.ShouldBe("llmgateway/grok-4-5");
+        resolved.ProfileRevisionId.ShouldBe(revision.Id);
+    }
+
+    [Test]
+    public async Task Resolve_injects_managed_secrets_and_keeps_wrapper_profiles_secret_free()
+    {
+        var protector = new RecordingLaunchSecretProtector();
+        await using var provider = BuildProvider(protector);
+        var (managed, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            authenticationMode: AgentTuiAuthenticationMode.ManagedEnvironment,
+            secretNames: ["OPENAI_API_KEY"],
+            canary: "canary-secret");
+        var managedAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Managed",
+            TuiProfileId = managed.Id
+        };
+        var managedLaunch = await ResolveAsync(provider, managedAgent);
+        managedLaunch.Spec.Env["OPENAI_API_KEY"].ShouldBe("canary-secret");
+        protector.UnprotectCalls.ShouldBe(1);
+
+        var (wrapper, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            displayName: "Wrapper profile",
+            authenticationMode: AgentTuiAuthenticationMode.WrapperManaged);
+        var wrapperAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Wrapper",
+            TuiProfileId = wrapper.Id
+        };
+        var wrapperLaunch = await ResolveAsync(provider, wrapperAgent);
+        wrapperLaunch.Spec.Env.ContainsKey("OPENAI_API_KEY").ShouldBeFalse();
+        protector.UnprotectCalls.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Resolve_fails_closed_for_disabled_profile_and_unknown_model()
+    {
+        await using var provider = BuildProvider();
+        var (profile, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            enabled: false,
+            models: ["llmgateway/grok-4-5"]);
+        var disabled = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Disabled",
+            TuiProfileId = profile.Id
+        };
+        var disabledError = await Should.ThrowAsync<ConflictException>(
+            () => ResolveAsync(provider, disabled));
+        disabledError.Code.ShouldBe("profile_disabled");
+
+        var (enabled, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            models: ["llmgateway/grok-4-5"]);
+        var unknownModel = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Unknown model",
+            TuiProfileId = enabled.Id,
+            ModelId = "provider/not-in-catalogue"
+        };
+        var modelError = await Should.ThrowAsync<ConflictException>(
+            () => ResolveAsync(provider, unknownModel));
+        modelError.Code.ShouldBe("model_not_in_profile");
+    }
+
+    [Test]
+    public async Task Resolve_uses_installation_default_when_agent_has_no_profile()
+    {
+        await using var provider = BuildProvider();
+        var defaultName = $"Default OpenCode {Guid.NewGuid():N}";
+        await SeedProfileAsync(
+            provider,
+            AgentKind.OpenCode,
+            displayName: defaultName,
+            isDefault: true);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Legacy",
+            TuiProfileId = null
+        };
+
+        var resolved = await ResolveAsync(provider, agent);
+
+        resolved.Spec.Kind.ShouldBe(AgentKind.OpenCode);
+        resolved.Spec.DefinitionName.ShouldBe(defaultName);
+    }
+
+    private static async Task<ResolvedAgentTuiLaunch> ResolveAsync(
+        ServiceProvider provider,
+        Agent agent)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var resolver = scope.ServiceProvider.GetRequiredService<AgentTuiLaunchResolver>();
+        return await resolver.ResolveForAgentAsync(
+            agent,
+            new AgentLaunchOptions(Cols: 120, Rows: 30),
+            CancellationToken.None);
+    }
+
+    private static ServiceProvider BuildProvider(RecordingLaunchSecretProtector? protector = null)
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options => options.UseNpgsql(
+            TestDbFixture.ConnectionString));
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton(protector ?? new RecordingLaunchSecretProtector());
+        services.AddSingleton<IAgentTuiSecretProtector>(sp =>
+            sp.GetRequiredService<RecordingLaunchSecretProtector>());
+        services.AddSingleton<AgentTuiMetrics>();
+        services.AddSingleton<AgentTuiRunnerCatalog>();
+        services.AddScoped<AgentTuiLaunchResolver>();
+        return services.BuildServiceProvider();
+    }
+
+    private static async Task<(AgentTuiProfile Profile, AgentTuiProfileRevision Revision)> SeedProfileAsync(
+        ServiceProvider provider,
+        AgentKind kind,
+        string? displayName = null,
+        bool enabled = true,
+        bool isDefault = false,
+        AgentTuiAuthenticationMode authenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+        string[]? secretNames = null,
+        string[]? models = null,
+        string canary = "canary-secret")
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<RecordingLaunchSecretProtector>();
+        var now = DateTime.UtcNow;
+        displayName ??= $"Launch profile {Guid.NewGuid():N}";
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = displayName,
+            Kind = kind,
+            IsEnabled = enabled,
+            IsDefault = isDefault,
+            Source = AgentTuiProfileSource.Operator,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+
+        var revision = new AgentTuiProfileRevision
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profile.Id,
+            RevisionNumber = 1,
+            Executable = "pwsh.exe",
+            ArgumentsJson = JsonSerializer.Serialize(new[] { "--auto", "--mini" }),
+            DiscoveryArgumentsJson = "[]",
+            VersionArgumentsJson = "[]",
+            WorkingDirectory = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),
+            AuthenticationMode = authenticationMode,
+            NonSecretEnvironmentJson = "{}",
+            SecretEnvironmentNamesJson = JsonSerializer.Serialize(secretNames ?? []),
+            ModelArgumentName = "--model",
+            Guidance = "Launch test",
+            CreatedAt = now
+        };
+        db.AgentTuiProfileRevisions.Add(revision);
+        await db.SaveChangesAsync();
+
+        profile.ActiveRevisionId = revision.Id;
+        foreach (var secretName in secretNames ?? [])
+        {
+            db.AgentTuiSecrets.Add(new AgentTuiSecret
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profile.Id,
+                Name = secretName,
+                Ciphertext = protector.Protect(profile.Id, secretName, canary),
+                ProtectionVersion = "v1",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+
+        foreach (var model in models ?? [])
+        {
+            db.AgentTuiModels.Add(new AgentTuiModel
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profile.Id,
+                Identifier = model,
+                DisplayName = model,
+                Source = AgentTuiModelSource.Operator,
+                Availability = AgentTuiModelAvailability.Verified,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return (profile, revision);
+    }
+}
+
+public sealed class RecordingLaunchSecretProtector : IAgentTuiSecretProtector
+{
+    private int _unprotectCalls;
+    public int UnprotectCalls => Volatile.Read(ref _unprotectCalls);
+
+    public string Protect(Guid profileId, string environmentName, string plaintext) =>
+        $"cipher:{profileId:N}:{environmentName}:{plaintext}";
+
+    public string Unprotect(Guid profileId, string environmentName, string protectedValue)
+    {
+        Interlocked.Increment(ref _unprotectCalls);
+        var prefix = $"cipher:{profileId:N}:{environmentName}:";
+        if (!protectedValue.StartsWith(prefix, StringComparison.Ordinal))
+            throw new CryptographicException("Purpose mismatch.");
+        return protectedValue[prefix.Length..];
+    }
+}

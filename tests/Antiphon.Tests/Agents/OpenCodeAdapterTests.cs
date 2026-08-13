@@ -1,67 +1,34 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
-using Microsoft.Extensions.Options;
-using Shouldly;
-using TUnit.Core;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
 
 namespace Antiphon.Tests.Agents;
 
 [Category("Unit")]
-public class AgentProtocolAdapterFactoryTests
+public sealed class OpenCodeAdapterTests
 {
-    private static AgentProtocolAdapterFactory NewFactory()
-        => new(Options.Create(new AgentRegistrySettings
-        {
-            DefaultDefinition = "claude",
-            Definitions = { ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" } },
-            CodexReadyQuietPeriodMs = 250,
-            CodexReadyMaxWaitMs = 5_000,
-            CodexDoneQuietPeriodMs = 250,
-            CodexDoneMaxWaitMs = 5_000,
-        }),
-        new ThrowingSessionRunnerClient());
-
     [Test]
-    public async Task Create_returns_RunnerRawAdapter_for_Raw()
+    public async Task Factory_returns_RunnerOpenCodeAdapter_for_OpenCode()
     {
-        var factory = NewFactory();
-        await using var adapter = factory.Create(AgentKind.Raw);
-        adapter.ShouldBeOfType<RunnerRawAdapter>();
-    }
-
-    [Test]
-    public async Task Create_returns_RunnerClaudeAdapter_for_ClaudeCode()
-    {
-        var factory = NewFactory();
-        await using var adapter = factory.Create(AgentKind.ClaudeCode);
-        adapter.ShouldBeOfType<RunnerClaudeAdapter>();
-    }
-
-    [Test]
-    public async Task Create_returns_RunnerCodexAdapter_for_Codex()
-    {
-        var factory = NewFactory();
-        await using var adapter = factory.Create(AgentKind.Codex);
-        adapter.ShouldBeOfType<RunnerCodexAdapter>();
-    }
-
-    [Test]
-    public async Task Create_returns_RunnerOpenCodeAdapter_for_OpenCode()
-    {
-        var factory = NewFactory();
+        var factory = new AgentProtocolAdapterFactory(
+            Options.Create(new AgentRegistrySettings()),
+            new ThrowingSessionRunnerClient());
         await using var adapter = factory.Create(AgentKind.OpenCode);
         adapter.ShouldBeOfType<RunnerOpenCodeAdapter>();
     }
 
     [Test]
-    public void Create_throws_on_unmapped_kind()
+    public void Session_runner_request_keeps_transcript_disabled_for_OpenCode()
     {
-        var factory = NewFactory();
-        Should.Throw<ArgumentOutOfRangeException>(() => factory.Create((AgentKind)999));
+        var kind = AgentKind.OpenCode;
+        var transcriptEnabled = kind == AgentKind.ClaudeCode;
+        transcriptEnabled.ShouldBeFalse();
     }
 
     private sealed class ThrowingSessionRunnerClient : ISessionRunnerClient

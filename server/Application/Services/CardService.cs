@@ -13,6 +13,7 @@ public sealed class CardService
 {
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
+    private readonly AgentTuiLaunchResolver _launchResolver;
     private readonly OrchestratorService _orchestrator;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
@@ -22,6 +23,7 @@ public sealed class CardService
     public CardService(
         AppDbContext db,
         AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver launchResolver,
         OrchestratorService orchestrator,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
@@ -30,6 +32,7 @@ public sealed class CardService
     {
         _db = db;
         _agentRegistry = agentRegistry;
+        _launchResolver = launchResolver;
         _orchestrator = orchestrator;
         _launchQueue = launchQueue;
         _eventBus = eventBus;
@@ -148,15 +151,51 @@ public sealed class CardService
             }
         }
 
-        var definitionName = string.IsNullOrWhiteSpace(request.DefinitionName)
-            ? _agentRegistry.Settings.DefaultDefinition
-            : request.DefinitionName.Trim();
-        var spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(
-            Cwd: null,
-            Cols: request.Cols,
-            Rows: request.Rows,
-            ExtraArgs: null,
-            ExtraEnv: null));
+        string definitionName;
+        AgentLaunchSpec spec;
+        Guid? tuiProfileRevisionId = null;
+        string? effectiveModelId = null;
+        if (!string.IsNullOrWhiteSpace(request.DefinitionName))
+        {
+            definitionName = request.DefinitionName.Trim();
+            spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(
+                Cwd: null,
+                Cols: request.Cols,
+                Rows: request.Rows,
+                ExtraArgs: null,
+                ExtraEnv: null));
+        }
+        else if (card.AssignedAgent is { } assignedAgent)
+        {
+            var resolved = await _launchResolver.ResolveForAgentAsync(
+                assignedAgent,
+                new AgentLaunchOptions(
+                    Cwd: null,
+                    Cols: request.Cols,
+                    Rows: request.Rows,
+                    ExtraArgs: null,
+                    ExtraEnv: null),
+                ct);
+            definitionName = resolved.Spec.DefinitionName;
+            spec = resolved.Spec;
+            tuiProfileRevisionId = resolved.ProfileRevisionId;
+            effectiveModelId = resolved.EffectiveModelId;
+        }
+        else
+        {
+            var resolved = await _launchResolver.ResolveDefaultAsync(
+                new AgentLaunchOptions(
+                    Cwd: null,
+                    Cols: request.Cols,
+                    Rows: request.Rows,
+                    ExtraArgs: null,
+                    ExtraEnv: null),
+                ct);
+            definitionName = resolved.Spec.DefinitionName;
+            spec = resolved.Spec;
+            tuiProfileRevisionId = resolved.ProfileRevisionId;
+            effectiveModelId = resolved.EffectiveModelId;
+        }
 
         var sessionId = await _orchestrator.TryClaimCardAsync(
             card.Id,
@@ -166,7 +205,9 @@ public sealed class CardService
             request.Cols,
             request.Rows,
             UtcNow(),
-            ct);
+            ct,
+            tuiProfileRevisionId,
+            effectiveModelId);
         if (sessionId is null)
             throw new ConflictException($"Card '{card.Identifier}' is already claimed by another session.");
 

@@ -16,6 +16,7 @@ public sealed class OrchestratorService
 {
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
+    private readonly AgentTuiLaunchResolver _launchResolver;
     private readonly AgentSessionService _sessionService;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly RetryScheduler _retryScheduler;
@@ -30,6 +31,7 @@ public sealed class OrchestratorService
     public OrchestratorService(
         AppDbContext db,
         AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver launchResolver,
         AgentSessionService sessionService,
         AgentSessionLaunchQueue launchQueue,
         RetryScheduler retryScheduler,
@@ -43,6 +45,7 @@ public sealed class OrchestratorService
     {
         _db = db;
         _agentRegistry = agentRegistry;
+        _launchResolver = launchResolver;
         _sessionService = sessionService;
         _launchQueue = launchQueue;
         _retryScheduler = retryScheduler;
@@ -105,18 +108,23 @@ public sealed class OrchestratorService
             }
 
             AgentLaunchSpec spec;
+            Guid? tuiProfileRevisionId = null;
+            string? effectiveModelId = null;
             try
             {
-                spec = _agentRegistry.Resolve(request.DefinitionName, new AgentLaunchOptions(
-                    Cwd: null,
-                    Cols: request.Cols,
-                    Rows: request.Rows,
-                    ExtraArgs: null,
-                    ExtraEnv: null));
+                var resolved = await ResolveDispatchLaunchAsync(candidate, request, ct);
+                spec = resolved.Spec;
+                tuiProfileRevisionId = resolved.ProfileRevisionId;
+                effectiveModelId = resolved.EffectiveModelId;
+                request = request with
+                {
+                    DefinitionName = spec.DefinitionName,
+                    AgentKind = spec.Kind
+                };
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogWarning(ex, "Failed to resolve agent definition {DefinitionName}", request.DefinitionName);
+                _logger.LogWarning(ex, "Failed to resolve agent launch for card {CardId}", candidate.CardId);
                 await _retryScheduler.ScheduleFailureAsync(_db, candidate.CardId, ex.Message, now, ct);
                 await _db.SaveChangesAsync(ct);
                 failures++;
@@ -130,7 +138,9 @@ public sealed class OrchestratorService
                 request.Cols,
                 request.Rows,
                 now,
-                ct);
+                ct,
+                tuiProfileRevisionId,
+                effectiveModelId);
             if (claimedSessionId is null)
             {
                 claimedElsewhere++;
@@ -312,7 +322,9 @@ public sealed class OrchestratorService
         int cols,
         int rows,
         DateTime utcNow,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? tuiProfileRevisionId = null,
+        string? effectiveModelId = null)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var card = await _db.Cards
@@ -332,7 +344,9 @@ public sealed class OrchestratorService
             Rows = rows,
             CreatedAt = utcNow,
             StartedAt = utcNow,
-            LastSeenAt = utcNow
+            LastSeenAt = utcNow,
+            TuiProfileRevisionId = tuiProfileRevisionId,
+            EffectiveModelId = effectiveModelId
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -494,6 +508,7 @@ public sealed class OrchestratorService
                 c.BoardColumnId,
                 c.BoardColumn.MaxConcurrentSessions,
                 c.ConcurrencyToken,
+                c.AssignedAgentId,
                 c.Board.WorkflowDefinitions
                     .Where(d => d.IsActive)
                     .OrderByDescending(d => d.Version)
@@ -544,10 +559,9 @@ public sealed class OrchestratorService
     {
         try
         {
-            var definitionName = _agentRegistry.Settings.DefaultDefinition;
             return new StartAgentSessionRequest(
                 candidate.CardId,
-                definitionName,
+                _agentRegistry.Settings.DefaultDefinition,
                 AgentKind.Raw,
                 BuildPrompt(candidate),
                 _settings.DefaultCols,
@@ -562,6 +576,29 @@ public sealed class OrchestratorService
             await _db.SaveChangesAsync(ct);
             return null;
         }
+    }
+
+    private async Task<ResolvedAgentTuiLaunch> ResolveDispatchLaunchAsync(
+        DispatchCandidate candidate,
+        StartAgentSessionRequest request,
+        CancellationToken ct)
+    {
+        var options = new AgentLaunchOptions(
+            Cwd: null,
+            Cols: request.Cols,
+            Rows: request.Rows,
+            ExtraArgs: null,
+            ExtraEnv: null);
+
+        if (candidate.AssignedAgentId is { } assignedAgentId)
+        {
+            var agent = await _db.Agents.AsNoTracking()
+                .SingleOrDefaultAsync(a => a.Id == assignedAgentId, ct);
+            if (agent is not null)
+                return await _launchResolver.ResolveForAgentAsync(agent, options, ct);
+        }
+
+        return await _launchResolver.ResolveDefaultAsync(options, ct);
     }
 
     private static void ClearCardClaim(Card card, DateTime utcNow)
@@ -658,6 +695,7 @@ public sealed class OrchestratorService
         Guid BoardColumnId,
         int? ColumnMaxConcurrentSessions,
         Guid ConcurrencyToken,
+        Guid? AssignedAgentId,
         Guid? WorkflowDefinitionId,
         string? WorkflowContent);
 
