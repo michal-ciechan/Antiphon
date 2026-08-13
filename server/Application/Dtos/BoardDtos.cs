@@ -74,7 +74,9 @@ public sealed record AgentSessionSummaryDto(
     DateTime LastSeenAt,
     DateTime? EndedAt,
     int? ExitCode,
-    string? FailureReason);
+    string? FailureReason,
+    Guid? TuiProfileRevisionId = null,
+    string? EffectiveModelId = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

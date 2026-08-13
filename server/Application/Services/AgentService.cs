@@ -55,6 +55,7 @@ public sealed class AgentService
             .Include(a => a.DefaultWorkflowTemplate)
             .Include(a => a.Board)
             .Include(a => a.QueueCards)
+            .Include(a => a.TuiProfile)!.ThenInclude(p => p!.ActiveRevision)
             .OrderBy(a => a.Name)
             .ToListAsync(ct);
 
@@ -149,7 +150,9 @@ public sealed class AgentService
                 s.LastSeenAt,
                 s.EndedAt,
                 s.ExitCode,
-                s.FailureReason))
+                s.FailureReason,
+                s.TuiProfileRevisionId,
+                s.EffectiveModelId))
             .ToListAsync(ct);
 
         return sessions.ToDictionary(s => s.Id);
@@ -204,6 +207,12 @@ public sealed class AgentService
                 CreatedAt = now,
                 UpdatedAt = now
             };
+            await ApplyTuiSelectionAsync(
+                agent,
+                request.TuiProfileId,
+                request.ModelId,
+                profileRequired: false,
+                ct);
             _db.Agents.Add(agent);
 
             try
@@ -267,6 +276,15 @@ public sealed class AgentService
             agent.SystemPromptAppend = string.IsNullOrWhiteSpace(systemPromptAppend) ? null : systemPromptAppend;
         if (request.ModelLevel is { } modelLevel)
             agent.ModelLevel = modelLevel;
+        if (request.TuiProfileId is { } profileId)
+        {
+            await ApplyTuiSelectionAsync(
+                agent,
+                profileId,
+                request.ModelId,
+                profileRequired: true,
+                ct);
+        }
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -576,6 +594,7 @@ public sealed class AgentService
         var query = _db.Agents
             .Include(a => a.DefaultWorkflowTemplate)
             .Include(a => a.Board)
+            .Include(a => a.TuiProfile)!.ThenInclude(p => p!.ActiveRevision)
             .Include(a => a.QueueCards)
                 .ThenInclude(c => c.Board)
             .Include(a => a.QueueCards)
@@ -691,6 +710,7 @@ public sealed class AgentService
     private static AgentSummaryDto ToSummaryDto(
         Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision, bool working = false)
     {
+        var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
         return new AgentSummaryDto(
             agent.Id,
             agent.Name,
@@ -714,7 +734,11 @@ public sealed class AgentService
             supervision,
             agent.SystemPromptAppend,
             agent.ModelLevel,
-            working);
+            working,
+            agent.TuiProfileId,
+            agent.ModelId,
+            configured,
+            liveSelection);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -737,6 +761,7 @@ public sealed class AgentService
                 c.ActiveWorkflowRun?.Status,
                 c.ActiveWorkflowRun?.CurrentStage?.Name))
             .ToList();
+        var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
 
         return new AgentDetailDto(
             agent.Id,
@@ -761,7 +786,119 @@ public sealed class AgentService
             supervision,
             agent.SystemPromptAppend,
             agent.ModelLevel,
-            working);
+            working,
+            agent.TuiProfileId,
+            agent.ModelId,
+            configured,
+            liveSelection);
+    }
+
+    private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
+        MapTuiSelection(Agent agent, AgentSessionSummaryDto? liveSession)
+    {
+        var configured = agent.TuiProfileId is null
+            ? null
+            : new AgentTuiConfiguredSelectionDto(
+                agent.TuiProfileId,
+                agent.ModelId,
+                agent.TuiProfile?.DisplayName,
+                agent.TuiProfile?.ActiveRevision?.RevisionNumber);
+
+        if (liveSession is null)
+            return (configured, null);
+
+        var pendingRestart =
+            liveSession.TuiProfileRevisionId != agent.TuiProfile?.ActiveRevisionId
+            || !string.Equals(
+                liveSession.EffectiveModelId,
+                agent.ModelId,
+                StringComparison.Ordinal);
+
+        var liveSelection = new AgentTuiLiveSessionSelectionDto(
+            liveSession.TuiProfileRevisionId,
+            liveSession.EffectiveModelId,
+            pendingRestart);
+        return (configured, liveSelection);
+    }
+
+    private async Task ApplyTuiSelectionAsync(
+        Agent agent,
+        Guid? requestedProfileId,
+        string? requestedModelId,
+        bool profileRequired,
+        CancellationToken ct)
+    {
+        AgentTuiProfile? profile;
+        if (requestedProfileId is { } profileId)
+        {
+            profile = await _db.AgentTuiProfiles
+                .Include(candidate => candidate.ActiveRevision)
+                .Include(candidate => candidate.Models)
+                .SingleOrDefaultAsync(candidate => candidate.Id == profileId, ct)
+                ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
+        }
+        else if (!profileRequired)
+        {
+            profile = await _db.AgentTuiProfiles
+                .Include(candidate => candidate.ActiveRevision)
+                .Include(candidate => candidate.Models)
+                .SingleOrDefaultAsync(candidate => candidate.IsDefault, ct);
+            if (profile is null)
+            {
+                agent.TuiProfileId = null;
+                agent.ModelId = NormalizeModelId(requestedModelId);
+                return;
+            }
+        }
+        else
+        {
+            return;
+        }
+
+        if (!profile.IsEnabled)
+        {
+            throw new ConflictException(
+                "The selected runner profile is disabled.",
+                "profile_disabled");
+        }
+        if (profile.ActiveRevisionId is null)
+        {
+            throw new ConflictException(
+                "The selected runner profile has no active revision.",
+                "profile_not_validated");
+        }
+
+        var modelId = NormalizeModelId(requestedModelId);
+        if (modelId is not null)
+            EnsureModelInProfile(profile, modelId);
+
+        agent.TuiProfileId = profile.Id;
+        agent.ModelId = modelId;
+    }
+
+    private static string? NormalizeModelId(string? modelId) =>
+        string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
+
+    private void EnsureModelInProfile(AgentTuiProfile profile, string modelId)
+    {
+        if (profile.Models.Any(model =>
+                string.Equals(model.Identifier, modelId, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        // Curated suggestions are valid exact selections even before discovery persists them.
+        // Keep this aligned with AgentTuiLaunchResolver.
+        var curated = new AgentTuiRunnerCatalog()
+            .Get(profile.Kind)
+            .CuratedModels
+            .Any(model => string.Equals(model.Identifier, modelId, StringComparison.Ordinal));
+        if (curated)
+            return;
+
+        throw new ConflictException(
+            "The selected model is not part of the profile catalogue.",
+            "model_not_in_profile");
     }
 
     private async Task<string> UniqueSlugAsync(string baseSlug, Guid? excludeAgentId, CancellationToken ct)

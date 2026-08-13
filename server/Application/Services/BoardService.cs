@@ -190,7 +190,9 @@ public sealed class BoardService
                     s.LastSeenAt,
                     s.EndedAt,
                     s.ExitCode,
-                    s.FailureReason))
+                    s.FailureReason,
+                    s.TuiProfileRevisionId,
+                    s.EffectiveModelId))
                 .ToList());
     }
 

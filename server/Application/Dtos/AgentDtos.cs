@@ -40,7 +40,11 @@ public sealed record AgentSummaryDto(
     AgentModelLevel ModelLevel = AgentModelLevel.High,
     // Transcript-derived "mid-turn right now" (SessionMessageQueueService.IsWorkingAsync) for the
     // live session. Distinct from Status=Running, which only means the agent was started.
-    bool Working = false);
+    bool Working = false,
+    Guid? TuiProfileId = null,
+    string? ModelId = null,
+    AgentTuiConfiguredSelectionDto? ConfiguredSelection = null,
+    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -67,7 +71,22 @@ public sealed record AgentDetailDto(
     string? SystemPromptAppend = null,
     AgentModelLevel ModelLevel = AgentModelLevel.High,
     // See AgentSummaryDto.Working.
-    bool Working = false);
+    bool Working = false,
+    Guid? TuiProfileId = null,
+    string? ModelId = null,
+    AgentTuiConfiguredSelectionDto? ConfiguredSelection = null,
+    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null);
+
+public sealed record AgentTuiConfiguredSelectionDto(
+    Guid? TuiProfileId,
+    string? ModelId,
+    string? ProfileDisplayName,
+    int? ProfileRevision);
+
+public sealed record AgentTuiLiveSessionSelectionDto(
+    Guid? TuiProfileRevisionId,
+    string? EffectiveModelId,
+    bool PendingRestart);
 
 /// <summary>Supervision snapshot for an always-on agent (see AgentSupervisionState).</summary>
 public sealed record AgentSupervisionDto(
@@ -107,7 +126,11 @@ public sealed record CreateAgentRequest(
     AgentAssignmentPolicy AssignmentPolicy = AgentAssignmentPolicy.AutoPick,
     bool CreateWorkingDirectory = false,
     // Null = High (the default level - the Opus tier - unless picked otherwise).
-    AgentModelLevel? ModelLevel = null);
+    AgentModelLevel? ModelLevel = null,
+    // Null/omitted = installation default profile.
+    Guid? TuiProfileId = null,
+    // Null/omitted = runner default model (no exact --model argument).
+    string? ModelId = null);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -133,7 +156,10 @@ public sealed record UpdateAgentRequest(
     // Null = leave unchanged; empty/whitespace = clear.
     string? SystemPromptAppend = null,
     // Null = leave unchanged.
-    AgentModelLevel? ModelLevel = null);
+    AgentModelLevel? ModelLevel = null,
+    // Null = leave profile selection unchanged. When set, ModelId is applied too (null clears exact model).
+    Guid? TuiProfileId = null,
+    string? ModelId = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.
