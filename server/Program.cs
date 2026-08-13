@@ -285,6 +285,8 @@ try
         builder.Services.AddHostedService<ChannelBridgeService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
+    builder.Services.AddSingleton<RunnerProcessReaper>();
+    builder.Services.AddHostedService(provider => provider.GetRequiredService<RunnerProcessReaper>());
     builder.Services.AddSingleton<IRunnerProcessProbe, RunnerProcessProbe>();
     builder.Services.AddSingleton<AgentTuiOperationCoordinator>();
     builder.Services.AddScoped<AgentTuiProfileService>();

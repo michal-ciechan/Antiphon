@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
@@ -16,6 +17,7 @@ public sealed class AgentTuiOperationCoordinator
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeSpan _operationTimeout;
     private readonly ConcurrentDictionary<OperationKey, Lazy<Task<object>>> _operations = new();
+    private readonly ConcurrentDictionary<OperationKey, Guid> _activeRuns = new();
 
     public AgentTuiOperationCoordinator(
         IServiceScopeFactory scopeFactory,
@@ -102,8 +104,24 @@ public sealed class AgentTuiOperationCoordinator
         }
         finally
         {
+            _activeRuns.TryRemove(key, out _);
             _operations.TryRemove(key, out _);
         }
+    }
+
+    internal void RegisterRun(Guid profileId, string operation, Guid runId)
+    {
+        var key = new OperationKey(profileId, ParseOperation(operation));
+        if (!_activeRuns.TryAdd(key, runId))
+            throw new InvalidOperationException("An active Agent TUI run is already registered for this operation.");
+    }
+
+    internal bool IsRunActive(Guid profileId, string operation, Guid runId)
+    {
+        if (!TryParseOperation(operation, out var parsed))
+            return false;
+        return _activeRuns.TryGetValue(new OperationKey(profileId, parsed), out var activeRunId)
+               && activeRunId == runId;
     }
 
     private async Task<object?> RecoverAsync(
@@ -111,20 +129,45 @@ public sealed class AgentTuiOperationCoordinator
         AgentTuiValidationStatus status,
         string summary)
     {
-        using var finalization = new CancellationTokenSource(RecoveryTimeout);
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var service = scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>();
-        var run = await service.FinalizeIncompleteOperationCoreAsync(
-            key.ProfileId,
-            key.Operation == AgentTuiOperation.Discovery ? "discovery" : "validation",
-            status,
-            summary,
-            finalization.Token);
-        if (run is null)
+        if (!_activeRuns.TryGetValue(key, out var runId))
             return null;
-        return key.Operation == AgentTuiOperation.Discovery
-            ? await service.GetModelsAsync(key.ProfileId, finalization.Token)
-            : run;
+
+        const int maximumAttempts = 3;
+        var startedAt = Stopwatch.GetTimestamp();
+        Exception? lastFailure = null;
+        for (var attempt = 0; attempt < maximumAttempts; attempt++)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startedAt);
+            var remaining = RecoveryTimeout - elapsed;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            var attemptsRemaining = maximumAttempts - attempt;
+            var attemptTimeout = remaining / attemptsRemaining;
+            using var finalization = new CancellationTokenSource(attemptTimeout);
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var service = scope.ServiceProvider.GetRequiredService<AgentTuiProfileService>();
+                var run = await service.FinalizeIncompleteOperationCoreAsync(
+                    runId,
+                    status,
+                    summary,
+                    finalization.Token);
+                if (run is null)
+                    return null;
+                return key.Operation == AgentTuiOperation.Discovery
+                    ? await service.GetModelsAsync(key.ProfileId, finalization.Token)
+                    : run;
+            }
+            catch (Exception exception)
+            {
+                lastFailure = exception;
+            }
+        }
+
+        if (lastFailure is not null)
+            ExceptionDispatchInfo.Capture(lastFailure).Throw();
+        return null;
     }
 
     private async Task<object> RecoverOrRethrowAsync(
@@ -149,6 +192,27 @@ public sealed class AgentTuiOperationCoordinator
     }
 
     private readonly record struct OperationKey(Guid ProfileId, AgentTuiOperation Operation);
+
+    private static AgentTuiOperation ParseOperation(string operation) =>
+        TryParseOperation(operation, out var parsed)
+            ? parsed
+            : throw new ArgumentOutOfRangeException(nameof(operation));
+
+    private static bool TryParseOperation(string operation, out AgentTuiOperation parsed)
+    {
+        switch (operation)
+        {
+            case "discovery":
+                parsed = AgentTuiOperation.Discovery;
+                return true;
+            case "validation":
+                parsed = AgentTuiOperation.Validation;
+                return true;
+            default:
+                parsed = default;
+                return false;
+        }
+    }
 
     private enum AgentTuiOperation
     {

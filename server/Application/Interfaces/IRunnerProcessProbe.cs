@@ -2,9 +2,15 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface IRunnerProcessProbe
 {
-    RunnerPathCheck CheckExecutable(string executable);
-    RunnerPathCheck CheckFile(string path);
-    RunnerPathCheck CheckDirectory(string path);
+    Task<RunnerPathCheck> CheckExecutableAsync(
+        string executable,
+        CancellationToken cancellationToken);
+    Task<RunnerPathCheck> CheckFileAsync(
+        string path,
+        CancellationToken cancellationToken);
+    Task<RunnerPathCheck> CheckDirectoryAsync(
+        string path,
+        CancellationToken cancellationToken);
     Task<RunnerProcessResult> RunAsync(
         RunnerProcessRequest request,
         CancellationToken cancellationToken);
@@ -29,5 +35,6 @@ public sealed record RunnerProcessResult(
     bool Cancelled = false,
     bool Started = true,
     bool CleanlyStopped = true,
+    bool CleanupConfirmed = true,
     bool SensitiveOutputDetected = false,
     string? Error = null);

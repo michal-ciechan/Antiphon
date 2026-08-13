@@ -99,9 +99,14 @@ public sealed class AgentTuiDiscoveryTests
         request.Environment.ShouldContainKey("SYNTHETIC_SETTING");
         models.Where(model => model.Source == AgentTuiModelSource.Discovered)
             .Select(model => model.Identifier)
-            .ShouldBe(["llmgateway/grok-4-5", "openai/gpt-5.6-sol"]);
+            .ShouldBe(["openai/gpt-5.6-sol"]);
+        models.Single(model => model.Identifier == "llmgateway/grok-4-5").Source
+            .ShouldBe(AgentTuiModelSource.Curated);
+        models.Single(model => model.Identifier == "llmgateway/grok-4-5").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
         models.Single(model => model.Identifier == "openai/gpt-5.6-sol").Availability
             .ShouldBe(AgentTuiModelAvailability.Verified);
+        models.Single(model => model.Identifier == "openai/gpt-5.6-sol").Family.ShouldBeNull();
         models.Single(model => model.Identifier == "openai/gpt-5.6-sol").DiscoveredAt
             .ShouldBe(FixedNow.UtcDateTime);
         models.ShouldContain(model =>
@@ -127,6 +132,46 @@ public sealed class AgentTuiDiscoveryTests
         models.ShouldNotContain(model => model.Identifier == "provider/new-model");
         models.ShouldContain(model => model.Identifier == "llmgateway/grok-4-5");
         models.ShouldContain(model => model.Identifier == "operator/custom-model");
+    }
+
+    [Test]
+    public async Task Discovery_rejects_non_opaque_lines_without_trimming_or_skipping_blanks()
+    {
+        var malformedResults = new[]
+        {
+            " provider/leading\n",
+            "provider/trailing \n",
+            "provider/internal whitespace\n",
+            "provider/first\n\nprovider/second\n"
+        };
+
+        foreach (var malformed in malformedResults)
+        {
+            var probe = new RecordingRunnerProcessProbe();
+            probe.Enqueue(Success("provider/stable\n"));
+            probe.Enqueue(Success(malformed));
+            await using var provider = BuildProvider(probe);
+            var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+            await RefreshAsync(provider, profile.Id);
+
+            var models = await RefreshAsync(provider, profile.Id);
+
+            models.ShouldContain(model =>
+                model.Identifier == "provider/stable"
+                && model.Availability == AgentTuiModelAvailability.Stale);
+            var identifiers = models.Select(model => model.Identifier).ToArray();
+            foreach (var rejected in new[]
+                     {
+                         "provider/leading",
+                         "provider/trailing",
+                         "provider/internal whitespace",
+                         "provider/first",
+                         "provider/second"
+                     })
+            {
+                identifiers.ShouldNotContain(rejected);
+            }
+        }
     }
 
     [Test]
@@ -463,7 +508,7 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
-    public async Task Operator_label_keeps_source_but_discovery_verification_becomes_unverified_or_stale()
+    public async Task Operator_label_and_source_survive_discovery_verification_omission_and_failure()
     {
         var probe = new RecordingRunnerProcessProbe();
         probe.Enqueue(Success("operator/custom-model\n"));
@@ -478,15 +523,86 @@ public sealed class AgentTuiDiscoveryTests
         verifiedOperator.Source.ShouldBe(AgentTuiModelSource.Operator);
         verifiedOperator.DisplayName.ShouldBe("Operator label");
         verifiedOperator.Availability.ShouldBe(AgentTuiModelAvailability.Verified);
+        verifiedOperator.DiscoveredAt.ShouldBe(FixedNow.UtcDateTime);
 
         var omitted = await RefreshAsync(provider, profile.Id);
         omitted.Single(model => model.Identifier == "operator/custom-model").Availability
             .ShouldBe(AgentTuiModelAvailability.Unverified);
 
         await RefreshAsync(provider, profile.Id);
+        var failedOperator = (await RefreshAsync(provider, profile.Id))
+            .Single(model => model.Identifier == "operator/custom-model");
+        failedOperator.Source.ShouldBe(AgentTuiModelSource.Operator);
+        failedOperator.DisplayName.ShouldBe("Operator label");
+        failedOperator.Availability.ShouldBe(AgentTuiModelAvailability.Stale);
+    }
+
+    [Test]
+    public async Task Curated_source_survives_discovery_verification_failure_and_omission()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("llmgateway/grok-4-5\n"));
+        probe.Enqueue(new RunnerProcessResult(1, string.Empty, string.Empty, false));
+        probe.Enqueue(Success("provider/replacement\n"));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var overlapped = await RefreshAsync(provider, profile.Id);
         var failed = await RefreshAsync(provider, profile.Id);
-        failed.Single(model => model.Identifier == "operator/custom-model").Availability
-            .ShouldBe(AgentTuiModelAvailability.Stale);
+        var omitted = await RefreshAsync(provider, profile.Id);
+
+        var verifiedCurated = overlapped.Single(model => model.Identifier == "llmgateway/grok-4-5");
+        verifiedCurated.Source.ShouldBe(AgentTuiModelSource.Curated);
+        verifiedCurated.Availability.ShouldBe(AgentTuiModelAvailability.Verified);
+        verifiedCurated.DiscoveredAt.ShouldBe(FixedNow.UtcDateTime);
+
+        var staleCurated = failed.Single(model => model.Identifier == "llmgateway/grok-4-5");
+        staleCurated.Source.ShouldBe(AgentTuiModelSource.Curated);
+        staleCurated.Availability.ShouldBe(AgentTuiModelAvailability.Stale);
+
+        var omittedCurated = omitted.Single(model => model.Identifier == "llmgateway/grok-4-5");
+        omittedCurated.Source.ShouldBe(AgentTuiModelSource.Curated);
+        omittedCurated.Availability.ShouldBe(AgentTuiModelAvailability.Unverified);
+        omittedCurated.DiscoveredAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Discovery_timeout_does_not_run_unbounded_stale_cache_work()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("provider/locked-stale\n"));
+        await using var provider = BuildProvider(probe, timeoutSeconds: 1);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+        await RefreshAsync(provider, profile.Id);
+        probe.Handler = async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        };
+        await using var lockingDb = _fixture.CreateDbContext();
+        await using var transaction = await lockingDb.Database.BeginTransactionAsync();
+        var locked = await lockingDb.AgentTuiModels
+            .SingleAsync(model => model.ProfileId == profile.Id
+                                  && model.Identifier == "provider/locked-stale");
+        locked.DisplayName = "locked during timeout recovery";
+        await lockingDb.SaveChangesAsync();
+
+        var elapsed = Stopwatch.StartNew();
+        await Should.ThrowAsync<OperationCanceledException>(() => RefreshAsync(provider, profile.Id));
+        elapsed.Stop();
+
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+        await transaction.RollbackAsync();
+
+        probe.Handler = null;
+        probe.Enqueue(Success("provider/recovered\n"));
+        await RefreshAsync(provider, profile.Id);
+        await using var verifyDb = _fixture.CreateDbContext();
+        (await verifyDb.AgentTuiValidationRuns.AsNoTracking()
+            .CountAsync(run => run.ProfileId == profile.Id
+                               && run.Operation == "discovery"
+                               && run.Status == AgentTuiValidationStatus.Running))
+            .ShouldBe(0);
     }
 
     [Test]
@@ -638,12 +754,11 @@ public sealed class AgentTuiDiscoveryTests
             && model.Availability == AgentTuiModelAvailability.Stale);
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var latest = await db.AgentTuiValidationRuns.AsNoTracking()
-            .Where(run => run.ProfileId == profile.Id && run.Operation == "discovery")
-            .OrderByDescending(run => run.CreatedAt)
-            .FirstAsync();
-        latest.Status.ShouldBe(AgentTuiValidationStatus.TimedOut);
-        latest.CompletedAt.ShouldNotBeNull();
+        var timedOutRun = await db.AgentTuiValidationRuns.AsNoTracking()
+            .SingleAsync(run => run.ProfileId == profile.Id
+                                && run.Operation == "discovery"
+                                && run.Status == AgentTuiValidationStatus.TimedOut);
+        timedOutRun.CompletedAt.ShouldNotBeNull();
     }
 
     [Test]
@@ -693,6 +808,81 @@ public sealed class AgentTuiDiscoveryTests
         capabilities.ShouldNotBeEmpty();
         capabilities.Single(capability => capability.Name == "structuredActivity").State
             .ShouldBe(AgentTuiCapabilityState.Degraded);
+    }
+
+    [Test]
+    public async Task Validation_fails_clean_stop_and_suitability_when_cleanup_is_unconfirmed()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("runner 1.0\n"));
+        probe.Enqueue(Success("provider/model\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            null,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true,
+            CleanupConfirmed: false,
+            Error: "Cleanup confirmation is pending."));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Status.ShouldBe(AgentTuiValidationStatus.Failed);
+        run.Stages.Single(stage => stage.Name == "cleanStop").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Failed);
+        run.Suitability.Queued.ShouldBeFalse();
+        run.Suitability.Delegated.ShouldBeFalse();
+        run.Suitability.Resumable.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Failed_primary_recovery_is_terminalized_by_a_later_independent_read()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new RecordingRunnerProcessProbe
+        {
+            Handler = async (_, cancellationToken) =>
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+                throw new InvalidOperationException("synthetic recovery failure");
+            }
+        };
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var validation = ValidateAsync(provider, profile.Id);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await using var lockingDb = _fixture.CreateDbContext();
+        await using var transaction = await lockingDb.Database.BeginTransactionAsync();
+        var running = await lockingDb.AgentTuiValidationRuns
+            .SingleAsync(run => run.ProfileId == profile.Id
+                                && run.Operation == "validation"
+                                && run.Status == AgentTuiValidationStatus.Running);
+        running.Summary = "locked during primary recovery";
+        await lockingDb.SaveChangesAsync();
+        release.TrySetResult();
+
+        var elapsed = Stopwatch.StartNew();
+        await Should.ThrowAsync<InvalidOperationException>(() => validation);
+        elapsed.Stop();
+        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+        await transaction.RollbackAsync();
+
+        await using var readScope = provider.CreateAsyncScope();
+        var reconciled = await readScope.ServiceProvider.GetRequiredService<AgentTuiProfileService>()
+            .GetValidationRunAsync(running.Id, CancellationToken.None);
+
+        reconciled.Status.ShouldBe(AgentTuiValidationStatus.TimedOut);
+        reconciled.CompletedAt.ShouldNotBeNull();
+        await using var verifyDb = _fixture.CreateDbContext();
+        (await verifyDb.AgentTuiValidationRuns.AsNoTracking()
+            .SingleAsync(run => run.Id == running.Id)).Status
+            .ShouldBe(AgentTuiValidationStatus.TimedOut);
     }
 
     [Test]
@@ -900,11 +1090,17 @@ public sealed class AgentTuiDiscoveryTests
 
         public void Enqueue(RunnerProcessResult result) => _results.Enqueue(result);
 
-        public RunnerPathCheck CheckExecutable(string executable) => ExecutableCheck;
+        public Task<RunnerPathCheck> CheckExecutableAsync(
+            string executable,
+            CancellationToken cancellationToken) => Task.FromResult(ExecutableCheck);
 
-        public RunnerPathCheck CheckFile(string path) => FileCheck;
+        public Task<RunnerPathCheck> CheckFileAsync(
+            string path,
+            CancellationToken cancellationToken) => Task.FromResult(FileCheck);
 
-        public RunnerPathCheck CheckDirectory(string path) => DirectoryCheck;
+        public Task<RunnerPathCheck> CheckDirectoryAsync(
+            string path,
+            CancellationToken cancellationToken) => Task.FromResult(DirectoryCheck);
 
         public Task<RunnerProcessResult> RunAsync(
             RunnerProcessRequest request,

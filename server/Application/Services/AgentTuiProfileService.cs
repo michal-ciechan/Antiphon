@@ -187,9 +187,17 @@ public sealed partial class AgentTuiProfileService
         CancellationToken cancellationToken)
     {
         var run = await _db.AgentTuiValidationRuns
-            .AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.Id == runId, cancellationToken)
             ?? throw new NotFoundException(nameof(AgentTuiValidationRun), runId);
+        if (run.Status == AgentTuiValidationStatus.Running
+            && !IsOperationRunActive(run))
+        {
+            await FinalizeIncompleteOperationCoreAsync(
+                run.Id,
+                AgentTuiValidationStatus.TimedOut,
+                "The bounded operation could not confirm completion and was terminalized safely.",
+                cancellationToken);
+        }
         return MapValidationRun(run);
     }
 
@@ -637,6 +645,10 @@ public sealed partial class AgentTuiProfileService
         CancellationToken cancellationToken)
     {
         var snapshot = await LoadOperationSnapshotAsync(profileId, cancellationToken);
+        await ReconcileInactiveOperationRunsCoreAsync(
+            profileId,
+            "discovery",
+            cancellationToken);
         if (snapshot.Kind != AgentKind.OpenCode)
             return MergeModels(snapshot.Kind, snapshot.Models);
 
@@ -657,18 +669,9 @@ public sealed partial class AgentTuiProfileService
             return await GetModelsAsync(profileId, cancellationToken);
         }
 
-        RunnerProcessResult result;
-        try
-        {
-            result = await RequireProcessProbe().RunAsync(
-                BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
-                cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            await MarkDiscoveredModelsStaleAsync(snapshot, CancellationToken.None);
-            throw;
-        }
+        var result = await RequireProcessProbe().RunAsync(
+            BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
+            cancellationToken);
 
         var parsed = ParseDiscoveredModels(result);
         var runnerVersion = await LatestRunnerVersionAsync(snapshot, cancellationToken);
@@ -715,13 +718,19 @@ public sealed partial class AgentTuiProfileService
         CancellationToken cancellationToken)
     {
         var snapshot = await LoadOperationSnapshotAsync(profileId, cancellationToken);
+        await ReconcileInactiveOperationRunsCoreAsync(
+            profileId,
+            "validation",
+            cancellationToken);
         var run = await CreateOperationRunAsync(snapshot, "validation", cancellationToken);
         var probe = RequireProcessProbe();
         var stages = new List<AgentTuiValidationStageDto>();
         var capabilities = _runnerCatalog.Get(snapshot.Kind, snapshot.Arguments).Capabilities;
         var timedOut = false;
 
-        var executable = probe.CheckExecutable(snapshot.Executable);
+        var executable = await probe.CheckExecutableAsync(
+            snapshot.Executable,
+            cancellationToken);
         stages.Add(Stage(
             "executable",
             executable.IsAvailable
@@ -729,7 +738,10 @@ public sealed partial class AgentTuiProfileService
                 : AgentTuiValidationStageStatus.Failed,
             executable.Message));
 
-        var arguments = CheckOrderedArguments(snapshot, probe);
+        var arguments = await CheckOrderedArgumentsAsync(
+            snapshot,
+            probe,
+            cancellationToken);
         stages.Add(Stage(
             "arguments",
             arguments.IsAvailable
@@ -739,7 +751,7 @@ public sealed partial class AgentTuiProfileService
 
         var workingDirectory = snapshot.WorkingDirectory is null
             ? new RunnerPathCheck(true, "The process default working directory will be used.")
-            : probe.CheckDirectory(snapshot.WorkingDirectory);
+            : await probe.CheckDirectoryAsync(snapshot.WorkingDirectory, cancellationToken);
         stages.Add(Stage(
             "workingDirectory",
             workingDirectory.IsAvailable
@@ -849,6 +861,7 @@ public sealed partial class AgentTuiProfileService
                             && !startupResult.TimedOut
                             && !startupResult.Cancelled
                             && !startupResult.OutputTruncated
+                            && startupResult.CleanupConfirmed
                             && !startupResult.SensitiveOutputDetected
                             && startupResult.ExitCode is null or 0;
         stages.Add(Stage(
@@ -861,12 +874,14 @@ public sealed partial class AgentTuiProfileService
                 : ProbeFailureMessage(startupResult, "The bounded startup probe failed.")));
         stages.Add(Stage(
             "cleanStop",
-            startupResult.CleanlyStopped
+            startupResult.CleanlyStopped && startupResult.CleanupConfirmed
                 ? AgentTuiValidationStageStatus.Passed
                 : AgentTuiValidationStageStatus.Failed,
-            startupResult.CleanlyStopped
+            startupResult.CleanlyStopped && startupResult.CleanupConfirmed
                 ? "The startup probe stopped without leaving a child process."
-                : "The startup probe required forced cleanup."));
+                : !startupResult.CleanupConfirmed
+                    ? "The startup probe could not confirm process cleanup."
+                    : "The startup probe required forced cleanup."));
 
         var suitability = CalculateSuitability(stages, capabilities);
         stages.Add(SuitabilityStage(suitability));
@@ -900,24 +915,21 @@ public sealed partial class AgentTuiProfileService
     }
 
     internal async Task<AgentTuiValidationRunDto?> FinalizeIncompleteOperationCoreAsync(
-        Guid profileId,
-        string operation,
+        Guid runId,
         AgentTuiValidationStatus status,
         string summary,
         CancellationToken cancellationToken)
     {
         var run = await _db.AgentTuiValidationRuns
-            .Where(candidate => candidate.ProfileId == profileId
-                                && candidate.Operation == operation
-                                && candidate.Status == AgentTuiValidationStatus.Running)
-            .OrderByDescending(candidate => candidate.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(candidate => candidate.Id == runId
+                                               && candidate.Status == AgentTuiValidationStatus.Running,
+                cancellationToken);
         if (run is null)
             return null;
-        if (operation == "discovery")
+        if (run.Operation == "discovery")
         {
             await MarkDiscoveredModelsStaleAsync(
-                profileId,
+                run.ProfileId,
                 run.ProfileRevisionId,
                 cancellationToken);
         }
@@ -925,7 +937,7 @@ public sealed partial class AgentTuiProfileService
             run,
             status,
             [Stage(
-                operation,
+                run.Operation,
                 AgentTuiValidationStageStatus.Failed,
                 status == AgentTuiValidationStatus.TimedOut
                     ? "The bounded operation reached its deadline; retained data remains available."
@@ -936,6 +948,31 @@ public sealed partial class AgentTuiProfileService
             new AgentTuiSuitabilityDto(false, false, false, false),
             cancellationToken);
         return MapValidationRun(run);
+    }
+
+    private async Task ReconcileInactiveOperationRunsCoreAsync(
+        Guid profileId,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        var runIds = await _db.AgentTuiValidationRuns
+            .AsNoTracking()
+            .Where(run => run.ProfileId == profileId
+                          && run.Operation == operation
+                          && run.Status == AgentTuiValidationStatus.Running)
+            .OrderBy(run => run.CreatedAt)
+            .Select(run => run.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var runId in runIds)
+        {
+            if (_operationCoordinator?.IsRunActive(profileId, operation, runId) == true)
+                continue;
+            await FinalizeIncompleteOperationCoreAsync(
+                runId,
+                AgentTuiValidationStatus.TimedOut,
+                "The bounded operation could not confirm completion and was terminalized safely.",
+                cancellationToken);
+        }
     }
 
     private async Task<AgentTuiOperationSnapshot> LoadOperationSnapshotAsync(
@@ -1034,9 +1071,10 @@ public sealed partial class AgentTuiProfileService
             "All declared managed credentials are configured and decryptable.");
     }
 
-    private static RunnerPathCheck CheckOrderedArguments(
+    private static async Task<RunnerPathCheck> CheckOrderedArgumentsAsync(
         AgentTuiOperationSnapshot snapshot,
-        IRunnerProcessProbe probe)
+        IRunnerProcessProbe probe,
+        CancellationToken cancellationToken)
     {
         if (snapshot.Arguments.Count > 256
             || snapshot.DiscoveryArguments.Count > 256
@@ -1073,7 +1111,7 @@ public sealed partial class AgentTuiProfileService
             return new RunnerPathCheck(true, "Ordered arguments require no shell interpolation.");
         foreach (var path in distinctWrapperPaths)
         {
-            var check = probe.CheckFile(path);
+            var check = await probe.CheckFileAsync(path, cancellationToken);
             if (!check.IsAvailable)
                 return check;
         }
@@ -1099,6 +1137,7 @@ public sealed partial class AgentTuiProfileService
             || result.TimedOut
             || result.Cancelled
             || result.OutputTruncated
+            || !result.CleanupConfirmed
             || result.SensitiveOutputDetected)
         {
             return new DiscoveryParseResult(
@@ -1109,12 +1148,12 @@ public sealed partial class AgentTuiProfileService
 
         var identifiers = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var rawLine in result.StandardOutput.ReplaceLineEndings("\n").Split('\n'))
+        using var reader = new StringReader(result.StandardOutput);
+        while (reader.ReadLine() is { } identifier)
         {
-            var identifier = rawLine.Trim();
-            if (identifier.Length == 0)
-                continue;
-            if (identifier.Length > 500 || !ModelIdentifierRegex().IsMatch(identifier))
+            if (identifier.Length == 0
+                || identifier.Length > 500
+                || !ModelIdentifierRegex().IsMatch(identifier))
             {
                 return new DiscoveryParseResult(
                     false,
@@ -1182,8 +1221,11 @@ public sealed partial class AgentTuiProfileService
             .Where(model => model.ProfileId == snapshot.ProfileId)
             .ToListAsync(cancellationToken);
         var accepted = identifiers.ToHashSet(StringComparer.Ordinal);
+        var curated = _runnerCatalog.Get(snapshot.Kind).CuratedModels
+            .ToDictionary(model => model.Identifier, StringComparer.Ordinal);
         _db.AgentTuiModels.RemoveRange(persisted.Where(model =>
-            model.Source == AgentTuiModelSource.Discovered && !accepted.Contains(model.Identifier)));
+            !accepted.Contains(model.Identifier)
+            && model.Source is AgentTuiModelSource.Discovered or AgentTuiModelSource.Curated));
 
         for (var index = 0; index < identifiers.Count; index++)
         {
@@ -1192,6 +1234,14 @@ public sealed partial class AgentTuiProfileService
                 string.Equals(model.Identifier, identifier, StringComparison.Ordinal));
             if (existing is not null)
             {
+                if (curated.TryGetValue(identifier, out var curatedModel)
+                    && existing.Source != AgentTuiModelSource.Operator)
+                {
+                    existing.DisplayName = curatedModel.DisplayName;
+                    existing.Family = curatedModel.Family;
+                    existing.Source = AgentTuiModelSource.Curated;
+                    existing.IsSuggestedDefault = curatedModel.IsSuggestedDefault;
+                }
                 existing.Availability = AgentTuiModelAvailability.Verified;
                 existing.DiscoveredAt = now;
                 existing.RunnerVersion = runnerVersion;
@@ -1199,18 +1249,22 @@ public sealed partial class AgentTuiProfileService
                 continue;
             }
 
+            var isCurated = curated.TryGetValue(identifier, out var suggestion);
+
             _db.AgentTuiModels.Add(new AgentTuiModel
             {
                 Id = Guid.NewGuid(),
                 ProfileId = snapshot.ProfileId,
                 Identifier = identifier,
-                DisplayName = identifier,
-                Family = ModelFamily(identifier),
-                Source = AgentTuiModelSource.Discovered,
+                DisplayName = isCurated ? suggestion!.DisplayName : identifier,
+                Family = isCurated ? suggestion!.Family : null,
+                Source = isCurated
+                    ? AgentTuiModelSource.Curated
+                    : AgentTuiModelSource.Discovered,
                 Availability = AgentTuiModelAvailability.Verified,
                 DiscoveredAt = now,
                 RunnerVersion = runnerVersion,
-                IsSuggestedDefault = false,
+                IsSuggestedDefault = isCurated && suggestion!.IsSuggestedDefault,
                 CreatedAt = now.AddTicks(index),
                 UpdatedAt = now.AddTicks(index)
             });
@@ -1225,6 +1279,7 @@ public sealed partial class AgentTuiProfileService
             operatorModel.RunnerVersion = null;
             operatorModel.UpdatedAt = now.AddTicks(identifiers.Count);
         }
+
         await _db.SaveChangesAsync(cancellationToken);
     }
 
@@ -1315,6 +1370,10 @@ public sealed partial class AgentTuiProfileService
             CreatedAt = now,
             StartedAt = now
         };
+        RequireOperationCoordinator().RegisterRun(
+            snapshot.ProfileId,
+            operation,
+            run.Id);
         _db.AgentTuiValidationRuns.Add(run);
         await _db.SaveChangesAsync(cancellationToken);
         return run;
@@ -1453,6 +1512,7 @@ public sealed partial class AgentTuiProfileService
             || result.TimedOut
             || result.Cancelled
             || result.OutputTruncated
+            || !result.CleanupConfirmed
             || result.SensitiveOutputDetected)
         {
             return null;
@@ -1472,6 +1532,8 @@ public sealed partial class AgentTuiProfileService
             return "The bounded runner probe did not complete before its deadline.";
         if (result.OutputTruncated)
             return "The runner probe exceeded the bounded output limit.";
+        if (!result.CleanupConfirmed)
+            return "The runner probe could not confirm process cleanup.";
         if (result.SensitiveOutputDetected)
             return "The runner probe returned credential-like diagnostics that were discarded.";
         return fallback;
@@ -1517,15 +1579,12 @@ public sealed partial class AgentTuiProfileService
         UpdatedAt = model.UpdatedAt
     };
 
-    private static string? ModelFamily(string identifier)
-    {
-        var separator = identifier.IndexOf('/');
-        return separator > 0 ? identifier[..separator] : null;
-    }
-
     private AgentTuiOperationCoordinator RequireOperationCoordinator() =>
         _operationCoordinator
         ?? throw new InvalidOperationException("Agent TUI operation coordination is not configured.");
+
+    private bool IsOperationRunActive(AgentTuiValidationRun run) =>
+        _operationCoordinator?.IsRunActive(run.ProfileId, run.Operation, run.Id) == true;
 
     private IRunnerProcessProbe RequireProcessProbe() =>
         _processProbe

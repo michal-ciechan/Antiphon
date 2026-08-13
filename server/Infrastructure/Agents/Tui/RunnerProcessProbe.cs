@@ -15,11 +15,33 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private const int MaximumEnvironmentEntries = 256;
     private const int MaximumEnvironmentValueLength = 4000;
     private const int CleanupGraceMilliseconds = 200;
-    private const int GracefulSignalMilliseconds = 75;
+    private const int GracefulSignalMilliseconds = 500;
     private readonly TimeSpan _timeout;
     private readonly int _maxOutputBytes;
+    private readonly RunnerProcessReaper _reaper;
+    private readonly Func<Process, CancellationToken, Task<bool>> _stopTreeAsync;
+    private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkExecutableAsync;
+    private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkFileAsync;
+    private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkDirectoryAsync;
+    private readonly Func<RunnerProcessStartGuard, CancellationToken, Task<bool>> _startProcessAsync;
+    private readonly Action? _startCommitted;
 
     public RunnerProcessProbe(IOptions<AgentTuiSettings> settings)
+        : this(settings, new RunnerProcessReaper())
+    {
+    }
+
+    public RunnerProcessProbe(
+        IOptions<AgentTuiSettings> settings,
+        RunnerProcessReaper reaper)
+        : this(settings, reaper, seams: null)
+    {
+    }
+
+    internal RunnerProcessProbe(
+        IOptions<AgentTuiSettings> settings,
+        RunnerProcessReaper reaper,
+        RunnerProcessProbeSeams? seams)
     {
         var timeoutSeconds = settings.Value.ProbeTimeoutSeconds;
         var maxOutputBytes = settings.Value.MaxProbeOutputBytes;
@@ -40,9 +62,43 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
 
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _maxOutputBytes = maxOutputBytes;
+        _reaper = reaper;
+        _stopTreeAsync = seams?.StopTreeAsync ?? RunnerProcessCleanup.StopTreeAsync;
+        _checkExecutableAsync = seams?.CheckExecutableAsync ?? DefaultCheckExecutableAsync;
+        _checkFileAsync = seams?.CheckFileAsync ?? DefaultCheckFileAsync;
+        _checkDirectoryAsync = seams?.CheckDirectoryAsync ?? DefaultCheckDirectoryAsync;
+        _startProcessAsync = seams?.StartProcessAsync ?? DefaultStartProcessAsync;
+        _startCommitted = seams?.StartCommitted;
     }
 
-    public RunnerPathCheck CheckExecutable(string executable)
+    public Task<RunnerPathCheck> CheckExecutableAsync(
+        string executable,
+        CancellationToken cancellationToken) =>
+        RunPathCheckAsync(
+            executable,
+            _checkExecutableAsync,
+            "The executable inspection reached its deadline.",
+            cancellationToken);
+
+    public Task<RunnerPathCheck> CheckFileAsync(
+        string path,
+        CancellationToken cancellationToken) =>
+        RunPathCheckAsync(
+            path,
+            _checkFileAsync,
+            "The required-file inspection reached its deadline.",
+            cancellationToken);
+
+    public Task<RunnerPathCheck> CheckDirectoryAsync(
+        string path,
+        CancellationToken cancellationToken) =>
+        RunPathCheckAsync(
+            path,
+            _checkDirectoryAsync,
+            "The working-directory inspection reached its deadline.",
+            cancellationToken);
+
+    private RunnerPathCheck CheckExecutableCore(string executable)
     {
         if (string.IsNullOrWhiteSpace(executable) || executable.Length > MaximumArgumentLength)
             return Unavailable("The executable is invalid or unavailable.");
@@ -77,7 +133,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         return Unavailable("The executable is unavailable.");
     }
 
-    public RunnerPathCheck CheckFile(string path)
+    private RunnerPathCheck CheckFileCore(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || path.Length > MaximumArgumentLength)
             return Unavailable("The required file is invalid or unavailable.");
@@ -95,7 +151,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         }
     }
 
-    public RunnerPathCheck CheckDirectory(string path)
+    private RunnerPathCheck CheckDirectoryCore(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || path.Length > 1000)
             return Unavailable("The working directory is invalid or unavailable.");
@@ -117,11 +173,27 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         RunnerProcessRequest request,
         CancellationToken cancellationToken)
     {
+        using var admission = _reaper.TryAdmitProbe();
+        if (admission is null)
+        {
+            return Failure(
+                "The runner process probe is unavailable because the host is shutting down.");
+        }
+        using var timeout = new CancellationTokenSource(_timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            timeout.Token,
+            cancellationToken);
         var requestFailure = ValidateRequest(request);
         if (requestFailure is not null)
             return Failure(requestFailure);
-        if (cancellationToken.IsCancellationRequested)
-            return CancelledBeforeStart();
+        if (linked.IsCancellationRequested)
+        {
+            var preStartCancelled = cancellationToken.IsCancellationRequested;
+            return InterruptedBeforeStart(
+                timedOut: !preStartCancelled,
+                cancelled: preStartCancelled,
+                cleanupConfirmed: true);
+        }
 
         var startInfo = new ProcessStartInfo
         {
@@ -152,17 +224,38 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         foreach (var entry in childEnvironment)
             startInfo.Environment[entry.Key] = entry.Value;
 
-        using var process = new Process { StartInfo = startInfo };
+        var process = new Process { StartInfo = startInfo };
+        var startGuard = new RunnerProcessStartGuard(process, _startCommitted);
+        var trackingId = _reaper.Register(startGuard);
+        Task<bool>? startTask = null;
         try
         {
-            if (!process.Start())
+            linked.Token.ThrowIfCancellationRequested();
+            startTask = _startProcessAsync(startGuard, linked.Token);
+            if (!await startTask.WaitAsync(linked.Token))
+            {
+                _reaper.Release(trackingId);
                 return Failure("The probe process could not be started.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            var startCancelled = cancellationToken.IsCancellationRequested;
+            var startTimedOut = !startCancelled && timeout.IsCancellationRequested;
+            if (linked.IsCancellationRequested && !startCancelled && !startTimedOut)
+                startTimedOut = true;
+            if (startTask is not null)
+                _reaper.AdoptPendingStart(trackingId, startTask);
+            else
+                _reaper.Release(trackingId);
+            return InterruptedBeforeStart(startTimedOut, startCancelled, startTask is null);
         }
         catch (Exception exception) when (exception is Win32Exception
                                           or InvalidOperationException
                                           or IOException
                                           or UnauthorizedAccessException)
         {
+            _reaper.Release(trackingId);
             return Failure("The probe process could not be started.");
         }
 
@@ -172,11 +265,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var timedOut = false;
         var cancelled = false;
         var cleanlyStopped = true;
+        var cleanupConfirmed = true;
 
-        using var timeout = new CancellationTokenSource(_timeout);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            timeout.Token,
-            cancellationToken);
         try
         {
             var waitForExit = process.WaitForExitAsync(CancellationToken.None);
@@ -189,7 +279,12 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 var completed = await Task.WhenAny(waitForExit, stopDelay);
                 if (completed == stopDelay && !linked.IsCancellationRequested)
                 {
-                    cleanlyStopped = await TryCleanStopAsync(process, waitForExit);
+                    var cleanup = await TryCleanStopAsync(
+                        process,
+                        waitForExit,
+                        linked.Token);
+                    cleanlyStopped = cleanup.CleanlyStopped;
+                    cleanupConfirmed = cleanup.CleanupConfirmed;
                 }
                 else
                 {
@@ -205,22 +300,22 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         {
             cancelled = cancellationToken.IsCancellationRequested;
             timedOut = !cancelled && timeout.IsCancellationRequested;
-            await StopTreeAsync(process);
+            cleanupConfirmed = await StopTreeSafelyAsync(process);
             cleanlyStopped = false;
         }
         catch (Exception exception) when (exception is InvalidOperationException
                                           or Win32Exception
                                           or IOException)
         {
-            await StopTreeAsync(process);
+            cleanupConfirmed = await StopTreeSafelyAsync(process);
             cleanlyStopped = false;
         }
 
         await DrainSafelyAsync(stdoutDrain, stderrDrain);
         var rawOutput = capture.GetOutput();
         var sanitized = Sanitize(rawOutput.StandardOutput, rawOutput.StandardError, request.SecretValues);
-        var exitCode = TryGetExitCode(process, timedOut || cancelled);
-        return new RunnerProcessResult(
+        var exitCode = TryGetExitCode(process, timedOut || cancelled || !cleanupConfirmed);
+        var result = new RunnerProcessResult(
             exitCode,
             sanitized.StandardOutput,
             sanitized.StandardError,
@@ -229,14 +324,22 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             cancelled,
             Started: true,
             cleanlyStopped,
+            cleanupConfirmed,
             sanitized.SensitiveOutputDetected,
-            timedOut
-                ? "The probe timed out."
+            !cleanupConfirmed
+                ? "The probe process cleanup could not be confirmed; background cleanup is continuing."
+                : timedOut
+                    ? "The probe timed out."
                 : cancelled
                     ? "The probe was cancelled."
                     : cleanlyStopped
                         ? null
                         : "The probe process required forced cleanup.");
+        if (cleanupConfirmed)
+            _reaper.Release(trackingId);
+        else
+            _reaper.AdoptStarted(trackingId);
+        return result;
     }
 
     private static async Task DrainAsync(
@@ -263,6 +366,62 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         }
     }
 
+    private async Task<RunnerPathCheck> RunPathCheckAsync(
+        string value,
+        Func<string, CancellationToken, Task<RunnerPathCheck>> checkAsync,
+        string deadlineMessage,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(_timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            timeout.Token,
+            cancellationToken);
+        try
+        {
+            return await checkAsync(value, linked.Token).WaitAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            return Unavailable(deadlineMessage);
+        }
+    }
+
+    private Task<RunnerPathCheck> DefaultCheckExecutableAsync(
+        string executable,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CheckExecutableCore(executable), CancellationToken.None);
+
+    private Task<RunnerPathCheck> DefaultCheckFileAsync(
+        string path,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CheckFileCore(path), CancellationToken.None);
+
+    private Task<RunnerPathCheck> DefaultCheckDirectoryAsync(
+        string path,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CheckDirectoryCore(path), CancellationToken.None);
+
+    private static Task<bool> DefaultStartProcessAsync(
+        RunnerProcessStartGuard process,
+        CancellationToken cancellationToken) =>
+        Task.Run(process.TryStart, CancellationToken.None);
+
+    private async Task<bool> StopTreeSafelyAsync(Process process)
+    {
+        try
+        {
+            return await _stopTreeAsync(process, CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     private static async Task DrainSafelyAsync(Task stdout, Task stderr)
     {
         try
@@ -278,17 +437,22 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         }
     }
 
-    private static async Task<bool> TryCleanStopAsync(Process process, Task waitForExit)
+    private async Task<CleanupOutcome> TryCleanStopAsync(
+        Process process,
+        Task waitForExit,
+        CancellationToken cancellationToken)
     {
         try
         {
             if (process.HasExited)
-                return true;
+                return new CleanupOutcome(true, true);
             process.StandardInput.Close();
             try
             {
-                await waitForExit.WaitAsync(TimeSpan.FromMilliseconds(GracefulSignalMilliseconds));
-                return true;
+                await waitForExit.WaitAsync(
+                    TimeSpan.FromMilliseconds(GracefulSignalMilliseconds),
+                    cancellationToken);
+                return new CleanupOutcome(true, true);
             }
             catch (TimeoutException)
             {
@@ -298,8 +462,10 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             {
                 try
                 {
-                    await waitForExit.WaitAsync(TimeSpan.FromMilliseconds(GracefulSignalMilliseconds));
-                    return true;
+                    await waitForExit.WaitAsync(
+                        TimeSpan.FromMilliseconds(GracefulSignalMilliseconds),
+                        cancellationToken);
+                    return new CleanupOutcome(true, true);
                 }
                 catch (TimeoutException)
                 {
@@ -314,51 +480,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             // Fall through to bounded forced cleanup.
         }
 
-        await StopTreeAsync(process);
-        return false;
-    }
-
-    private static async Task<bool> StopTreeAsync(Process process)
-    {
-        KillTree(process);
-        return await AwaitExitAsync(process);
-    }
-
-    private static void KillTree(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
-        {
-            // The process may have exited between the state check and kill request.
-        }
-    }
-
-    private static async Task<bool> AwaitExitAsync(Process process)
-    {
-        try
-        {
-            await process.WaitForExitAsync(CancellationToken.None)
-                .WaitAsync(TimeSpan.FromMilliseconds(CleanupGraceMilliseconds));
-            return process.HasExited;
-        }
-        catch (Exception exception) when (exception is TimeoutException
-                                          or InvalidOperationException
-                                          or Win32Exception)
-        {
-            KillTree(process);
-            try
-            {
-                return process.HasExited;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
-        }
+        var cleanupConfirmed = await StopTreeSafelyAsync(process);
+        return new CleanupOutcome(false, cleanupConfirmed);
     }
 
     private static int? TryGetExitCode(Process process, bool forced)
@@ -454,16 +577,24 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private static RunnerProcessResult Failure(string message) =>
         new(null, string.Empty, string.Empty, false, Started: false, CleanlyStopped: false, Error: message);
 
-    private static RunnerProcessResult CancelledBeforeStart() =>
+    private static RunnerProcessResult InterruptedBeforeStart(
+        bool timedOut,
+        bool cancelled,
+        bool cleanupConfirmed) =>
         new(
             null,
             string.Empty,
             string.Empty,
-            false,
-            Cancelled: true,
+            timedOut,
+            Cancelled: cancelled,
             Started: false,
-            CleanlyStopped: true,
-            Error: "The probe was cancelled.");
+            CleanlyStopped: cleanupConfirmed,
+            CleanupConfirmed: cleanupConfirmed,
+            Error: cleanupConfirmed
+                ? timedOut
+                    ? "The probe timed out before process startup."
+                    : "The probe was cancelled before process startup."
+                : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
         @"(?im)(?<![A-Za-z0-9_])[""']?(?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|token|password|secret|authorization)[""']?\s*[:=]\s*[^\r\n]+",
@@ -517,8 +648,19 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     }
 
     private sealed record CapturedOutput(string StandardOutput, string StandardError);
+    private sealed record CleanupOutcome(bool CleanlyStopped, bool CleanupConfirmed);
     private sealed record SanitizedOutput(
         string StandardOutput,
         string StandardError,
         bool SensitiveOutputDetected);
+}
+
+internal sealed class RunnerProcessProbeSeams
+{
+    internal Func<Process, CancellationToken, Task<bool>>? StopTreeAsync { get; init; }
+    internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckExecutableAsync { get; init; }
+    internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckFileAsync { get; init; }
+    internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckDirectoryAsync { get; init; }
+    internal Func<RunnerProcessStartGuard, CancellationToken, Task<bool>>? StartProcessAsync { get; init; }
+    internal Action? StartCommitted { get; init; }
 }
