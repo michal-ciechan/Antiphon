@@ -855,12 +855,13 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
         var lateAgent = NewAgent(profileId: null, AgentModelLevel.Medium);
         DbContext.Agents.Add(lateAgent);
         await DbContext.SaveChangesAsync();
+        var rejectedSecondPassDefinitionName = $"new-default-{Guid.NewGuid():N}";
         var changedSettings = new AgentRegistrySettings
         {
-            DefaultDefinition = "new-default",
+            DefaultDefinition = rejectedSecondPassDefinitionName,
             Definitions = new Dictionary<string, AgentDefinition>
             {
-                ["new-default"] = new()
+                [rejectedSecondPassDefinitionName] = new()
                 {
                     Kind = "Codex",
                     Exe = "must-not-overwrite-or-import",
@@ -879,9 +880,17 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             .ImportAsync(CancellationToken.None);
 
         secondPass.ProfilesCreated.ShouldBe(0);
-        var importedProfileIds = importedProfiles.Select(profile => profile.Id).ToArray();
-        (await DbContext.AgentTuiProfiles.CountAsync(profile => importedProfileIds.Contains(profile.Id)))
-            .ShouldBe(importedProfiles.Count);
+        var secondPassDefinitionNames = changedSettings.Definitions.Keys.ToArray();
+        var profilesMatchingSecondPassDefinitions = await DbContext.AgentTuiProfiles.AsNoTracking()
+            .Where(profile => profile.Source == AgentTuiProfileSource.ImportedFile
+                && profile.SourceDefinitionName != null
+                && secondPassDefinitionNames.Contains(profile.SourceDefinitionName))
+            .OrderBy(profile => profile.SourceDefinitionName)
+            .Select(profile => new { profile.Id, profile.SourceDefinitionName })
+            .ToListAsync();
+        profilesMatchingSecondPassDefinitions
+            .Select(profile => (profile.Id, profile.SourceDefinitionName))
+            .ShouldBe([(defaultProfile.Id, defaultProfile.SourceDefinitionName)]);
         (await DbContext.AgentTuiProfileRevisions.AsNoTracking()
             .SingleAsync(revision => revision.Id == defaultProfile.ActiveRevisionId))
             .Executable.ShouldBe("synthetic-claude-wrapper");
