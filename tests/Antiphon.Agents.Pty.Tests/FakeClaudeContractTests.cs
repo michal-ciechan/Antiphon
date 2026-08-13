@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -299,20 +300,151 @@ public class FakeClaudeContractTests
             (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
 
+            // One turn (user + assistant) then the manual-compaction set of six (pinned below).
+            var lines = await WaitForTranscriptLinesAsync(path, 8);
             await runner.KillAsync(TimeSpan.FromSeconds(2));
 
-            var lines = (await File.ReadAllLinesAsync(path)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
-            lines.Length.ShouldBe(3);
+            lines.Length.ShouldBe(8);
             lines[0].ShouldContain("\"type\":\"user\"");
             lines[0].ShouldContain("hello transcript");
             lines[1].ShouldContain("\"type\":\"assistant\"");
             lines[1].ShouldContain("\"stop_reason\":\"end_turn\"");
-            lines[2].ShouldContain("\"subtype\":\"compact_boundary\"");
+            lines[3].ShouldContain("\"subtype\":\"compact_boundary\"");
         }
         finally
         {
             try { File.Delete(path); } catch { }
         }
+    }
+
+    // CARD-0041: a manual /compact writes SIX records, not one, and two of them are the shapes that
+    // left a compacted session reading "working" forever — the RAW typed prompt (recorded in
+    // addition to the <command-name> wrapper) and the isCompactSummary continuation. Modelling only
+    // the boundary, as this fake used to, made the bug unreproducible. Real-Claude shape pinned by
+    // ClaudeCompactionCanaryTests; this pins the fake's mirror, and that the normalizer's rules
+    // classify each record the way the working checks need.
+    [Test]
+    public async Task Manual_compact_with_args_writes_the_full_measured_record_set()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-compact-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
+
+            await runner.SendLineAsync("/compact keep the API contract notes");
+            (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("/compact WITH ARGUMENTS must still compact — the live shape had args");
+            // The screen line is written BEFORE the records — and this is the fake's first JSON
+            // serialization, whose warm-up is slow enough to lose the whole set to the kill below.
+            var lines = await WaitForTranscriptLinesAsync(path, 6);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            lines.Length.ShouldBe(6);
+
+            // 1. The raw typed text, as a plain user record: no isCompactSummary, no isMeta. This is
+            //    the record the working rule tripped over, and it is deliberately NOT excluded —
+            //    the boundary outranks it instead.
+            ContentOf(lines[0]).ShouldBe("/compact keep the API contract notes");
+            lines[0].ShouldNotContain("isCompactSummary");
+            lines[0].ShouldNotContain("isMeta");
+
+            // 2. The boundary, carrying the MANUAL trigger the working rules key on (the
+            //    trigger→"Context compacted (manual)" mapping is pinned in TranscriptNormalizerTests).
+            lines[1].ShouldContain("\"subtype\":\"compact_boundary\"");
+            lines[1].ShouldContain("\"trigger\":\"manual\"");
+
+            // 3. The continuation summary: the structural flag AND the text prefix the rule matches.
+            lines[2].ShouldContain("\"isCompactSummary\":true");
+            TranscriptKinds.IsCompactionContinuationPrompt("UserPrompt", ContentOf(lines[2]))
+                .ShouldBeTrue();
+
+            // 4. The isMeta caveat — TranscriptNormalizer.FromUser drops these, so no rule sees it.
+            lines[3].ShouldContain("\"isMeta\":true");
+
+            // 5-6. The local-command wrapper pair.
+            var wrapper = ContentOf(lines[4]);
+            TranscriptKinds.IsLocalCommandRecord("UserPrompt", wrapper).ShouldBeTrue();
+            wrapper.ShouldContain("<command-args>keep the API contract notes</command-args>");
+            TranscriptKinds.IsLocalCommandRecord("UserPrompt", ContentOf(lines[5])).ShouldBeTrue();
+
+            // The whole point: no turn end is coming for any of it.
+            lines.ShouldAllBe(l => !l.Contains("stop_reason"));
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // The auto path is the opposite case: nothing was typed, the boundary lands MID-turn, and the
+    // working rules must NOT read it as an end.
+    [Test]
+    public async Task Auto_compaction_writes_an_auto_boundary_and_the_continuation_only()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-autocompact-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                ["ANTIPHON_FAKE_COMPACT_AFTER_TURNS"] = "1",
+            });
+
+            await runner.SendLineAsync("do the big thing");
+            (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            var lines = await WaitForTranscriptLinesAsync(path, 4);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            lines.Length.ShouldBe(4, "user + assistant, then the auto boundary and its continuation");
+            lines[2].ShouldContain("\"trigger\":\"auto\"");
+            lines[2].ShouldNotContain("command-name");
+            lines[2].ShouldNotContain("\"trigger\":\"manual\"",
+                customMessage: "an auto boundary must never rank as a turn end");
+            lines[3].ShouldContain("\"isCompactSummary\":true");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // The transcript is written after the screen output, so "the screen said Compacted" is not
+    // evidence the records landed. Poll for the expected count, then assert on what arrived.
+    private static async Task<string[]> WaitForTranscriptLinesAsync(string path, int expected)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var lines = Array.Empty<string>();
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    lines = (await File.ReadAllLinesAsync(path))
+                        .Where(l => !string.IsNullOrWhiteSpace(l))
+                        .ToArray();
+                    if (lines.Length >= expected)
+                        return lines;
+                }
+                catch (IOException)
+                {
+                    // Mid-append; try again.
+                }
+            }
+            await Task.Delay(50);
+        }
+        return lines;
+    }
+
+    private static string ContentOf(string jsonLine)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(jsonLine);
+        doc.RootElement.GetProperty("type").GetString().ShouldBe("user");
+        return doc.RootElement.GetProperty("message").GetProperty("content").GetString()!;
     }
 
     // Local built-in commands (/clear, /model, /status …) write ONLY <command-name> +
@@ -337,13 +469,6 @@ public class FakeClaudeContractTests
 
             var lines = (await File.ReadAllLinesAsync(path)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
             lines.Length.ShouldBe(2);
-
-            string ContentOf(string line)
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(line);
-                doc.RootElement.GetProperty("type").GetString().ShouldBe("user");
-                return doc.RootElement.GetProperty("message").GetProperty("content").GetString()!;
-            }
 
             var invocation = ContentOf(lines[0]);
             invocation.ShouldStartWith("<command-name>/model</command-name>");

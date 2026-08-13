@@ -5,9 +5,10 @@ namespace Antiphon.SessionRunner;
 /// <summary>
 /// Runner-side working/idle judgement over a tailed transcript. Mirrors the server's
 /// SessionMessageQueueService.IsWorkingAsync (and the client's isWorking()) — the session is
-/// working while activity outranks the last turn end, where an interrupt marker counts as an END
-/// (an aborted turn writes no TurnEnd) and local slash-command records, turn titles and compaction
-/// boundaries are housekeeping, not activity. Keep the three implementations in lockstep — with
+/// working while activity outranks the last turn end, where an interrupt marker and a MANUAL
+/// compaction boundary count as ENDS (neither an aborted turn nor a compaction writes a TurnEnd)
+/// and local slash-command records, turn titles, auto compaction boundaries and compaction's own
+/// continuation prompt are housekeeping, not activity. Keep the three implementations in lockstep — with
 /// one deliberate divergence: the server/client add a timestamp override because THEIR sequences
 /// are arrival-ordered and a catch-up sync can reorder them (2026-08-08); this judgement runs over
 /// the tailer's own mirror, which is always in transcript-file order, so sequences alone are
@@ -30,14 +31,20 @@ public static class TranscriptWorkingState
         {
             if (entry.Kind == TranscriptKinds.TurnEnd
                 || entry.Kind == TranscriptKinds.SessionRestartBoundary
+                || TranscriptKinds.IsManualCompactBoundary(entry.Kind, entry.Text)
                 || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text))
             {
                 lastEnd = Math.Max(lastEnd, entry.Sequence);
                 continue;
             }
 
+            // CompactBoundary here is only ever the AUTO/trigger-less kind — the manual one ranked
+            // as an end above. There is no timestamp override to fall back on in this judgement, so
+            // the continuation prompt MUST be excluded explicitly: in FILE order it lands after the
+            // boundary and would outrank it (CARD-0041).
             if (entry.Kind == TranscriptKinds.TurnTitle
                 || entry.Kind == TranscriptKinds.CompactBoundary
+                || TranscriptKinds.IsCompactionContinuationPrompt(entry.Kind, entry.Text)
                 || TranscriptKinds.IsLocalCommandRecord(entry.Kind, entry.Text))
             {
                 continue; // housekeeping — neither activity nor an end

@@ -26,10 +26,14 @@ namespace Antiphon.FakeClaude;
 ///    typed body before submitting; a fake that swallowed input silently would make every verified
 ///    delivery look wedged.
 ///  * <b>Readiness</b> — print a banner then go quiet, so the quiet-period ready detector settles.
-///  * <b>Compaction</b> — a submitted <c>/compact</c> (or <c>ANTIPHON_FAKE_COMPACT_AFTER_TURNS=N</c>
-///    after the Nth turn) renders the pinned <c>Compacted (ctrl+o to see full summary)</c> screen line
-///    with NO turn-end signal — compaction is not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set,
-///    a compact-boundary JSONL line is appended too (shape mirrors the canary fixture).
+///  * <b>Compaction</b> — a submitted <c>/compact</c>, with or without arguments (or
+///    <c>ANTIPHON_FAKE_COMPACT_AFTER_TURNS=N</c> after the Nth turn) renders the pinned
+///    <c>Compacted (ctrl+o to see full summary)</c> screen line with NO turn-end signal — compaction is
+///    not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set, the FULL measured record set is
+///    appended (CARD-0041): manual = raw typed prompt, <c>trigger:"manual"</c> boundary,
+///    <c>isCompactSummary</c> continuation, <c>isMeta</c> caveat, <c>&lt;command-name&gt;</c> +
+///    <c>&lt;local-command-stdout&gt;</c>; auto = <c>trigger:"auto"</c> boundary + continuation only
+///    (nothing was typed). Always on — this is transcript-shape modelling, not input-loss behaviour.
 ///  * <b>Chunk clipping</b> (OPT-IN, <c>ANTIPHON_FAKE_STDIN_CLIP</c>) — the real TUI keeps ONE
 ///    ~1024-byte read chunk per event-loop turn and silently discards the rest, which is how briefs
 ///    arrived with their heads missing (CARD-0027). Default OFF: our transport is genuinely
@@ -273,19 +277,19 @@ internal static class Program
                 composer.Clear();
                 if (text.Length == 0) return true; // bare Enter on an empty composer — nothing to submit.
 
-                if (text == "/compact")
+                if (IsCompactCommand(text))
                 {
                     // Compaction is NOT a turn: no response echo, no " for Ns" done pattern.
                     Write("\r\n");
-                    Write("SUBMITTED:/compact\r\n");
-                    EmitCompaction(Write, transcriptPath);
+                    Write($"SUBMITTED:{text}\r\n");
+                    EmitManualCompaction(Write, transcriptPath, text);
                     return true;
                 }
 
                 SubmitTurn(Write, text, transcriptPath);
                 turnCount++;
                 if (compactAfterTurns > 0 && turnCount == compactAfterTurns)
-                    EmitCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
+                    EmitAutoCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
                 return true;
             }
 
@@ -404,12 +408,59 @@ internal static class Program
             AppendTranscript(transcriptPath, JsonAssistantLine(echo));
     }
 
-    private static void EmitCompaction(Action<string> write, string? transcriptPath)
+    // "/compact" with or without arguments — arguments are the normal shape (the live CARD-0041
+    // session typed "/compact This session is being handed NEW, unrelated work…") and they are what
+    // produced the RAW user record that the working rule tripped over.
+    private static bool IsCompactCommand(string text) =>
+        text == "/compact" || text.StartsWith("/compact ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A MANUAL <c>/compact</c>, modelled as the full record set real Claude writes (CARD-0041,
+    /// measured from session e77fb0a7's JSONL). All six records matter to the working/idle rules:
+    /// the RAW typed prompt and the continuation summary are the two that escaped the exclusions
+    /// and left a compacted session reading "working" forever, and the boundary's <c>manual</c>
+    /// trigger is what now ends the turn. Emitting only the boundary — as this fake used to — made
+    /// the bug unreproducible in tests.
+    /// </summary>
+    private static void EmitManualCompaction(Action<string> write, string? transcriptPath, string typedText)
     {
         write(CompactedScreenLine + "\r\n");
         write(IdleTitle);
-        if (transcriptPath is not null)
-            AppendTranscript(transcriptPath, JsonCompactBoundaryLine());
+        if (transcriptPath is null)
+            return;
+
+        // 1. The literal typed text, as a plain user record — NOT isMeta, NOT isCompactSummary.
+        AppendTranscript(transcriptPath, JsonUserLine(typedText));
+        // 2. The boundary itself.
+        AppendTranscript(transcriptPath, JsonCompactBoundaryLine("manual"));
+        // 3. Compaction's synthetic continuation prompt (carries isCompactSummary).
+        AppendTranscript(transcriptPath, JsonCompactSummaryLine());
+        // 4. The caveat, isMeta — the normalizer drops these, and this pins that it keeps doing so.
+        AppendTranscript(transcriptPath, JsonMetaUserLine(
+            "Caveat: The messages below were generated by the user while running local commands."));
+        // 5-6. The local-command wrapper pair, exactly as any other slash command writes them.
+        var commandArgs = typedText.Split(' ', 2, StringSplitOptions.None) is [_, var rest] ? rest : "";
+        AppendTranscript(transcriptPath, JsonUserLine(
+            "<command-name>/compact</command-name>\n"
+            + "            <command-message>compact</command-message>\n"
+            + $"            <command-args>{commandArgs}</command-args>"));
+        AppendTranscript(transcriptPath, JsonUserLine(
+            $"<local-command-stdout>{CompactedScreenLine}</local-command-stdout>"));
+    }
+
+    /// <summary>
+    /// AUTO compaction: fires when a request starts over the context threshold, i.e. MID-turn, with
+    /// nothing typed — so there is no raw prompt and no command-wrapper pair, and the trigger says
+    /// <c>auto</c>. The working rules must NOT read this boundary as a turn end.
+    /// </summary>
+    private static void EmitAutoCompaction(Action<string> write, string? transcriptPath)
+    {
+        write(CompactedScreenLine + "\r\n");
+        write(IdleTitle);
+        if (transcriptPath is null)
+            return;
+        AppendTranscript(transcriptPath, JsonCompactBoundaryLine("auto"));
+        AppendTranscript(transcriptPath, JsonCompactSummaryLine());
     }
 
     // JSONL lines in the shapes TranscriptNormalizer parses. The boundary shape must stay in sync with
@@ -435,9 +486,37 @@ internal static class Program
         },
     });
 
+    // The synthetic user record compaction writes to carry the summary forward. The prefix is the
+    // one TranscriptKinds.CompactionContinuationPromptPrefix matches; isCompactSummary is the
+    // structural flag a future migration could key on instead (CARD-0041).
+    private static string JsonCompactSummaryLine() => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        isCompactSummary = true,
+        message = new
+        {
+            role = "user",
+            content = "This session is being continued from a previous conversation that ran out of "
+                + "context. The conversation is summarized below:\nFAKE summary of the conversation.",
+        },
+    });
+
+    // isMeta:true user records (caveats, command output) are system-injected, not the user talking —
+    // TranscriptNormalizer.FromUser drops them before any rule sees them.
+    private static string JsonMetaUserLine(string text) => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        isMeta = true,
+        message = new { role = "user", content = text },
+    });
+
     // Key set mirrors the pinned fixture (tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl,
     // captured from claude 2.1.217 on 2026-07-22). PINNED-BY: ClaudeCompactionCanaryTests.
-    private static string JsonCompactBoundaryLine() => JsonSerializer.Serialize(new
+    private static string JsonCompactBoundaryLine(string trigger) => JsonSerializer.Serialize(new
     {
         parentUuid = (string?)null,
         logicalParentUuid = Guid.NewGuid().ToString(),
@@ -446,7 +525,7 @@ internal static class Program
         subtype = "compact_boundary",
         content = "Conversation compacted",
         level = "info",
-        compactMetadata = new { trigger = "manual", preTokens = 1000, postTokens = 100 },
+        compactMetadata = new { trigger, preTokens = 1000, postTokens = 100 },
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
         userType = "external",
