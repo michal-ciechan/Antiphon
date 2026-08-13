@@ -193,9 +193,18 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         };
     }
 
-    /// <summary>Inserts one transcript entry with the next sequence for the harness session.</summary>
+    /// <summary>
+    /// Inserts one transcript entry with the next sequence for the harness session. <paramref
+    /// name="timestamp"/> is the RECORD's own timestamp (the one the working rule's backfill
+    /// override reads) — leave it null unless the test is about ordering; real transcripts are
+    /// non-monotonic against sequence, so a test that must not be rescued by the override sets it.
+    /// </summary>
     public async Task<long> InsertTranscriptEntryAsync(
-        string kind, string? text = null, string? stopReason = null, Guid? sessionId = null)
+        string kind,
+        string? text = null,
+        string? stopReason = null,
+        Guid? sessionId = null,
+        DateTime? timestamp = null)
     {
         var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
@@ -210,6 +219,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Kind = kind,
             Text = text,
             StopReason = stopReason,
+            Timestamp = timestamp,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();

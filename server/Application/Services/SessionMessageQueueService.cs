@@ -376,6 +376,42 @@ public sealed class SessionMessageQueueService
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
     }
 
+    /// <summary>
+    /// NARROW flush for a manual compaction boundary (CARD-0041): deliver the next queued message
+    /// if the session is idle, and nothing else. A manual boundary IS a turn end for the working
+    /// rule — without a flush here, messages queued before the compaction sit until the stranded
+    /// watchdog's next sweep, which only serves always-on sessions (the CARD-0029 delegation brief
+    /// is the live case), and a session that never takes another turn never flushes at all.
+    ///
+    /// Deliberately NOT <see cref="OnTurnEndAsync"/>: an empty queue must NOT publish
+    /// <c>SessionFinished</c> (every idle /compact would fire a spurious "Agent finished" toast —
+    /// the SessionFinishedDuplicateTests domain), and the channel/review/task dispatchers must NOT
+    /// run (task settlement would be attempted against the STALE pre-compaction report, the exact
+    /// mis-settle CARD-0029 warns about). Compaction is not a report.
+    /// </summary>
+    public async Task FlushIfIdleAsync(Guid sessionId, CancellationToken ct)
+    {
+        var result = FlushResult.Nothing;
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Same Starting-session guard as the enqueue path: a boundary arriving while the TUI
+            // still boots must not put text in front of the launch's ready probe.
+            if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
+                result = await DeliverNextLockedAsync(db, sessionId, ct);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (result != FlushResult.Nothing)
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+    }
+
     // The DB session status is the ready gate: Starting means the launch's ready probe has not
     // yet seen an idle composer, so nothing may type into the terminal (see EnqueueAsync).
     private async Task<bool> IsAcceptingInputAsync(Guid sessionId, CancellationToken ct)
@@ -788,11 +824,22 @@ public sealed class SessionMessageQueueService
         // activity — an aborted turn writes NO TurnEnd, and counting the marker as activity left
         // the session permanently "working" and stranded every WhenIdle delivery (2026-07-29).
         // A SessionRestartBoundary is a turn end for the same reason: the relaunch proved the old
-        // turn's process is gone (2026-08-08).
+        // turn's process is gone (2026-08-08). A MANUAL compaction boundary is one too: /compact
+        // runs only between turns, and no TurnEnd is ever coming for it (2026-08-11, CARD-0041 —
+        // a compacted session read "working" for two days because TWO post-compaction records
+        // escaped the exclusions below: the RAW typed "/compact …" prompt, which Claude records in
+        // addition to the <command-name> wrapper, and the synthetic continuation prompt. Both are
+        // outranked once the boundary itself is the turn's end; the continuation is excluded from
+        // activity as well, because it lands AFTER the boundary). An AUTO boundary stays
+        // housekeeping — it fires mid-turn, so counting it as an end would read a working session
+        // as idle. Predicates inlined for EF translation, like the interrupt prefix.
         var end = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.TurnEnd
                     || t.Kind == TranscriptKinds.SessionRestartBoundary
+                    || (t.Kind == TranscriptKinds.CompactBoundary
+                        && t.Text != null
+                        && t.Text.Contains(TranscriptKinds.ManualCompactMarker))
                     || (t.Kind == TranscriptKinds.UserPrompt
                         && t.Text != null
                         && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
@@ -812,8 +859,15 @@ public sealed class SessionMessageQueueService
                         || t.Text.StartsWith(TranscriptKinds.LocalCommandStdoutPrefix)))
                 // Compaction is idle-time housekeeping, not work: counting the boundary as
                 // activity would flip an idle session to permanently "working" (no TurnEnd ever
-                // follows), stranding every WhenIdle message — including the recovery note.
+                // follows), stranding every WhenIdle message — including the recovery note. The
+                // blanket exclusion stays: manual boundaries are ranked as ENDS above, and
+                // auto/trigger-less ones are neither activity nor an end.
                 && t.Kind != TranscriptKinds.CompactBoundary
+                // The synthetic "This session is being continued from a previous conversation…"
+                // record compaction writes: nobody typed it and no TurnEnd follows (CARD-0041).
+                && !(t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text != null
+                    && t.Text.StartsWith(TranscriptKinds.CompactionContinuationPromptPrefix))
                 && !(t.Kind == TranscriptKinds.UserPrompt
                     && t.Text != null
                     && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))

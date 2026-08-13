@@ -40,10 +40,13 @@ public class CompactionRecoveryTests
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, "You are {agentName}."));
     }
 
-    private static SessionRunnerTranscriptEvent Boundary(Guid sessionId, long sequence) => new(
+    private static SessionRunnerTranscriptEvent Boundary(Guid sessionId, long sequence) =>
+        Boundary(sessionId, sequence, "Context compacted (manual)");
+
+    private static SessionRunnerTranscriptEvent Boundary(Guid sessionId, long sequence, string text) => new(
         sessionId, sequence, TranscriptKinds.CompactBoundary,
         Guid.NewGuid().ToString(), null, DateTimeOffset.UtcNow, null,
-        "Context compacted (manual)", null, null, null, null, null);
+        text, null, null, null, null, null);
 
     [Test]
     public async Task Compact_boundary_records_info_incident_and_enqueues_one_recovery_note()
@@ -125,6 +128,38 @@ public class CompactionRecoveryTests
         (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == h.SessionId)).ShouldBeFalse();
     }
 
+    // CARD-0041 end to end: the note is enqueued WhenIdle at the boundary, with every other
+    // post-compaction record ALREADY stored — the raw typed "/compact …" prompt, the continuation
+    // prompt, and the <command-name>/<local-command-stdout> pair. Before the fix the first two
+    // outranked the last turn end and the note sat Pending on a session that would never take
+    // another turn (this is how the CARD-0029 delegation brief was lost).
+    [Test]
+    public async Task Recovery_note_is_delivered_even_with_the_full_post_compaction_record_set()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SetPreambleAsync(h);
+
+        await h.InsertTurnAsync("the real work", "done");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "/compact hand this session new work");
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt,
+            "This session is being continued from a previous conversation that ran out of context.");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "<command-name>/compact</command-name>");
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, "<local-command-stdout>Compacted</local-command-stdout>");
+
+        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 11), CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RecoveryNoteBody]);
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.AnyAsync(
+            m => m.AgentSessionId == h.SessionId && m.Status == QueuedMessageStatus.Pending))
+            .ShouldBeFalse("nothing may strand behind a compaction");
+    }
+
+    // AUTO compaction is the mid-work one: it fires when a request starts over the context
+    // threshold, so the turn is still running and the boundary proves nothing (CARD-0041 —
+    // a manual /compact cannot happen mid-work, which is why this case is the auto shape).
     [Test]
     public async Task Mid_work_compaction_defers_the_note_to_the_next_turn_end()
     {
@@ -132,7 +167,8 @@ public class CompactionRecoveryTests
         await SetPreambleAsync(h);
         await h.MarkWorkingAsync(); // activity after the (nonexistent) last turn end → working
 
-        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 9), CancellationToken.None);
+        await h.Runtime.ObserveTranscriptAsync(
+            Boundary(h.SessionId, 9, "Context compacted (auto)"), CancellationToken.None);
 
         h.Adapter.SubmittedBodies.ShouldBeEmpty("a working session must not be interrupted");
         await using (var db = CreateContext())

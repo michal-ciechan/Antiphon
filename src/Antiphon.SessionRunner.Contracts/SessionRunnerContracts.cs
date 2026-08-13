@@ -116,11 +116,54 @@ public static class TranscriptKinds
 
     /// <summary>
     /// A context compaction boundary (Claude Code JSONL: type=system, subtype=compact_boundary —
-    /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). NOT a turn
-    /// end, and excluded from working/idle activity checks — compaction is normal idle-time
-    /// housekeeping, not agent work.
+    /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). Never a turn
+    /// end at the NORMALIZER level (no stop_reason is emitted), and never activity — compaction is
+    /// housekeeping, not agent work. For the working/idle rules the trigger decides: a MANUAL
+    /// boundary counts as a turn END (see <see cref="IsManualCompactBoundary"/>), an auto/unknown
+    /// one stays pure housekeeping (CARD-0041).
     /// </summary>
     public const string CompactBoundary = "CompactBoundary";
+
+    /// <summary>
+    /// The trigger marker <c>TranscriptNormalizer.FromSystem</c> writes into a boundary's text
+    /// ("Context compacted ({trigger})"). A MANUAL <c>/compact</c> only ever runs BETWEEN turns, so
+    /// its boundary proves the previous turn is over and counts as that turn's end — nothing else
+    /// ever will, since compaction makes no API call and writes no TurnEnd (live miss 2026-08-11,
+    /// CARD-0041: a compacted session read "working" for two days and stranded its delegation
+    /// brief). An AUTO boundary is the opposite: auto-compaction fires when a request starts over
+    /// the context threshold, i.e. MID-turn, so treating it as an end would inject a WhenIdle
+    /// message into a working composer and feed a false "proven idle" to the runner's CPU watchdog.
+    /// A boundary with no trigger in its text (old rows) stays housekeeping — the conservative read.
+    /// </summary>
+    public const string ManualCompactMarker = "(manual)";
+
+    /// <summary>True when a transcript entry is a MANUAL compaction boundary (see <see cref="ManualCompactMarker"/>).</summary>
+    public static bool IsManualCompactBoundary(string? kind, string? text) =>
+        kind == CompactBoundary
+        && text is not null
+        && text.Contains(ManualCompactMarker, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Compaction writes a synthetic USER record carrying the summary of the conversation so far.
+    /// Nobody typed it, NO TurnEnd follows it, and counting it as activity left a compacted session
+    /// reading "working" forever with every WhenIdle delivery stranded (live miss 2026-08-11,
+    /// CARD-0041). The real record carries <c>isCompactSummary: true</c>, but matching is by TEXT:
+    /// the rule must also heal already-stored rows, and the client only ever sees the text.
+    /// <para>The prefix stops where the wording starts varying, and that is MEASURED, not cautious:
+    /// the 2026-08-11 live record read "…from a previous conversation THAT RAN OUT OF CONTEXT. The
+    /// summary below covers…" while the 2026-08-13 canary capture read "…from a previous
+    /// conversation. The summary below covers…" — same CLI family, same manual trigger. Do not
+    /// lengthen this constant past the common prefix (fixture:
+    /// tests/Antiphon.Tests/Agents/Fixtures/compact-full-manual.jsonl).</para>
+    /// </summary>
+    public const string CompactionContinuationPromptPrefix =
+        "This session is being continued from a previous conversation";
+
+    /// <summary>True when a transcript entry is a compaction continuation prompt (see <see cref="CompactionContinuationPromptPrefix"/>).</summary>
+    public static bool IsCompactionContinuationPrompt(string? kind, string? text) =>
+        kind == UserPrompt
+        && text is not null
+        && text.TrimStart().StartsWith(CompactionContinuationPromptPrefix, StringComparison.Ordinal);
 
     /// <summary>
     /// SERVER-SYNTHESIZED (never read from a JSONL): written when a session is relaunched and its

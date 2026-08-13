@@ -34,6 +34,12 @@ function entry(
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 6, 30, 10, 0, seconds)).toISOString()
 
+// Compaction's own synthetic USER record (CARD-0041); the full wording is pinned by the headed
+// canary, the prefix is what the rule matches.
+const CONTINUATION =
+  'This session is being continued from a previous conversation that ran out of context. ' +
+  'The conversation is summarized below:'
+
 describe('isWorking', () => {
   it('reads working while activity outranks the last turn end', () => {
     expect(
@@ -135,6 +141,57 @@ describe('isWorking', () => {
         entry(1, 'AssistantText', 'turn output', { timestamp: at(0) }),
         entry(2, 'TurnEnd', null, { timestamp: at(30) }),
         entry(3, 'UserPrompt', 'next piece of work', { timestamp: at(60) }),
+      ]),
+    ).toBe(true)
+  })
+
+  // Live miss 2026-08-11 (CARD-0041): a compacted session badged Working for two days. Two
+  // post-compaction records escaped the exclusions — the RAW typed "/compact …" prompt (recorded
+  // in addition to the <command-name> wrapper) and compaction's synthetic continuation prompt —
+  // and no TurnEnd was ever coming. A MANUAL boundary is the turn's end; the continuation is not
+  // activity. The real timestamps are non-monotonic (the boundary is stamped LATER than the
+  // continuation that follows it), so the backfill override must not be what decides this.
+  it('reads idle after a manual compaction (the real stored shape, real timestamps)', () => {
+    expect(
+      isWorking([
+        entry(1, 'AssistantText', 'done', { timestamp: at(22) }),
+        entry(2, 'TurnEnd', null, { timestamp: at(22) }),
+        entry(3, 'UserPrompt', '/compact This session is being handed NEW work', { timestamp: at(430) }),
+        entry(4, 'CompactBoundary', 'Context compacted (manual)', { timestamp: at(484) }),
+        entry(5, 'UserPrompt', CONTINUATION, { timestamp: at(474) }),
+        entry(6, 'UserPrompt', '<command-name>/compact</command-name>', { timestamp: at(430) }),
+        entry(7, 'UserPrompt', '<local-command-stdout>Compacted</local-command-stdout>', { timestamp: at(484) }),
+      ]),
+    ).toBe(false)
+  })
+
+  it('ignores the compaction continuation prompt even when it is stamped after the boundary', () => {
+    expect(
+      isWorking([
+        entry(1, 'TurnEnd', null, { timestamp: at(22) }),
+        entry(2, 'CompactBoundary', 'Context compacted (manual)', { timestamp: at(484) }),
+        entry(3, 'UserPrompt', CONTINUATION, { timestamp: at(510) }),
+      ]),
+    ).toBe(false)
+  })
+
+  // The deliberate non-exclusion: a prompt may legitimately begin with a slash, so raw text is
+  // never matched — without a boundary to outrank it, it is real activity.
+  it('still reads working on a raw /-prefixed prompt with no boundary', () => {
+    expect(
+      isWorking([entry(1, 'TurnEnd'), entry(2, 'UserPrompt', '/compact keep the API contract notes')]),
+    ).toBe(true)
+  })
+
+  // Auto-compaction fires when a request starts over the context threshold — MID-turn. Treating
+  // it as an end would badge a genuinely working agent idle.
+  it('does not treat an auto compaction boundary as a turn end', () => {
+    expect(
+      isWorking([
+        entry(1, 'TurnEnd', null, { timestamp: at(22) }),
+        entry(2, 'UserPrompt', 'now do the big thing', { timestamp: at(60) }),
+        entry(3, 'CompactBoundary', 'Context compacted (auto)', { timestamp: at(90) }),
+        entry(4, 'UserPrompt', CONTINUATION, { timestamp: at(95) }),
       ]),
     ).toBe(true)
   })
