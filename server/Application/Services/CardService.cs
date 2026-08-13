@@ -101,7 +101,7 @@ public sealed class CardService
         // The dequeue below clears AssignedAgentId — capture it first so the completion
         // checkpoint still knows whose workspace to snapshot.
         var assignedAgentId = card.AssignedAgentId;
-        ApplyColumnMove(card, targetColumn, terminalReason: request.TerminalReason);
+        ApplyColumnMove(card, targetColumn, reason: request.Reason);
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
         await _db.SaveChangesAsync(ct);
 
@@ -221,8 +221,14 @@ public sealed class CardService
             ?? throw new NotFoundException(nameof(Card), id);
     }
 
+    /// <param name="reason">
+    /// Why the card is moving, from the caller. Kept as <see cref="Card.TerminalReason"/> on a move
+    /// into a terminal column; on any other move there is nowhere to persist it yet (CARD-0019's
+    /// card history), so it is deliberately dropped rather than silently written to a field that
+    /// means something else.
+    /// </param>
     private void ApplyColumnMove(
-        Card card, BoardColumn targetColumn, bool enforceStateMachine = true, string? terminalReason = null)
+        Card card, BoardColumn targetColumn, bool enforceStateMachine = true, string? reason = null)
     {
         if (card.BoardColumnId == targetColumn.Id)
             return;
@@ -250,7 +256,7 @@ public sealed class CardService
             card.CompletedAt ??= now;
             // A supplied reason WINS over an existing one: a card re-closed with a better
             // explanation ("fixed by CARD-0041") should not keep the generic note it got first.
-            var supplied = terminalReason?.Trim();
+            var supplied = reason?.Trim();
             card.TerminalReason = !string.IsNullOrEmpty(supplied)
                 ? supplied
                 : card.TerminalReason ?? "Moved to terminal column.";

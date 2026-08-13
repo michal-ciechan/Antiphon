@@ -19,9 +19,20 @@ cards were walked that way by hand on 2026-08-13 — and `Canceled` is wrong for
 the work genuinely happened.
 
 What separates a close from a completion is therefore **the reason, not the path**.
-`MoveCardRequest` now carries an optional `TerminalReason`, and a supplied reason overwrites an
-existing one so a card re-closed with a better explanation ("fixed by CARD-0041") does not keep the
-generic note it got first.
+`MoveCardRequest` now carries an optional `Reason`, and a supplied reason overwrites an existing one
+so a card re-closed with a better explanation ("fixed by CARD-0041") does not keep the generic note
+it got first.
+
+It is called `Reason`, not `TerminalReason`, deliberately. Closing is what motivated it, but "moved
+back because the spec changed" and "started early to unblock CARD-nnnn" are the same kind of fact,
+and a field named for one use is how a second one ends up as a second field.
+
+**Known gap:** the reason only persists on a move into a terminal column, where it becomes
+`Card.TerminalReason`. On every other move it is accepted and dropped, because there is no per-card
+history to hold it. `AuditRecord` is not that home — it is workflow and LLM-cost oriented. The right
+home is CARD-0019's `CardRevision`, which makes this the second caller waiting on that card. The API
+shape is deliberately correct ahead of the storage: callers should pass a reason now rather than
+learn not to.
 
 **Not changed, deliberately:** `InProgress → Done` and `Blocked → Done` remain forbidden. The same
 argument applies to both and they are probably worth allowing, but widening a considered state

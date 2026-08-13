@@ -89,14 +89,21 @@ public sealed record CreateCardRequest(
     int Priority = 0,
     IReadOnlyList<string>? Labels = null);
 
-/// <param name="TerminalReason">
-/// Why this card is being closed, when the target column is terminal. Optional, and the whole
-/// point of allowing Backlog -&gt; Done: "no longer wanted" and "fixed as part of CARD-nnnn" are
-/// different closes and a board that records neither cannot tell them apart later. Ignored for
-/// non-terminal columns; omitted falls back to the generic note.
+/// <param name="Reason">
+/// Why this card is moving. Optional, and deliberately NOT named for the close case: "no longer
+/// wanted" and "fixed as part of CARD-nnnn" are what motivated it, but "moved back because the
+/// spec changed" or "started early to unblock CARD-nnnn" are the same kind of fact, and a field
+/// named for one use is how a second one ends up as a second field.
+///
+/// <para>Currently it PERSISTS only on a move into a terminal column, where it becomes
+/// <c>Card.TerminalReason</c>. On any other move it is accepted and then DROPPED — there is no
+/// per-card history to store it in yet. That arrives with CARD-0019's <c>CardRevision</c>, and
+/// this is the second caller waiting for it. Callers should pass a reason regardless: the API
+/// shape is right, the storage is what is missing, and a dropped reason is better than a caller
+/// learning not to send one.</para>
 /// </param>
 public sealed record MoveCardRequest(
-    Guid BoardColumnId, Guid ConcurrencyToken, string? TerminalReason = null);
+    Guid BoardColumnId, Guid ConcurrencyToken, string? Reason = null);
 
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,
