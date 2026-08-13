@@ -566,13 +566,23 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
 
     private static string RedactCredentialShapes(string value, ref bool sensitive)
     {
-        var redacted = CredentialAssignmentRegex().Replace(
-            value,
-            match => IsCredentialName(match.Groups["name"].Value) ? "*" : match.Value);
+        var redacted = RedactCredentialAssignments(value);
         redacted = BearerCredentialRegex().Replace(redacted, "*");
         if (!string.Equals(redacted, value, StringComparison.Ordinal))
             sensitive = true;
         return redacted;
+    }
+
+    private static string RedactCredentialAssignments(string value)
+    {
+        return CredentialAssignmentRegex().Replace(value, match =>
+        {
+            if (!IsCredentialName(match.Groups["name"].Value))
+                return match.Value;
+
+            var assignment = match.Groups["assignment"];
+            return match.Value[..(assignment.Index - match.Index)] + "*";
+        });
     }
 
     private static bool IsCredentialName(string name) =>
@@ -733,8 +743,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 : "Process startup exceeded the deadline; background cleanup is monitoring for a late start.");
 
     [GeneratedRegex(
-        @"(?im)(?<![A-Za-z0-9_])[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?\s*[:=]\s*[^\r\n]+",
-        RegexOptions.CultureInvariant)]
+        @"(?:\A|[^A-Za-z0-9_])(?<assignment>[""']?(?<name>[A-Za-z][A-Za-z0-9_-]*)[""']?[ \t]*[:=][ \t]*(?:""(?:\\[^\r\n]|[^""\\\r\n])*""|'(?:\\[^\r\n]|[^'\\\r\n])*'|[^\s,}\]]+))",
+        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
     private static partial Regex CredentialAssignmentRegex();
 
     [GeneratedRegex(

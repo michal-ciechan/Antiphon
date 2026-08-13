@@ -683,6 +683,72 @@ public sealed class RunnerProcessProbeTests
     }
 
     [Test]
+    [Arguments(
+        "clientApiKey=synthetic-credential-first status=ready note='ordinary value !@#$%^&*()'",
+        "* status=ready note='ordinary value !@#$%^&*()'",
+        false)]
+    [Arguments(
+        "status=ready,clientAuthToken=synthetic-credential-middle,count=2",
+        "status=ready,*,count=2",
+        false)]
+    [Arguments(
+        "status=ready message='ordinary value: punctuation !?' clientPassword=synthetic-credential-last",
+        "status=ready message='ordinary value: punctuation !?' *",
+        true)]
+    [Arguments(
+        """{"clientSecret":"synthetic-credential-json-first","status":"ok"}""",
+        """{*,"status":"ok"}""",
+        false)]
+    [Arguments(
+        """{"status":"ok","clientSecret":"synthetic-credential-quote-\"-slash-\\-end","note":"ordinary value, with punctuation!"}""",
+        """{"status":"ok",*,"note":"ordinary value, with punctuation!"}""",
+        false)]
+    [Arguments(
+        """{"status":"ok","clientAuthorization":"synthetic-credential-json-last"}""",
+        """{"status":"ok",*}""",
+        true)]
+    [Arguments(
+        "status=ok clientApiKey='synthetic-credential-one with spaces' clientPassword=\"synthetic-credential-two,with punctuation!\" tail='ordinary value'",
+        "status=ok * * tail='ordinary value'",
+        false)]
+    [Arguments(
+        "message=ordinary value with punctuation! clientRefreshToken=synthetic-credential-refresh status=ok",
+        "message=ordinary value with punctuation! * status=ok",
+        false)]
+    [Arguments(
+        "status=ok clientSecretHint='ordinary secret hint' authTokenType=ordinary servicePasswordPolicy=standard apiKeyLabel=public clientPrivateKey=synthetic-credential-private",
+        "status=ok clientSecretHint='ordinary secret hint' authTokenType=ordinary servicePasswordPolicy=standard apiKeyLabel=public *",
+        false)]
+    [Arguments(
+        """{"clientApiKey":"synthetic-credential-json-one","status":"ok","clientPassword":"synthetic-credential-json-two"}""",
+        """{*,"status":"ok",*}""",
+        false)]
+    public async Task Probe_redacts_each_credential_assignment_without_consuming_neighbors(
+        string output,
+        string expected,
+        bool writeToStandardError)
+    {
+        var scratch = CreateScratch();
+        try
+        {
+            var script = WriteHelper(scratch);
+            var result = await CreateProbe().RunAsync(
+                Request(script, [writeToStandardError ? "raw-error" : "raw-value", output]),
+                CancellationToken.None);
+
+            result.SensitiveOutputDetected.ShouldBeTrue();
+            var actual = writeToStandardError ? result.StandardError : result.StandardOutput;
+            actual.ShouldBe(expected);
+            actual.ShouldNotContain("synthetic-credential");
+            (writeToStandardError ? result.StandardOutput : result.StandardError).ShouldBeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Executable_path_rejects_an_existing_non_executable_file()
     {
         var scratch = CreateScratch();
@@ -1124,6 +1190,10 @@ public sealed class RunnerProcessProbeTests
             }
             if ($mode -eq 'raw-value') {
                 [Console]::Out.Write($args[1])
+                exit 0
+            }
+            if ($mode -eq 'raw-error') {
+                [Console]::Error.Write($args[1])
                 exit 0
             }
             if ($mode -eq 'invalid-utf8') {
