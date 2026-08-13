@@ -548,26 +548,39 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         IReadOnlyList<string> secretValues)
     {
         var sensitive = false;
-        standardOutput = RedactCredentialShapes(standardOutput, ref sensitive);
-        standardError = RedactCredentialShapes(standardError, ref sensitive);
         var exactSecrets = secretValues
             .Where(value => !string.IsNullOrEmpty(value))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        standardOutput = RedactExactSecretOccurrences(standardOutput, exactSecrets, ref sensitive);
-        standardError = RedactExactSecretOccurrences(standardError, exactSecrets, ref sensitive);
+        standardOutput = RedactOutput(standardOutput, exactSecrets, ref sensitive);
+        standardError = RedactOutput(standardError, exactSecrets, ref sensitive);
         return new SanitizedOutput(standardOutput, standardError, sensitive);
     }
 
-    private static string RedactExactSecretOccurrences(
+    private static string RedactOutput(
         string value,
         IReadOnlyList<string> exactSecrets,
         ref bool sensitive)
     {
-        if (value.Length == 0 || exactSecrets.Count == 0)
+        if (value.Length == 0)
             return value;
 
         var redactionDeltas = new int[value.Length + 1];
+        var detected = CollectCredentialAssignmentRedactions(value, redactionDeltas);
+        detected |= CollectBearerCredentialRedactions(value, redactionDeltas);
+        detected |= CollectExactSecretRedactions(value, exactSecrets, redactionDeltas);
+        if (!detected)
+            return value;
+
+        sensitive = true;
+        return RenderRedactions(value, redactionDeltas);
+    }
+
+    private static bool CollectExactSecretRedactions(
+        string value,
+        IReadOnlyList<string> exactSecrets,
+        int[] redactionDeltas)
+    {
         var detected = false;
         foreach (var secret in exactSecrets)
         {
@@ -579,16 +592,71 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                     break;
 
                 detected = true;
-                redactionDeltas[occurrence]++;
-                redactionDeltas[occurrence + secret.Length]--;
+                AddRedaction(redactionDeltas, occurrence, occurrence + secret.Length);
                 searchStart = occurrence + 1;
             }
         }
+        return detected;
+    }
 
-        if (!detected)
-            return value;
-        sensitive = true;
+    private static bool CollectBearerCredentialRedactions(string value, int[] redactionDeltas)
+    {
+        var detected = false;
+        foreach (Match match in BearerCredentialRegex().Matches(value))
+        {
+            AddRedaction(redactionDeltas, match.Index, match.Index + match.Length);
+            detected = true;
+        }
+        return detected;
+    }
 
+    private static bool CollectCredentialAssignmentRedactions(string value, int[] redactionDeltas)
+    {
+        var matches = CredentialAssignmentRegex().Matches(value);
+        var lineEnds = IndexLineEnds(value);
+        var lineEndIndex = 0;
+        var coveredThrough = 0;
+        var detected = false;
+
+        for (var index = 0; index < matches.Count; index++)
+        {
+            var match = matches[index];
+            if (!IsCredentialName(match.Groups["name"].Value))
+                continue;
+
+            var assignment = match.Groups["assignment"];
+            if (assignment.Index < coveredThrough)
+                continue;
+            var redactionEnd = assignment.Index + assignment.Length;
+            var unquotedValue = match.Groups["unquotedValue"];
+            if (unquotedValue.Success)
+            {
+                while (lineEnds[lineEndIndex] < redactionEnd)
+                    lineEndIndex++;
+                var lineEnd = lineEnds[lineEndIndex];
+                var malformedQuotedValue = unquotedValue.Value[0] is '"' or '\'';
+                redactionEnd = !malformedQuotedValue
+                               && index + 1 < matches.Count
+                               && matches[index + 1].Index < lineEnd
+                    ? matches[index + 1].Index
+                    : lineEnd;
+            }
+
+            AddRedaction(redactionDeltas, assignment.Index, redactionEnd);
+            coveredThrough = redactionEnd;
+            detected = true;
+        }
+        return detected;
+    }
+
+    private static void AddRedaction(int[] redactionDeltas, int start, int end)
+    {
+        redactionDeltas[start]++;
+        redactionDeltas[end]--;
+    }
+
+    private static string RenderRedactions(string value, int[] redactionDeltas)
+    {
         var redacted = new StringBuilder(value.Length);
         var copiedThrough = 0;
         var redactionStart = -1;
@@ -617,59 +685,6 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
             redacted.Append('*');
             copiedThrough = value.Length;
         }
-        redacted.Append(value, copiedThrough, value.Length - copiedThrough);
-        return redacted.ToString();
-    }
-
-    private static string RedactCredentialShapes(string value, ref bool sensitive)
-    {
-        var redacted = RedactCredentialAssignments(value);
-        redacted = BearerCredentialRegex().Replace(redacted, "*");
-        if (!string.Equals(redacted, value, StringComparison.Ordinal))
-            sensitive = true;
-        return redacted;
-    }
-
-    private static string RedactCredentialAssignments(string value)
-    {
-        var matches = CredentialAssignmentRegex().Matches(value);
-        var lineEnds = IndexLineEnds(value);
-        var lineEndIndex = 0;
-        StringBuilder? redacted = null;
-        var copiedThrough = 0;
-
-        for (var index = 0; index < matches.Count; index++)
-        {
-            var match = matches[index];
-            if (!IsCredentialName(match.Groups["name"].Value))
-                continue;
-
-            var assignment = match.Groups["assignment"];
-            if (assignment.Index < copiedThrough)
-                continue;
-            var redactionEnd = assignment.Index + assignment.Length;
-            var unquotedValue = match.Groups["unquotedValue"];
-            if (unquotedValue.Success)
-            {
-                while (lineEnds[lineEndIndex] < redactionEnd)
-                    lineEndIndex++;
-                var lineEnd = lineEnds[lineEndIndex];
-                var malformedQuotedValue = unquotedValue.Value[0] is '"' or '\'';
-                redactionEnd = !malformedQuotedValue
-                               && index + 1 < matches.Count
-                               && matches[index + 1].Index < lineEnd
-                    ? matches[index + 1].Index
-                    : lineEnd;
-            }
-
-            redacted ??= new StringBuilder(value.Length);
-            redacted.Append(value, copiedThrough, assignment.Index - copiedThrough);
-            redacted.Append('*');
-            copiedThrough = redactionEnd;
-        }
-
-        if (redacted is null)
-            return value;
         redacted.Append(value, copiedThrough, value.Length - copiedThrough);
         return redacted.ToString();
     }
@@ -857,7 +872,9 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         RegexOptions.CultureInvariant)]
     private static partial Regex CamelCaseCredentialSuffixRegex();
 
-    [GeneratedRegex(@"(?im)\bbearer\s+[^\s\r\n]+", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(
+        @"(?im)\bbearer\s+[^\s\r\n]+",
+        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)]
     private static partial Regex BearerCredentialRegex();
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]

@@ -688,6 +688,24 @@ public sealed class RunnerProcessProbeTests
     [Arguments("prefix abcdef suffix", "prefix * suffix", true, "abcdef", "abc", "")]
     [Arguments("abcabcdef", "*", false, "bcde", "abc", "abcdef")]
     [Arguments("aaaaa", "*", true, "aaa", "", "")]
+    [Arguments("Password=\"alpha\nbeta\"", "*\"", false, "alpha\nbeta", "", "")]
+    [Arguments("clientSecret=alpha\r\nbeta status=ok", "* status=ok", true, "alpha\r\nbeta", "", "")]
+    [Arguments("Bearer alpha\nbeta", "*", false, "alpha\nbeta", "", "")]
+    [Arguments(
+        "prefix alpha\nbeta\ngamma suffix",
+        "prefix * suffix",
+        false,
+        "alpha\nbeta",
+        "beta\ngamma",
+        "")]
+    [Arguments("prefix alpha\nbetaalpha\nbeta suffix", "prefix * suffix", true, "alpha\nbeta", "", "")]
+    [Arguments(
+        "clientSecret=alpha=beta;status=ok&gamma",
+        "*",
+        true,
+        "alpha=beta;status=ok&gamma",
+        "",
+        "")]
     public async Task Probe_redacts_the_union_of_exact_secret_occurrences_without_order_or_overlap_leaks(
         string output,
         string expected,
@@ -906,21 +924,23 @@ public sealed class RunnerProcessProbeTests
             result.StandardError.ShouldBeEmpty();
             elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
 
-            var redactorMethod = typeof(RunnerProcessProbe).GetMethod(
-                "RedactCredentialAssignments",
+            var collectorMethod = typeof(RunnerProcessProbe).GetMethod(
+                "CollectCredentialAssignmentRedactions",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-            redactorMethod.ShouldNotBeNull();
-            var redact = redactorMethod.CreateDelegate<Func<string, string>>();
+            collectorMethod.ShouldNotBeNull();
+            var collect = collectorMethod.CreateDelegate<Func<string, int[], bool>>();
             var sameLineOutput = string.Concat(Enumerable.Repeat(assignment, repetitionCount));
             var lineDelimitedOutput = string.Concat(
                 Enumerable.Repeat(lineDelimitedAssignment, repetitionCount));
-            redact(sameLineOutput).ShouldNotContain("synthetic", Case.Insensitive);
-            redact(lineDelimitedOutput).ShouldNotContain("synthetic", Case.Insensitive);
+            var sameLineDeltas = new int[sameLineOutput.Length + 1];
+            var lineDelimitedDeltas = new int[lineDelimitedOutput.Length + 1];
+            collect(sameLineOutput, sameLineDeltas).ShouldBeTrue();
+            collect(lineDelimitedOutput, lineDelimitedDeltas).ShouldBeTrue();
 
             for (var warmup = 0; warmup < 20; warmup++)
             {
-                redact(lineDelimitedOutput);
-                redact(sameLineOutput);
+                collect(lineDelimitedOutput, lineDelimitedDeltas);
+                collect(sameLineOutput, sameLineDeltas);
             }
 
             var bestLineDelimited = TimeSpan.MaxValue;
@@ -929,12 +949,14 @@ public sealed class RunnerProcessProbeTests
             {
                 var lineFirst = round % 2 == 0;
                 var first = MeasureRedaction(
-                    redact,
+                    collect,
                     lineFirst ? lineDelimitedOutput : sameLineOutput,
+                    lineFirst ? lineDelimitedDeltas : sameLineDeltas,
                     benchmarkIterations);
                 var second = MeasureRedaction(
-                    redact,
+                    collect,
                     lineFirst ? sameLineOutput : lineDelimitedOutput,
+                    lineFirst ? sameLineDeltas : lineDelimitedDeltas,
                     benchmarkIterations);
                 bestLineDelimited = TimeSpan.FromTicks(Math.Min(
                     bestLineDelimited.Ticks,
@@ -958,13 +980,14 @@ public sealed class RunnerProcessProbeTests
         }
 
         static TimeSpan MeasureRedaction(
-            Func<string, string> redact,
+            Func<string, int[], bool> collect,
             string output,
+            int[] redactionDeltas,
             int iterations)
         {
             var measurement = Stopwatch.StartNew();
             for (var iteration = 0; iteration < iterations; iteration++)
-                redact(output);
+                collect(output, redactionDeltas);
             measurement.Stop();
             return measurement.Elapsed;
         }
