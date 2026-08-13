@@ -63,6 +63,11 @@ public sealed record AgentTuiProfileRevisionDto(
     string Guidance,
     DateTime CreatedAt);
 
+public sealed record AgentTuiCommandPreviewDto(
+    string Executable,
+    IReadOnlyList<string> Arguments,
+    string? WorkingDirectory);
+
 public sealed record AgentTuiModelDto(
     string Identifier,
     string DisplayName,
@@ -99,6 +104,7 @@ public sealed record AgentTuiProfileDto(
     Guid RevisionId,
     int Revision,
     AgentTuiProfileRevisionDto RevisionDetails,
+    AgentTuiCommandPreviewDto CommandPreview,
     IReadOnlyList<AgentTuiSecretMetadataDto> SecretEnvironment,
     IReadOnlyList<AgentTuiModelDto> Models,
     IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
@@ -142,3 +148,7 @@ public sealed record AgentTuiValidationRunDto(
     DateTime CreatedAt,
     DateTime? StartedAt,
     DateTime? CompletedAt);
+
+public sealed record AgentTuiModelRefreshDto(
+    AgentTuiValidationRunDto Run,
+    IReadOnlyList<AgentTuiModelDto> Models);

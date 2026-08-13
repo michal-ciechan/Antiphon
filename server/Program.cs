@@ -49,6 +49,12 @@ try
                 : Serilog.Events.LogEventLevel.Verbose;
         lc
             .ReadFrom.Configuration(ctx.Configuration)
+            // Hosting.Diagnostics includes the full query string in request start/finish events.
+            // Secret endpoints reject query-string values, but logging a rejected value would
+            // still disclose it; Antiphon's own request log records method + path without query.
+            .MinimumLevel.Override(
+                "Microsoft.AspNetCore.Hosting.Diagnostics",
+                Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .WriteTo.Console(
                 restrictedToMinimumLevel: consoleLevel,
@@ -285,6 +291,7 @@ try
         builder.Services.AddHostedService<ChannelBridgeService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddSingleton<AgentTuiRunnerCatalog>();
+    builder.Services.AddSingleton<AgentTuiMetrics>();
     builder.Services.AddSingleton<RunnerProcessReaper>();
     builder.Services.AddHostedService(provider => provider.GetRequiredService<RunnerProcessReaper>());
     builder.Services.AddSingleton<IRunnerProcessProbe, RunnerProcessProbe>();
@@ -390,8 +397,19 @@ try
         var llmSettings = scope.ServiceProvider.GetRequiredService<IOptions<LlmSettings>>().Value;
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
-        var profileImport = await scope.ServiceProvider.GetRequiredService<AgentTuiProfileImporter>()
-            .ImportAsync(CancellationToken.None);
+        var agentTuiMetrics = scope.ServiceProvider.GetRequiredService<AgentTuiMetrics>();
+        Antiphon.Server.Application.Dtos.AgentTuiImportResultDto profileImport;
+        try
+        {
+            profileImport = await scope.ServiceProvider.GetRequiredService<AgentTuiProfileImporter>()
+                .ImportAsync(CancellationToken.None);
+            agentTuiMetrics.RecordImport(profileImport);
+        }
+        catch
+        {
+            agentTuiMetrics.RecordImportFailure();
+            throw;
+        }
         if (profileImport.ProfilesCreated > 0 || profileImport.AgentsAssigned > 0)
         {
             Log.Information(
@@ -416,6 +434,7 @@ try
     app.MapBoardEndpoints();
     app.MapCardEndpoints();
     app.MapAgentEndpoints();
+    app.MapAgentTuiEndpoints();
     app.MapChannelEndpoints();
     app.MapWorkflowEndpoints();
     app.MapGateEndpoints();

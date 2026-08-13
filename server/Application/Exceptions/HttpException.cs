@@ -6,15 +6,22 @@ namespace Antiphon.Server.Application.Exceptions;
 public abstract class HttpException : Exception
 {
     public int StatusCode { get; }
+    public string? Code { get; }
 
-    protected HttpException(int statusCode, string message) : base(message)
+    protected HttpException(int statusCode, string message, string? code = null) : base(message)
     {
         StatusCode = statusCode;
+        Code = code;
     }
 
-    protected HttpException(int statusCode, string message, Exception innerException)
+    protected HttpException(
+        int statusCode,
+        string message,
+        Exception innerException,
+        string? code = null)
         : base(message, innerException)
     {
         StatusCode = statusCode;
+        Code = code;
     }
 }

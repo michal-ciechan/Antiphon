@@ -21,4 +21,13 @@ public class ValidationException : HttpException
             { field, [error] }
         };
     }
+
+    public ValidationException(string field, string error, string code)
+        : base(422, "One or more validation errors occurred.", code)
+    {
+        Errors = new Dictionary<string, string[]>
+        {
+            { field, [error] }
+        };
+    }
 }

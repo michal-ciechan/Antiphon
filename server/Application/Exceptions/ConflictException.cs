@@ -9,6 +9,10 @@ public class ConflictException : HttpException
     {
     }
 
+    public ConflictException(string message, string code) : base(409, message, code)
+    {
+    }
+
     /// <summary>
     /// Keeps the underlying failure attached. A 409 raised from a database error is a summary of
     /// something more specific — a unique-index violation names its constraint, a deadlock names
@@ -17,6 +21,11 @@ public class ConflictException : HttpException
     /// </summary>
     public ConflictException(string message, Exception innerException)
         : base(409, message, innerException)
+    {
+    }
+
+    public ConflictException(string message, Exception innerException, string code)
+        : base(409, message, innerException, code)
     {
     }
 }

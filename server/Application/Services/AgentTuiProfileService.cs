@@ -1,4 +1,5 @@
 using System.Data;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
@@ -151,6 +152,30 @@ public sealed partial class AgentTuiProfileService
         Guid profileId,
         CancellationToken cancellationToken) =>
         RequireOperationCoordinator().RefreshModelsAsync(profileId, cancellationToken);
+
+    public async Task<AgentTuiModelRefreshDto> RefreshModelsWithOutcomeAsync(
+        Guid profileId,
+        CancellationToken cancellationToken)
+    {
+        var models = await RefreshModelsAsync(profileId, cancellationToken);
+        var activeRevisionId = await _db.AgentTuiProfiles
+            .AsNoTracking()
+            .Where(profile => profile.Id == profileId)
+            .Select(profile => profile.ActiveRevisionId)
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
+        var run = await _db.AgentTuiValidationRuns
+            .AsNoTracking()
+            .Where(candidate => candidate.ProfileId == profileId
+                                && candidate.ProfileRevisionId == activeRevisionId
+                                && candidate.Operation == "discovery")
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new ConflictException(
+                "The discovery outcome is not available.",
+                "discovery_run_unavailable");
+        return new AgentTuiModelRefreshDto(MapValidationRun(run), models);
+    }
 
     public Task<AgentTuiValidationRunDto> ValidateAsync(
         Guid profileId,
@@ -327,12 +352,18 @@ public sealed partial class AgentTuiProfileService
         catch (DbUpdateException exception)
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The profile revision conflicts with another update.", exception);
+            throw new ConflictException(
+                "The profile revision conflicts with another update.",
+                exception,
+                "profile_revision_conflict");
         }
         catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The profile revision conflicts with another update.", exception);
+            throw new ConflictException(
+                "The profile revision conflicts with another update.",
+                exception,
+                "profile_revision_conflict");
         }
         catch
         {
@@ -430,13 +461,18 @@ public sealed partial class AgentTuiProfileService
         {
             var profile = await _db.AgentTuiProfiles
                 .Include(candidate => candidate.Revisions)
+                .Include(candidate => candidate.ValidationRuns)
                 .SingleOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken)
                 ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
 
             if (profile.IsDefault)
-                throw new ConflictException("The installation default profile cannot be deleted.");
+                throw new ConflictException(
+                    "The installation default profile cannot be deleted.",
+                    "profile_in_use");
             if (await _db.Agents.AnyAsync(agent => agent.TuiProfileId == profileId, cancellationToken))
-                throw new ConflictException("The profile is assigned to one or more agents.");
+                throw new ConflictException(
+                    "The profile is assigned to one or more agents.",
+                    "profile_in_use");
 
             var revisionIds = profile.Revisions.Select(revision => revision.Id).ToArray();
             if (await _db.AgentSessions.AnyAsync(
@@ -444,10 +480,13 @@ public sealed partial class AgentTuiProfileService
                                && revisionIds.Contains(session.TuiProfileRevisionId.Value),
                     cancellationToken))
             {
-                throw new ConflictException("The profile has revisions referenced by agent sessions.");
+                throw new ConflictException(
+                    "The profile has revisions referenced by agent sessions.",
+                    "profile_in_use");
             }
 
             profile.ActiveRevisionId = null;
+            _db.AgentTuiValidationRuns.RemoveRange(profile.ValidationRuns);
             await _db.SaveChangesAsync(cancellationToken);
             _db.AgentTuiProfiles.Remove(profile);
             await _db.SaveChangesAsync(cancellationToken);
@@ -456,12 +495,18 @@ public sealed partial class AgentTuiProfileService
         catch (DbUpdateException exception)
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The profile is still in use and cannot be deleted.", exception);
+            throw new ConflictException(
+                "The profile is still in use and cannot be deleted.",
+                exception,
+                "profile_in_use");
         }
         catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The profile is still in use and cannot be deleted.", exception);
+            throw new ConflictException(
+                "The profile is still in use and cannot be deleted.",
+                exception,
+                "profile_in_use");
         }
         catch
         {
@@ -488,10 +533,21 @@ public sealed partial class AgentTuiProfileService
         var preflightRevision = RequireActiveRevision(preflightProfile);
         EnsureExpectedRevision(preflightRevision, request.ExpectedRevision);
         var preflightDeclaredName = RequireDeclaredManagedSecret(preflightRevision, environmentName);
-        var protectedValue = _secretProtector.Protect(
-            profileId,
-            preflightDeclaredName,
-            request.Value);
+        string protectedValue;
+        try
+        {
+            protectedValue = _secretProtector.Protect(
+                profileId,
+                preflightDeclaredName,
+                request.Value);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new ServiceUnavailableException(
+                "Managed-secret protection is unavailable.",
+                "secret_protection_unavailable",
+                exception);
+        }
 
         var now = UtcNow();
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -555,12 +611,18 @@ public sealed partial class AgentTuiProfileService
         catch (DbUpdateException exception)
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The secret could not be saved because the profile state changed.", exception);
+            throw new ConflictException(
+                "The secret could not be saved because the profile state changed.",
+                exception,
+                "secret_write_failed");
         }
         catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The secret could not be saved because the profile state changed.", exception);
+            throw new ConflictException(
+                "The secret could not be saved because the profile state changed.",
+                exception,
+                "secret_write_failed");
         }
         catch
         {
@@ -621,12 +683,18 @@ public sealed partial class AgentTuiProfileService
         catch (DbUpdateException exception)
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The secret could not be cleared because the profile state changed.", exception);
+            throw new ConflictException(
+                "The secret could not be cleared because the profile state changed.",
+                exception,
+                "secret_write_failed");
         }
         catch (Exception exception) when (IsTransactionConcurrencyFailure(exception))
         {
             await RollbackAsync(transaction, cancellationToken);
-            throw new ConflictException("The secret could not be cleared because the profile state changed.", exception);
+            throw new ConflictException(
+                "The secret could not be cleared because the profile state changed.",
+                exception,
+                "secret_write_failed");
         }
         catch
         {
@@ -644,10 +712,25 @@ public sealed partial class AgentTuiProfileService
             profileId,
             "discovery",
             cancellationToken);
-        if (snapshot.Kind != AgentKind.OpenCode)
-            return MergeModels(snapshot.Kind, snapshot.Models);
-
         var run = await CreateOperationRunAsync(snapshot, "discovery", cancellationToken);
+        if (snapshot.Kind != AgentKind.OpenCode)
+        {
+            var cachedModels = MergeModels(snapshot.Kind, snapshot.Models);
+            await CompleteOperationRunAsync(
+                run,
+                AgentTuiValidationStatus.Succeeded,
+                [Stage(
+                    "discovery",
+                    AgentTuiValidationStageStatus.Skipped,
+                    "This runner uses its cached curated and operator catalogue.")],
+                [],
+                runnerVersion: null,
+                "The cached model catalogue remains authoritative for this runner.",
+                new AgentTuiSuitabilityDto(false, false, false, false),
+                cancellationToken);
+            return cachedModels;
+        }
+
         var auth = BuildAuthenticationEnvironment(snapshot);
         if (!auth.Ready)
         {
@@ -1754,6 +1837,10 @@ public sealed partial class AgentTuiProfileService
                 revision.ModelArgumentName,
                 revision.Guidance,
                 revision.CreatedAt),
+            new AgentTuiCommandPreviewDto(
+                revision.Executable,
+                arguments,
+                revision.WorkingDirectory),
             secretNames,
             MergeModels(profile.Kind, profile.Models),
             runner.Capabilities,
@@ -2056,7 +2143,10 @@ public sealed partial class AgentTuiProfileService
     {
         if (!AgentEnvironmentVariableNames.IsValid(environmentName))
         {
-            throw new ValidationException(nameof(environmentName), "The environment-variable name is invalid.");
+            throw new ValidationException(
+                nameof(environmentName),
+                "The environment-variable name is invalid.",
+                "invalid_environment_name");
         }
     }
 
@@ -2118,7 +2208,8 @@ public sealed partial class AgentTuiProfileService
         if (revision.RevisionNumber != expectedRevision)
         {
             throw new ConflictException(
-                $"Profile revision conflict: expected {expectedRevision}, current {revision.RevisionNumber}.");
+                "The profile revision no longer matches the submitted revision.",
+                "profile_revision_conflict");
         }
     }
 

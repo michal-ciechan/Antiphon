@@ -6,7 +6,7 @@ namespace Antiphon.Server.Api.Middleware;
 
 /// <summary>
 /// Global exception handler that catches all unhandled exceptions and returns
-/// RFC 9457 Problem Details JSON responses with correlation IDs and full stack traces (MVP).
+/// sanitized RFC 9457 Problem Details JSON responses with correlation IDs and stable codes.
 /// </summary>
 public class ExceptionMiddleware
 {
@@ -57,11 +57,14 @@ public class ExceptionMiddleware
             ["type"] = GetProblemType(statusCode),
             ["title"] = GetProblemTitle(statusCode),
             ["status"] = statusCode,
-            ["detail"] = exception.Message,
+            ["detail"] = exception is HttpException
+                ? exception.Message
+                : "An unexpected error occurred.",
             ["traceId"] = traceId,
-            // Full stack trace in MVP — no security filtering
-            ["stackTrace"] = BuildStackTrace(exception)
         };
+
+        if (exception is HttpException { Code: not null } codedException)
+            problemDetails["code"] = codedException.Code;
 
         // Add structured validation errors for ValidationException
         if (exception is ValidationException validationEx)
@@ -82,6 +85,7 @@ public class ExceptionMiddleware
         404 => "https://tools.ietf.org/html/rfc9110#section-15.5.5",
         409 => "https://tools.ietf.org/html/rfc9110#section-15.5.10",
         422 => "https://tools.ietf.org/html/rfc4918#section-11.2",
+        503 => "https://tools.ietf.org/html/rfc9110#section-15.6.4",
         _ => "https://tools.ietf.org/html/rfc9110#section-15.6.1"
     };
 
@@ -92,29 +96,7 @@ public class ExceptionMiddleware
         404 => "Not Found",
         409 => "Conflict",
         422 => "Unprocessable Entity",
+        503 => "Service Unavailable",
         _ => "Internal Server Error"
     };
-
-    /// <summary>
-    /// Builds the full stack trace including inner exceptions.
-    /// MVP only — will be stripped in production in a future story.
-    /// </summary>
-    private static string BuildStackTrace(Exception exception)
-    {
-        var traces = new List<string>();
-        var current = exception;
-
-        while (current != null)
-        {
-            if (current.StackTrace != null)
-            {
-                var prefix = current == exception ? "" : $"--- Inner: {current.GetType().Name}: {current.Message} ---\n";
-                traces.Add(prefix + current.StackTrace);
-            }
-
-            current = current.InnerException;
-        }
-
-        return string.Join("\n", traces);
-    }
 }
