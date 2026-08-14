@@ -25,6 +25,27 @@ public class Card
     public DateTime? CompletedAt { get; set; }
     public string? TerminalReason { get; set; }
 
+    /// <summary>
+    /// Set when the card is archived. Archive is what "delete" means here — the row stays, so a
+    /// card that is cited in commit messages, docs and other cards' terminal reasons never turns
+    /// into a dangling reference, and <c>NextIdentifierAsync</c> keeps seeing its identifier
+    /// (a hard delete of the highest card would hand its number out again — CARD-0005).
+    /// </summary>
+    public DateTime? ArchivedAt { get; set; }
+    public string? ArchivedReason { get; set; }
+
+    /// <summary>Self-reported archiver. Free text; the server has no principals.</summary>
+    public string? ArchivedBy { get; set; }
+
+    /// <summary>
+    /// How many revisions this card has, and the allocator for the next
+    /// <see cref="CardRevision.RevisionNumber"/>. Stored on the card rather than counted so that
+    /// (a) the board GET can surface an "edited" affordance without a second query or a windowed
+    /// subquery, and (b) any code path holding a tracked card can append a revision without a
+    /// database round-trip. The card's concurrency token guards the allocation.
+    /// </summary>
+    public int RevisionCount { get; set; }
+
     public Board Board { get; set; } = null!;
     public BoardColumn BoardColumn { get; set; } = null!;
     public AgentSession? OwnerSession { get; set; }
@@ -37,4 +58,5 @@ public class Card
     public ICollection<RunAttempt> RunAttempts { get; set; } = new List<RunAttempt>();
     public ICollection<Worktree> Worktrees { get; set; } = new List<Worktree>();
     public ICollection<CardWorkflowRun> WorkflowRuns { get; set; } = new List<CardWorkflowRun>();
+    public ICollection<CardRevision> Revisions { get; set; } = new List<CardRevision>();
 }
