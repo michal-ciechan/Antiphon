@@ -270,3 +270,79 @@ way that should be recorded accurately** — the test was checkout-path dependen
 prefix is the cwd, so the echoed prompt wrapped at 129 columns from a worktree and 110 from
 `C:\src\Antiphon`), not load-flaky, and `f078dd2` fixed the underlying `CodexResponseAnalyzer`
 defect rather than the test. The correction should say that, not merely retract the old note.
+
+---
+
+## Addendum 2026-08-13 (re-plan, task 74f4de94)
+
+The base plan and the caller decisions above are kept verbatim — this addendum only records what
+has moved in the two days since, and amends the design where the codebase has grown new
+dependants. Verified against current master (`288ab95`): **nothing from this spec is implemented
+yet** — `CardEndpoints.cs` still maps exactly the five original routes, `AppDbContext.cs:622`
+still has `HasMaxLength(4000)`, and `CardRevision` appears nowhere outside docs. Everything in
+the base plan's file table stands.
+
+### Delta 1 — `CardRevision` must record MOVES, not only content edits
+
+Since 2026-08-11, two shipped/near-shipped consumers wait on CardRevision for something the base
+design cannot give them, because a content-snapshot row only exists when *text* is superseded and
+a move supersedes no text:
+
+- **Move reasons are accepted and dropped.** `MoveCardRequest` now carries `Reason`
+  (`BoardDtos.cs:92-106`); it persists only into `TerminalReason` on a terminal move and is
+  deliberately dropped otherwise, with doc comments in both `BoardDtos.cs` and
+  `CardService.ApplyColumnMove` naming CardRevision as its future home
+  (`docs/product/card-workflow-decisions.md`, 2026-08-13 entry).
+- **The board state graph (feature 011) needs transition history.** Its proposal refuses
+  time-in-state and per-edge flow counts "until CARD-0019's `CardRevision` provides
+  entered-state-at" — i.e. it expects rows for column transitions.
+
+**Amendment:** one table, `CardRevisions`, with a `Kind` discriminator:
+
+- `Kind = ContentEdit` — exactly the base plan's shape: snapshot of the superseded
+  title/description/priority/labels, required `Reason`, `EditedBy`.
+- `Kind = Move` — `FromColumnId`, `ToColumnId`, `FromStatus`, `ToStatus`, optional `Reason`,
+  `EditedBy`; content-snapshot columns null. Written by `ApplyColumnMove` for **every** move
+  (spawn- and workflow-driven moves included, since they all pass through it); a terminal move
+  additionally keeps stamping `TerminalReason` as the cheap-to-read summary it is today.
+
+`RevisionNumber` stays one per-card monotonic sequence across both kinds, so
+`GET /api/cards/{id}/revisions` returns one interleaved history — which is also what the
+CardModal history tab wants. Entered-state-at = the card's latest `Move` row; per-edge counts are
+a group-by. One table over two (a separate `CardTransitions`) because the UI, the API and the
+revision numbering all want a single ordered history, at the cost of nullable snapshot columns on
+Move rows. No backfill: existing cards simply have no history, which feature 011 already accepts.
+
+Slice-3 gains a step: fold the parked entries of `docs/product/card-workflow-decisions.md` back
+into their cards, as that file's own header promises, and shrink it to decisions that genuinely
+live outside any card.
+
+### Delta 2 — the 20k-cap condition, re-resolved after CARD-0037
+
+The caller's condition ("shipping 20,000 over a typed prompt is not fine") was written in the
+CARD-0027 world where every pty delivery was typed and clipped at ~1 KB. CARD-0037 has since
+shipped and **this deployment runs the modern conpty backend**: `PtyDeliveryProfile` resolves
+backend-conditional ceilings (inbox: brief 900 B; modern: 43,200 B, single-write, bracketed
+paste delivered intact), requiring agreement between the server's own policy and the runner's
+`GET /capabilities`.
+
+The condition stands in spirit — never hand the pty a body it may clip — but its resolution is
+now concrete and no longer blocks the cap:
+
+> The spawn prompt (`CardService.BuildPrompt` → launch queue → `SendPromptAsync`) must go through
+> the same ceiling-aware delivery as delegation briefs: measure the prompt in **UTF-8 bytes**
+> against the `PtyDeliveryProfile`-resolved brief ceiling, deliver inline when under, and
+> **spill to file + typed pointer** when over.
+
+With that in place the 20,000-char cap ships unconditionally: on modern, a mostly-ASCII 20k
+description (~20-22 KB) goes inline under 43,200 B; a worst-case multibyte one (up to 80 KB) or
+any inbox-fallback machine spills. The cap needs no knowledge of the backend; the delivery layer
+already owns that decision. Note this is the same gap **CARD-0025** tracks ("only delegation
+paths spill oversized bodies") — implement the spawn-path spill once and settle both cards'
+claims on it, rather than building it twice.
+
+### Minor API correction
+
+`DELETE /api/cards/{id}` with a request body (token + reason) is hostile to proxies and some
+clients. Ship archive as `POST /api/cards/{id}/archive` (mirroring the already-planned
+`POST /unarchive`); a bodyless `DELETE` alias is optional and not load-bearing.
