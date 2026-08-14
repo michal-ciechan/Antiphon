@@ -440,6 +440,14 @@ public class FakeClaudeContractTests
         return lines;
     }
 
+    /// <summary>The <c>message</c> object of an assistant record — id, stop_reason, content.</summary>
+    private static System.Text.Json.JsonElement MessageOf(string jsonLine)
+    {
+        var doc = System.Text.Json.JsonDocument.Parse(jsonLine);
+        doc.RootElement.GetProperty("type").GetString().ShouldBe("assistant");
+        return doc.RootElement.GetProperty("message").Clone();
+    }
+
     private static string ContentOf(string jsonLine)
     {
         using var doc = System.Text.Json.JsonDocument.Parse(jsonLine);
@@ -484,6 +492,92 @@ public class FakeClaudeContractTests
 
             // And crucially: NO assistant line, NO turn end.
             lines.ShouldAllBe(l => !l.Contains("\"type\":\"assistant\"") && !l.Contains("stop_reason"));
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // CARD-0046. Real Claude writes one API response as SEVERAL JSONL records — a signature-only
+    // thinking record, then the text record — and stamps EVERY one with the response's stop_reason,
+    // so what reaches the server FIRST is a bare TurnEnd with no text at all. Settlement fired on it
+    // and handed six callers the delegate's preamble instead of its verdict. The fake could not
+    // reproduce any of that: it emitted one record per turn and NO message.id, so nothing below the
+    // service layer could exercise same-response identity. This pins the modelled shape.
+    [Test]
+    public async Task A_split_final_response_reaches_the_server_as_a_bare_turn_end_then_text()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-split-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                ["ANTIPHON_FAKE_SPLIT_FINAL"] = "1",
+            });
+
+            await runner.SendLineAsync("report the verdict");
+            (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:report the verdict"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            // user + thinking + text, where the one-record default writes only user + text.
+            var lines = await WaitForTranscriptLinesAsync(path, 3);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+            lines.Length.ShouldBe(3);
+
+            var thinking = MessageOf(lines[1]);
+            var text = MessageOf(lines[2]);
+
+            // The thinking record comes FIRST and carries the response's stop_reason, so the server
+            // sees a finished turn before any text exists. Its thinking string is EMPTY (signature
+            // only — true of all 1 936 thinking blocks measured), which is what makes
+            // TranscriptNormalizer yield a bare TurnEnd and nothing else for it. The normalizer half
+            // is pinned over the REAL records in TranscriptNormalizerTests.
+            var block = thinking.GetProperty("content")[0];
+            block.GetProperty("type").GetString().ShouldBe("thinking");
+            block.GetProperty("thinking").GetString().ShouldBe("");
+            block.TryGetProperty("signature", out _).ShouldBeTrue();
+            thinking.GetProperty("stop_reason").GetString().ShouldBe("end_turn");
+            text.GetProperty("stop_reason").GetString().ShouldBe("end_turn");
+            text.GetProperty("content")[0].GetProperty("type").GetString().ShouldBe("text");
+
+            thinking.GetProperty("id").GetString()
+                .ShouldBe(
+                    text.GetProperty("id").GetString(),
+                    "one response, one message.id — that shared id is what settlement waits on");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // Default OFF, and the id is present either way: the one-record shape is also real, and it is
+    // what every other transcript test in this file counts lines against.
+    [Test]
+    public async Task An_unsplit_turn_still_carries_a_message_id_on_its_single_record()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-unsplit-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
+
+            await runner.SendLineAsync("report the verdict");
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            lines.Length.ShouldBe(2, "one user record and ONE assistant record — no split without the flag");
+            var message = MessageOf(lines[1]);
+            message.GetProperty("content")[0].GetProperty("type").GetString().ShouldBe("text");
+            message.GetProperty("id").GetString().ShouldNotBeNullOrWhiteSpace();
+            // One record: its AssistantText part is normalized (and persisted) BEFORE its own
+            // TurnEnd part, so the same-id check settlement makes (CARD-0046) is already satisfied
+            // when the boundary is acted on — which is why emitting the id defers nothing.
+            message.GetProperty("stop_reason").GetString().ShouldBe("end_turn");
         }
         finally
         {

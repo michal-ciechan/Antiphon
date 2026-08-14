@@ -84,6 +84,55 @@ public class TranscriptNormalizerTests
         TranscriptNormalizer.Normalize(line).ShouldBeEmpty();
     }
 
+    // The two verbatim JSONL lines of ONE API response: session 7f9d06a5 (task ff320d72),
+    // msg_011Ce2Xog1xCJs9P, whose thinking record is stamped 11:05:43 and whose 5 850-char report is
+    // stamped 11:06:01 — written to the file together at the end of the response.
+    private static string[] SplitFinalResponseFixtureLines() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "split-final-response.jsonl"))
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToArray();
+
+    /// <summary>
+    /// The shape the whole of CARD-0046 rests on. A thinking record whose <c>thinking</c> string is
+    /// EMPTY (signature only — true of all 1 936 thinking blocks measured on this machine) produces
+    /// no Thinking part, so the record yields exactly ONE part: a bare <c>TurnEnd</c>. It carries the
+    /// response's ApiCallId, and that is the only handle anything has on "is this response finished
+    /// speaking?".
+    ///
+    /// If this ever produced a Thinking part as well, the DB would hold Thinking rows (it holds
+    /// zero against 1 366 TurnEnd rows) and settlement's same-id check would have to change with it.
+    /// </summary>
+    [Test]
+    public void A_signature_only_thinking_record_yields_exactly_one_bare_turn_end()
+    {
+        var part = TranscriptNormalizer.Normalize(SplitFinalResponseFixtureLines()[0]).ShouldHaveSingleItem();
+
+        part.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        part.StopReason.ShouldBe("end_turn");
+        part.Text.ShouldBeNull("there is no text on this record — which is exactly the problem");
+        part.ApiCallId.ShouldNotBeNull("the id is what identifies the response that ended the turn");
+    }
+
+    /// <summary>
+    /// And the second record of the same response: the report, plus its OWN TurnEnd (every record of
+    /// the response carries the stop_reason). All three parts share one message.id — the identity
+    /// settlement now waits on, and the reason the acted-on boundary is always the earlier bare one.
+    /// </summary>
+    [Test]
+    public void Both_records_of_one_response_carry_its_stop_reason_and_its_id()
+    {
+        var lines = SplitFinalResponseFixtureLines();
+        lines.Length.ShouldBe(2);
+
+        var parts = lines.SelectMany(TranscriptNormalizer.Normalize).ToList();
+
+        var text = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ShouldHaveSingleItem();
+        text.Text!.Length.ShouldBe(5_850, "the report that was discarded, verbatim");
+        parts.Count(p => p.Kind == TranscriptKinds.TurnEnd)
+            .ShouldBe(2, "the thinking record announces the end; the text record repeats it");
+        parts.ShouldAllBe(p => p.ApiCallId == text.ApiCallId);
+    }
+
     [Test]
     public void Other_system_records_are_still_skipped()
     {

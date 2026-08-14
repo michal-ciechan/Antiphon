@@ -47,8 +47,15 @@ namespace Antiphon.FakeClaude;
 ///    rendered at all, which is what delivery verification has to survive
 ///    (<c>ComposerDeliveryEvidence</c>).
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
-///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>) line on turn end, in the shapes
-///    <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
+///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>, +<c>message.id</c>) line on turn end,
+///    in the shapes <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
+///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
+///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
+///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
+///    The thinking record therefore reaches consumers as a BARE <c>TurnEnd</c>, which is what
+///    settled six delegated tasks on their own preamble (CARD-0046). Default OFF: the one-record
+///    shape is also real (measured 40% of fable's <c>end_turn</c> responses, 78% of opus's), and it
+///    is what every existing transcript test counts.
 ///
 /// <para><b>Why timing, not read boundaries.</b> ConPTY does not preserve write boundaries as read
 /// boundaries — a single <c>WriteFile("body\r")</c> can surface to the child as one read or several, and
@@ -79,6 +86,11 @@ internal static class Program
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
         var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
+        // OPT-IN (CARD-0046): write the turn-ending response as the TWO records real Claude writes —
+        // a signature-only thinking record, then the text record, sharing one message.id. Default
+        // OFF, like the clip model: the one-record shape is also real (f2bf457c settled correctly
+        // from it), and every existing transcript test counts lines.
+        var splitFinal = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SPLIT_FINAL") == "1";
         // OPT-IN: models the real TUI dropping all but one read chunk per event-loop turn. Unset =
         // null = the fake stays the lossless peer PtyLargeWriteTests pins. See StdinClipModel.
         var clip = StdinClipModel.FromEnvironment();
@@ -286,7 +298,7 @@ internal static class Program
                     return true;
                 }
 
-                SubmitTurn(Write, text, transcriptPath);
+                SubmitTurn(Write, text, transcriptPath, splitFinal);
                 turnCount++;
                 if (compactAfterTurns > 0 && turnCount == compactAfterTurns)
                     EmitAutoCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
@@ -340,7 +352,7 @@ internal static class Program
                     Write("\r\n");
                     if (fragment.Length > 0)
                     {
-                        SubmitTurn(Write, fragment, transcriptPath);
+                        SubmitTurn(Write, fragment, transcriptPath, splitFinal);
                         turnCount++;
                     }
                 }
@@ -367,7 +379,8 @@ internal static class Program
     // they submit as real turns.
     private static readonly string[] LocalCommands = ["/clear", "/model", "/status", "/help", "/config"];
 
-    private static void SubmitTurn(Action<string> write, string text, string? transcriptPath)
+    private static void SubmitTurn(
+        Action<string> write, string text, string? transcriptPath, bool splitFinal = false)
     {
         // Deterministic, assertable echo. Slash-commands echo their name so slash routing/dispatch tests
         // can assert behaviour without depending on Claude's real (variable) output. Newlines in the
@@ -404,9 +417,28 @@ internal static class Program
         // Turn-end signals: the " for Ns" done pattern (survives ConPTY) AND the idle title (usually consumed).
         write("Crunched for 1s\r\n");
         write(IdleTitle);
-        if (transcriptPath is not null)
-            AppendTranscript(transcriptPath, JsonAssistantLine(echo));
+        if (transcriptPath is null)
+            return;
+
+        // ONE response, and it decides its own message.id up front — the two records below have to
+        // share it, because that shared id is the only thing that tells a consumer they are one
+        // response (CARD-0046).
+        var apiCallId = NewApiCallId();
+        if (splitFinal)
+        {
+            // The measured shape, in this order: the thinking record — signature only, thinking
+            // text EMPTY in all 1 936 thinking blocks measured — carrying the response's
+            // stop_reason, and therefore normalizing to a BARE TurnEnd. Then the text record, with
+            // the same stop_reason and the same id.
+            AppendTranscript(transcriptPath, JsonAssistantThinkingLine(apiCallId));
+        }
+        AppendTranscript(transcriptPath, JsonAssistantLine(echo, apiCallId));
     }
+
+    // Faithful, and safe for every existing test: within ONE record the AssistantText part is
+    // persisted before that record's TurnEnd part, so the same-id check settlement now makes
+    // (CARD-0046) passes and no fake-driven test defers.
+    private static string NewApiCallId() => $"msg_fake_{Guid.NewGuid():N}";
 
     // "/compact" with or without arguments — arguments are the normal shape (the live CARD-0041
     // session typed "/compact This session is being handed NEW, unrelated work…") and they are what
@@ -473,16 +505,44 @@ internal static class Program
         message = new { role = "user", content = text },
     });
 
-    private static string JsonAssistantLine(string text) => JsonSerializer.Serialize(new
+    private static string JsonAssistantLine(string text, string? apiCallId = null) => JsonSerializer.Serialize(new
     {
         type = "assistant",
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
         message = new
         {
+            // The Anthropic message id, always present on a real assistant record. Emitting it is
+            // what lets anything below the service layer exercise same-response identity at all.
+            id = apiCallId ?? NewApiCallId(),
             role = "assistant",
             stop_reason = "end_turn",
             content = new object[] { new { type = "text", text } },
+        },
+    });
+
+    /// <summary>
+    /// The first record of a SPLIT turn-ending response (CARD-0046, measured from session 7f9d06a5,
+    /// response <c>msg_011Ce2Xog1xCJs9P</c>): a thinking block with an EMPTY <c>thinking</c> string
+    /// and a signature, stamped with the response's <c>stop_reason</c>. Because the text is empty,
+    /// <c>TranscriptNormalizer.FromAssistant</c> emits no Thinking part and the record yields a bare
+    /// <c>TurnEnd</c> and nothing else — which is the record settlement used to fire on while the
+    /// report was still 0.01-1.17 s away. Shares its id with the text record that follows.
+    /// </summary>
+    private static string JsonAssistantThinkingLine(string apiCallId) => JsonSerializer.Serialize(new
+    {
+        type = "assistant",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        message = new
+        {
+            id = apiCallId,
+            role = "assistant",
+            stop_reason = "end_turn",
+            content = new object[]
+            {
+                new { type = "thinking", thinking = "", signature = "FAKEsignature" },
+            },
         },
     });
 
