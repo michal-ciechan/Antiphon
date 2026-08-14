@@ -14,6 +14,10 @@ public sealed class ExternalTrackerSyncService
     private readonly IEventBus _eventBus;
     private readonly ILogger<ExternalTrackerSyncService> _logger;
 
+    // The self-reported author on revisions this service writes: a tracker-driven move is nobody's
+    // decision on this side of the sync, and a history that attributed it to a person would lie.
+    private const string TrackerActor = "external-tracker";
+
     // Queue removals accumulated while reconciling boards; published after SyncAsync's save.
     private readonly List<AgentQueueRemoval> _pendingQueueRemovals = [];
 
@@ -276,6 +280,14 @@ public sealed class ExternalTrackerSyncService
             && card.BoardColumnId != targetColumn.Id;
         if (shouldMoveForTrackerState)
         {
+            CardRevisionLog.AppendMove(
+                card,
+                card.BoardColumnId,
+                card.Status,
+                targetColumn,
+                reason: $"External tracker state '{issue.State.Trim()}' maps to this column.",
+                movedBy: TrackerActor,
+                utcNow);
             card.BoardColumnId = targetColumn.Id;
             card.BoardColumn = targetColumn;
             card.Status = targetColumn.CardStatus;
@@ -444,13 +456,22 @@ public sealed class ExternalTrackerSyncService
         if (card.OwnerSessionId is not null || card.BoardColumn.IsTerminal)
             return false;
 
+        var terminalReason = string.IsNullOrWhiteSpace(trackerState)
+            ? "External tracker issue is no longer returned as active."
+            : $"External tracker state '{trackerState}' is no longer active.";
+        CardRevisionLog.AppendMove(
+            card,
+            card.BoardColumnId,
+            card.Status,
+            terminalColumn,
+            terminalReason,
+            TrackerActor,
+            utcNow);
         card.BoardColumnId = terminalColumn.Id;
         card.BoardColumn = terminalColumn;
         card.Status = terminalColumn.CardStatus;
         card.CompletedAt = utcNow;
-        card.TerminalReason = string.IsNullOrWhiteSpace(trackerState)
-            ? "External tracker issue is no longer returned as active."
-            : $"External tracker state '{trackerState}' is no longer active.";
+        card.TerminalReason = terminalReason;
         card.UpdatedAt = utcNow;
         card.ConcurrencyToken = Guid.NewGuid();
         externalRef.LastSyncedAt = utcNow;

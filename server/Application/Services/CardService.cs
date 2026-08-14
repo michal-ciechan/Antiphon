@@ -42,6 +42,12 @@ public sealed class CardService
     /// <summary>The <c>EditedBy</c>/<c>ArchivedBy</c> columns are varchar(200).</summary>
     public const int MaxActorLength = 200;
 
+    /// <summary>
+    /// The author recorded on a revision nothing human asked for. Self-reported like every other
+    /// actor here — the server has no principals — but distinguishable from a name a caller chose.
+    /// </summary>
+    internal const string SystemActor = "system";
+
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
     private readonly OrchestratorService _orchestrator;
@@ -170,7 +176,12 @@ public sealed class CardService
                 .OrderBy(c => c.ColumnOrder)
                 .FirstOrDefault(c => c.IsActive && !c.IsTerminal)
                 ?? throw new ConflictException($"Board '{card.Board.Name}' has no active column for spawning.");
-            ApplyColumnMove(card, activeColumn, enforceStateMachine: false);
+            ApplyColumnMove(
+                card,
+                activeColumn,
+                enforceStateMachine: false,
+                reason: "Moved into an active column to spawn an agent session.",
+                movedBy: SystemActor);
             try
             {
                 await _db.SaveChangesAsync(ct);
@@ -255,13 +266,18 @@ public sealed class CardService
     }
 
     /// <param name="reason">
-    /// Why the card is moving, from the caller. Kept as <see cref="Card.TerminalReason"/> on a move
-    /// into a terminal column; on any other move there is nowhere to persist it yet (CARD-0019's
-    /// card history), so it is deliberately dropped rather than silently written to a field that
-    /// means something else.
+    /// Why the card is moving, from the caller. It now PERSISTS on every move, as the reason on the
+    /// card's <c>Move</c> revision — before CARD-0019 there was nowhere to put it and a non-terminal
+    /// move's reason was accepted and silently dropped. A move into a terminal column additionally
+    /// keeps stamping <see cref="Card.TerminalReason"/>, which stays as the cheap-to-read summary
+    /// it is today.
     /// </param>
     private void ApplyColumnMove(
-        Card card, BoardColumn targetColumn, bool enforceStateMachine = true, string? reason = null)
+        Card card,
+        BoardColumn targetColumn,
+        bool enforceStateMachine = true,
+        string? reason = null,
+        string? movedBy = null)
     {
         if (card.BoardColumnId == targetColumn.Id)
             return;
@@ -276,6 +292,8 @@ public sealed class CardService
         }
 
         var now = UtcNow();
+        CardRevisionLog.AppendMove(
+            card, card.BoardColumnId, card.Status, targetColumn, reason, movedBy, now);
         card.BoardColumnId = targetColumn.Id;
         card.BoardColumn = targetColumn;
         card.Status = targetColumn.CardStatus;

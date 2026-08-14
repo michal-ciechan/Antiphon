@@ -30,6 +30,16 @@ internal static class CardLifecycleTransitions
             return false;
         }
 
+        // The most common transition on the board, and the one a history that only covered
+        // CardService.ApplyColumnMove would have missed entirely.
+        CardRevisionLog.AppendMove(
+            card,
+            card.BoardColumnId,
+            card.Status,
+            reviewColumn,
+            reason: "The card's latest run attempt succeeded.",
+            movedBy: CardService.SystemActor,
+            utcNow);
         card.BoardColumnId = reviewColumn.Id;
         card.BoardColumn = reviewColumn;
         card.Status = reviewColumn.CardStatus;

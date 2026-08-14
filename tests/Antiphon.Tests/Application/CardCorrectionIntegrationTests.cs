@@ -200,6 +200,142 @@ public class CardCorrectionIntegrationTests
         }
     }
 
+    // Before CARD-0019 a non-terminal move's reason was accepted and then dropped: TerminalReason
+    // was the only place a reason could go, and it means something else. This is the fix.
+    [Test]
+    public async Task A_non_terminal_move_persists_its_reason_as_a_move_revision()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Move history board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Pulled straight into review"), CancellationToken.None);
+            var backlogColumn = board.Columns.Single(c => c.StateKey == "backlog");
+            var reviewColumn = board.Columns.Single(c => c.StateKey == "review");
+
+            var moved = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(reviewColumn.Id, card.ConcurrencyToken, "The work already existed; skipping ahead."),
+                CancellationToken.None);
+
+            moved.TerminalReason.ShouldBeNull();
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.Move);
+            revision.RevisionNumber.ShouldBe(1);
+            revision.FromColumnId.ShouldBe(backlogColumn.Id);
+            revision.ToColumnId.ShouldBe(reviewColumn.Id);
+            revision.FromStatus.ShouldBe(CardStatus.Backlog);
+            revision.ToStatus.ShouldBe(CardStatus.Review);
+            revision.Reason.ShouldBe("The work already existed; skipping ahead.");
+            revision.Title.ShouldBeNull();
+            revision.Description.ShouldBeNull();
+            var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            stored.RevisionCount.ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // A terminal move keeps stamping TerminalReason as the cheap-to-read summary it is today, AND
+    // records the transition — the two are not alternatives.
+    [Test]
+    public async Task A_terminal_move_records_both_the_revision_and_the_terminal_reason()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Terminal history board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Closed as part of another card"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+
+            var moved = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Fixed as part of CARD-0041."),
+                CancellationToken.None);
+
+            moved.TerminalReason.ShouldBe("Fixed as part of CARD-0041.");
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.Move);
+            revision.ToStatus.ShouldBe(CardStatus.Done);
+            revision.Reason.ShouldBe("Fixed as part of CARD-0041.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // Every move, not just the ones a human asked for: a history missing "the session finished, so
+    // the card went to Review" is missing the most common transition on the board.
+    [Test]
+    public async Task A_system_driven_move_to_review_records_a_revision_of_its_own()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "System move board"), CancellationToken.None);
+            var created = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Session finishes"), CancellationToken.None);
+            var inProgressColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+
+            await using (var move = CreateContext())
+            {
+                var card = await move.Cards
+                    .Include(c => c.Board).ThenInclude(b => b.Columns)
+                    .Include(c => c.BoardColumn)
+                    .SingleAsync(c => c.Id == created.Id);
+                card.BoardColumnId = inProgressColumn.Id;
+                card.BoardColumn = await move.BoardColumns.SingleAsync(c => c.Id == inProgressColumn.Id);
+                card.Status = CardStatus.InProgress;
+                await move.SaveChangesAsync();
+
+                // The path AgentSessionLaunchQueue and OrchestratorService take when a run attempt
+                // succeeds — it never goes near CardService.ApplyColumnMove.
+                CardLifecycleTransitions.TryMoveToReview(card, DateTime.UtcNow).ShouldBeTrue();
+                await move.SaveChangesAsync();
+            }
+
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == created.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.Move);
+            revision.FromStatus.ShouldBe(CardStatus.InProgress);
+            revision.ToStatus.ShouldBe(CardStatus.Review);
+            revision.EditedBy.ShouldBe("system");
+            revision.Reason.ShouldNotBeNullOrWhiteSpace();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static Harness BuildHarness(string tempRoot)
