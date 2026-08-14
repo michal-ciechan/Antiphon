@@ -171,9 +171,16 @@ public static class DelegationReportFormatter
     /// The ceiling the report is measured against. Depends on the pseudoconsole that will carry the
     /// note (CARD-0037); null keeps the conservative inbox-conhost number.
     /// </param>
+    /// <param name="warning">
+    /// A caveat about the report itself, placed between the header and the report so the caller
+    /// reads it FIRST — currently "this may be preamble, not the verdict" when the turn-ending
+    /// response never wrote its own text (CARD-0046 slice 3). Deliberately outside
+    /// <see cref="FitReport"/>: the ceiling and the excerpt arithmetic are about the report, and a
+    /// warning that could itself be excerpted away would be worthless.
+    /// </param>
     public static Note BuildCompletionNote(
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
-        int? replyInlineMaxChars = null)
+        int? replyInlineMaxChars = null, string? warning = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -189,6 +196,8 @@ public static class DelegationReportFormatter
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
+        if (!string.IsNullOrWhiteSpace(warning))
+            body = $"{warning.Trim()}\n\n{body}";
         return new Note($"{header}\n\n{body}".ReplaceLineEndings("\n"), excerpted);
     }
 

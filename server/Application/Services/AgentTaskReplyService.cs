@@ -104,13 +104,12 @@ public sealed class AgentTaskReplyService
 
                 if (turn.FinalMessageMissing)
                 {
-                    // Slice 3 makes this an incident and a caller-visible warning; until then the
-                    // log is the only record that a task settled without the verdict it was owed.
-                    _logger.LogWarning(
-                        "Session {SessionId}: the turn-ending response for task {ShortId} never wrote "
-                        + "any text within the {Grace}s grace — nothing to settle on",
-                        sessionId, DelegationReportFormatter.Short(task.Id),
-                        _settings.FinalMessageGraceSeconds);
+                    // Nothing to settle on AT ALL: the response that ended the turn wrote no text
+                    // and neither did the rest of the turn. Measured 1 in 180 — a lone end_turn
+                    // thinking record followed by "API Error: Connection lost mid-response". A
+                    // Succeeded with an empty report would be a lie, and leaving it Dispatched hides
+                    // it until the 10-minute watchdog; failing says what happened (CARD-0046 slice 3).
+                    await FailUnreportedTurnAsync(scope.ServiceProvider, db, task, sessionId, ct);
                     return;
                 }
 
@@ -125,7 +124,8 @@ public sealed class AgentTaskReplyService
             if (turn.FinalMessageMissing)
             {
                 // Same as above, but there WAS other text: the report about to be stored is
-                // whatever the turn produced — most likely preamble, not a verdict.
+                // whatever the turn produced — most likely preamble, not a verdict. SettleAsync
+                // carries this all the way to the caller's note (CARD-0046 slice 3).
                 _logger.LogWarning(
                     "Session {SessionId}: the turn-ending response for task {ShortId} never wrote its "
                     + "own text within the {Grace}s grace; settling on {Chars:N0} characters of "
@@ -283,6 +283,21 @@ public sealed class AgentTaskReplyService
             task.Status == AgentTaskStatus.Blocked ? "Delegate asked a question." : reported,
             now));
 
+        // A settlement that could not get the final message is LOUD (CARD-0046 slice 3). Succeeded
+        // is still the right status — the work happened and the text is real — but "Succeeded" on
+        // its own says the caller got the verdict, and here it did not. Three surfaces, because the
+        // whole character of this failure was that every surface said the task was fine: an event on
+        // the task, an incident on the agent's timeline, and a line the CALLER reads above the
+        // report itself.
+        string? callerWarning = null;
+        if (turn.FinalMessageMissing)
+        {
+            callerWarning = FinalMessageMissingWarning(report.Length, _settings.FinalMessageGraceSeconds);
+            db.AgentTaskEvents.Add(NewEvent(
+                task.Id, AgentTaskEventType.Warning,
+                FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds), now));
+        }
+
         // The work landed; now the BRANCH has to. Only a genuinely finished Worktree task merges —
         // a question-Blocked one keeps its worktree and session alive to continue.
         string? workspaceNote = null;
@@ -302,12 +317,142 @@ public sealed class AgentTaskReplyService
 
         await db.SaveChangesAsync(ct);
 
+        if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
+        {
+            await RecordFinalMessageMissingAsync(
+                services, db, task, missingFrom,
+                $"Task {DelegationReportFormatter.Short(task.Id)} settled without the delegate's final "
+                + $"message. {FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds)} "
+                + "The caller has been told the report may be preamble; the whole turn is in this "
+                + "session's transcript.",
+                ct);
+        }
+
         _logger.LogInformation(
             "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000})",
             DelegationReportFormatter.Short(task.Id), task.Status, report.Length, task.CostUsd);
 
-        await DeliverToParentAsync(task, report, ct, workspaceNote);
+        await DeliverToParentAsync(task, report, ct, workspaceNote, callerWarning);
         await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// The turn ended and produced NO text at all — not the turn-ending response's, not anything
+    /// earlier. Measured 1 in 180 responses: a lone <c>end_turn</c> thinking record followed 106 ms
+    /// later by "API Error: Connection lost mid-response".
+    ///
+    /// <para>Failing is the correct verdict, not a fallback. Succeeded with an empty report tells the
+    /// caller the work is done and hands it nothing; leaving the task Dispatched hides it until the
+    /// 10-minute delivery watchdog kills it with a reason about undelivered briefs that is simply
+    /// untrue here. Failed with this reason is retryable by the caller and says what happened.</para>
+    ///
+    /// <para>The delegate goes through the ordinary release path: its session is alive and healthy —
+    /// one response died, not the agent — so a Shared delegate is pooled warm rather than killed.
+    /// Skipping the release would leak the agent Busy forever, since only settlement frees it.</para>
+    /// </summary>
+    private async Task FailUnreportedTurnAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var reason =
+            $"The delegate's turn ended with no report at all: the response that ended it never wrote "
+            + $"any text within the {_settings.FinalMessageGraceSeconds}s grace, and neither did the "
+            + "rest of the turn. This is the shape an API error mid-response leaves (CARD-0046). The "
+            + $"work may well be real — read session {sessionId} before re-running this task.";
+
+        task.Status = AgentTaskStatus.Failed;
+        task.FailureReason = reason;
+        task.CompletedAt = now;
+        task.ConcurrencyToken = Guid.NewGuid();
+        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+
+        await ReleaseDelegateAsync(services, db, task, now, ct);
+        await db.SaveChangesAsync(ct);
+
+        await RecordFinalMessageMissingAsync(
+            services, db, task, sessionId,
+            $"Task {DelegationReportFormatter.Short(task.Id)} failed with no report: its turn-ending "
+            + $"response wrote no text within the {_settings.FinalMessageGraceSeconds}s grace and the "
+            + "turn produced none either. The delegate may have done the work — the session's "
+            + "transcript is the only record of it.",
+            ct);
+
+        _logger.LogWarning(
+            "Task {ShortId} failed: session {SessionId} ended a turn with no text at all within the "
+            + "{Grace}s grace",
+            DelegationReportFormatter.Short(task.Id), sessionId, _settings.FinalMessageGraceSeconds);
+
+        await DeliverToParentAsync(task, reason, ct);
+        await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// What the caller reads ABOVE the report, in the note delivered to its terminal. The report is
+    /// forwarded either way — it is real text and it may well be useful — but a caller that acts on
+    /// preamble as though it were a verdict is exactly what CARD-0046 cost six times over.
+    /// </summary>
+    private static string FinalMessageMissingWarning(int reportChars, int graceSeconds) =>
+        $"WARNING: this may be PREAMBLE, not the verdict. The delegate's turn-ending response never "
+        + $"wrote any text within {graceSeconds}s, so what follows is the {reportChars:N0} characters "
+        + "it produced earlier in the same turn. Check the session transcript before acting on it.";
+
+    private static string FinalMessageMissingDetail(int reportChars, int graceSeconds) =>
+        $"The response that ended the turn never wrote its own text within {graceSeconds}s. This "
+        + $"report is the {reportChars:N0} characters the turn produced BEFORE it — most likely "
+        + "mid-turn narration, not the delegate's verdict.";
+
+    /// <summary>
+    /// The incident behind CARD-0046 slice 3, ONCE per session for the same reason
+    /// <see cref="RecordUncorrelatedReportAsync"/> is: a delegate in this state keeps ending turns,
+    /// and the same finding on every one of them buries the first.
+    /// </summary>
+    private async Task RecordFinalMessageMissingAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId, string message,
+        CancellationToken ct)
+    {
+        if (task.AgentId is not Guid agentId)
+            return;
+
+        try
+        {
+            var already = await db.AgentIncidents.AnyAsync(
+                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing, ct);
+            if (already)
+                return;
+
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.DelegateFinalMessageMissing,
+                Severity = AlertSeverity.Warning,
+                Message = message,
+                CreatedAt = UtcNow(),
+            });
+            await db.SaveChangesAsync(ct);
+
+            if (services.GetService<IAlertService>() is { } alerts)
+            {
+                await alerts.RaiseAsync(
+                    new AlertRaise(
+                        AlertSeverity.Warning,
+                        Source: "delegation",
+                        Title: $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled without its final message",
+                        Detail: message,
+                        DedupKey: $"delegation:final-message-missing:{task.Id}",
+                        AgentId: agentId,
+                        SessionId: sessionId),
+                    ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Observability must never be able to break settlement.
+            _logger.LogError(
+                ex, "Could not record a missing-final-message incident for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
+        }
     }
 
     /// <summary>
@@ -401,6 +546,11 @@ public sealed class AgentTaskReplyService
     /// session goes WARM — reserved for its own run for a window, then open to any work in its
     /// directory, until the pool janitor retires it. Everything else pool-spawned (worktree
     /// delegates, dead sessions) retires now. A user's standing agent is never touched.
+    ///
+    /// <para>Also runs when a task FAILS unreported (CARD-0046 slice 3). The judgement is about the
+    /// agent, not the verdict: one response died, the session did not, so a live Shared delegate is
+    /// as reusable as after any success — and skipping the release would leak it Busy forever,
+    /// because settlement is the only thing that frees a delegate.</para>
     /// </summary>
     private async Task ReleaseDelegateAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
@@ -451,13 +601,14 @@ public sealed class AgentTaskReplyService
     /// parent's turns rather than interrupting one.
     /// </summary>
     private async Task DeliverToParentAsync(
-        AgentTask task, string report, CancellationToken ct, string? workspaceNote = null)
+        AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
+        string? warning = null)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
         var note = DelegationReportFormatter.BuildCompletionNote(
-            task, _settings, report, workspaceNote, ReplyInlineMaxChars);
+            task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

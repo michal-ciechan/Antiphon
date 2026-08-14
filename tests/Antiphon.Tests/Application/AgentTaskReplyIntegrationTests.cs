@@ -299,7 +299,10 @@ public class AgentTaskReplyIntegrationTests
     public async Task a_response_that_never_writes_text_settles_after_the_grace_window()
     {
         using var workspace = new TempWorkspace();
-        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, configure: t => t.AgentId = agentId);
         var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000, FinalMessageGraceSeconds = 120 };
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
 
@@ -325,7 +328,125 @@ public class AgentTaskReplyIntegrationTests
         settled.Status.ShouldBe(
             AgentTaskStatus.Succeeded, "past the grace, settling on the preamble beats stranding the task");
         settled.Result.ShouldBe("I'll start by reading the spec.");
-        // Slice 3 turns this into an incident and a warning the CALLER can see; today it is a log line.
+
+        // Slice 3: Succeeded, but never SILENTLY Succeeded. Three surfaces, because the whole
+        // character of CARD-0046 was that every one of them said the task was fine.
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
+        incident.Message.ShouldContain("31 characters", customMessage: "and what the report was built from");
+
+        var warned = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)
+            .SingleAsync();
+        warned.Detail.ShouldContain("never wrote its own text within 120s");
+        warned.Detail.ShouldContain("31 characters");
+
+        var note = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId)
+            .SingleAsync();
+        note.Body.ShouldContain(
+            "may be PREAMBLE", customMessage: "the CALLER is the one who must not act on it as a verdict");
+        note.Body.ShouldContain("I'll start by reading the spec.", customMessage: "the text is still forwarded");
+        note.Body.IndexOf("may be PREAMBLE", StringComparison.Ordinal)
+            .ShouldBeLessThan(
+                note.Body.IndexOf("I'll start by reading the spec.", StringComparison.Ordinal),
+                "a caveat read after the report is a caveat read too late");
+    }
+
+    /// <summary>
+    /// The other half of the backstop, and the one the spec argues hardest about: a turn that
+    /// produced NO text at all must FAIL, not succeed with an empty report and not sit Dispatched.
+    /// This is the cefed08a shape — a lone <c>end_turn</c> thinking record followed 106 ms later by
+    /// "API Error: Connection lost mid-response". Failing is the correct verdict for it; Succeeded
+    /// would tell the caller the work is done and hand it nothing.
+    /// </summary>
+    [Test]
+    public async Task a_turn_with_no_text_at_all_at_grace_fails_the_task()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, configure: t => t.AgentId = agentId);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = CreateService(timeProvider: clock);
+
+        // Prompt, then a TurnEnd carrying a response id and nothing else. No narration anywhere.
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            assistantText: null, turnEndApiCallId: $"msg_{Guid.NewGuid():N}");
+
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var midGrace = CreateContext())
+        {
+            (await midGrace.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched, "inside the grace it is still waiting");
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.Result.ShouldBeNull("there was never a report to store");
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason!.ShouldContain("no report at all");
+        failed.FailureReason.ShouldContain(
+            sessionId.ToString(), customMessage: "the work may be real — name where to read it");
+        failed.CompletedAt.ShouldNotBeNull();
+
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+
+        // The caller must HEAR about it, not discover it on the board.
+        var note = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId)
+            .SingleAsync();
+        note.Body.ShouldContain("no report at all");
+
+        (await verify.AgentIncidents.CountAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing))
+            .ShouldBe(1);
+
+        // The response died; the SESSION did not. A live Shared delegate is as reusable as after any
+        // success — and something has to free it, or it leaks Busy forever.
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Test]
+    public async Task the_final_message_missing_incident_is_raised_once_per_session()
+    {
+        // Same reason the uncorrelated one is deduped: a delegate in this state keeps ending turns,
+        // and the same finding on every one of them buries the first.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (first, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = CreateService(timeProvider: clock);
+
+        await SeedSplitTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(first.Id),
+            narration: "Reading the spec now.", finalMessage: null);
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        // The warm delegate takes a SECOND task in the same session and does it again.
+        var second = await SeedFollowUpTaskAsync(workspace.Path, sessionId, agentId);
+        await SeedSplitTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(second.Id),
+            narration: "Reading the other spec now.", finalMessage: null);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id))
+            .Status.ShouldBe(AgentTaskStatus.Succeeded, "the second task still settles");
+        (await verify.AgentIncidents.CountAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing))
+            .ShouldBe(1);
     }
 
     /// <summary>
@@ -1059,6 +1180,39 @@ public class AgentTaskReplyIntegrationTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return (task, sessionId);
+    }
+
+    /// <summary>
+    /// A second task on a session and agent that already exist — the warm-pool reuse shape, and the
+    /// only way to make one session produce the same incident twice.
+    /// </summary>
+    private static async Task<AgentTask> SeedFollowUpTaskAsync(
+        string workingDirectory, Guid sessionId, Guid agentId)
+    {
+        var id = Guid.NewGuid();
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            ReplyTo = AgentTaskReplyTo.None,
+            Title = "Follow-up on a warm delegate",
+            Goal = "Do the other thing.",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Docs,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = workingDirectory,
+            AgentSessionId = sessionId,
+            AgentId = agentId,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = DateTime.UtcNow,
+            DispatchedAt = DateTime.UtcNow,
+        };
+
+        await using var db = CreateContext();
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
     }
 
     private static async Task<Guid> SeedAgentAsync(string workingDirectory, string name, bool poolDelegate = true)

@@ -102,4 +102,19 @@ public enum AgentIncidentKind
     /// Information — so the one event that explained three dead tasks was written nowhere.
     /// </summary>
     DelegateReportUncorrelated = 17,
+
+    /// <summary>
+    /// A delegated task settled WITHOUT the text of the response that ended its turn — so the stored
+    /// report is whatever else the turn produced (mid-turn narration, most likely) and not the
+    /// delegate's verdict. Raised when CARD-0046's grace expires: either settled Succeeded on that
+    /// fallback text, or failed outright because the turn produced no text at all.
+    ///
+    /// Live miss 2026-08-13/14 (CARD-0046): six delegates lost 4 573-6 296-character reports to a
+    /// bare TurnEnd emitted by the thinking record of the same API response, and every surface said
+    /// the task had succeeded. The identity gate now waits for that response's own text; this is
+    /// what fires when waiting does not produce it, so the SECOND occurrence is visible instead of
+    /// the sixth. Warning: the task is settled either way, and a human deciding whether to re-run it
+    /// needs to know the report may be preamble.
+    /// </summary>
+    DelegateFinalMessageMissing = 18,
 }
