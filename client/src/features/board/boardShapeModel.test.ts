@@ -233,6 +233,20 @@ describe('legal move targets (lockstep with CardStateMachine)', () => {
     expect(canMoveTo('Review', 'Backlog')).toBe(true)
     expect(canMoveTo('Blocked', 'Done')).toBe(true)
   })
+
+  // The case the lockstep claim above is easiest to break on: the server excludes self from every
+  // row (`Without(self)`), so a same-status move is NOT legal. This board hides it - each column
+  // carries a distinct status, so `legalMoveTargets`' column filter removes the only candidate -
+  // hence the direct assertions, and a two-column board to prove the filter is not the guard.
+  it('refuses a self-move, even between two columns sharing one status', () => {
+    expect(canMoveTo('Backlog', 'Backlog')).toBe(false)
+    expect(canMoveTo('InProgress', 'InProgress')).toBe(false)
+    expect(canMoveTo('Done', 'Done')).toBe(false)
+
+    const [triage, second] = [board.columns[0], { ...board.columns[1], cardStatus: 'Backlog' as const }]
+    expect(legalMoveTargets(triage.cards[0], [triage, second]).map((column) => column.stateKey))
+      .toEqual([])
+  })
 })
 
 describe('spine neighbours', () => {

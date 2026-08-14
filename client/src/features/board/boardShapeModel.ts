@@ -268,7 +268,12 @@ export function defaultExpandedState(states: StateShape[]): string | null {
  * can record a reopen as a correction. Change one side and change this one.
  */
 export function canMoveTo(from: CardStatus, to: CardStatus): boolean {
-  if (from === to) return true
+  // A self-move is not a transition. The server builds every row via `Without(self)`, so
+  // `CanTransition(x, x)` is false and a same-status move is refused. `legalMoveTargets` filters
+  // the card's current COLUMN out, which hides this on a board whose columns each carry a
+  // distinct status — but two columns may share one `cardStatus`, and then the column filter
+  // passes and the server still says no. Answer it here, where the lockstep claim is made.
+  if (from === to) return false
   return from !== 'Done' && from !== 'Canceled'
 }
 
