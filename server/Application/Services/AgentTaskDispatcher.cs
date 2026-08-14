@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -32,6 +33,7 @@ public sealed class AgentTaskDispatcher
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskDispatcher> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    private readonly AgentTaskReplyService? _replies;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -45,8 +47,12 @@ public sealed class AgentTaskDispatcher
         IEventBus eventBus,
         TimeProvider timeProvider,
         ILogger<AgentTaskDispatcher> logger,
-        PtyDeliveryProfile? ptyProfile = null)
+        PtyDeliveryProfile? ptyProfile = null,
+        // Optional so every harness that predates CARD-0046 keeps constructing this; where it is
+        // absent the deferred-settlement sweep is simply not armed.
+        AgentTaskReplyService? replies = null)
     {
+        _replies = replies;
         _ptyProfile = ptyProfile;
         _db = db;
         _agentRegistry = agentRegistry;
@@ -80,6 +86,11 @@ public sealed class AgentTaskDispatcher
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
         await RetireIdleWarmAgentsAsync(ct);
+
+        // And with settlements deferred waiting for a turn-ending response's own text (CARD-0046).
+        // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
+        // this is the one that already runs on a 5 s cadence before the early return below.
+        await SettleDeferredReportsAsync(ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -346,6 +357,65 @@ public sealed class AgentTaskDispatcher
         }
 
         return failed;
+    }
+
+    /// <summary>
+    /// The clock behind CARD-0046's grace window. Settlement defers when the turn-ending response
+    /// has not written its own text yet; the ordinary resolution is the text's own arrival
+    /// re-triggering <see cref="AgentTaskReplyService.OnTurnEndAsync"/>. But a response that never
+    /// writes text at all is real — 1 in 180 measured, a lone <c>end_turn</c> thinking record
+    /// followed by "API Error: Connection lost mid-response" — and nothing would ever come back for
+    /// it, so that task would sit Dispatched until the 10-minute delivery watchdog killed it.
+    ///
+    /// Deliberately NARROW: it re-invokes settlement only for a session whose LATEST TurnEnd is
+    /// still missing its own response's text past the grace. Every other running task is left
+    /// untouched rather than being re-settled on a cadence.
+    /// </summary>
+    internal async Task<int> SettleDeferredReportsAsync(CancellationToken ct)
+    {
+        if (_replies is null || _settings.FinalMessageGraceSeconds <= 0)
+            return 0;
+
+        var cutoff = UtcNow() - TimeSpan.FromSeconds(_settings.FinalMessageGraceSeconds);
+        var sessions = await _db.AgentTasks.AsNoTracking()
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.AgentSessionId != null)
+            .Select(t => t.AgentSessionId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var swept = 0;
+        foreach (var sessionId in sessions)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var end = await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
+                .OrderByDescending(e => e.Sequence)
+                .Select(e => new { e.ApiCallId, e.CreatedAt })
+                .FirstOrDefaultAsync(ct);
+
+            // No boundary, no id to wait on, or still inside the grace — nothing was deferred here.
+            // CreatedAt, never the record's Timestamp: that one is backdated up to 30 s (CARD-0046).
+            if (end?.ApiCallId is not string apiCallId || end.CreatedAt > cutoff)
+                continue;
+
+            var landed = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
+                e => e.AgentSessionId == sessionId
+                    && e.Kind == TranscriptKinds.AssistantText
+                    && e.ApiCallId == apiCallId, ct);
+            if (landed)
+                continue; // the live path already settled (or will) on the real report
+
+            _logger.LogWarning(
+                "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
+                + "settling on what the turn produced",
+                sessionId, _settings.FinalMessageGraceSeconds);
+            await _replies.OnTurnEndAsync(sessionId, ct);
+            swept++;
+        }
+
+        return swept;
     }
 
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)

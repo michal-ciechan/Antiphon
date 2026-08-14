@@ -90,12 +90,48 @@ public sealed class AgentTaskReplyService
                     return;
                 }
 
+                if (turn.DeferredForFinalMessage)
+                {
+                    // CARD-0046: this TurnEnd is the thinking record of a response whose text is
+                    // still in flight. Waiting is the whole fix — the text's own arrival re-triggers
+                    // us, and the dispatcher sweeps the grace if it never comes.
+                    _logger.LogDebug(
+                        "Session {SessionId} ended a turn for task {ShortId} but its own response has "
+                        + "not written text yet; deferring settlement",
+                        sessionId, DelegationReportFormatter.Short(task.Id));
+                    return;
+                }
+
+                if (turn.FinalMessageMissing)
+                {
+                    // Slice 3 makes this an incident and a caller-visible warning; until then the
+                    // log is the only record that a task settled without the verdict it was owed.
+                    _logger.LogWarning(
+                        "Session {SessionId}: the turn-ending response for task {ShortId} never wrote "
+                        + "any text within the {Grace}s grace — nothing to settle on",
+                        sessionId, DelegationReportFormatter.Short(task.Id),
+                        _settings.FinalMessageGraceSeconds);
+                    return;
+                }
+
                 // The delegate hasn't produced text yet — Claude can write the stop marker before
                 // its reply, and the AssistantText arrival re-triggers us. Leave the task running.
                 _logger.LogDebug(
                     "Session {SessionId} ended a turn with no report for task {ShortId}; still working",
                     sessionId, DelegationReportFormatter.Short(task.Id));
                 return;
+            }
+
+            if (turn.FinalMessageMissing)
+            {
+                // Same as above, but there WAS other text: the report about to be stored is
+                // whatever the turn produced — most likely preamble, not a verdict.
+                _logger.LogWarning(
+                    "Session {SessionId}: the turn-ending response for task {ShortId} never wrote its "
+                    + "own text within the {Grace}s grace; settling on {Chars:N0} characters of "
+                    + "mid-turn text instead",
+                    sessionId, DelegationReportFormatter.Short(task.Id),
+                    _settings.FinalMessageGraceSeconds, report.Length);
             }
 
             await SettleAsync(scope.ServiceProvider, db, task, report, ct);
@@ -446,23 +482,40 @@ public sealed class AgentTaskReplyService
     /// delegate's terminal (benign, and what the gate is for), or the marker did not survive
     /// delivery and a finished task is about to strand (the 2026-08-11 miss).
     /// </param>
-    private readonly record struct TurnOutcome(string? Report, bool UncorrelatedReport)
+    /// <param name="DeferredForFinalMessage">
+    /// The turn-ending response has not written its own text yet (CARD-0046). Not a verdict about
+    /// the task at all — come back when the text lands, or when the grace expires.
+    /// </param>
+    /// <param name="FinalMessageMissing">
+    /// The grace expired and the turn-ending response never wrote text, so this report was built
+    /// from whatever else the turn produced — most likely mid-turn narration, not a verdict.
+    /// </param>
+    private readonly record struct TurnOutcome(
+        string? Report,
+        bool UncorrelatedReport,
+        bool DeferredForFinalMessage = false,
+        bool FinalMessageMissing = false)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
+        public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
     }
 
     /// <summary>
     /// The turn's assistant text, but only if the turn was the one we asked for — its prompt must
-    /// carry this task's marker.
+    /// carry this task's marker AND the response that ended the turn must have written its own text.
     /// </summary>
-    private static async Task<TurnOutcome> ExtractMarkedTurnAsync(
+    private async Task<TurnOutcome> ExtractMarkedTurnAsync(
         AppDbContext db, Guid sessionId, Guid taskId, CancellationToken ct)
     {
-        var endSeq = await db.TranscriptEntries
+        // The ROW, not just its sequence: settling correctly needs the turn-ending response's
+        // identity (ApiCallId) and when we actually stored it (CreatedAt) — see FinalMessageLandedAsync.
+        var end = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
-            .MaxAsync(t => (long?)t.Sequence, ct);
-        if (endSeq is not long turnEnd)
+            .OrderByDescending(t => t.Sequence)
+            .FirstOrDefaultAsync(ct);
+        if (end is null)
             return TurnOutcome.Nothing;
+        var turnEnd = end.Sequence;
 
         var prompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -495,7 +548,77 @@ public sealed class AgentTaskReplyService
         if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
             return new TurnOutcome(null, joined.Length > 0);
 
+        // CARD-0046. The turn is ours; is this response FINISHED speaking? One API response is
+        // written as several JSONL records — a signature-only thinking record, then the text record
+        // — and every one carries the response's stop_reason, so the boundary that reaches us first
+        // is a bare TurnEnd with the report still milliseconds away. Settling here hands the caller
+        // the mid-turn narration and discards the verdict (six delegates, 2026-08-13/14).
+        switch (await FinalMessageStateAsync(db, sessionId, end, ct))
+        {
+            case FinalMessageState.Landed:
+                break;
+
+            case FinalMessageState.Pending:
+                // The text record's own arrival re-triggers us (AgentSessionRuntime :219 → :350),
+                // and AgentTaskDispatcher.SettleDeferredReportsAsync sweeps the grace.
+                return TurnOutcome.Deferred;
+
+            case FinalMessageState.NeverArrived:
+                // Past the grace: a response that ends the turn with no text at all is real (1 in
+                // 180 measured — a lone thinking record followed by "API Error: Connection lost
+                // mid-response"). Settle on what there is rather than strand the task, and say so.
+                return joined.Length == 0
+                    ? new TurnOutcome(null, false, FinalMessageMissing: true)
+                    : new TurnOutcome(joined, false, FinalMessageMissing: true);
+        }
+
         return joined.Length == 0 ? TurnOutcome.Nothing : new TurnOutcome(joined, false);
+    }
+
+    private enum FinalMessageState
+    {
+        /// <summary>The turn-ending response's own text is persisted (or there is no id to check).</summary>
+        Landed = 0,
+
+        /// <summary>Not yet, and still inside the grace window.</summary>
+        Pending = 1,
+
+        /// <summary>The grace expired; this response is never going to write text.</summary>
+        NeverArrived = 2,
+    }
+
+    /// <summary>
+    /// Whether the response that ended the turn has written its own text, decided by IDENTITY: the
+    /// thinking record and the text record of one API response share a <c>message.id</c>, stored as
+    /// <see cref="TranscriptEntry.ApiCallId"/>. Exact where a debounce would be a guess.
+    ///
+    /// <para>Two deliberate escapes. A TurnEnd with NO ApiCallId is the legacy/synthetic path (a
+    /// SessionRestartBoundary, an older row, a fake that emits no message.id) — there is nothing to
+    /// wait for and it behaves exactly as it always did. And the grace is measured from
+    /// <see cref="TranscriptEntry.CreatedAt"/>, never the record's own <c>Timestamp</c>: the
+    /// thinking record's timestamp is BACKDATED to when its block finished, by 1-30 s against a
+    /// measured persist gap of 0.01-1.17 s, so a Timestamp-based window would expire before the
+    /// text it is waiting for could possibly arrive.</para>
+    /// </summary>
+    private async Task<FinalMessageState> FinalMessageStateAsync(
+        AppDbContext db, Guid sessionId, TranscriptEntry end, CancellationToken ct)
+    {
+        if (_settings.FinalMessageGraceSeconds <= 0)
+            return FinalMessageState.Landed; // escape hatch: never defer
+        if (end.ApiCallId is not string apiCallId)
+            return FinalMessageState.Landed;
+
+        var landed = await db.TranscriptEntries.AnyAsync(
+            t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.AssistantText
+                && t.ApiCallId == apiCallId, ct);
+        if (landed)
+            return FinalMessageState.Landed;
+
+        var waited = UtcNow() - end.CreatedAt;
+        return waited < TimeSpan.FromSeconds(_settings.FinalMessageGraceSeconds)
+            ? FinalMessageState.Pending
+            : FinalMessageState.NeverArrived;
     }
 
     /// <summary>

@@ -248,6 +248,28 @@ public sealed class DelegationSettings
     /// </summary>
     public int DeliveryFailTimeoutMinutes { get; set; } = 10;
 
+    /// <summary>
+    /// How long settlement waits for the turn-ending response's OWN text before giving up and
+    /// settling on whatever the turn produced (CARD-0046).
+    ///
+    /// Claude Code writes one API response as several JSONL records — a signature-only
+    /// <c>thinking</c> record, then the <c>text</c> record — and stamps EVERY one with the
+    /// response's <c>stop_reason</c>, so the first thing that reaches us is a BARE TurnEnd. The wait
+    /// is closed by IDENTITY (both records share one <c>message.id</c> → <c>ApiCallId</c>), and this
+    /// is only the backstop for a response that never writes text at all: 1 in 180 in the measured
+    /// corpus, an <c>end_turn</c> thinking record followed by <c>API Error: Connection lost
+    /// mid-response</c>. Without the backstop such a task would sit Dispatched forever.
+    ///
+    /// Measured need is ~1.2 s (persist gap 0.01-1.17 s at a 300 ms tailer poll). 120 s absorbs a
+    /// tailer stall or a stream gap and still sits far under
+    /// <see cref="DeliveryFailTimeoutMinutes"/> (10 min).
+    ///
+    /// <para><b>Escape hatch:</b> <c>&lt;= 0</c> means "never defer" — settlement behaves exactly as
+    /// it did before CARD-0046, including discarding the report. Only set it to prove a regression
+    /// came from here.</para>
+    /// </summary>
+    public int FinalMessageGraceSeconds { get; set; } = 120;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 

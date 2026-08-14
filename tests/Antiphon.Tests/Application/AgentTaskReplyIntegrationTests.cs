@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -204,6 +205,221 @@ public class AgentTaskReplyIntegrationTests
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.Status.ShouldBe(AgentTaskStatus.Dispatched);
         stored.Result.ShouldBeNull();
+    }
+
+    // ---- CARD-0046: settle on the response that ENDED the turn, not on the record that announced it ----
+
+    /// <summary>
+    /// The root defect, verbatim. Claude Code writes ONE API response as several JSONL records — a
+    /// signature-only <c>thinking</c> record, then the <c>text</c> record — and stamps EVERY one of
+    /// them with the response's <c>stop_reason</c>. The thinking record's text is empty in all 1 936
+    /// thinking blocks on this machine, so it normalizes to a BARE TurnEnd and nothing else, and
+    /// settlement fired on it while the report was still 0.01-1.2 s from being persisted.
+    ///
+    /// Six delegates lost their verdicts that way on 2026-08-13/14 (4 573-6 296 characters each) and
+    /// their callers received the mid-turn preamble instead. Nothing had stopped early; the reports
+    /// are still in TranscriptEntries.
+    ///
+    /// Closed by IDENTITY — the two records share one <c>message.id</c>, persisted as
+    /// <c>ApiCallId</c> — never by timing.
+    /// </summary>
+    [Test]
+    public async Task a_turn_end_whose_own_response_has_not_written_its_text_does_not_settle()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedSplitTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.",
+            finalMessage: null);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched,
+            "the turn-ending response has not written its text yet — its narration is not the report");
+        stored.Result.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task the_final_messages_arrival_settles_the_task_with_the_report()
+    {
+        // The other half: deferring is only correct because the text record's own arrival
+        // re-triggers settlement (AgentSessionRuntime :219 → :350). Nothing else has to happen.
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+
+        var apiCallId = await SeedSplitTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.",
+            finalMessage: null);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await AppendFinalMessageAsync(sessionId, apiCallId, "Verdict: keep as is. 142 passed, 0 failed.");
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldContain(
+            "Verdict: keep as is.", customMessage: "the verdict is what the caller was owed");
+    }
+
+    [Test]
+    public async Task a_turn_end_with_no_api_call_id_settles_as_it_always_did()
+    {
+        // The explicit regression guard for the legacy/synthetic path: a SessionRestartBoundary, an
+        // older row, a fake that emits no message.id. There is no response identity to wait for, so
+        // there is nothing to defer on — and the other 25 tests in this file take the same route.
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.", turnEndApiCallId: null);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe("Done.");
+    }
+
+    /// <summary>
+    /// The backstop the deferral must have: a response CAN end a turn having written no text at all
+    /// — 1 in 180 in the measured corpus (opus session cefed08a, a lone thinking record with
+    /// <c>end_turn</c> followed 106 ms later by "API Error: Connection lost mid-response"). Without
+    /// the grace that task sits Dispatched until the 10-minute delivery watchdog kills it.
+    /// </summary>
+    [Test]
+    public async Task a_response_that_never_writes_text_settles_after_the_grace_window()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000, FinalMessageGraceSeconds = 120 };
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+
+        await SeedSplitTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.",
+            finalMessage: null);
+
+        var service = CreateService(settings: settings, timeProvider: clock);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var midGrace = CreateContext())
+        {
+            (await midGrace.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched, "inside the grace it is still waiting");
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(
+            AgentTaskStatus.Succeeded, "past the grace, settling on the preamble beats stranding the task");
+        settled.Result.ShouldBe("I'll start by reading the spec.");
+        // Slice 3 turns this into an incident and a warning the CALLER can see; today it is a log line.
+    }
+
+    /// <summary>
+    /// The live shape, replayed from the real JSONL: session 7f9d06a5 (task ff320d72), response
+    /// <c>msg_011Ce2Xog1xCJs9P</c>, whose thinking record is stamped 11:05:43 and whose 5 850-char
+    /// report is stamped 11:06:01 — both written to the file together at the end of the response.
+    /// Settlement fired 0.73 s before the report row was persisted and the caller received 289
+    /// characters of "I'll start by…" instead.
+    ///
+    /// Driven through the three invocations the runtime really makes, in arrival order: the bare
+    /// TurnEnd, then the text record, then the text record's own TurnEnd sibling. Exactly one
+    /// settlement may come out of it.
+    /// </summary>
+    [Test]
+    public async Task the_live_split_response_tail_settles_once_with_the_report()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var (apiCallId, finalMessage) = LiveSplitResponseFixture();
+        finalMessage.Length.ShouldBe(5_850, "the report that was discarded, verbatim");
+        var service = CreateService();
+
+        // seq 97: the thinking record's bare TurnEnd. Nothing may settle here.
+        await SeedLiveSplitTailAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id), apiCallId);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var midTurn = CreateContext())
+        {
+            (await midTurn.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        }
+
+        // seq 98-99: the text record (re-triggers settlement) and its duplicate TurnEnd sibling.
+        await AppendFinalMessageAsync(sessionId, apiCallId, finalMessage);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        // Slice 1 still joins the whole turn; slice 2 narrows Result to the final message alone.
+        settled.Result.ShouldEndWith(finalMessage, customMessage: "the verdict is what the caller is owed");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBe(1, "the duplicate TurnEnd sibling must not settle the task a second time");
+    }
+
+    /// <summary>
+    /// The two real JSONL lines of <c>msg_011Ce2Xog1xCJs9P</c>, through the production normalizer:
+    /// the signature-only thinking record yields a bare TurnEnd, the text record yields the report.
+    /// Reading them rather than restating them is what keeps this test honest about the shape.
+    /// </summary>
+    private static (string ApiCallId, string FinalMessage) LiveSplitResponseFixture()
+    {
+        var lines = File.ReadAllLines(
+                Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "split-final-response.jsonl"))
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToArray();
+        var parts = lines.SelectMany(Antiphon.SessionRunner.TranscriptNormalizer.Normalize).ToList();
+
+        var bare = parts.Where(p => p.Kind == TranscriptKinds.TurnEnd).ToList();
+        bare.Count.ShouldBe(2, "both records of one response carry its stop_reason");
+        var text = parts.Single(p => p.Kind == TranscriptKinds.AssistantText);
+        bare.ShouldAllBe(p => p.ApiCallId == text.ApiCallId);
+        return (text.ApiCallId!, text.Text!);
+    }
+
+    /// <summary>seq 97's shape: the marked brief, mid-turn narration, then the bare TurnEnd.</summary>
+    private static async Task SeedLiveSplitTailAsync(Guid sessionId, string marker, string apiCallId)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        db.TranscriptEntries.Add(NewEntry(
+            sessionId, ++seq, TranscriptKinds.UserPrompt, marker + "\n\nPlan CARD-0046."));
+        // ff320d72's stored Result was literally these three sentences joined.
+        foreach (var narration in new[]
+        {
+            "I'll start by reading the card.",
+            "I'll now measure the record shapes.",
+            "I'll write the plan.",
+        })
+        {
+            var chatter = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, narration);
+            chatter.ApiCallId = $"msg_{Guid.NewGuid():N}";
+            db.TranscriptEntries.Add(chatter);
+        }
+
+        var bareEnd = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+        bareEnd.StopReason = "end_turn";
+        bareEnd.ApiCallId = apiCallId;
+        db.TranscriptEntries.Add(bareEnd);
+        await db.SaveChangesAsync();
     }
 
     [Test]
@@ -735,14 +951,16 @@ public class AgentTaskReplyIntegrationTests
     // Most cases pin the ceiling explicitly so they stay readable as the shipped default moves;
     // pass `settings` to exercise what actually ships.
     private static AgentTaskReplyService CreateService(
-        TestScopeFactory? factory = null, DelegationSettings? settings = null)
+        TestScopeFactory? factory = null,
+        DelegationSettings? settings = null,
+        TimeProvider? timeProvider = null)
     {
         settings ??= new DelegationSettings { ReplyInlineMaxChars = 20_000 };
         return new AgentTaskReplyService(
             factory ?? new TestScopeFactory(),
             Options.Create(settings),
             new MockEventBus(),
-            TimeProvider.System,
+            timeProvider ?? TimeProvider.System,
             NullLogger<AgentTaskReplyService>.Instance);
     }
 
@@ -826,11 +1044,16 @@ public class AgentTaskReplyIntegrationTests
     /// <paramref name="entriesPerApiCall"/> models the real JSONL shape: a single API
     /// call emits several entries (text, tool call, tool result...) that all carry the same
     /// ApiCallId and REPEAT its usage numbers verbatim — so anything summing per entry overcounts.
+    ///
+    /// <paramref name="turnEndApiCallId"/> defaults to NULL, which is the legacy shape and the
+    /// reason CARD-0046's deferral leaves all these tests on their existing path: with no response
+    /// identity on the boundary there is nothing to wait for. Pass one to exercise the identity gate
+    /// (see <see cref="SeedSplitTurnAsync"/> for the split shape it was written for).
     /// </summary>
     private static async Task SeedTurnAsync(
         Guid sessionId, string prompt, string? assistantText, int? inputTokens = null, int? outputTokens = null,
         int? cacheReadTokens = null, int? cacheCreationTokens = null, int entriesPerApiCall = 1,
-        DateTime? timestamp = null)
+        DateTime? timestamp = null, string? turnEndApiCallId = null)
     {
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
@@ -855,6 +1078,68 @@ public class AgentTaskReplyIntegrationTests
         }
         var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
         end.StopReason = "end_turn";
+        end.ApiCallId = turnEndApiCallId;
+        db.TranscriptEntries.Add(end);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The measured split shape (CARD-0046 §1.2, session 7f9d06a5): mid-turn narration under its own
+    /// API call, then the turn-ending response written as TWO JSONL records sharing ONE
+    /// <c>message.id</c> — a signature-only thinking record, which normalizes to a BARE TurnEnd, and
+    /// 0.01-1.2 s later the text record plus its own (deduped) TurnEnd sibling.
+    ///
+    /// <paramref name="finalMessage"/> null stops after the bare TurnEnd — the instant settlement
+    /// used to fire in. Returns the turn-ending response's ApiCallId so a test can land its text
+    /// afterwards, exactly as the tailer does.
+    /// </summary>
+    private static async Task<string> SeedSplitTurnAsync(
+        Guid sessionId, string prompt, string narration, string? finalMessage)
+    {
+        var finalCallId = $"msg_{Guid.NewGuid():N}";
+        await using (var db = CreateContext())
+        {
+            var seq = await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == sessionId)
+                .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+            db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
+
+            // An EARLIER API call: the "I'll start by…" narration between tool calls. Non-empty, so
+            // the "no text yet — leave it running" guard never fired.
+            var chatter = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, narration);
+            chatter.ApiCallId = $"msg_{Guid.NewGuid():N}";
+            db.TranscriptEntries.Add(chatter);
+
+            // The thinking record of the turn-ending response: a TurnEnd carrying that response's id
+            // and NOTHING else.
+            var bareEnd = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+            bareEnd.StopReason = "end_turn";
+            bareEnd.ApiCallId = finalCallId;
+            db.TranscriptEntries.Add(bareEnd);
+            await db.SaveChangesAsync();
+        }
+
+        if (finalMessage is not null)
+            await AppendFinalMessageAsync(sessionId, finalCallId, finalMessage);
+        return finalCallId;
+    }
+
+    /// <summary>The text record of an already-ended response, and its duplicate TurnEnd sibling.</summary>
+    private static async Task AppendFinalMessageAsync(Guid sessionId, string apiCallId, string finalMessage)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        var text = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, finalMessage);
+        text.ApiCallId = apiCallId;
+        db.TranscriptEntries.Add(text);
+
+        var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+        end.StopReason = "end_turn";
+        end.ApiCallId = apiCallId;
         db.TranscriptEntries.Add(end);
         await db.SaveChangesAsync();
     }
