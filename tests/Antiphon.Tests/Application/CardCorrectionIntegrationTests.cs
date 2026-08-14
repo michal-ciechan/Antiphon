@@ -949,6 +949,62 @@ public class CardCorrectionIntegrationTests
         }
     }
 
+    // Two writers who both read RevisionCount = n both allocate n + 1, and the unique
+    // (CardId, RevisionNumber) index rejects the loser — as a DbUpdateException, which is NOT a
+    // concurrency exception and escaped as an unexplained 500 until SaveCardWriteAsync learned the
+    // shape. Two concurrent channel delegations of one card did exactly that.
+    [Test]
+    public async Task Two_concurrent_writers_leave_one_winner_and_one_conflict_never_a_500()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var seed = BuildHarness(tempRoot);
+            var board = await seed.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Race board"), CancellationToken.None);
+            var card = await seed.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Contended"), CancellationToken.None);
+            var reviewColumn = board.Columns.Single(c => c.StateKey == "review");
+
+            await using var first = BuildHarness(tempRoot);
+            await using var second = BuildHarness(tempRoot);
+            var request = new MoveCardRequest(reviewColumn.Id, card.ConcurrencyToken, "Racing.");
+            var outcomes = await Task.WhenAll(
+                CaptureAsync(() => first.CardService.MoveAsync(card.Id, request, CancellationToken.None)),
+                CaptureAsync(() => second.CardService.MoveAsync(card.Id, request, CancellationToken.None)));
+
+            outcomes.Count(o => o.Error is null).ShouldBe(1);
+            outcomes.Count(o => o.Error is ConflictException).ShouldBe(1);
+
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id)).ShouldBe(1);
+            (await verify.Cards.SingleAsync(c => c.Id == card.Id)).RevisionCount.ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static async Task<MoveOutcome> CaptureAsync(Func<Task<CardDto>> move)
+    {
+        try
+        {
+            return new MoveOutcome(await move(), null);
+        }
+        catch (Exception ex)
+        {
+            return new MoveOutcome(null, ex);
+        }
+    }
+
+    private sealed record MoveOutcome(CardDto? Card, Exception? Error);
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static Harness BuildHarness(string tempRoot)

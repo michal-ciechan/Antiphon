@@ -1,8 +1,12 @@
 # Card workflow — decisions taken outside the cards
 
-**Why this file exists:** cards are write-once and there is no edit endpoint (CARD-0019), so a
-decision that refines an already-filed card has nowhere to live. Chat is not a record. Until
-CARD-0019 ships, refinements land here and should be folded into the card once it can be edited.
+**Why this file exists:** cards used to be write-once with no edit endpoint (CARD-0019), so a
+decision that refined an already-filed card had nowhere to live. Chat is not a record.
+
+**Since 2026-08-14** cards *can* be edited — `PATCH /api/cards/{id}/content`, with a mandatory
+reason and an immutable revision history — so the entries below should be folded back into their
+cards, leaving this file only for decisions that genuinely live outside any card. That fold is
+CARD-0019 slice 3 and has not happened yet.
 
 ---
 
@@ -27,12 +31,13 @@ It is called `Reason`, not `TerminalReason`, deliberately. Closing is what motiv
 back because the spec changed" and "started early to unblock CARD-nnnn" are the same kind of fact,
 and a field named for one use is how a second one ends up as a second field.
 
-**Known gap:** the reason only persists on a move into a terminal column, where it becomes
-`Card.TerminalReason`. On every other move it is accepted and dropped, because there is no per-card
-history to hold it. `AuditRecord` is not that home — it is workflow and LLM-cost oriented. The right
-home is CARD-0019's `CardRevision`, which makes this the second caller waiting on that card. The API
-shape is deliberately correct ahead of the storage: callers should pass a reason now rather than
-learn not to.
+**Known gap — CLOSED 2026-08-14 by CARD-0019 slice 1.** The reason used to persist only on a move
+into a terminal column, where it becomes `Card.TerminalReason`; on every other move it was accepted
+and dropped, because there was no per-card history to hold it. `CardRevision` is now that home: every
+column transition writes a `Move` revision carrying the reason, from/to column and from/to status,
+including the spawn-, session- and tracker-driven moves. A terminal move still stamps
+`TerminalReason` as well — the two are not alternatives. (`AuditRecord` was never the right home; it
+is workflow and LLM-cost oriented.)
 
 **Not changed, deliberately:** `InProgress → Done` and `Blocked → Done` remain forbidden. The same
 argument applies to both and they are probably worth allowing, but widening a considered state

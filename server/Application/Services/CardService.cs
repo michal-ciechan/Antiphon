@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -146,7 +147,7 @@ public sealed class CardService
         var assignedAgentId = card.AssignedAgentId;
         ApplyColumnMove(card, targetColumn, reason: request.Reason);
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
-        await _db.SaveChangesAsync(ct);
+        await SaveCardWriteAsync(card, ct);
 
         // Completing a card is the "work is done" sign-off — checkpoint the assigned agent's
         // workspace (HEAD sha + timestamp) so the Files review surface can show changes since
@@ -195,14 +196,7 @@ public sealed class CardService
         card.UpdatedAt = now;
         card.ConcurrencyToken = Guid.NewGuid();
 
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException ex)
-        {
-            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
-        }
+        await SaveCardWriteAsync(card, ct);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return await GetByIdAsync(card.Id, ct);
@@ -302,14 +296,7 @@ public sealed class CardService
         card.UpdatedAt = now;
         card.ConcurrencyToken = Guid.NewGuid();
 
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException ex)
-        {
-            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
-        }
+        await SaveCardWriteAsync(card, ct);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return await GetByIdAsync(card.Id, ct);
@@ -356,14 +343,7 @@ public sealed class CardService
                 enforceStateMachine: false,
                 reason: "Moved into an active column to spawn an agent session.",
                 movedBy: SystemActor);
-            try
-            {
-                await _db.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
-            }
+            await SaveCardWriteAsync(card, ct);
         }
 
         var definitionName = string.IsNullOrWhiteSpace(request.DefinitionName)
@@ -414,6 +394,44 @@ public sealed class CardService
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return new SpawnCardResult(card.Id, sessionId.Value);
     }
+
+    /// <summary>
+    /// Saves a card write, turning "somebody else got there first" into a 409 rather than a 500.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes mean the same thing. The card's concurrency token catches the ordinary race. The
+    /// revision sequence catches the rest: two writers who both read <c>RevisionCount = n</c> both
+    /// allocate n + 1, and the unique <c>(CardId, RevisionNumber)</c> index rejects the loser — as
+    /// a <see cref="DbUpdateException"/>, which is NOT a concurrency exception and would otherwise
+    /// escape as an unexplained 500. Two concurrent channel delegations of one card did exactly
+    /// that. The database's own message is attached rather than paraphrased, so a 409 that turns
+    /// out to be a misdiagnosis still has something to debug from.
+    /// </remarks>
+    private async Task SaveCardWriteAsync(Card card, CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
+        }
+        catch (DbUpdateException ex) when (IsDuplicateRevisionNumber(ex))
+        {
+            throw new ConflictException(
+                $"Card '{card.Identifier}' was modified by another operation "
+                + $"({AgentService.DescribeDbFailure(ex)}).",
+                ex);
+        }
+    }
+
+    private static bool IsDuplicateRevisionNumber(DbUpdateException ex) =>
+        ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_CardRevisions_CardId_RevisionNumber"
+        };
 
     private async Task<Card> LoadCardAsync(Guid id, CancellationToken ct)
     {
@@ -504,10 +522,11 @@ public sealed class CardService
     /// has to move forward even when rows leave. Suffixes that do not parse (a board synced from a
     /// foreign tracker) are ignored rather than blocking allocation.
     ///
-    /// <para>This closes the collision but not the whole hole: deleting the CURRENT HIGHEST card
-    /// still frees its number, because the only record that it was ever taken is the row itself.
-    /// Full monotonicity needs CARD-0019's archive-instead-of-delete (or a per-board counter), and
-    /// that is where it belongs — a card that is cited should not vanish in the first place.</para>
+    /// <para>A HARD delete of the current highest card still frees its number, because the only
+    /// record that it was ever taken is the row itself. That is now avoidable rather than
+    /// inevitable: <see cref="ArchiveAsync"/> is what "delete" means for a card, and an archived
+    /// row is still counted here — which is exactly why archived cards are filtered at the read
+    /// site and NOT by a global EF query filter.</para>
     /// </remarks>
     private async Task<string> NextIdentifierAsync(Guid boardId, CancellationToken ct)
     {
