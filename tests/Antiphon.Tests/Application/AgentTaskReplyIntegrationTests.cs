@@ -1010,6 +1010,179 @@ public class AgentTaskReplyIntegrationTests
             .ShouldBeTrue();
     }
 
+    // ---- a turn that launched background subagents is not finished (CARD-0046 slice 4) ----------
+
+    /// <summary>
+    /// The 26421cf2 case (session ac09cffd, seqs 1-35). A Review delegate fanned out four
+    /// background <c>Agent</c> calls, each answered instantly with "Async agent launched
+    /// successfully", wrote "Four review agents are running in parallel — …" and ended its turn FOR
+    /// REAL (seq 18 text, seq 19 TurnEnd, one ApiCallId — this one is not the split shape, so
+    /// slice 1 does not help it). Settlement harvested the announcement at 07:44:10, priced the
+    /// task and released the delegate; the actual 6 195-character verdict was written at 07:48:06
+    /// into a task that no longer existed.
+    /// </summary>
+    [Test]
+    public async Task a_turn_that_launched_background_agents_does_not_settle_on_its_announcement()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-5);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+
+        var launched = await SeedSubagentFanOutAsync(sessionId, dispatched, task.Id);
+        launched.Count.ShouldBe(4);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "the work was handed to subagents, not done");
+        stored.Result.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The hazard slice 4 creates and must close in the same commit: each notification arrives as a
+    /// USER record and ends a turn of its own, so with notifications left in the walk-back the
+    /// marker gate fails on every one of them, an incident is raised, and the delivery watchdog
+    /// kills the task at ten minutes — the exact death this whole change exists to stop.
+    /// </summary>
+    [Test]
+    public async Task a_task_notification_turn_is_not_an_uncorrelated_report()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var dispatched = DateTime.UtcNow.AddMinutes(-5);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.AgentId = agentId; t.DispatchedAt = dispatched; });
+
+        var launched = await SeedSubagentFanOutAsync(sessionId, dispatched, task.Id);
+        await SeedSubagentNotificationAsync(
+            sessionId, launched[2], "The allocator review came back clean.", dispatched.AddMinutes(2));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "three of four are still running");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBeFalse("the brief still owns this span — a notification is not a prompt");
+    }
+
+    /// <summary>
+    /// All four report, the delegate folds them into a verdict, and THAT settles the task — once.
+    /// Pairing is by the <c>toolu_…</c> id each notification names, so three of four is
+    /// unambiguously "one still running" rather than a count that could be satisfied by anything.
+    /// </summary>
+    [Test]
+    public async Task the_last_subagent_notification_settles_the_task_with_the_verdict()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-6);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string verdict = "Verdict: keep as is — no real problem found.";
+        var service = CreateService();
+
+        var launched = await SeedSubagentFanOutAsync(sessionId, dispatched, task.Id);
+        for (var i = 0; i < 3; i++)
+        {
+            await SeedSubagentNotificationAsync(
+                sessionId, launched[i], $"Reviewer {i} came back clean.",
+                dispatched.AddMinutes(2 + i));
+            await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        }
+
+        await using (var mid = CreateContext())
+        {
+            (await mid.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Dispatched, "the fourth has not reported");
+        }
+
+        await SeedSubagentNotificationAsync(sessionId, launched[3], verdict, dispatched.AddMinutes(5));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(verdict);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
+            .ShouldBe(1, "exactly one settlement");
+    }
+
+    /// <summary>
+    /// A SYNCHRONOUS Agent call returns the subagent's answer as its ToolResult, with no launch
+    /// marker on it — the work is already in the turn, so nothing is being waited for.
+    /// </summary>
+    [Test]
+    public async Task a_synchronous_agent_call_settles_normally()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-5);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nReview the commit.",
+            dispatched.AddMinutes(1));
+        var toolUseId = $"toolu_{Guid.NewGuid():N}";
+        await SeedToolCallAsync(sessionId, TranscriptKinds.AgentToolName, toolUseId, dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.ToolResult,
+            "The subagent's whole answer, returned inline: nothing to fix.", dispatched.AddMinutes(2),
+            toolUseId: toolUseId);
+        await SeedResponseAsync(sessionId, "Verdict: keep as is.", dispatched.AddMinutes(3));
+
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe("Verdict: keep as is.");
+    }
+
+    /// <summary>
+    /// A background subagent can die without ever notifying, and nothing would come back for the
+    /// task. Past the grace it settles on what there is — and says so on all three surfaces, because
+    /// "Four review agents are running in parallel" reads exactly like a finished report.
+    /// </summary>
+    [Test]
+    public async Task a_subagent_that_never_reports_settles_after_the_subagent_grace()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var dispatched = DateTime.UtcNow.AddMinutes(-5);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId: await SeedSessionAsync(workspace.Path),
+            configure: t => { t.AgentId = agentId; t.DispatchedAt = dispatched; });
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+
+        await SeedSubagentFanOutAsync(sessionId, dispatched, task.Id);
+        clock.Advance(TimeSpan.FromMinutes(31));
+        await CreateService(timeProvider: clock).OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(
+            AgentTaskStatus.Succeeded, "the delegate did what it could — stranding it helps nobody");
+        settled.Result.ShouldContain("Four review agents are running in parallel");
+
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("4 background subagent(s)");
+
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId
+                && i.Kind == AgentIncidentKind.DelegateSubagentsNeverReported);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+
+        var note = await verify.SessionQueuedMessages
+            .SingleAsync(m => m.AgentSessionId == task.ParentSessionId);
+        note.Body.ShouldContain(
+            "may be its ANNOUNCEMENT", customMessage: "the CALLER is the one who has to know");
+    }
+
     [Test]
     public async Task a_session_running_no_task_is_ignored()
     {
@@ -1494,7 +1667,8 @@ public class AgentTaskReplyIntegrationTests
 
     /// <summary>One entry appended at the session's next sequence, with a real record timestamp.</summary>
     private static async Task SeedEntryAsync(
-        Guid sessionId, string kind, string? text, DateTime timestamp, string? apiCallId = null)
+        Guid sessionId, string kind, string? text, DateTime timestamp, string? apiCallId = null,
+        string? toolUseId = null, string? toolName = null)
     {
         await using var db = CreateContext();
         var seq = await db.TranscriptEntries
@@ -1504,10 +1678,79 @@ public class AgentTaskReplyIntegrationTests
         var entry = NewEntry(sessionId, seq + 1, kind, text);
         entry.Timestamp = timestamp;
         entry.ApiCallId = apiCallId;
+        entry.ToolUseId = toolUseId;
+        entry.ToolName = toolName;
         if (kind == TranscriptKinds.TurnEnd)
             entry.StopReason = "end_turn";
         db.TranscriptEntries.Add(entry);
         await db.SaveChangesAsync();
+    }
+
+    private static Task SeedToolCallAsync(Guid sessionId, string toolName, string toolUseId, DateTime at) =>
+        SeedEntryAsync(
+            sessionId, TranscriptKinds.ToolCall, null, at,
+            apiCallId: $"msg_{Guid.NewGuid():N}", toolUseId: toolUseId, toolName: toolName);
+
+    /// <summary>
+    /// The measured background fan-out (session ac09cffd seqs 1-19): the brief, a line of narration,
+    /// four <c>Agent</c> ToolCalls each answered instantly by the async-launch marker, then the
+    /// announcement and a REAL turn end whose text has already landed under the same ApiCallId —
+    /// so nothing in slice 1 defers it. Returns the four <c>toolu_…</c> ids, in launch order.
+    /// </summary>
+    private static async Task<List<string>> SeedSubagentFanOutAsync(
+        Guid sessionId, DateTime dispatchedAt, Guid taskId)
+    {
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(taskId) + "\n\nJudge whether commit ce48f50 is correct.",
+            dispatchedAt.AddMinutes(1));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText,
+            "The commit is large but well-scoped. I'll fan out four parallel review agents.",
+            dispatchedAt.AddMinutes(1));
+
+        var launched = new List<string>();
+        for (var i = 0; i < 4; i++)
+        {
+            var toolUseId = $"toolu_{Guid.NewGuid():N}";
+            launched.Add(toolUseId);
+            await SeedToolCallAsync(
+                sessionId, TranscriptKinds.AgentToolName, toolUseId, dispatchedAt.AddMinutes(1));
+            await SeedEntryAsync(
+                sessionId, TranscriptKinds.ToolResult,
+                TranscriptKinds.AsyncAgentLaunchMarker
+                + " successfully. (This tool result is internal metadata — never quote or paste any "
+                + "part of it, including the agentId below, into a user-facing reply.)",
+                dispatchedAt.AddMinutes(1), toolUseId: toolUseId);
+        }
+
+        await SeedResponseAsync(
+            sessionId,
+            "Four review agents are running in parallel — proposal fidelity, the state model, the "
+            + "allocator, and menu safety. I'll synthesize when they report.",
+            dispatchedAt.AddMinutes(1));
+        return launched;
+    }
+
+    /// <summary>
+    /// One background subagent reporting: the <c>&lt;task-notification&gt;</c> USER record naming the
+    /// launch it answers, then the turn the delegate takes in response — a BARE TurnEnd first (the
+    /// notification turns really are the split shape, ac09cffd seqs 21-23) and then its text.
+    /// </summary>
+    private static async Task SeedSubagentNotificationAsync(
+        Guid sessionId, string toolUseId, string delegateReply, DateTime at)
+    {
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            $"{TranscriptKinds.TaskNotificationPrefix}\n<task-id>a548067d72b9d6de9</task-id>\n"
+            + $"<tool-use-id>{toolUseId}</tool-use-id>\n<status>completed</status>\n"
+            + "<result>The subagent's own report.</result>\n</task-notification>",
+            at);
+
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, at, apiCallId);
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, delegateReply, at, apiCallId);
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, at, apiCallId);
     }
 
     /// <summary>An assistant response: its text and the TurnEnd sibling that shares its message id.</summary>

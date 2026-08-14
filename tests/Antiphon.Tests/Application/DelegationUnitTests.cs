@@ -884,3 +884,52 @@ public class TranscriptLocalCommandEchoTests
             .ShouldBeFalse();
     }
 }
+
+/// <summary>
+/// The classifiers behind CARD-0046 slice 4: telling a BACKGROUND subagent launch from a
+/// synchronous one, and pairing each launch with the notification that answers it. Shapes pinned
+/// from session ac09cffd (seqs 10-20). Settlement only.
+/// </summary>
+[Category("Unit")]
+public class SubagentNotificationTests
+{
+    private const string Notification =
+        "<task-notification>\n<task-id>a548067d72b9d6de9</task-id>\n"
+        + "<tool-use-id>toolu_016EchwymsdkwrMZzwUnmtvg</tool-use-id>\n<status>completed</status>\n"
+        + "<summary>Agent \"Review CardService allocator (c)\" finished</summary>\n</task-notification>";
+
+    [Test]
+    public void a_notification_is_not_a_prompt_anybody_typed()
+    {
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, Notification).ShouldBeTrue();
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, "review the commit")
+            .ShouldBeFalse();
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.AssistantText, Notification)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void a_notification_names_the_launch_it_answers()
+    {
+        // The strong link: pairing by id makes four launches and three notifications an unambiguous
+        // "one still running", where counting them would have to assume nothing else launches.
+        TranscriptKinds.TryReadNotifiedToolUseId(Notification)
+            .ShouldBe("toolu_016EchwymsdkwrMZzwUnmtvg");
+        TranscriptKinds.TryReadNotifiedToolUseId("<task-notification>\n<status>completed</status>")
+            .ShouldBeNull();
+        TranscriptKinds.TryReadNotifiedToolUseId(null).ShouldBeNull();
+    }
+
+    [Test]
+    public void the_async_launch_marker_separates_a_launch_from_an_answer()
+    {
+        // A background spawn answers instantly with metadata; a SYNCHRONOUS Agent call returns the
+        // subagent's actual work, so only the marker means "not started yet".
+        const string async_ =
+            "Async agent launched successfully. (This tool result is internal metadata — never quote "
+            + "or paste any part of it, including the agentId below, into a user-facing reply.)";
+        async_.Contains(TranscriptKinds.AsyncAgentLaunchMarker, StringComparison.Ordinal).ShouldBeTrue();
+        "All checks done by reading; I did not run the tests."
+            .Contains(TranscriptKinds.AsyncAgentLaunchMarker, StringComparison.Ordinal).ShouldBeFalse();
+    }
+}

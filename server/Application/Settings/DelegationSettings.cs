@@ -270,6 +270,23 @@ public sealed class DelegationSettings
     /// </summary>
     public int FinalMessageGraceSeconds { get; set; } = 120;
 
+    /// <summary>
+    /// How long settlement waits for the BACKGROUND subagents a turn launched before giving up and
+    /// settling without them (CARD-0046 slice 4).
+    ///
+    /// A delegate that spawns Claude Code's built-in <c>Agent</c> tool asynchronously gets "Async
+    /// agent launched successfully" back immediately, writes an announcement and legitimately ENDS
+    /// its turn — the work it was asked to do has not happened yet. Task 26421cf2 settled on that
+    /// announcement at 07:44:10 and folded four reviews into a 6 195-character verdict at 07:48:06,
+    /// four minutes after it had been priced and closed. The wait is closed by IDENTITY, not by a
+    /// count: each notification names the <c>toolu_…</c> id of the launch it answers.
+    ///
+    /// This is only the backstop for a subagent that dies without ever notifying. Minutes, not
+    /// seconds, because the thing being waited for is another agent doing real work — the measured
+    /// four took 78-236 s. <c>&lt;= 0</c> disables the wait entirely (pre-slice-4 behaviour).
+    /// </summary>
+    public int SubagentGraceMinutes { get; set; } = 30;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 

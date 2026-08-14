@@ -370,13 +370,24 @@ public sealed class AgentTaskDispatcher
     /// Deliberately NARROW: it re-invokes settlement only for a session whose LATEST TurnEnd is
     /// still missing its own response's text past the grace. Every other running task is left
     /// untouched rather than being re-settled on a cadence.
+    ///
+    /// <para>Slice 4 adds the second clock, for the same reason: a turn that launched BACKGROUND
+    /// subagents defers until their notifications return, and a subagent can die without ever
+    /// notifying. That one is measured from the session's last transcript entry — a notification
+    /// arriving resets it — and it is self-limiting, because the settlement it triggers takes the
+    /// task out of Dispatched and out of this scan.</para>
     /// </summary>
     internal async Task<int> SettleDeferredReportsAsync(CancellationToken ct)
     {
-        if (_replies is null || _settings.FinalMessageGraceSeconds <= 0)
+        if (_replies is null)
+            return 0;
+        var finalMessageArmed = _settings.FinalMessageGraceSeconds > 0;
+        var subagentsArmed = _settings.SubagentGraceMinutes > 0;
+        if (!finalMessageArmed && !subagentsArmed)
             return 0;
 
         var cutoff = UtcNow() - TimeSpan.FromSeconds(_settings.FinalMessageGraceSeconds);
+        var subagentCutoff = UtcNow() - TimeSpan.FromMinutes(_settings.SubagentGraceMinutes);
         var sessions = await _db.AgentTasks.AsNoTracking()
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
                 && t.AgentSessionId != null)
@@ -394,25 +405,48 @@ public sealed class AgentTaskDispatcher
                 .OrderByDescending(e => e.Sequence)
                 .Select(e => new { e.ApiCallId, e.CreatedAt })
                 .FirstOrDefaultAsync(ct);
+            if (end is null)
+                continue; // no boundary at all — nothing has been deferred here
 
-            // No boundary, no id to wait on, or still inside the grace — nothing was deferred here.
-            // CreatedAt, never the record's Timestamp: that one is backdated up to 30 s (CARD-0046).
-            if (end?.ApiCallId is not string apiCallId || end.CreatedAt > cutoff)
+            // (1) The turn-ending response never wrote its own text. No id to wait on, or still
+            // inside the grace, means nothing was deferred. CreatedAt, never the record's
+            // Timestamp: that one is backdated up to 30 s (CARD-0046).
+            if (finalMessageArmed && end.ApiCallId is string apiCallId && end.CreatedAt <= cutoff)
+            {
+                var landed = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
+                    e => e.AgentSessionId == sessionId
+                        && e.Kind == TranscriptKinds.AssistantText
+                        && e.ApiCallId == apiCallId, ct);
+                if (!landed)
+                {
+                    _logger.LogWarning(
+                        "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
+                        + "settling on what the turn produced",
+                        sessionId, _settings.FinalMessageGraceSeconds);
+                    await _replies.OnTurnEndAsync(sessionId, ct);
+                    swept++;
+                    continue;
+                }
+            }
+
+            // (2) Background subagents that never notified. Silence on the WHOLE session is the
+            // signal — while they are working there is nothing else to write, and a notification
+            // landing resets the clock. Settlement itself decides whether any launch is actually
+            // outstanding; this is only the clock, and a no-op in every other case.
+            if (!subagentsArmed)
                 continue;
-
-            var landed = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
-                e => e.AgentSessionId == sessionId
-                    && e.Kind == TranscriptKinds.AssistantText
-                    && e.ApiCallId == apiCallId, ct);
-            if (landed)
-                continue; // the live path already settled (or will) on the real report
-
-            _logger.LogWarning(
-                "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
-                + "settling on what the turn produced",
-                sessionId, _settings.FinalMessageGraceSeconds);
-            await _replies.OnTurnEndAsync(sessionId, ct);
-            swept++;
+            var lastEntryAt = await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (DateTime?)e.CreatedAt, ct);
+            if (lastEntryAt is DateTime quietSince && quietSince <= subagentCutoff)
+            {
+                _logger.LogDebug(
+                    "Session {SessionId}: silent for {Grace}+ minutes — re-checking settlement for "
+                    + "background subagents that never reported",
+                    sessionId, _settings.SubagentGraceMinutes);
+                await _replies.OnTurnEndAsync(sessionId, ct);
+                swept++;
+            }
         }
 
         return swept;

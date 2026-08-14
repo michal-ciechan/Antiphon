@@ -269,6 +269,56 @@ public static class TranscriptKinds
 
         return false;
     }
+
+    /// <summary>Claude Code's built-in subagent tool, as it appears in a ToolCall's tool name.</summary>
+    public const string AgentToolName = "Agent";
+
+    /// <summary>
+    /// The head of the ToolResult Claude Code returns for a BACKGROUND <see cref="AgentToolName"/>
+    /// spawn: "Async agent launched successfully. (This tool result is internal metadata …)". A
+    /// synchronous Agent call returns the subagent's actual answer instead, so this string is what
+    /// separates "the work is done" from "the work has not started" (pinned from session ac09cffd
+    /// seq 11; the launch itself is invisible to Antiphon — the built-in tool is not a delegate).
+    /// </summary>
+    public const string AsyncAgentLaunchMarker = "Async agent launched";
+
+    /// <summary>
+    /// The USER record Claude Code writes when a background subagent finishes. It carries the
+    /// subagent's whole report and is NOT a prompt anybody typed — a turn that answers one is still
+    /// answering the brief that launched it.
+    /// </summary>
+    public const string TaskNotificationPrefix = "<task-notification>";
+
+    /// <summary>True when a transcript entry is a background-subagent notification.</summary>
+    public static bool IsTaskNotificationPrompt(string? kind, string? text) =>
+        kind == UserPrompt
+        && text is not null
+        && text.TrimStart().StartsWith(TaskNotificationPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The <c>toolu_…</c> id a notification answers, read out of its <c>&lt;tool-use-id&gt;</c> tag.
+    /// This is the STRONG link between a launch and its completion: pairing by id makes four
+    /// launches and three notifications an unambiguous "one still running", where counting them
+    /// would have to assume nothing else ever launches an agent in the same turn.
+    /// </summary>
+    public static string? TryReadNotifiedToolUseId(string? text)
+    {
+        if (text is null)
+            return null;
+
+        const string open = "<tool-use-id>";
+        const string close = "</tool-use-id>";
+        var start = text.IndexOf(open, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += open.Length;
+        var end = text.IndexOf(close, start, StringComparison.Ordinal);
+        if (end <= start)
+            return null;
+
+        var id = text[start..end].Trim();
+        return id.Length == 0 ? null : id;
+    }
 }
 
 /// <summary>

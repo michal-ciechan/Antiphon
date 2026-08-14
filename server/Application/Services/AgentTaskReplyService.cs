@@ -298,6 +298,17 @@ public sealed class AgentTaskReplyService
                 FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds), now));
         }
 
+        // Same three surfaces, different fact: the turn handed work to background subagents that
+        // never came back (CARD-0046 slice 4). Succeeded is still right — the delegate did what it
+        // could — but this report is at best incomplete and may be the announcement of work that
+        // never landed, which is not something the caller can tell from the text.
+        if (turn.AbandonedSubagents > 0)
+        {
+            var detail = SubagentsNeverReportedDetail(turn.AbandonedSubagents, _settings.SubagentGraceMinutes);
+            callerWarning = callerWarning is null ? detail : $"{callerWarning}\n\n{detail}";
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, detail, now));
+        }
+
         // The work landed; now the BRANCH has to. Only a genuinely finished Worktree task merges —
         // a question-Blocked one keeps its worktree and session alive to continue.
         string? workspaceNote = null;
@@ -325,6 +336,21 @@ public sealed class AgentTaskReplyService
                 + $"message. {FinalMessageMissingDetail(report.Length, _settings.FinalMessageGraceSeconds)} "
                 + "The caller has been told the report may be preamble; the whole turn is in this "
                 + "session's transcript.",
+                ct);
+        }
+
+        if (turn.AbandonedSubagents > 0 && task.AgentSessionId is Guid abandonedFrom)
+        {
+            await RecordIncidentOnceAsync(
+                services, db, task, abandonedFrom,
+                AgentIncidentKind.DelegateSubagentsNeverReported,
+                $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled with background "
+                + "subagents unreported",
+                $"Task {DelegationReportFormatter.Short(task.Id)} settled while "
+                + $"{turn.AbandonedSubagents} background subagent(s) it launched had still not "
+                + $"reported after {_settings.SubagentGraceMinutes} minutes. The stored report may be "
+                + "the delegate's announcement of that work rather than its outcome — the launches "
+                + "and any notifications are in this session's transcript.",
                 ct);
         }
 
@@ -402,13 +428,36 @@ public sealed class AgentTaskReplyService
         + "mid-turn narration, not the delegate's verdict.";
 
     /// <summary>
+    /// What the caller reads above a report whose turn handed work to background subagents that
+    /// never came back (CARD-0046 slice 4). "Four review agents are running in parallel" reads
+    /// exactly like a finished report unless something says otherwise.
+    /// </summary>
+    private static string SubagentsNeverReportedDetail(int unanswered, int graceMinutes) =>
+        $"WARNING: {unanswered} background subagent(s) this delegate launched never reported within "
+        + $"{graceMinutes} minutes, so what follows may be its ANNOUNCEMENT of that work rather than "
+        + "the outcome. Check the session transcript before acting on it.";
+
+    /// <summary>
     /// The incident behind CARD-0046 slice 3, ONCE per session for the same reason
     /// <see cref="RecordUncorrelatedReportAsync"/> is: a delegate in this state keeps ending turns,
     /// and the same finding on every one of them buries the first.
     /// </summary>
-    private async Task RecordFinalMessageMissingAsync(
+    private Task RecordFinalMessageMissingAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId, string message,
-        CancellationToken ct)
+        CancellationToken ct) =>
+        RecordIncidentOnceAsync(
+            services, db, task, sessionId, AgentIncidentKind.DelegateFinalMessageMissing,
+            $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled without its final message",
+            message, ct);
+
+    /// <summary>
+    /// One Warning incident + alert per (session, kind) — the shared body behind
+    /// <see cref="RecordFinalMessageMissingAsync"/> and slice 4's abandoned-subagent incident. The
+    /// dedup is what keeps a delegate that keeps ending turns from burying its own first finding.
+    /// </summary>
+    private async Task RecordIncidentOnceAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId,
+        AgentIncidentKind kind, string title, string message, CancellationToken ct)
     {
         if (task.AgentId is not Guid agentId)
             return;
@@ -416,7 +465,7 @@ public sealed class AgentTaskReplyService
         try
         {
             var already = await db.AgentIncidents.AnyAsync(
-                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing, ct);
+                i => i.SessionId == sessionId && i.Kind == kind, ct);
             if (already)
                 return;
 
@@ -425,7 +474,7 @@ public sealed class AgentTaskReplyService
                 Id = Guid.NewGuid(),
                 AgentId = agentId,
                 SessionId = sessionId,
-                Kind = AgentIncidentKind.DelegateFinalMessageMissing,
+                Kind = kind,
                 Severity = AlertSeverity.Warning,
                 Message = message,
                 CreatedAt = UtcNow(),
@@ -438,9 +487,9 @@ public sealed class AgentTaskReplyService
                     new AlertRaise(
                         AlertSeverity.Warning,
                         Source: "delegation",
-                        Title: $"Delegate task {DelegationReportFormatter.Short(task.Id)} settled without its final message",
+                        Title: title,
                         Detail: message,
-                        DedupKey: $"delegation:final-message-missing:{task.Id}",
+                        DedupKey: $"delegation:{kind}:{task.Id}",
                         AgentId: agentId,
                         SessionId: sessionId),
                     ct);
@@ -450,8 +499,8 @@ public sealed class AgentTaskReplyService
         {
             // Observability must never be able to break settlement.
             _logger.LogError(
-                ex, "Could not record a missing-final-message incident for task {ShortId}",
-                DelegationReportFormatter.Short(task.Id));
+                ex, "Could not record a {Kind} incident for task {ShortId}",
+                kind, DelegationReportFormatter.Short(task.Id));
         }
     }
 
@@ -653,12 +702,18 @@ public sealed class AgentTaskReplyService
     /// turn-ending response alone (CARD-0046 slice 2). Recorded on the task's Completed event so a
     /// delegate that front-loaded its findings can be seen to have done so.
     /// </param>
+    /// <param name="AbandonedSubagents">
+    /// How many background subagents this turn launched and never heard back from before the
+    /// subagent grace expired (CARD-0046 slice 4). Non-zero means the report is at best incomplete
+    /// and at worst the announcement of work that never landed.
+    /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
         bool UncorrelatedReport,
         bool DeferredForFinalMessage = false,
         bool FinalMessageMissing = false,
-        int NarrationDiscardedChars = 0)
+        int NarrationDiscardedChars = 0,
+        int AbandonedSubagents = 0)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
@@ -684,12 +739,12 @@ public sealed class AgentTaskReplyService
             return TurnOutcome.Nothing;
         var turnEnd = end.Sequence;
 
-        var prompts = await LoadPromptsInSpanAsync(db, sessionId, task.DispatchedAt, ct);
-        var prompt = prompts.LastOrDefault(p => p.Sequence < turnEnd);
+        var span = await LoadPromptsInSpanAsync(db, sessionId, task.DispatchedAt, ct);
+        var prompt = span.TurnPrompts.LastOrDefault(p => p.Sequence < turnEnd);
         if (prompt?.Text is not string promptText)
             return TurnOutcome.Nothing;
 
-        var nextPrompt = prompts.FirstOrDefault(p => p.Sequence > prompt.Sequence)?.Sequence;
+        var nextPrompt = span.TurnPrompts.FirstOrDefault(p => p.Sequence > prompt.Sequence)?.Sequence;
 
         var query = db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -710,6 +765,36 @@ public sealed class AgentTaskReplyService
         // Distinguishing them is not possible; SAYING SO is, which is the whole point of the flag.
         if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
             return new TurnOutcome(null, joined.Length > 0);
+
+        // CARD-0046 slice 4. The turn is ours and it ended — but a turn that handed its work to
+        // BACKGROUND subagents has not done the work, it has announced it. Checked before the
+        // final-message gate below because the answer is the same whichever record the boundary
+        // came from: this turn is not the report, so there is nothing to wait for and nothing to
+        // fail on.
+        // <= 0 is the documented escape hatch: no wait at all, i.e. exactly pre-slice-4 behaviour,
+        // so a regression can be proved to come from here.
+        var subagents = _settings.SubagentGraceMinutes <= 0
+            ? new SubagentWait(0, null)
+            : await ResolveSubagentWaitAsync(db, sessionId, prompt.Sequence, nextPrompt, span, ct);
+        var abandonedSubagents = 0;
+        if (subagents.Unanswered > 0)
+        {
+            if (subagents.LastEntryAt is DateTime lastAt
+                && UtcNow() - lastAt < TimeSpan.FromMinutes(_settings.SubagentGraceMinutes))
+            {
+                // Each notification arrives as a USER record and ends a turn of its own, which
+                // re-triggers us; the LAST one settles with the folded verdict (ac09cffd seq 34).
+                _logger.LogDebug(
+                    "Session {SessionId} ended a turn for task {ShortId} with {Count} background "
+                    + "subagent(s) still unreported; deferring settlement",
+                    sessionId, DelegationReportFormatter.Short(taskId), subagents.Unanswered);
+                return TurnOutcome.Nothing;
+            }
+
+            // Past the grace: a background subagent can die without ever notifying, and nothing
+            // else would ever come back for this task. Settle on what there is, and say so.
+            abandonedSubagents = subagents.Unanswered;
+        }
 
         // CARD-0046. The turn is ours; is this response FINISHED speaking? One API response is
         // written as several JSONL records — a signature-only thinking record, then the text record
@@ -734,7 +819,8 @@ public sealed class AgentTaskReplyService
                 // mid-response"). Settle on what there is rather than strand the task, and say so.
                 return joined.Length == 0
                     ? new TurnOutcome(null, false, FinalMessageMissing: true)
-                    : new TurnOutcome(joined, false, FinalMessageMissing: true);
+                    : new TurnOutcome(
+                        joined, false, FinalMessageMissing: true, AbandonedSubagents: abandonedSubagents);
         }
 
         // THE REPORT IS THE FINAL MESSAGE, not a join of everything the delegate happened to say
@@ -748,11 +834,87 @@ public sealed class AgentTaskReplyService
         if (finalMessage is not null)
         {
             var narration = Join(texts.Where(t => t.ApiCallId != end.ApiCallId).Select(t => t.Text));
-            return new TurnOutcome(finalMessage, false, NarrationDiscardedChars: narration.Length);
+            return new TurnOutcome(
+                finalMessage, false,
+                NarrationDiscardedChars: narration.Length,
+                AbandonedSubagents: abandonedSubagents);
         }
 
-        return joined.Length == 0 ? TurnOutcome.Nothing : new TurnOutcome(joined, false);
+        return joined.Length == 0
+            ? TurnOutcome.Nothing
+            : new TurnOutcome(joined, false, AbandonedSubagents: abandonedSubagents);
     }
+
+    /// <summary>
+    /// What a turn handed to background subagents, and whether they have come back. Claude Code's
+    /// built-in <c>Agent</c> tool can be spawned ASYNCHRONOUSLY: the ToolResult is
+    /// "<c>Async agent launched successfully</c>" within milliseconds, the delegate writes an
+    /// announcement, and the turn ends for real — the work has not started. Task 26421cf2 was
+    /// settled and priced on that announcement, and wrote its actual 6 195-character verdict four
+    /// minutes later into a task that no longer existed (CARD-0046 §1.4).
+    ///
+    /// <para>Paired by ID, never by count: each <c>&lt;task-notification&gt;</c> names the
+    /// <c>toolu_…</c> id of the launch it answers, so four launches and three notifications is an
+    /// unambiguous "one still running" even if something else spawns an agent in the same span.
+    /// A SYNCHRONOUS Agent call returns the subagent's answer as its ToolResult and carries no
+    /// marker, so it is not counted — its work is already in the turn.</para>
+    ///
+    /// <para>Phrase drift degrades safely: if Claude Code reworded the marker, nothing would be
+    /// counted as launched and settlement falls back to exactly today's behaviour (settle on the
+    /// announcement turn) rather than hanging. Same exposure as the local-command shapes.</para>
+    /// </summary>
+    private static async Task<SubagentWait> ResolveSubagentWaitAsync(
+        AppDbContext db, Guid sessionId, long promptSequence, long? cap, SpanPrompts span,
+        CancellationToken ct)
+    {
+        // The ToolResult text is joined in SQL and never transferred — a tool result can be a whole
+        // file, and there can be hundreds of them in one span.
+        var launched = await (
+            from call in db.TranscriptEntries
+            where call.AgentSessionId == sessionId
+                && call.Sequence > promptSequence
+                && (cap == null || call.Sequence < cap)
+                && call.Kind == TranscriptKinds.ToolCall
+                && call.ToolName == TranscriptKinds.AgentToolName
+                && call.ToolUseId != null
+            join result in db.TranscriptEntries
+                    .Where(r => r.AgentSessionId == sessionId && r.Kind == TranscriptKinds.ToolResult)
+                on call.ToolUseId equals result.ToolUseId
+            where result.Text != null && result.Text.Contains(TranscriptKinds.AsyncAgentLaunchMarker)
+            select call.ToolUseId!)
+            .Distinct()
+            .ToListAsync(ct);
+        if (launched.Count == 0)
+            return new SubagentWait(0, null);
+
+        // The notifications were loaded with the span's prompts — they ARE prompts, just not ones
+        // that open a turn. They sit past `cap` by construction (each one starts a new turn), so
+        // the cap deliberately does not apply to them.
+        var notified = span.Notifications
+            .Where(n => n.Sequence > promptSequence)
+            .Select(n => TranscriptKinds.TryReadNotifiedToolUseId(n.Text))
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+
+        var unanswered = launched.Count(id => !notified.Contains(id));
+        if (unanswered == 0)
+            return new SubagentWait(0, null);
+
+        // The grace runs from the last thing that happened on this session, not from the turn end:
+        // a notification arriving resets it, which is the whole point — three of four reporting is
+        // evidence the fourth is still coming.
+        var lastEntryAt = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId && t.Sequence > promptSequence)
+            .MaxAsync(t => (DateTime?)t.CreatedAt, ct);
+        return new SubagentWait(unanswered, lastEntryAt);
+    }
+
+    /// <param name="Unanswered">Background subagents launched in the span with no notification yet.</param>
+    /// <param name="LastEntryAt">
+    /// When this session last wrote anything after the turn's prompt — the grace clock. Null only
+    /// when nothing is unanswered, since there is then nothing to time.
+    /// </param>
+    private readonly record struct SubagentWait(int Unanswered, DateTime? LastEntryAt);
 
     /// <summary>One assistant-text row of the turn, carrying the API response it was part of.</summary>
     private readonly record struct TurnText(string? Text, string? ApiCallId);
@@ -791,8 +953,14 @@ public sealed class AgentTaskReplyService
     /// timestamp cannot be placed in time and is KEPT rather than dropped, exactly as
     /// <see cref="DelegationUsageRollup"/> keeps it — the conservative direction here is to let the
     /// marker gate judge it.</para>
+    ///
+    /// <para><b>A background subagent's notification is not a prompt either</b> (CARD-0046 slice 4).
+    /// It is kept, separately, because the launches it answers are what settlement waits for — but
+    /// it must never own the span: without the skip the marker gate fails on every notification
+    /// turn, <see cref="RecordUncorrelatedReportAsync"/> fires, and the delivery watchdog kills the
+    /// task at ten minutes. That hazard is created by slice 4 and closed here.</para>
     /// </summary>
-    private static async Task<List<PromptRow>> LoadPromptsInSpanAsync(
+    private static async Task<SpanPrompts> LoadPromptsInSpanAsync(
         AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct)
     {
         var rows = await db.TranscriptEntries
@@ -810,14 +978,26 @@ public sealed class AgentTaskReplyService
             .OfType<string>()
             .ToHashSet(StringComparer.Ordinal);
 
-        return rows.Where(r => !IsHousekeepingPrompt(r.Text, invoked)).ToList();
+        return new SpanPrompts(
+            rows.Where(r => !IsHousekeepingPrompt(r.Text, invoked)).ToList(),
+            rows.Where(r => TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, r.Text))
+                .ToList());
     }
+
+    /// <param name="TurnPrompts">USER records a turn could actually be answering, in sequence order.</param>
+    /// <param name="Notifications">
+    /// The background-subagent notifications among them — skipped as turn prompts, kept because
+    /// they are what proves a launch came back (CARD-0046 slice 4).
+    /// </param>
+    private sealed record SpanPrompts(
+        IReadOnlyList<PromptRow> TurnPrompts, IReadOnlyList<PromptRow> Notifications);
 
     /// <summary>A USER record that no one typed as a prompt (see <see cref="LoadPromptsInSpanAsync"/>).</summary>
     private static bool IsHousekeepingPrompt(string? text, IReadOnlyCollection<string> invokedCommands) =>
         TranscriptKinds.IsLocalCommandRecord(TranscriptKinds.UserPrompt, text)
         || TranscriptKinds.IsCompactionContinuationPrompt(TranscriptKinds.UserPrompt, text)
-        || TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, text, invokedCommands);
+        || TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, text, invokedCommands)
+        || TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, text);
 
     private static string Join(IEnumerable<string?> texts) =>
         string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();

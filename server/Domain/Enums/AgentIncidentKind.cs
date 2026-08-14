@@ -117,4 +117,17 @@ public enum AgentIncidentKind
     /// needs to know the report may be preamble.
     /// </summary>
     DelegateFinalMessageMissing = 18,
+
+    /// <summary>
+    /// A delegated task settled while background subagents its turn had launched never reported —
+    /// so the stored report is the turn's announcement of that work, not its outcome. Raised when
+    /// CARD-0046 slice 4's <c>SubagentGraceMinutes</c> expires with a launch still unanswered.
+    ///
+    /// Live miss 2026-08-14 (CARD-0046 §1.4): task 26421cf2 announced four parallel reviewers,
+    /// legitimately ended its turn, and was settled and priced on the announcement at 07:44:10 —
+    /// then folded all four reviews into a 6 195-character verdict at 07:48:06, four minutes after
+    /// its task was closed. Settlement now waits for the notifications; this is what fires when
+    /// waiting does not produce them, because a background subagent can die without ever notifying.
+    /// </summary>
+    DelegateSubagentsNeverReported = 19,
 }
