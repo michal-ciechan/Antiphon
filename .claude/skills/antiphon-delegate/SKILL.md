@@ -118,8 +118,20 @@ spawned only when none fits.
 
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
 - **Write `-Goal` as an outcome, not a procedure.** The delegate decides how.
-- **Don't poll.** The report is delivered into your session as `[task <id> done] ...` when it lands.
-  End your turn; it will reach you.
+- **Don't poll — this rule is for the CALLER, not the delegate.** As the caller, the report is
+  delivered into your session as `[task <id> done] ...` when it lands; end your turn and it will
+  reach you. **If you ARE the delegate, the opposite applies:** your final message IS the report,
+  so finish the work and say what you found — never end a turn expecting to be re-invoked, and
+  never spawn sub-agents and end your turn awaiting them (a Worker settles when its turn ends;
+  make it a `-Orchestrator` if it genuinely needs to fan out).
+
+  > Historical note, because a wrong theory here cost real debugging time on 2026-08-13/14: when
+  > six delegates appeared to "end their turns early" and return only preamble, this bullet was
+  > blamed. It was not the cause. The cause was a settlement race — Claude Code splits one API
+  > response into a signature-only `thinking` record and then the `text` record, both stamped with
+  > the response's `stop_reason`, so a bare `TurnEnd` arrived up to 1.2 s before the report and
+  > settlement fired on it. See `docs/superpowers/specs/2026-08-14-card-0046-settlement-final-message.md`
+  > and CARD-0046. The guidance above is still worth scoping, but it was never the bug.
 - **A delegate that asks a question comes back blocked.** Answer it — don't take the work back:
   ```powershell
   pwsh -NoProfile -File scripts/delegate.ps1 -Reply <taskId> "yes, accept negatives"
