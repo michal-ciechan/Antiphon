@@ -476,6 +476,8 @@ public sealed class OrchestratorService
                 || (c.Board.Project.LocalRepositoryPath != null
                     && c.Board.Project.LocalRepositoryPath.StartsWith(_settings.InternalTrackerRepositoryPathPrefix)))
             .Where(c => c.BoardColumn.IsActive && !c.BoardColumn.IsTerminal)
+            // An archived card is off the board; auto-dispatch must not pick it back up.
+            .Where(c => c.ArchivedAt == null)
             .Where(c => c.OwnerSessionId == null)
             .Where(c => !c.AgentSessions.Any(s => activeStatuses.Contains(s.Status)))
             .Where(c => c.RetrySchedule == null

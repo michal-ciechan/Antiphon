@@ -129,6 +129,10 @@ public sealed class CardService
             throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
         if (request.ConcurrencyToken != card.ConcurrencyToken)
             throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+        // An archived card is out of play: moving it into an active column would spawn an agent on
+        // a record the operator has taken off the board. Unarchive first — that is one call.
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before moving it.");
 
         var targetColumn = await _db.BoardColumns
             .FirstOrDefaultAsync(c => c.Id == request.BoardColumnId, ct)
@@ -204,6 +208,113 @@ public sealed class CardService
         return await GetByIdAsync(card.Id, ct);
     }
 
+    /// <summary>
+    /// Archives a card. This is what "delete" means here — the row stays, so every reference to its
+    /// identifier (commit messages, docs, other cards' terminal reasons) keeps resolving, and the
+    /// identifier allocator keeps seeing the number as taken.
+    /// </summary>
+    /// <remarks>
+    /// Refused while an agent is actually working the card: archiving the record out from under a
+    /// live session is the one genuinely destructive shape here, and unlike everything else on this
+    /// card it cannot be undone by reading the history.
+    /// </remarks>
+    public async Task<CardDto> ArchiveAsync(Guid id, ArchiveCardRequest request, CancellationToken ct)
+    {
+        ValidateArchiveRequest(request.Reason, nameof(request.Reason), request.ArchivedBy, nameof(request.ArchivedBy));
+
+        var card = await LoadCardForArchiveAsync(id, request.ConcurrencyToken, ct);
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is already archived.");
+
+        if (card.OwnerSessionId is Guid ownerSessionId)
+        {
+            var liveSession = await _db.AgentSessions.AnyAsync(
+                s => s.Id == ownerSessionId
+                    && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
+                ct);
+            if (liveSession)
+            {
+                throw new ConflictException(
+                    $"Card '{card.Identifier}' has a live owner session; stop it before archiving.");
+            }
+        }
+
+        if (card.ActiveWorkflowRunId is Guid runId)
+        {
+            var runningWorkflow = await _db.CardWorkflowRuns.AnyAsync(
+                r => r.Id == runId
+                    && r.Status != CardWorkflowRunStatus.Completed
+                    && r.Status != CardWorkflowRunStatus.Failed
+                    && r.Status != CardWorkflowRunStatus.Canceled,
+                ct);
+            if (runningWorkflow)
+            {
+                throw new ConflictException(
+                    $"Card '{card.Identifier}' has an active workflow run; cancel it before archiving.");
+            }
+        }
+
+        var now = UtcNow();
+        CardRevisionLog.AppendArchiveChange(
+            card, CardRevisionKind.Archive, request.Reason, request.ArchivedBy, now);
+        card.ArchivedAt = now;
+        card.ArchivedReason = request.Reason.Trim();
+        card.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
+
+        return await SaveArchiveChangeAsync(card, now, ct);
+    }
+
+    /// <summary>Undoes an archive. Mistakes in archiving need correcting too.</summary>
+    public async Task<CardDto> UnarchiveAsync(Guid id, UnarchiveCardRequest request, CancellationToken ct)
+    {
+        ValidateArchiveRequest(
+            request.Reason, nameof(request.Reason), request.UnarchivedBy, nameof(request.UnarchivedBy));
+
+        var card = await LoadCardForArchiveAsync(id, request.ConcurrencyToken, ct);
+        if (card.ArchivedAt is null)
+            throw new ConflictException($"Card '{card.Identifier}' is not archived.");
+
+        var now = UtcNow();
+        // The Unarchive revision is why clearing these three fields is not a loss: the archive, its
+        // reason and its undoing all stay readable in the history.
+        CardRevisionLog.AppendArchiveChange(
+            card, CardRevisionKind.Unarchive, request.Reason, request.UnarchivedBy, now);
+        card.ArchivedAt = null;
+        card.ArchivedReason = null;
+        card.ArchivedBy = null;
+
+        return await SaveArchiveChangeAsync(card, now, ct);
+    }
+
+    private async Task<Card> LoadCardForArchiveAsync(Guid id, Guid concurrencyToken, CancellationToken ct)
+    {
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (concurrencyToken == Guid.Empty)
+            throw new ValidationException("ConcurrencyToken", "Card concurrency token is required.");
+        if (concurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        return card;
+    }
+
+    private async Task<CardDto> SaveArchiveChangeAsync(Card card, DateTime now, CancellationToken ct)
+    {
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
+        }
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
     /// <summary>The card's history, newest first. One interleaved sequence across every kind.</summary>
     public async Task<IReadOnlyList<CardRevisionDto>> GetRevisionsAsync(Guid id, CancellationToken ct)
     {
@@ -226,6 +337,9 @@ public sealed class CardService
         var card = await LoadCardForUpdateAsync(id, ct);
         if (request.ConcurrencyToken is Guid requestedToken && requestedToken != card.ConcurrencyToken)
             throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before spawning.");
 
         if (card.BoardColumn.IsTerminal)
             throw new ConflictException($"Card '{card.Identifier}' is already in a terminal column.");
@@ -506,6 +620,18 @@ public sealed class CardService
         RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
         RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
 
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private static void ValidateArchiveRequest(
+        string reason, string reasonField, string? actor, string actorField)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(reason))
+            errors[reasonField] = ["A reason is required."];
+        RequireWithinLimit(errors, reasonField, reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, actorField, actor?.Trim(), MaxActorLength);
         if (errors.Count > 0)
             throw new ValidationException(errors);
     }

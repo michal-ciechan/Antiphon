@@ -47,6 +47,26 @@ public static class CardEndpoints
             return Results.Accepted($"/api/cards/{id}", await service.SpawnAsync(id, request, cancellationToken));
         });
 
+        // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
+        // and this is not a delete — hard delete deliberately does not exist for cards.
+        cards.MapPost("/{id:guid}/archive", async (
+            Guid id,
+            ArchiveCardRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ArchiveAsync(id, request, cancellationToken));
+        });
+
+        cards.MapPost("/{id:guid}/unarchive", async (
+            Guid id,
+            UnarchiveCardRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UnarchiveAsync(id, request, cancellationToken));
+        });
+
         cards.MapGet("/{id:guid}/diff", async (
             Guid id,
             CardReviewService service,

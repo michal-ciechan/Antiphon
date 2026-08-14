@@ -418,7 +418,11 @@ public sealed class AgentControlService
 
     private static bool IsSpawnable(Card card) =>
         !card.BoardColumn.IsTerminal
-        && card.Status is not (CardStatus.Review or CardStatus.Done or CardStatus.Canceled);
+        && card.Status is not (CardStatus.Review or CardStatus.Done or CardStatus.Canceled)
+        // An archived card is off the board. Left spawnable, one sitting at an agent's queue head
+        // would be respawned on at every agent start — the CARD-0001 loop, on a card someone had
+        // just taken out of play.
+        && card.ArchivedAt is null;
 
     private async Task<Agent> LockAgentAsync(Guid agentId, CancellationToken ct) =>
         await _db.Agents

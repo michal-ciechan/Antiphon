@@ -661,6 +661,294 @@ public class CardCorrectionIntegrationTests
             harness.CardService.GetRevisionsAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
+    [Test]
+    public async Task Archiving_hides_a_card_from_the_board_but_keeps_it_one_query_away()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Archive board"), CancellationToken.None);
+            var kept = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Still wanted"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Filed by mistake"), CancellationToken.None);
+
+            var archived = await harness.CardService.ArchiveAsync(
+                card.Id,
+                new ArchiveCardRequest(card.ConcurrencyToken, "Duplicate of CARD-0001.", "operator"),
+                CancellationToken.None);
+
+            archived.ArchivedAt.ShouldNotBeNull();
+            archived.ArchivedReason.ShouldBe("Duplicate of CARD-0001.");
+            archived.ArchivedBy.ShouldBe("operator");
+
+            var visible = await harness.BoardService.GetByIdAsync(board.Id, CancellationToken.None);
+            visible.Columns.SelectMany(c => c.Cards).Select(c => c.Id).ShouldBe([kept.Id]);
+
+            var withArchived = await harness.BoardService.GetByIdAsync(
+                board.Id, includeArchived: true, CancellationToken.None);
+            withArchived.Columns.SelectMany(c => c.Cards).Select(c => c.Id)
+                .OrderBy(id => id).ShouldBe(new[] { kept.Id, card.Id }.OrderBy(id => id));
+
+            // The row is still there, and so is the reason.
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.Archive);
+            revision.Reason.ShouldBe("Duplicate of CARD-0001.");
+            revision.EditedBy.ShouldBe("operator");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Unarchive_restores_the_card_and_leaves_both_acts_in_the_history()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Unarchive board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Archived too eagerly"), CancellationToken.None);
+            var archived = await harness.CardService.ArchiveAsync(
+                card.Id,
+                new ArchiveCardRequest(card.ConcurrencyToken, "Thought it was done."),
+                CancellationToken.None);
+
+            var restored = await harness.CardService.UnarchiveAsync(
+                archived.Id,
+                new UnarchiveCardRequest(archived.ConcurrencyToken, "It was not done after all."),
+                CancellationToken.None);
+
+            restored.ArchivedAt.ShouldBeNull();
+            restored.ArchivedReason.ShouldBeNull();
+            var visible = await harness.BoardService.GetByIdAsync(board.Id, CancellationToken.None);
+            visible.Columns.SelectMany(c => c.Cards).Select(c => c.Id).ShouldContain(card.Id);
+
+            // Clearing ArchivedReason is not a loss — the history holds both acts.
+            var history = await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None);
+            history.Select(r => r.Kind).ShouldBe([CardRevisionKind.Unarchive, CardRevisionKind.Archive]);
+            history[1].Reason.ShouldBe("Thought it was done.");
+            history[0].Reason.ShouldBe("It was not done after all.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // Archiving the record out from under a working agent is the one genuinely destructive shape
+    // here, and unlike everything else on this card it cannot be undone by reading the history.
+    [Test]
+    public async Task Archive_is_refused_while_a_live_owner_session_holds_the_card()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Live session board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Being worked right now"), CancellationToken.None);
+
+            await using (var claim = CreateContext())
+            {
+                var now = DateTime.UtcNow;
+                var session = new AgentSession
+                {
+                    Id = Guid.NewGuid(),
+                    CardId = card.Id,
+                    DefinitionName = "fake",
+                    AgentKind = AgentKind.Raw,
+                    Status = SessionStatus.Running,
+                    Cwd = tempRoot,
+                    CreatedAt = now,
+                    StartedAt = now,
+                    LastSeenAt = now
+                };
+                claim.AgentSessions.Add(session);
+                var row = await claim.Cards.SingleAsync(c => c.Id == card.Id);
+                row.OwnerSessionId = session.Id;
+                await claim.SaveChangesAsync();
+            }
+
+            // A second harness, because the first one's DbContext still has the card cached from
+            // before the claim — a request-scoped context in production always reads it fresh.
+            await using var claimAware = BuildHarness(tempRoot);
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                claimAware.CardService.ArchiveAsync(
+                    card.Id,
+                    new ArchiveCardRequest(card.ConcurrencyToken, "Tidying the board."),
+                    CancellationToken.None));
+
+            ex.Message.ShouldContain("live owner session");
+            await using var verify = CreateContext();
+            (await verify.Cards.SingleAsync(c => c.Id == card.Id)).ArchivedAt.ShouldBeNull();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // CARD-0005 regression pin. The identifier allocator learns a number is taken by seeing the
+    // row; a global EF query filter on ArchivedAt would hide it from NextIdentifierAsync too and
+    // hand the freed number to the next card, silently repointing every reference to the old one.
+    [Test]
+    public async Task Archiving_the_highest_card_does_not_free_its_identifier()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Identifier guard board"), CancellationToken.None);
+
+            var first = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "First"), CancellationToken.None);
+            first.Identifier.ShouldBe("CARD-0001");
+
+            await harness.CardService.ArchiveAsync(
+                first.Id,
+                new ArchiveCardRequest(first.ConcurrencyToken, "Wrong board."),
+                CancellationToken.None);
+
+            var second = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Second"), CancellationToken.None);
+
+            second.Identifier.ShouldBe("CARD-0002");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_archived_card_is_out_of_play_until_it_is_unarchived()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Out of play board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Off the board"), CancellationToken.None);
+            var archived = await harness.CardService.ArchiveAsync(
+                card.Id,
+                new ArchiveCardRequest(card.ConcurrencyToken, "Not real work."),
+                CancellationToken.None);
+            var activeColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+
+            // Moving it into an active column would otherwise spawn an agent on it.
+            var move = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.MoveAsync(
+                    archived.Id,
+                    new MoveCardRequest(activeColumn.Id, archived.ConcurrencyToken),
+                    CancellationToken.None));
+            move.Message.ShouldContain("archived");
+
+            var spawn = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.SpawnAsync(
+                    archived.Id, new SpawnCardRequest("fake"), CancellationToken.None));
+            spawn.Message.ShouldContain("archived");
+
+            var again = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.ArchiveAsync(
+                    archived.Id,
+                    new ArchiveCardRequest(archived.ConcurrencyToken, "Twice."),
+                    CancellationToken.None));
+            again.Message.ShouldContain("already archived");
+
+            // But it can still be CORRECTED — the record of a card taken off the board can be
+            // wrong just like any other.
+            var corrected = await harness.CardService.UpdateContentAsync(
+                archived.Id,
+                new UpdateCardContentRequest(
+                    archived.ConcurrencyToken, "Recording what it actually was.", Title: "Off the board (duplicate)"),
+                CancellationToken.None);
+            corrected.Title.ShouldBe("Off the board (duplicate)");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Archive_and_unarchive_require_a_reason_and_a_matching_token()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Archive contract board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Contract"), CancellationToken.None);
+
+            var noReason = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.ArchiveAsync(
+                    card.Id, new ArchiveCardRequest(card.ConcurrencyToken, "  "), CancellationToken.None));
+            noReason.Errors.ShouldContainKey(nameof(ArchiveCardRequest.Reason));
+
+            var staleToken = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.ArchiveAsync(
+                    card.Id, new ArchiveCardRequest(Guid.NewGuid(), "Tidy."), CancellationToken.None));
+            staleToken.Message.ShouldContain("modified by another operation");
+
+            var notArchived = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.UnarchiveAsync(
+                    card.Id, new UnarchiveCardRequest(card.ConcurrencyToken, "Undo."), CancellationToken.None));
+            notArchived.Message.ShouldContain("not archived");
+
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static Harness BuildHarness(string tempRoot)
