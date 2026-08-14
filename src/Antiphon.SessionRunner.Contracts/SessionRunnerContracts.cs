@@ -210,6 +210,65 @@ public static class TranscriptKinds
         return trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal)
             || trimmed.StartsWith(LocalCommandStdoutPrefix, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The command a <see cref="IsLocalCommandRecord"/> wrapper invoked ("/compact"), read out of
+    /// its <c>&lt;command-name&gt;</c> tag — or null when this is not such a record. The wrapper is
+    /// the PROOF that the text Claude also recorded verbatim was a local command and not a prompt;
+    /// see <see cref="IsRawLocalCommandEcho"/>.
+    /// </summary>
+    public static string? TryReadLocalCommandName(string? kind, string? text)
+    {
+        if (kind != UserPrompt || text is null)
+            return null;
+        var trimmed = text.TrimStart();
+        if (!trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal))
+            return null;
+
+        var close = trimmed.IndexOf("</command-name>", StringComparison.Ordinal);
+        if (close <= LocalCommandPrefix.Length)
+            return null;
+        var name = trimmed[LocalCommandPrefix.Length..close].Trim();
+        return name.Length == 0 ? null : name;
+    }
+
+    /// <summary>
+    /// True when this USER record is the literal text a local slash-command was typed as. Claude
+    /// records that raw line as a plain user record IN ADDITION to the
+    /// <see cref="IsLocalCommandRecord"/> wrapper (CARD-0041), so a transcript carries the same
+    /// <c>/compact …</c> twice in two different shapes.
+    ///
+    /// <para>Matching raw <c>/</c>-prefixed text ON ITS OWN stays rejected — a real prompt may begin
+    /// with a slash — so this needs <paramref name="invokedCommands"/>: the command names actually
+    /// read out of wrappers in the same span (<see cref="TryReadLocalCommandName"/>). A command that
+    /// exists produces a wrapper and matches here; a prompt that merely starts with a slash produces
+    /// no wrapper and cannot.</para>
+    ///
+    /// <para>SETTLEMENT ONLY. No working/idle rule may consume it: there the manual compact boundary
+    /// already outranks this record (CARD-0041), and reproducing the judgement in three lockstep
+    /// implementations would be three chances to disagree.</para>
+    /// </summary>
+    public static bool IsRawLocalCommandEcho(
+        string? kind, string? text, IReadOnlyCollection<string> invokedCommands)
+    {
+        if (kind != UserPrompt || text is null || invokedCommands.Count == 0)
+            return false;
+        if (IsLocalCommandRecord(kind, text))
+            return false;
+
+        var trimmed = text.TrimStart();
+        foreach (var name in invokedCommands)
+        {
+            if (name.Length == 0 || !trimmed.StartsWith(name, StringComparison.Ordinal))
+                continue;
+            // "/compact" must not match a prompt that opens "/compacting is broken" — the
+            // invocation ends at the command name or at whitespace before its arguments.
+            if (trimmed.Length == name.Length || char.IsWhiteSpace(trimmed[name.Length]))
+                return true;
+        }
+
+        return false;
+    }
 }
 
 /// <summary>

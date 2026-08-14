@@ -882,6 +882,134 @@ public class AgentTaskReplyIntegrationTests
         settled.TokensOut.ShouldBe(120);
     }
 
+    // ---- the walk-back is bounded at dispatch, and compaction's records are not prompts ---------
+
+    /// <summary>
+    /// The 2026-08-14 live miss, replayed at its measured record order (session c8d07c43, task
+    /// bcc982b7; fbcd6af2 / 861eaefb is the same shape 14 minutes later).
+    ///
+    /// A brief routed to a still-warm delegate is preceded by a focused <c>/compact</c>, so for the
+    /// minutes that compaction takes the newest TurnEnd on the session is still the PREVIOUS task's.
+    /// Every AssistantText re-runs extraction (AgentSessionRuntime :219 → :350), so that stale turn
+    /// — a real, complete report, for a different task — was read as an unattributable report for
+    /// THIS one. The incident it raised is what <c>FailNeverStartedAsync</c> acts on, and it killed
+    /// the task at the 10-minute mark while the delegate was still working; it later left finished
+    /// work uncommitted. The brief was never mangled: it is sitting intact at seq 137.
+    /// </summary>
+    [Test]
+    public async Task a_turn_that_ended_before_this_task_was_dispatched_is_not_a_report_for_it()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.AgentId = agentId; t.DispatchedAt = dispatched; });
+
+        await SeedWarmReuseAfterCompactionAsync(sessionId, dispatched, task.Id);
+
+        // The delegate is working: its narration, not a turn end. This is the call that fired.
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText, "Now implementing slice 2.",
+            dispatched.AddMinutes(4));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Dispatched, "the delegate is still working");
+        stored.Result.ShouldBeNull("the previous task's report is not this task's");
+
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBeFalse(
+                "a turn that ended before this task was dispatched is not an unattributable report "
+                + "— and that incident is what the 10-minute watchdog kills the task on");
+    }
+
+    /// <summary>
+    /// The other half: once the delegate really does end a turn, the walk-back has to reach past
+    /// everything the compaction wrote and find the brief. Four USER records sit between them that
+    /// nobody typed as a prompt — the raw echo of the typed command line, the
+    /// <c>&lt;command-name&gt;</c> wrapper, the <c>&lt;local-command-stdout&gt;</c> result and the
+    /// synthetic continuation prompt (CARD-0041).
+    /// </summary>
+    [Test]
+    public async Task a_report_after_the_reuse_compaction_settles_against_the_brief()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string report = "Shipped and pushed — 3 commits. 187 passed, 0 failed.";
+
+        await SeedWarmReuseAfterCompactionAsync(sessionId, dispatched, task.Id);
+        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(5));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+    }
+
+    /// <summary>
+    /// The same records, but written by a delegate that compacted itself MID-task — after its
+    /// brief, to make room to finish. Nothing bounds that one out, so the walk-back must skip the
+    /// records rather than stop at them, or the report lands on the raw <c>/compact</c> line and
+    /// the task dies unattributable with the brief three records further back.
+    /// </summary>
+    [Test]
+    public async Task a_compaction_the_delegate_runs_mid_task_still_settles_against_the_brief()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-20);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string report = "Verdict: keep as is. The guard is sound.";
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nReview the move guard.",
+            dispatched.AddMinutes(1));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.AssistantText, "Reading the spec.", dispatched.AddMinutes(2));
+        await SeedCompactionRecordsAsync(
+            sessionId, dispatched.AddMinutes(5), "/compact Keep only the review context.");
+        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(8));
+
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report, "the report is the turn-ending response, not the /compact line");
+    }
+
+    /// <summary>
+    /// The gate the bound must not weaken: a human typing in the delegate's terminal AFTER dispatch
+    /// is still an unattributable report, and still has to be loud (CARD-0003).
+    /// </summary>
+    [Test]
+    public async Task an_unmarked_turn_after_dispatch_is_still_an_uncorrelated_report()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.AgentId = agentId; t.DispatchedAt = dispatched; });
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt, "the brief, with its head eaten",
+            dispatched.AddMinutes(1));
+        await SeedResponseAsync(sessionId, "Done — here is the report.", dispatched.AddMinutes(2));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBeTrue();
+    }
+
     [Test]
     public async Task a_session_running_no_task_is_ignored()
     {
@@ -1362,6 +1490,86 @@ public class AgentTaskReplyIntegrationTests
         end.ApiCallId = apiCallId;
         db.TranscriptEntries.Add(end);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>One entry appended at the session's next sequence, with a real record timestamp.</summary>
+    private static async Task SeedEntryAsync(
+        Guid sessionId, string kind, string? text, DateTime timestamp, string? apiCallId = null)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        var entry = NewEntry(sessionId, seq + 1, kind, text);
+        entry.Timestamp = timestamp;
+        entry.ApiCallId = apiCallId;
+        if (kind == TranscriptKinds.TurnEnd)
+            entry.StopReason = "end_turn";
+        db.TranscriptEntries.Add(entry);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>An assistant response: its text and the TurnEnd sibling that shares its message id.</summary>
+    private static async Task SeedResponseAsync(Guid sessionId, string text, DateTime timestamp)
+    {
+        var apiCallId = $"msg_{Guid.NewGuid():N}";
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, text, timestamp, apiCallId);
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, timestamp, apiCallId);
+    }
+
+    /// <summary>
+    /// What a manual <c>/compact</c> actually leaves behind, in the ARRIVAL order measured on
+    /// session c8d07c43 (seqs 132-136): the raw echo of the typed line first, then the boundary,
+    /// then the synthetic continuation prompt, then the two wrapper records — whose own timestamps
+    /// run backwards against their sequences, which is why nothing here may lean on ordering by
+    /// time. Five records, four of them USER, none of them a prompt anybody typed (CARD-0041).
+    /// </summary>
+    private static async Task SeedCompactionRecordsAsync(Guid sessionId, DateTime at, string typed)
+    {
+        var args = typed["/compact".Length..].TrimStart();
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, typed, at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.CompactBoundary,
+            $"Context compacted {TranscriptKinds.ManualCompactMarker}", at.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            TranscriptKinds.CompactionContinuationPromptPrefix
+            + " that ran out of context. The summary below covers…", at.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n"
+            + $"            <command-args>{args}</command-args>", at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>",
+            at.AddMinutes(2));
+    }
+
+    /// <summary>
+    /// The warm-reuse shape end to end: a PREVIOUS task's finished turn (before this task existed),
+    /// then the focused <c>/compact</c> the reuse path sends, then this task's brief — which is
+    /// exactly where session c8d07c43 was when its task was failed as unattributable.
+    /// </summary>
+    private static async Task SeedWarmReuseAfterCompactionAsync(
+        Guid sessionId, DateTime dispatchedAt, Guid taskId)
+    {
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + "\n\nThe task before this one.",
+            dispatchedAt.AddMinutes(-38));
+        await SeedResponseAsync(
+            sessionId, "Plan delivered: docs/superpowers/specs/2026-08-14-card-0046.md",
+            dispatchedAt.AddMinutes(-30));
+
+        await SeedCompactionRecordsAsync(
+            sessionId, dispatchedAt.AddMinutes(1),
+            "/compact This session is being handed NEW, unrelated work. Keep only context useful for: X");
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(taskId) + "\n\nImplement slices 2 and 3.",
+            dispatchedAt.AddMinutes(3));
     }
 
     private static TranscriptEntry NewEntry(Guid sessionId, long sequence, string kind, string? text) => new()

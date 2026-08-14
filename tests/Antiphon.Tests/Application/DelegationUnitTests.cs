@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -819,5 +820,67 @@ public class PtyInlineCeilingTests
             .ShouldBeGreaterThan(settings.BriefInlineMaxBytes,
                 "over the ceiling once measured in the unit the transport actually uses, so it "
                 + "must spill to a file rather than be typed");
+    }
+}
+
+/// <summary>
+/// The two classifiers settlement uses to tell compaction's own USER records apart from the
+/// prompts a turn could have answered (CARD-0041 shapes, CARD-0046 walk-back). SETTLEMENT ONLY —
+/// no working/idle rule consumes them, so there is nothing to keep in lockstep here.
+/// </summary>
+[Category("Unit")]
+public class TranscriptLocalCommandEchoTests
+{
+    private const string Wrapper =
+        "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n"
+        + "            <command-args>Keep only what serves the new task.</command-args>";
+
+    [Test]
+    public void the_wrapper_names_the_command_it_invoked()
+    {
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, Wrapper).ShouldBe("/compact");
+    }
+
+    [Test]
+    public void an_ordinary_prompt_names_no_command()
+    {
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, "/compact do the thing")
+            .ShouldBeNull("the raw typed line is not the wrapper — only the wrapper proves a command ran");
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, "read the spec").ShouldBeNull();
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.AssistantText, Wrapper).ShouldBeNull();
+    }
+
+    [Test]
+    public void the_raw_typed_line_is_an_echo_of_the_command_that_ran()
+    {
+        // Claude records the literal typed text as a plain user record IN ADDITION to the wrapper.
+        var invoked = new[] { "/compact" };
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compact Keep only what serves the new task.", invoked)
+            .ShouldBeTrue();
+        TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, "/compact", invoked).ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_real_prompt_that_merely_begins_with_a_slash_is_not_an_echo()
+    {
+        // Why the wrapper is required rather than a '/' prefix: a real prompt may begin with a
+        // slash, and skipping it in the walk-back would attribute someone else's turn to the task.
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compact do the thing", []).ShouldBeFalse("no command ran");
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compaction is the topic", ["/compact"])
+            .ShouldBeFalse("the invocation ends at the command name, not mid-word");
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/status of the build please", ["/compact"]).ShouldBeFalse();
+    }
+
+    [Test]
+    public void the_wrapper_itself_is_not_also_an_echo()
+    {
+        // It is already excluded as a local-command record; double-counting it would be harmless
+        // but the classifiers must stay disjoint to read.
+        TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, Wrapper, ["/compact"])
+            .ShouldBeFalse();
     }
 }
