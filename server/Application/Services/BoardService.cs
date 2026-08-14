@@ -191,7 +191,31 @@ public sealed class BoardService
                     s.EndedAt,
                     s.ExitCode,
                     s.FailureReason))
-                .ToList());
+                .ToList(),
+            card.RevisionCount,
+            card.ArchivedAt,
+            card.ArchivedReason,
+            card.ArchivedBy);
+    }
+
+    internal static CardRevisionDto ToRevisionDto(CardRevision revision)
+    {
+        return new CardRevisionDto(
+            revision.Id,
+            revision.CardId,
+            revision.RevisionNumber,
+            revision.Kind,
+            revision.Title,
+            revision.Description,
+            revision.Priority,
+            revision.LabelsJson is null ? null : ParseLabels(revision.LabelsJson),
+            revision.FromColumnId,
+            revision.ToColumnId,
+            revision.FromStatus,
+            revision.ToStatus,
+            revision.Reason,
+            revision.EditedBy,
+            revision.CreatedAt);
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)
@@ -246,7 +270,7 @@ public sealed class BoardService
         };
     }
 
-    private static IReadOnlyList<string> ParseLabels(string labelsJson)
+    internal static IReadOnlyList<string> ParseLabels(string labelsJson)
     {
         if (string.IsNullOrWhiteSpace(labelsJson))
             return [];

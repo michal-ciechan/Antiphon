@@ -19,6 +19,25 @@ public static class CardEndpoints
             return Results.Ok(await service.MoveAsync(id, request, cancellationToken));
         });
 
+        // Separate from PATCH /{id}, which is move-only: one verb that both moves and rewrites
+        // invites partial-intent bugs, and the two have different concurrency stories.
+        cards.MapPatch("/{id:guid}/content", async (
+            Guid id,
+            UpdateCardContentRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UpdateContentAsync(id, request, cancellationToken));
+        });
+
+        cards.MapGet("/{id:guid}/revisions", async (
+            Guid id,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetRevisionsAsync(id, cancellationToken));
+        });
+
         cards.MapPost("/{id:guid}/spawn", async (
             Guid id,
             SpawnCardRequest request,

@@ -336,6 +336,331 @@ public class CardCorrectionIntegrationTests
         }
     }
 
+    [Test]
+    public async Task An_edit_supersedes_the_text_and_archives_what_it_replaced()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Correction board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Retry beats the cold-launch race", "As claimed in CARD-0018.", 1, ["bug"]),
+                CancellationToken.None);
+
+            var updated = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(
+                    card.ConcurrencyToken,
+                    "Disproven by task a6e163fe attempt 2, which spawned a new session and lost its prompt.",
+                    Title: "Retry does NOT beat the cold-launch race",
+                    Description: "Attempt 2 lost its prompt the same way.",
+                    Priority: 0,
+                    Labels: ["bug", "corrected"],
+                    EditedBy: "operator"),
+                CancellationToken.None);
+
+            updated.Title.ShouldBe("Retry does NOT beat the cold-launch race");
+            updated.Description.ShouldBe("Attempt 2 lost its prompt the same way.");
+            updated.Priority.ShouldBe(0);
+            updated.Labels.ShouldBe(["bug", "corrected"]);
+            updated.RevisionCount.ShouldBe(1);
+            updated.ConcurrencyToken.ShouldNotBe(card.ConcurrencyToken);
+            updated.UpdatedAt.ShouldBeGreaterThanOrEqualTo(card.UpdatedAt);
+            harness.EventBus.PublishedEvents
+                .Count(e => e.Group is null
+                    && e.EventName == "CardChanged"
+                    && HasPayloadValue(e.Payload, "cardId", card.Id))
+                .ShouldBeGreaterThanOrEqualTo(1);
+
+            // The revision holds the SUPERSEDED values, not the new ones.
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.ContentEdit);
+            revision.RevisionNumber.ShouldBe(1);
+            revision.Title.ShouldBe("Retry beats the cold-launch race");
+            revision.Description.ShouldBe("As claimed in CARD-0018.");
+            revision.Priority.ShouldBe(1);
+            revision.LabelsJson.ShouldBe("[\"bug\"]");
+            revision.Reason.ShouldNotBeNull().ShouldContain("a6e163fe");
+            revision.EditedBy.ShouldBe("operator");
+            revision.FromColumnId.ShouldBeNull();
+            revision.ToColumnId.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_edit_leaves_the_fields_it_was_not_given_alone()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Partial edit board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Keep my title", "Keep my description", 2, ["keep"]),
+                CancellationToken.None);
+
+            var updated = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(
+                    card.ConcurrencyToken, "Only the description was wrong.", Description: "Rewritten."),
+                CancellationToken.None);
+
+            updated.Title.ShouldBe("Keep my title");
+            updated.Description.ShouldBe("Rewritten.");
+            updated.Priority.ShouldBe(2);
+            updated.Labels.ShouldBe(["keep"]);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_edit_with_a_stale_token_is_a_conflict_and_writes_no_revision()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Stale edit board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Concurrent edit"), CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.UpdateContentAsync(
+                    card.Id,
+                    new UpdateCardContentRequest(Guid.NewGuid(), "Someone else got there first.", Title: "Mine"),
+                    CancellationToken.None));
+
+            ex.Message.ShouldContain("modified by another operation");
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id)).ShouldBe(0);
+            (await verify.Cards.SingleAsync(c => c.Id == card.Id)).Title.ShouldBe("Concurrent edit");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task An_edit_without_a_reason_or_without_any_content_field_is_rejected()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reason required board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Needs a reason"), CancellationToken.None);
+
+            var noReason = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.UpdateContentAsync(
+                    card.Id,
+                    new UpdateCardContentRequest(card.ConcurrencyToken, "   ", Title: "Silent rewrite"),
+                    CancellationToken.None));
+            noReason.Errors.ShouldContainKey(nameof(UpdateCardContentRequest.Reason));
+
+            var noContent = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.UpdateContentAsync(
+                    card.Id,
+                    new UpdateCardContentRequest(card.ConcurrencyToken, "Nothing to change."),
+                    CancellationToken.None));
+            noContent.Errors.ShouldContainKey(nameof(UpdateCardContentRequest.Title));
+
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // The correction mechanism must not ship with the same landmine it exists to remove.
+    [Test]
+    public async Task An_edit_past_the_description_ceiling_is_a_validation_error_not_a_500()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Edit ceiling board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Grows with every correction"), CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.UpdateContentAsync(
+                    card.Id,
+                    new UpdateCardContentRequest(
+                        card.ConcurrencyToken,
+                        "Appending context.",
+                        Description: new string('x', CardService.MaxDescriptionLength + 1)),
+                    CancellationToken.None));
+
+            ex.Errors[nameof(UpdateCardContentRequest.Description)].Single().ShouldContain("20,000");
+
+            // And one character under the ceiling goes through, on the update path too.
+            var updated = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(
+                    card.ConcurrencyToken,
+                    "Appending context.",
+                    Description: new string('x', CardService.MaxDescriptionLength - 1)),
+                CancellationToken.None);
+            updated.Description.Length.ShouldBe(CardService.MaxDescriptionLength - 1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // One monotonic sequence across kinds is the point of a single table: the history reads in the
+    // order things actually happened, edits and moves interleaved.
+    [Test]
+    public async Task Revisions_number_one_sequence_across_kinds_and_read_newest_first()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Interleaved board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "First"), CancellationToken.None);
+            var reviewColumn = board.Columns.Single(c => c.StateKey == "review");
+
+            var first = await harness.CardService.UpdateContentAsync(
+                card.Id,
+                new UpdateCardContentRequest(card.ConcurrencyToken, "First correction.", Title: "Second"),
+                CancellationToken.None);
+            var moved = await harness.CardService.MoveAsync(
+                first.Id,
+                new MoveCardRequest(reviewColumn.Id, first.ConcurrencyToken, "Ready to look at."),
+                CancellationToken.None);
+            var third = await harness.CardService.UpdateContentAsync(
+                moved.Id,
+                new UpdateCardContentRequest(moved.ConcurrencyToken, "Second correction.", Title: "Third"),
+                CancellationToken.None);
+
+            third.Title.ShouldBe("Third");
+            third.RevisionCount.ShouldBe(3);
+
+            var history = await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None);
+            history.Select(r => r.RevisionNumber).ShouldBe([3, 2, 1]);
+            history.Select(r => r.Kind).ShouldBe(
+                [CardRevisionKind.ContentEdit, CardRevisionKind.Move, CardRevisionKind.ContentEdit]);
+            // Each ContentEdit holds the title it superseded.
+            history[0].Title.ShouldBe("Second");
+            history[2].Title.ShouldBe("First");
+            history[1].Reason.ShouldBe("Ready to look at.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // CARD-0026's closing note was known-wrong and uncorrectable — the case that motivated the
+    // whole card. A done card must still be editable.
+    [Test]
+    public async Task A_card_in_a_terminal_column_can_still_be_corrected()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Done but wrong board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Codex question detection", "The failure is load-flaky."),
+                CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Fixed."),
+                CancellationToken.None);
+
+            var corrected = await harness.CardService.UpdateContentAsync(
+                closed.Id,
+                new UpdateCardContentRequest(
+                    closed.ConcurrencyToken,
+                    "The diagnosis was disproven; the fix landed in f078dd2.",
+                    Description: "Checkout-path dependent: the prompt echo wrapped under long worktree paths."),
+                CancellationToken.None);
+
+            corrected.Status.ShouldBe(CardStatus.Done);
+            corrected.Description.ShouldContain("Checkout-path dependent");
+            var history = await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None);
+            history[0].Kind.ShouldBe(CardRevisionKind.ContentEdit);
+            history[0].Description.ShouldBe("The failure is load-flaky.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Revisions_of_an_unknown_card_are_a_not_found()
+    {
+        await using var harness = BuildHarness(NewTempRoot());
+
+        await Should.ThrowAsync<NotFoundException>(() =>
+            harness.CardService.GetRevisionsAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private static Harness BuildHarness(string tempRoot)
@@ -478,6 +803,12 @@ public class CardCorrectionIntegrationTests
         await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync();
         await db.Boards.Where(b => boardIds.Contains(b.Id)).ExecuteDeleteAsync();
         await db.Projects.Where(p => projectIds.Contains(p.Id)).ExecuteDeleteAsync();
+    }
+
+    private static bool HasPayloadValue<T>(object payload, string propertyName, T expected)
+    {
+        var value = payload.GetType().GetProperty(propertyName)?.GetValue(payload);
+        return value is T typed && EqualityComparer<T>.Default.Equals(typed, expected);
     }
 
     private static void DeleteDirectoryBestEffort(string path)

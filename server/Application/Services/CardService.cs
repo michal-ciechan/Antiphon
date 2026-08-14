@@ -159,6 +159,66 @@ public sealed class CardService
         return await GetByIdAsync(card.Id, ct);
     }
 
+    /// <summary>
+    /// Corrects a card's text. The card SURFACE is correctable; the card RECORD is append-only —
+    /// the superseded values are archived as a revision, with a mandatory reason, before anything
+    /// is overwritten. Allowed in any column, including terminal ones: correcting the record of
+    /// work already done is the case that motivated this (CARD-0026's known-wrong closing note).
+    /// </summary>
+    public async Task<CardDto> UpdateContentAsync(
+        Guid id, UpdateCardContentRequest request, CancellationToken ct)
+    {
+        ValidateUpdateContentRequest(request);
+
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
+        if (request.ConcurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        var now = UtcNow();
+        // Snapshot BEFORE the overwrite — the revision holds what is being superseded.
+        CardRevisionLog.AppendContentEdit(card, request.Reason, request.EditedBy, now);
+
+        if (request.Title is not null)
+            card.Title = request.Title.Trim();
+        if (request.Description is not null)
+            card.Description = request.Description.Trim();
+        if (request.Priority is int priority)
+            card.Priority = priority;
+        if (request.Labels is not null)
+            card.LabelsJson = BoardService.SerializeLabels(request.Labels);
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
+        }
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    /// <summary>The card's history, newest first. One interleaved sequence across every kind.</summary>
+    public async Task<IReadOnlyList<CardRevisionDto>> GetRevisionsAsync(Guid id, CancellationToken ct)
+    {
+        if (!await _db.Cards.AnyAsync(c => c.Id == id, ct))
+            throw new NotFoundException(nameof(Card), id);
+
+        var revisions = await _db.CardRevisions
+            .AsNoTracking()
+            .Where(r => r.CardId == id)
+            .OrderByDescending(r => r.RevisionNumber)
+            .ToListAsync(ct);
+
+        return revisions.Select(BoardService.ToRevisionDto).ToList();
+    }
+
     public async Task<SpawnCardResult> SpawnAsync(Guid id, SpawnCardRequest request, CancellationToken ct)
     {
         ValidateSpawnRequest(request);
@@ -418,6 +478,36 @@ public sealed class CardService
             return;
 
         errors[field] = [$"{field} must be at most {limit:N0} characters; got {value.Length:N0}."];
+    }
+
+    private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            errors[nameof(request.Reason)] = ["A reason is required for a card correction."];
+        RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
+
+        var hasContent = request.Title is not null
+            || request.Description is not null
+            || request.Priority is not null
+            || request.Labels is not null;
+        if (!hasContent)
+        {
+            errors[nameof(request.Title)] =
+                ["At least one of Title, Description, Priority or Labels must be provided."];
+        }
+
+        if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
+            errors[nameof(request.Title)] = ["Card title must not be blank."];
+        if (request.Priority is int priority && priority < 0)
+            errors[nameof(request.Priority)] = ["Priority must not be negative."];
+
+        RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
+        RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
+        RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
+
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
     }
 
     private static void ValidateMoveRequest(MoveCardRequest request)
