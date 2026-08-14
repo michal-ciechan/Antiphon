@@ -365,11 +365,17 @@ public class AgentTaskReplyIntegrationTests
         await using var verify = CreateContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
-        // Slice 1 still joins the whole turn; slice 2 narrows Result to the final message alone.
-        settled.Result.ShouldEndWith(finalMessage, customMessage: "the verdict is what the caller is owed");
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed))
-            .ShouldBe(1, "the duplicate TurnEnd sibling must not settle the task a second time");
+        settled.Result.ShouldBe(
+            finalMessage,
+            "the report IS the final message — the three 'I'll start by…' sentences ff320d72's caller "
+            + "actually received are narration, and they are not part of it");
+        var completed = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed)
+            .ToListAsync();
+        completed.Count.ShouldBe(1, "the duplicate TurnEnd sibling must not settle the task a second time");
+        completed[0].Detail.ShouldContain(
+            "of mid-turn narration not included",
+            customMessage: "what the report left out is on the record, never silent");
     }
 
     /// <summary>
@@ -420,6 +426,66 @@ public class AgentTaskReplyIntegrationTests
         bareEnd.ApiCallId = apiCallId;
         db.TranscriptEntries.Add(bareEnd);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The report is the FINAL MESSAGE, not a join of everything the delegate said while working
+    /// (CARD-0046 slice 2). Joining the whole turn is what put "I'll start by reading the spec." at
+    /// the top of six callers' reports — and it is also what the head+tail excerpt excerpted, and
+    /// what <c>LooksLikeAQuestion</c> read the last line of.
+    /// </summary>
+    [Test]
+    public async Task the_report_is_the_turn_ending_responses_own_text()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        const string finalMessage = "Verdict: the ceiling is correct. 142 passed, 0 failed.";
+
+        await SeedSplitTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.",
+            finalMessage: finalMessage);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(finalMessage);
+        settled.Result.ShouldNotContain(
+            "I'll start by", customMessage: "narration under a DIFFERENT api call is not the report");
+
+        // The discarded narration is named, so a delegate that front-loads its findings is visible
+        // rather than silently trimmed.
+        var completed = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed);
+        completed.Detail.ShouldBe(
+            $"Delegate reported {finalMessage.Length:N0} characters (final message; "
+            + "31 characters of mid-turn narration not included).");
+    }
+
+    /// <summary>
+    /// One API response can carry several text blocks, and they are all the final message. Order is
+    /// the sequence they were written in — a report reassembled backwards is a corrupted report.
+    /// </summary>
+    [Test]
+    public async Task a_response_split_over_several_text_blocks_is_joined_in_order()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        var apiCallId = await SeedSplitTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.",
+            finalMessage: null);
+        await AppendFinalMessageAsync(sessionId, apiCallId, "Outcome: shipped.");
+        await AppendFinalMessageAsync(sessionId, apiCallId, "Files: Numbers.cs (+11).");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Result.ShouldBe("Outcome: shipped.\n\nFiles: Numbers.cs (+11).");
     }
 
     [Test]

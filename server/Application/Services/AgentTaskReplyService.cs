@@ -134,7 +134,7 @@ public sealed class AgentTaskReplyService
                     _settings.FinalMessageGraceSeconds, report.Length);
             }
 
-            await SettleAsync(scope.ServiceProvider, db, task, report, ct);
+            await SettleAsync(scope.ServiceProvider, db, task, report, turn, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -238,7 +238,8 @@ public sealed class AgentTaskReplyService
     }
 
     private async Task SettleAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, string report, CancellationToken ct)
+        IServiceProvider services, AppDbContext db, AgentTask task, string report, TurnOutcome turn,
+        CancellationToken ct)
     {
         var now = UtcNow();
         task.Result = report;
@@ -268,12 +269,18 @@ public sealed class AgentTaskReplyService
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
         task.ResultFilePath = await ResolveSpillFileAsync(task, report, ct);
 
+        // What the report was built from, on the record. The report is the turn-ending response's
+        // own text, so a delegate that front-loaded findings mid-turn left some behind — name how
+        // much, or that loss is invisible from every surface (CARD-0046 slice 2).
+        var reported = turn.NarrationDiscardedChars > 0
+            ? $"Delegate reported {report.Length:N0} characters (final message; "
+              + $"{turn.NarrationDiscardedChars:N0} characters of mid-turn narration not included)."
+            : $"Delegate reported {report.Length:N0} characters.";
+
         db.AgentTaskEvents.Add(NewEvent(
             task.Id,
             task.Status == AgentTaskStatus.Blocked ? AgentTaskEventType.Blocked : AgentTaskEventType.Completed,
-            task.Status == AgentTaskStatus.Blocked
-                ? "Delegate asked a question."
-                : $"Delegate reported {report.Length:N0} characters.",
+            task.Status == AgentTaskStatus.Blocked ? "Delegate asked a question." : reported,
             now));
 
         // The work landed; now the BRANCH has to. Only a genuinely finished Worktree task merges —
@@ -490,11 +497,17 @@ public sealed class AgentTaskReplyService
     /// The grace expired and the turn-ending response never wrote text, so this report was built
     /// from whatever else the turn produced — most likely mid-turn narration, not a verdict.
     /// </param>
+    /// <param name="NarrationDiscardedChars">
+    /// How much mid-turn text the report deliberately leaves out, because the report is the
+    /// turn-ending response alone (CARD-0046 slice 2). Recorded on the task's Completed event so a
+    /// delegate that front-loaded its findings can be seen to have done so.
+    /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
         bool UncorrelatedReport,
         bool DeferredForFinalMessage = false,
-        bool FinalMessageMissing = false)
+        bool FinalMessageMissing = false,
+        int NarrationDiscardedChars = 0)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
@@ -508,7 +521,8 @@ public sealed class AgentTaskReplyService
         AppDbContext db, Guid sessionId, Guid taskId, CancellationToken ct)
     {
         // The ROW, not just its sequence: settling correctly needs the turn-ending response's
-        // identity (ApiCallId) and when we actually stored it (CreatedAt) — see FinalMessageLandedAsync.
+        // identity (ApiCallId) and when we actually stored it (CreatedAt) — see FinalMessageOf and
+        // ResolveFinalMessageState.
         var end = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
             .OrderByDescending(t => t.Sequence)
@@ -539,8 +553,12 @@ public sealed class AgentTaskReplyService
         if (nextPrompt is long cap)
             query = query.Where(t => t.Sequence < cap);
 
-        var texts = await query.OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync(ct);
-        var joined = string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();
+        // Each row with the API response it belongs to: the report is one of those responses, not
+        // the whole turn (slice 2), and telling them apart is what ApiCallId is for.
+        var texts = await query.OrderBy(t => t.Sequence)
+            .Select(t => new TurnText(t.Text, t.ApiCallId))
+            .ToListAsync(ct);
+        var joined = Join(texts.Select(t => t.Text));
 
         // The marker gate. A human typing in this terminal produces a prompt without it — but so
         // does a brief whose marker was eaten in transit, and those two look identical from here.
@@ -553,7 +571,9 @@ public sealed class AgentTaskReplyService
         // — and every one carries the response's stop_reason, so the boundary that reaches us first
         // is a bare TurnEnd with the report still milliseconds away. Settling here hands the caller
         // the mid-turn narration and discards the verdict (six delegates, 2026-08-13/14).
-        switch (await FinalMessageStateAsync(db, sessionId, end, ct))
+        var finalMessage = FinalMessageOf(end, texts);
+
+        switch (ResolveFinalMessageState(end, finalMessage))
         {
             case FinalMessageState.Landed:
                 break;
@@ -572,7 +592,48 @@ public sealed class AgentTaskReplyService
                     : new TurnOutcome(joined, false, FinalMessageMissing: true);
         }
 
+        // THE REPORT IS THE FINAL MESSAGE, not a join of everything the delegate happened to say
+        // (CARD-0046 slice 2). Joining the whole turn made the caller's report open with "I'll start
+        // by reading the spec." and the head+tail excerpt excerpt the preamble; LooksLikeAQuestion
+        // inspected the wrong last line for the same reason.
+        //
+        // The trade-off, taken deliberately: a delegate that front-loads its findings mid-turn and
+        // ends with "done" loses that mid-turn text from Result — it stays in TranscriptEntries, and
+        // the discarded length is named in the Completed event so the loss is never silent.
+        if (finalMessage is not null)
+        {
+            var narration = Join(texts.Where(t => t.ApiCallId != end.ApiCallId).Select(t => t.Text));
+            return new TurnOutcome(finalMessage, false, NarrationDiscardedChars: narration.Length);
+        }
+
         return joined.Length == 0 ? TurnOutcome.Nothing : new TurnOutcome(joined, false);
+    }
+
+    /// <summary>One assistant-text row of the turn, carrying the API response it was part of.</summary>
+    private readonly record struct TurnText(string? Text, string? ApiCallId);
+
+    private static string Join(IEnumerable<string?> texts) =>
+        string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();
+
+    /// <summary>
+    /// The text of the response that ENDED the turn — the delegate's actual final message — or null
+    /// when there is no response identity to key on and the whole-turn join is all there is.
+    ///
+    /// <para>One response can carry several text blocks, so this is a join too; it is bounded to one
+    /// <c>message.id</c> rather than to a stretch of the transcript, and sequence order is the order
+    /// the blocks were written in.</para>
+    /// </summary>
+    private string? FinalMessageOf(TranscriptEntry end, IReadOnlyList<TurnText> texts)
+    {
+        // The documented escape hatch is total: at <= 0 settlement behaves exactly as it did before
+        // CARD-0046, report included, so it can prove or clear a regression from this whole change.
+        if (_settings.FinalMessageGraceSeconds <= 0)
+            return null;
+        if (end.ApiCallId is not string apiCallId)
+            return null;
+
+        var text = Join(texts.Where(t => t.ApiCallId == apiCallId).Select(t => t.Text));
+        return text.Length == 0 ? null : text;
     }
 
     private enum FinalMessageState
@@ -599,20 +660,17 @@ public sealed class AgentTaskReplyService
     /// thinking record's timestamp is BACKDATED to when its block finished, by 1-30 s against a
     /// measured persist gap of 0.01-1.17 s, so a Timestamp-based window would expire before the
     /// text it is waiting for could possibly arrive.</para>
+    ///
+    /// <para>Reads the turn's OWN rows (<paramref name="finalMessage"/>) rather than querying the
+    /// session again, so the text this waits for and the text it then reports are by construction
+    /// the same rows.</para>
     /// </summary>
-    private async Task<FinalMessageState> FinalMessageStateAsync(
-        AppDbContext db, Guid sessionId, TranscriptEntry end, CancellationToken ct)
+    private FinalMessageState ResolveFinalMessageState(TranscriptEntry end, string? finalMessage)
     {
-        if (_settings.FinalMessageGraceSeconds <= 0)
-            return FinalMessageState.Landed; // escape hatch: never defer
-        if (end.ApiCallId is not string apiCallId)
+        if (finalMessage is not null)
             return FinalMessageState.Landed;
-
-        var landed = await db.TranscriptEntries.AnyAsync(
-            t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.AssistantText
-                && t.ApiCallId == apiCallId, ct);
-        if (landed)
+        // Nothing to wait for: the escape hatch, or a boundary with no response identity on it.
+        if (_settings.FinalMessageGraceSeconds <= 0 || end.ApiCallId is null)
             return FinalMessageState.Landed;
 
         var waited = UtcNow() - end.CreatedAt;
