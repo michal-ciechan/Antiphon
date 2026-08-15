@@ -43,15 +43,27 @@ public class PtyBracketedPasteContractTests
     }
 
     /// <summary>
-    /// The production path (Porta.Pty → kernel32 <c>CreatePseudoConsole</c> → inbox conhost): what
-    /// we write as a paste reaches the child as plain typing. Asserted on the child's own first
-    /// bytes, because a line count cannot tell a delivered marker from a stripped one.
+    /// The inbox path (Porta.Pty → kernel32 <c>CreatePseudoConsole</c> → <c>%SystemRoot%\System32\
+    /// conhost.exe</c>): what we write as a paste reaches the child as plain typing. Asserted on the
+    /// child's own first bytes, because a line count cannot tell a delivered marker from a stripped
+    /// one.
+    ///
+    /// <para>Was <c>The_production_pty_delivers_no_bracketed_paste_markers</c>, and the rename is the
+    /// point (CARD-0045): since CARD-0037 step 3 "production" on this deployment is the <em>modern</em>
+    /// backend, which delivers the markers — so a test named for production, inheriting
+    /// <c>ANTIPHON_PTY_BACKEND</c>, asserted the opposite of the thing it was measuring the moment
+    /// anyone launched the suite from an Antiphon-spawned shell. It pins the fallback, and now says
+    /// so and declares it.</para>
     /// </summary>
     [Test]
-    public async Task The_production_pty_delivers_no_bracketed_paste_markers()
+    public async Task The_inbox_conhost_delivers_no_bracketed_paste_markers()
     {
         SkipIfUnavailable();
-        await using var probe = await NodeStdinProbe.StartAsync(chunkLog: false, decset2004: true);
+        await using var probe = await NodeStdinProbe.StartAsync(
+            chunkLog: false, decset2004: true, backend: "inbox");
+        probe.Runner.Backend!.Backend.ShouldBe(
+            PtyBackend.InboxConhost,
+            "this test pins the marker-stripping fallback and must declare it, not inherit it");
 
         var result = await probe.DeliverAsync(NodeStdinProbe.MarkedBodyOfBytes(300));
 

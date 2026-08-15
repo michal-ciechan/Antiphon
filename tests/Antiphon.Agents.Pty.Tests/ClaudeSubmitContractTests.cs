@@ -87,9 +87,14 @@ public class ClaudeSubmitContractTests
     private static TimeSpan NoSubmitWindowFor(string backend) =>
         backend == "claude" ? TimeSpan.FromSeconds(8) : TimeSpan.FromSeconds(3);
 
+    // CARD-0045: both arms declare the INBOX conhost. The whole value of this file is that the fake
+    // arm and the real arm measure the same transport — the fake models the inbox typing path
+    // (CARD-0028), so a real arm silently running on the modern pseudoconsole because the launching
+    // shell exported ANTIPHON_PTY_BACKEND would compare two different platforms and call the
+    // difference "drift".
     private static async Task<PtyAgentRunner> LaunchReadyAsync(string backend)
     {
-        var runner = new PtyAgentRunner();
+        var runner = new PtyAgentRunner("inbox");
         if (backend == "fakeclaude")
         {
             if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
@@ -109,6 +114,10 @@ public class ClaudeSubmitContractTests
             if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
         }
 
+        runner.Backend!.Backend.ShouldBe(
+            PtyBackend.InboxConhost,
+            "the submit contract is pinned against the inbox conhost on both arms — declared, not "
+            + "inherited from ANTIPHON_PTY_BACKEND");
         runner.ClearLiveBuffer();
         return runner;
     }

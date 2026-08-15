@@ -56,10 +56,17 @@ public class ClaudePasteLossCanaryTests
         ClSession.SkipIfNotEligible();
         var sessionId = Guid.NewGuid().ToString("D");
 
-        await using var runner = new PtyAgentRunner();
+        // CARD-0045: the loss this reproduces is a TYPED-input loss, i.e. an inbox-conhost fact
+        // (CARD-0030/0037) — through the modern pseudoconsole the markers arrive, the composer takes
+        // its paste path and 86 KB lands whole. Declared, so the reproduction cannot quietly change
+        // which platform it is reproducing on because a shell exported ANTIPHON_PTY_BACKEND.
+        await using var runner = new PtyAgentRunner("inbox");
         var (app, args) = ClSession.BuildLaunch(
             ClSession.ResolveOrThrow(), "--dangerously-skip-permissions", "--session-id", sessionId);
         await runner.StartAsync(app, args, cols: 120, rows: 30, env: ClSession.HeadedSafeEnv());
+        runner.Backend!.Backend.ShouldBe(
+            PtyBackend.InboxConhost,
+            "CARD-0027's loss is an inbox-conhost fact — this reproduction must declare it");
         var ready = await new ClaudeReadyDetector().WaitAsync(runner);
         if (!ready) throw new SkipTestException("real Claude TUI did not reach a ready state");
         runner.ClearLiveBuffer();

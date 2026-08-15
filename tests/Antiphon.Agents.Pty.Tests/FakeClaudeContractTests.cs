@@ -35,16 +35,34 @@ public class FakeClaudeContractTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
     }
 
+    /// <summary>
+    /// CARD-0045: the fake IS the model of the <b>inbox conhost</b> typing path (CARD-0028), so every
+    /// test reached through this helper means inbox and must say so rather than inheriting whatever
+    /// <c>ANTIPHON_PTY_BACKEND</c> the launching shell happened to export. Pinned, not inherited: on
+    /// the modern pseudoconsole the bracketed-paste markers reach the fake, its clip model exempts
+    /// paste-mode content, and tests asserting "a chunk must be lost" fail <em>because the fix
+    /// works</em>. The inbox behaviour still ships as the fallback on any machine without the
+    /// redistributable, so it stays pinned here; the modern half lives in
+    /// <see cref="LaunchClippingFakeOnModernPtyAsync"/>.
+    /// </summary>
     private static async Task<PtyAgentRunner> LaunchReadyFakeAsync(
         IDictionary<string, string>? env = null)
     {
-        var runner = new PtyAgentRunner();
+        var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
+        ShouldBeInbox(runner);
         var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15));
         ready.ShouldBeTrue("fake Claude should print its readiness banner");
         runner.ClearLiveBuffer();
         return runner;
     }
+
+    /// <summary>The declaration, asserted once per launch, so a regression names itself (CARD-0045).</summary>
+    private static void ShouldBeInbox(PtyAgentRunner runner) =>
+        runner.Backend!.Backend.ShouldBe(
+            PtyBackend.InboxConhost,
+            "these tests pin inbox-conhost facts and must declare that backend — an inherited "
+            + "ANTIPHON_PTY_BACKEND must not be able to change what this suite means");
 
     // The BUG path: text and the submitting CR in a SINGLE write. The TUI reads it as a paste — the CR
     // collapses to a literal newline and the line is NOT submitted. This is exactly what the old
@@ -679,8 +697,12 @@ public class FakeClaudeContractTests
         };
         foreach (var (k, v) in extraEnv) env[k] = v;
 
-        var runner = new PtyAgentRunner();
+        // CARD-0045: inbox, declared. The clip model is a model of TYPED input, which is all the
+        // inbox conhost can deliver — on the modern backend the markers survive, the paste is exempt
+        // and every clip assertion below would (correctly) find nothing lost.
+        var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
+        ShouldBeInbox(runner);
         // The CLIP banner carries the seed and the chunk size: a test that believed it enabled
         // clipping but did not must fail here, not by mysteriously observing no loss.
         var ready = await runner.WaitForOutputAsync(
