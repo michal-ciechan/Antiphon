@@ -114,6 +114,28 @@ describe('CardModal', () => {
     expect(screen.getByLabelText('Description')).toHaveValue('Wire xterm to the session stream')
   })
 
+  it('does not fetch the history until the History tab is opened', async () => {
+    const revisionsSpy = vi.fn()
+    server.use(
+      agentDefinitionsHandler(),
+      http.get('/api/cards/card-1/revisions', () => {
+        revisionsSpy()
+        return HttpResponse.json([])
+      }),
+    )
+
+    renderWithProviders(
+      <CardModal boardId="board-1" card={{ ...card, revisionCount: 7 }} opened onClose={() => undefined} />,
+    )
+
+    // `keepMounted={false}` on the tabs is what buys this — no explicit lazy-loading code.
+    const tab = await screen.findByRole('tab', { name: 'History (7)' })
+    expect(revisionsSpy).not.toHaveBeenCalled()
+
+    await userEvent.click(tab)
+    await waitFor(() => expect(revisionsSpy).toHaveBeenCalled())
+  })
+
   it('disables spawn while a session is stopping', async () => {
     server.use(agentDefinitionsHandler())
     renderWithProviders(

@@ -1,12 +1,13 @@
 import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
+import { TbHistory, TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardEditModal } from './CardEditModal'
+import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { SessionTabs } from './SessionTabs'
@@ -137,6 +138,13 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                     Diff
                   </Tabs.Tab>
                 )}
+                {/*
+                  `revisionCount` counts MOVES as well as edits, so it is a count and nothing
+                  else — never an "edited" badge.
+                */}
+                <Tabs.Tab value="history" leftSection={<TbHistory size={14} />}>
+                  History ({card.revisionCount})
+                </Tabs.Tab>
                 <Tabs.Tab value="details" leftSection={<TbInfoCircle size={14} />} className="card-page__detailsTab">
                   Details
                 </Tabs.Tab>
@@ -157,6 +165,14 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                   </ScrollArea>
                 </Tabs.Panel>
               )}
+
+              {/* `keepMounted={false}` above is what makes this lazy: the revisions query does
+                  not fire until the tab is first opened. */}
+              <Tabs.Panel value="history" className="card-page__panel">
+                <ScrollArea h="100%" type="auto" offsetScrollbars>
+                  <CardHistory cardId={card.id} columns={columns} />
+                </ScrollArea>
+              </Tabs.Panel>
 
               <Tabs.Panel value="details" className="card-page__panel card-page__detailsPanel">
                 <ScrollArea h="100%" type="auto" offsetScrollbars>
