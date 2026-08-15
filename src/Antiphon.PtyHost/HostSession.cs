@@ -14,7 +14,7 @@ public sealed class HostSession : IAsyncDisposable
 {
     private readonly PtyHostOptions _options;
     private readonly HostLog _log;
-    private readonly PtyAgentRunner _runner = new();
+    private readonly PtyAgentRunner _runner;
     private readonly object _gate = new();
     private readonly Queue<(long Seq, string Chunk)> _ring = new();
     private readonly TaskCompletionSource<string> _exitRequested =
@@ -36,6 +36,12 @@ public sealed class HostSession : IAsyncDisposable
     {
         _options = options;
         _log = log;
+        // CARD-0045: the backend comes from --pty-backend when the launcher stated one, and falls
+        // back to ANTIPHON_PTY_BACKEND (null override) otherwise — so production, where the daemon
+        // exports the variable, resolves exactly as it did before, while a caller that owns a
+        // runtime (a test) can now say which pseudoconsole its sessions get without reaching for
+        // the process environment it shares with everything else.
+        _runner = new PtyAgentRunner(options.PtyBackend);
     }
 
     /// <summary>Completes when the host should exit; the result is the reason (for the log).</summary>

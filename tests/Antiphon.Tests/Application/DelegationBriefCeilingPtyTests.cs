@@ -246,8 +246,16 @@ public class DelegationBriefCeilingPtyTests
             };
             h.Cwd = Path.Combine(Path.GetTempPath(), $"antiphon-card28-{h._sessionId:N}");
             Directory.CreateDirectory(h.Cwd);
+            // CARD-0045: declared, not inherited. The clip model this harness arms is a model of the
+            // INBOX conhost's typed-input path (CARD-0028) — on the modern pseudoconsole the
+            // bracketed-paste markers reach the fake, the paste is exempt, and
+            // The_same_brief_typed_inline_silently_loses_a_whole_chunk fails because the fix works.
+            // The declaration reaches the pty three processes down via SessionRunnerSettings
+            // .PtyBackend → --pty-backend → HostSession (slice 3); it does not depend on the
+            // assembly's env guard.
             h._client = new DirectSessionRunnerClient(
-                Path.Combine(Path.GetTempPath(), $"antiphon-card28-log-{h._sessionId:N}"));
+                Path.Combine(Path.GetTempPath(), $"antiphon-card28-log-{h._sessionId:N}"),
+                ptyBackend: "inbox");
 
             var services = new ServiceCollection();
             services.AddDbContext<AppDbContext>(options =>

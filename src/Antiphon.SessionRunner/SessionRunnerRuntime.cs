@@ -442,6 +442,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 launchTimeout: TimeSpan.FromSeconds(_settings.PtyHostLaunchTimeoutSec),
                 lingerTtl: TimeSpan.FromHours(_settings.PtyHostLingerHours),
                 ringCapChars: Math.Max(1, _settings.ReplayBufferMaxChars),
+                // CARD-0045: state the backend on the host's command line instead of relying on it
+                // inheriting our environment block. Production is unchanged — the daemon exports the
+                // same SessionRunner:PtyBackend value into ANTIPHON_PTY_BACKEND at startup, so the
+                // host now hears the same answer twice. What it BUYS is the host-mediated tests: a
+                // caller that builds its own runtime (DirectSessionRunnerClient) could not reach
+                // PtyAgentRunner's per-instance override at all, three processes down, and so ran on
+                // whatever the test process had inherited.
+                ptyBackend: _settings.PtyBackend,
                 ct: ct);
 
             try

@@ -37,6 +37,17 @@ public class SessionMessageQueuePtyIntegrationTests
     private static string FakeClaudeExe =>
         Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
 
+    /// <summary>
+    /// CARD-0045: the backend these host-mediated sessions run on, declared rather than inherited.
+    /// fakeclaude models the INBOX conhost's typed-input path (CARD-0028) — including the CR-vs-LF
+    /// fragmentation this file exists to pin — so that is the pty these tests mean. It travels
+    /// <c>DirectSessionRunnerClient</c> → <c>SessionRunnerSettings.PtyBackend</c> →
+    /// <c>--pty-backend</c> → the detached host's <c>HostSession</c> (slice 3): before that seam the
+    /// per-instance override could not reach a pty three processes down, and these tests ran on
+    /// whatever the launching shell had exported.
+    /// </summary>
+    private const string PinnedBackend = "inbox";
+
     [Test]
     public async Task Queued_message_submits_through_the_real_runtime_runner_pty_path()
     {
@@ -45,7 +56,7 @@ public class SessionMessageQueuePtyIntegrationTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -134,7 +145,7 @@ public class SessionMessageQueuePtyIntegrationTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -250,7 +261,7 @@ public class SessionMessageQueuePtyIntegrationTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -348,7 +359,7 @@ public class SessionMessageQueuePtyIntegrationTests
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
         var sessionId = Guid.NewGuid();
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);

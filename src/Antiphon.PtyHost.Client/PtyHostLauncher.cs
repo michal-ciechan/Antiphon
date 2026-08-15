@@ -29,6 +29,12 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
     /// Spawns a detached host for <paramref name="sessionId"/> and returns its pid.
     /// The host is empty (WaitingForLaunch) - connect to the pipe and send Launch next.
     /// </summary>
+    /// <param name="ptyBackend">
+    /// Which pseudoconsole the host's session should spawn under (<c>inbox</c>/<c>modern</c>), or
+    /// null to leave it to the environment the host inherits. CARD-0045: passed as an argument
+    /// rather than set on the StartInfo, so the choice is visible in the host's own command line
+    /// while diagnosing a live host.
+    /// </param>
     public async Task<int> LaunchDetachedAsync(
         Guid sessionId,
         string manifestDir,
@@ -37,6 +43,7 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         TimeSpan? launchTimeout = null,
         TimeSpan? lingerTtl = null,
         int? ringCapChars = null,
+        string? ptyBackend = null,
         CancellationToken ct = default)
     {
         var exe = Path.Combine(CurrentShadowDir, HostExeName);
@@ -52,7 +59,8 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
             RedirectStandardError = true,
         };
         foreach (var arg in BuildHostArgs(
-                     sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl, ringCapChars))
+                     sessionId, manifestDir, hostLogFile, pipeName, launchTimeout, lingerTtl,
+                     ringCapChars, ptyBackend))
             psi.ArgumentList.Add(arg);
 
         using var intermediary = Process.Start(psi)
@@ -76,7 +84,8 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         string? pipeName,
         TimeSpan? launchTimeout,
         TimeSpan? lingerTtl,
-        int? ringCapChars)
+        int? ringCapChars,
+        string? ptyBackend)
     {
         yield return "--spawn";
         yield return "--session";
@@ -107,6 +116,12 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         {
             yield return "--ring-cap-chars";
             yield return cap.ToString();
+        }
+
+        if (!string.IsNullOrWhiteSpace(ptyBackend))
+        {
+            yield return "--pty-backend";
+            yield return ptyBackend;
         }
     }
 }

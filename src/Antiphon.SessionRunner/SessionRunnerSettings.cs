@@ -51,6 +51,12 @@ public sealed class SessionRunnerSettings
     /// conpty.dll + OpenConsole.exe, which delivers them). Exported to <c>ANTIPHON_PTY_BACKEND</c>
     /// at startup so the detached pty-hosts inherit it; an env var already set wins. A machine
     /// without the redistributable falls back to <c>inbox</c> — see <c>PtyBackendPolicy</c>.
+    ///
+    /// <para>CARD-0045: <see cref="SessionRunnerRuntime"/> also passes this value to each host as
+    /// <c>--pty-backend</c>. In the daemon that is the same answer stated twice (the export already
+    /// reached the host by inheritance); it exists because a runtime built in-process — a test's
+    /// <c>DirectSessionRunnerClient</c> — has no daemon to do the export, and previously had no way
+    /// at all to reach the backend of a pty three processes down.</para>
     /// </summary>
     public string? PtyBackend { get; set; }
 
