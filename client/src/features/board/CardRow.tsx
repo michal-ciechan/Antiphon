@@ -27,6 +27,9 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
   const live = hasLiveSession(card)
   const age = ageInDays(card.createdAt, now)
   const stacked = layout === 'stacked'
+  // Only ever on screen under the board's Archived filter, so it needs to read as "not part of
+  // the live board" without becoming unreadable — the row is still the record.
+  const archived = !!card.archivedAt
 
   const identifier = (
     <Tooltip label={card.identifier} withArrow openDelay={400}>
@@ -51,6 +54,17 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
   // wrapping — a long label must not push the age and the kebab onto a line of their own.
   const meta = (
     <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+      {archived && (
+        <Badge
+          size="xs"
+          color="gray"
+          variant="filled"
+          style={{ flex: 'none' }}
+          title={card.archivedReason ?? undefined}
+        >
+          archived
+        </Badge>
+      )}
       <Badge size="xs" color={priorityBadgeColor(card.priority)} variant="light" style={{ flex: 'none' }}>
         P{card.priority}
       </Badge>
@@ -113,6 +127,7 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
         borderRadius: 6,
         borderTop: stacked ? '1px solid var(--mantine-color-dark-5)' : undefined,
         borderLeft: live ? '3px solid var(--mantine-color-success-5)' : '3px solid transparent',
+        opacity: archived ? 0.55 : undefined,
       }}
     >
       <Group gap="xs" wrap="nowrap" align="baseline">

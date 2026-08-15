@@ -79,7 +79,11 @@ export function BoardPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: boards, isLoading: boardsLoading } = useBoards()
-  const { data: board, isLoading: boardLoading, error } = useBoard(id)
+  // Archived cards are opt-in per board and the opt-in lives in the URL, so a link to an archived
+  // card's board carries the toggle with it. The chip that sets it lives in `BoardShapeView`,
+  // which reads the same search params.
+  const showArchived = searchParams.get('archived') === '1'
+  const { data: board, isLoading: boardLoading, error } = useBoard(id, { includeArchived: showArchived })
   const boardIds = useMemo(() => (boards ?? []).map((item) => item.id), [boards])
   const allBoards = useAllBoardDetails(boardIds, !id && !boardsLoading)
   const selectedBoardLoading = !!id && boardLoading
@@ -298,6 +302,7 @@ function BoardShapeView({
   const [expandedBands, setExpandedBands] = useState<ReadonlySet<string>>(() => new Set<string>())
 
   const selectedState = searchParams.get('state')
+  const showArchived = searchParams.get('archived') === '1'
   const priorities = useMemo(
     () => (searchParams.get('p') ?? '')
       .split(',')
@@ -357,7 +362,7 @@ function BoardShapeView({
     setQuery('')
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
-      for (const key of ['q', 'p', 'labels', 'state']) next.delete(key)
+      for (const key of ['q', 'p', 'labels', 'state', 'archived']) next.delete(key)
       return next
     }, { replace: true })
   }
@@ -376,6 +381,22 @@ function BoardShapeView({
         ))}
       </Group>
     </Chip.Group>
+  )
+
+  /**
+   * Archived cards are absent from the board payload unless asked for, so this is a REFETCH under
+   * a different cache key, not a client-side filter. It stays a per-board opt-in: the all-boards
+   * aggregate is a workload view, not an archaeology view.
+   */
+  const archivedChip = (
+    <Chip
+      size="xs"
+      variant="outline"
+      checked={showArchived}
+      onChange={(checked) => setParam('archived', checked ? '1' : null)}
+    >
+      Archived
+    </Chip>
   )
 
   const labelSelect = (
@@ -422,6 +443,7 @@ function BoardShapeView({
               <Stack gap="xs" w={260}>
                 {priorityChips}
                 {labelSelect}
+                {archivedChip}
                 {(filtered || selectedState) && (
                   <Button size="xs" variant="subtle" onClick={clearFilters}>Clear filters</Button>
                 )}
@@ -436,6 +458,7 @@ function BoardShapeView({
           <>
             {priorityChips}
             {labelSelect}
+            {archivedChip}
             {(filtered || selectedState) && (
               <Button size="xs" variant="subtle" onClick={clearFilters}>Clear filters</Button>
             )}

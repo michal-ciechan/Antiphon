@@ -37,6 +37,7 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
 
   if (!card) return null
   const description = card.description.trim()
+  const archived = !!card.archivedAt
   const activeSessionCount = card.sessions.filter((session) =>
     session.status === 'Starting' || session.status === 'Running' || session.status === 'Stopping',
   ).length
@@ -86,6 +87,11 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               </Title>
             </Group>
             <Group gap={6} wrap="nowrap" className="card-page__badges">
+              {archived && (
+                <Badge color="gray" variant="filled" title={card.archivedReason ?? undefined}>
+                  archived
+                </Badge>
+              )}
               <Badge variant="light">{card.status}</Badge>
               <Badge color="gray" variant="outline">P{card.priority}</Badge>
               {activeSessionCount > 0 && (
@@ -108,7 +114,16 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               <TbPencil size={18} />
             </ActionIcon>
             {columns.length > 0 && (
-              <MoveMenu boardId={boardId} card={card} columns={columns} variant="button" />
+              <MoveMenu
+                boardId={boardId}
+                card={card}
+                columns={columns}
+                variant="button"
+                // The archived card leaves the default board payload, so this page would resolve
+                // to nothing anyway — closing explicitly is the difference between a clean exit
+                // and a modal that blinks out mid-refetch.
+                onArchived={onClose}
+              />
             )}
             <AgentPicker value={definitionName} onChange={setDefinitionName} compact />
             <Button
@@ -116,7 +131,8 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               leftSection={<TbPlayerPlay size={16} />}
               onClick={handleSpawn}
               loading={spawnCard.isPending}
-              disabled={hasActiveSession}
+              disabled={hasActiveSession || archived}
+              title={archived ? 'Unarchive this card before starting work on it' : undefined}
             >
               Spawn
             </Button>

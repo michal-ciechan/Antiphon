@@ -1,34 +1,57 @@
 import { ActionIcon, Alert, Button, Group, Menu, Modal, Stack, Text, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
-import { TbAlertTriangle, TbCopy, TbDots } from 'react-icons/tb'
-import { type BoardColumnDto, type CardDto, useMoveCard } from '../../api/boards'
+import { TbAlertTriangle, TbArchive, TbArchiveOff, TbCopy, TbDots } from 'react-icons/tb'
+import {
+  type BoardColumnDto,
+  type CardDto,
+  useArchiveCard,
+  useMoveCard,
+  useUnarchiveCard,
+} from '../../api/boards'
+import { getApiErrorMessage } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
-import { legalMoveTargets } from './boardShapeModel'
+import { hasLiveSession, legalMoveTargets } from './boardShapeModel'
 
 interface MoveMenuProps {
   boardId: string
   card: CardDto
   columns: BoardColumnDto[]
   variant?: 'kebab' | 'button'
+  /**
+   * Called after a successful archive. The card leaves the default board payload, so anything
+   * showing it (the card modal) has to let go rather than wait for `selectedCard` to resolve null.
+   */
+  onArchived?: () => void
 }
 
 /**
- * The board's only move surface, replacing drag-and-drop.
+ * The board's only move surface, replacing drag-and-drop — and, since CARD-0019, the card's
+ * actions menu generally.
  *
  * Drag answered "which adjacent column", which the fully-connected state machine made obsolete;
  * worse, it had nowhere to put the move's Reason and made a gesture out of a side effect — moving
  * a card into an ACTIVE column spawns an agent session. So a move is now explicit, reasoned, and
  * says out loud when it will start an agent.
+ *
+ * Archive lives here rather than behind an overflow of its own: this IS the card's overflow, on
+ * every row and in the modal header, so archive is reachable everywhere a card is.
  */
-export function MoveMenu({ boardId, card, columns, variant = 'kebab' }: MoveMenuProps) {
+export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived }: MoveMenuProps) {
   const [target, setTarget] = useState<BoardColumnDto | null>(null)
+  const [archiveAction, setArchiveAction] = useState<'archive' | 'unarchive' | null>(null)
   const [reason, setReason] = useState('')
   const moveCard = useMoveCard(boardId)
-  const targets = legalMoveTargets(card, columns)
+  const archiveCard = useArchiveCard(boardId)
+  const unarchiveCard = useUnarchiveCard(boardId)
+  const archived = !!card.archivedAt
+  // An archived card cannot move — the server refuses with "unarchive it before…", so offering
+  // targets would only produce a 409 the operator has to read to understand.
+  const targets = archived ? [] : legalMoveTargets(card, columns)
 
   const close = () => {
     setTarget(null)
+    setArchiveAction(null)
     setReason('')
   }
 
@@ -56,6 +79,45 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab' }: MoveMenu
         },
       },
     )
+    close()
+  }
+
+  const submitArchive = () => {
+    if (!archiveAction || !reason.trim()) return
+    const action = archiveAction
+    const request = { cardId: card.id, request: { concurrencyToken: card.concurrencyToken, reason: reason.trim() } }
+
+    const onError = (error: unknown) => {
+      // The server's refusals here are good sentences ("has a live owner session; stop it before
+      // archiving") — show them rather than a generic failure.
+      notifications.show({
+        color: 'red',
+        message: getApiErrorMessage(error, action === 'archive' ? 'Archive failed' : 'Unarchive failed'),
+      })
+    }
+
+    if (action === 'archive') {
+      archiveCard.mutate(
+        { ...request, request: { ...request.request, archivedBy: 'operator' } },
+        {
+          onSuccess: () => {
+            notifications.show({ color: 'green', message: `${card.identifier} archived` })
+            onArchived?.()
+          },
+          onError,
+        },
+      )
+    } else {
+      unarchiveCard.mutate(
+        { ...request, request: { ...request.request, unarchivedBy: 'operator' } },
+        {
+          onSuccess: () => {
+            notifications.show({ color: 'green', message: `${card.identifier} unarchived` })
+          },
+          onError,
+        },
+      )
+    }
     close()
   }
 
@@ -90,22 +152,50 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab' }: MoveMenu
             : <Button size="xs" variant="light">Move to</Button>}
         </Menu.Target>
         <Menu.Dropdown onClick={(event) => event.stopPropagation()}>
-          <Menu.Label>Move to</Menu.Label>
-          {targets.length === 0 && (
-            <Menu.Item disabled data-testid="no-move-target">No move out of a terminal state</Menu.Item>
+          {!archived && (
+            <>
+              <Menu.Label>Move to</Menu.Label>
+              {targets.length === 0 && (
+                <Menu.Item disabled data-testid="no-move-target">No move out of a terminal state</Menu.Item>
+              )}
+              {targets.map((column) => (
+                <Menu.Item
+                  key={column.id}
+                  data-testid={`move-to-${column.stateKey}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setTarget(column)
+                  }}
+                >
+                  {column.name}{column.isActive ? ' — spawns an agent' : ''}
+                </Menu.Item>
+              ))}
+              <Menu.Divider />
+              <Menu.Item
+                color="red"
+                data-testid="archive-card"
+                leftSection={<TbArchive size={14} />}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setArchiveAction('archive')
+                }}
+              >
+                Archive…
+              </Menu.Item>
+            </>
           )}
-          {targets.map((column) => (
+          {archived && (
             <Menu.Item
-              key={column.id}
-              data-testid={`move-to-${column.stateKey}`}
+              data-testid="unarchive-card"
+              leftSection={<TbArchiveOff size={14} />}
               onClick={(event) => {
                 event.stopPropagation()
-                setTarget(column)
+                setArchiveAction('unarchive')
               }}
             >
-              {column.name}{column.isActive ? ' — spawns an agent' : ''}
+              Unarchive…
             </Menu.Item>
-          ))}
+          )}
           <Menu.Divider />
           <Menu.Item
             data-testid="copy-card-id"
@@ -146,13 +236,60 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab' }: MoveMenu
             onChange={(event) => setReason(event.currentTarget.value)}
           />
           <Text size="xs" c="dimmed">
-            A reason is kept as the card's terminal reason on a move into a terminal state. On any
-            other move there is nowhere to store it yet — that arrives with CARD-0019's card
-            history. Send one regardless.
+            A reason is kept as the reason on the card's history entry for this move; a move into a
+            terminal state also stamps the card's terminal reason. Send one regardless.
           </Text>
           <Group justify="flex-end">
             <Button variant="subtle" onClick={close}>Cancel</Button>
             <Button onClick={submit} loading={moveCard.isPending}>Move</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={!!archiveAction}
+        onClose={close}
+        title={archiveAction === 'unarchive'
+          ? `Unarchive ${displayIdentifier(card.identifier)}`
+          : `Archive ${displayIdentifier(card.identifier)}`}
+        zIndex={400}
+      >
+        <Stack>
+          {archiveAction === 'archive' && hasLiveSession(card) && (
+            <Alert
+              color="warning"
+              variant="light"
+              icon={<TbAlertTriangle size={18} />}
+              title="This card has a live session"
+            >
+              The server will refuse to archive a card an agent is working. Stop the session first.
+            </Alert>
+          )}
+          <Textarea
+            label="Reason"
+            placeholder={archiveAction === 'unarchive'
+              ? 'Why this card is coming back'
+              : 'Why this card is being archived'}
+            withAsterisk
+            autosize
+            minRows={2}
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+          />
+          <Text size="xs" c="dimmed">
+            Archiving is not deleting: the card keeps its identifier and its history, and shows up
+            again under the board's Archived filter.
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={close}>Cancel</Button>
+            <Button
+              color={archiveAction === 'unarchive' ? undefined : 'red'}
+              onClick={submitArchive}
+              loading={archiveCard.isPending || unarchiveCard.isPending}
+              disabled={!reason.trim()}
+            >
+              {archiveAction === 'unarchive' ? 'Unarchive' : 'Archive'}
+            </Button>
           </Group>
         </Stack>
       </Modal>

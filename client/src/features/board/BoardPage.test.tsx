@@ -363,6 +363,76 @@ describe('moving a card', () => {
   })
 })
 
+describe('archived cards', () => {
+  const archivedCard = card({
+    id: 'card-5',
+    identifier: 'CARD-0005',
+    title: 'Duplicate of CARD-0042',
+    archivedAt: '2026-08-12T09:00:00Z',
+    archivedReason: 'duplicate',
+    archivedBy: 'operator',
+  })
+
+  /** Mirrors the server: archived cards are absent unless `?includeArchived=true` is asked for. */
+  function archiveAwareHandlers() {
+    const asked: boolean[] = []
+    return {
+      asked,
+      handlers: [
+        http.get('/api/boards', () => HttpResponse.json([boardSummary()])),
+        http.get('/api/projects', () => HttpResponse.json([])),
+        agentDefinitionsHandler(),
+        http.get('/api/boards/board-1', ({ request }) => {
+          const includeArchived = new URL(request.url).searchParams.get('includeArchived') === 'true'
+          asked.push(includeArchived)
+          return HttpResponse.json({
+            ...board,
+            columns: board.columns.map((column) => column.stateKey === 'backlog'
+              ? { ...column, cards: includeArchived ? [...column.cards, archivedCard] : column.cards }
+              : column),
+          })
+        }),
+      ],
+    }
+  }
+
+  it('leaves archived cards out until the chip is on', async () => {
+    const { asked, handlers } = archiveAwareHandlers()
+    server.use(...handlers)
+    renderBoardRoute('/boards/board-1?state=backlog')
+
+    expect(await screen.findByRole('article', { name: 'CARD-0001 Drag me' })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: /CARD-0005/ })).not.toBeInTheDocument()
+    expect(asked).toEqual([false])
+  })
+
+  it('refetches with includeArchived when the chip goes on, and puts it in the URL', async () => {
+    const { asked, handlers } = archiveAwareHandlers()
+    server.use(...handlers)
+    renderBoardRoute('/boards/board-1?state=backlog')
+    await screen.findByRole('article', { name: 'CARD-0001 Drag me' })
+
+    await userEvent.click(screen.getByText('Archived'))
+
+    // The URL carries the toggle, so a link to this board keeps showing the archived card.
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('archived')).toBe('1'))
+    const archivedRow = await screen.findByRole('article', { name: 'CARD-0005 Duplicate of CARD-0042' })
+    expect(within(archivedRow).getByText('archived')).toBeInTheDocument()
+    expect(archivedRow).toHaveStyle({ opacity: '0.55' })
+    // A REFETCH under a different cache key, not a client-side filter — the card was never here.
+    expect(asked).toContain(true)
+  })
+
+  it('restores the archived view straight from the URL', async () => {
+    const { handlers } = archiveAwareHandlers()
+    server.use(...handlers)
+    renderBoardRoute('/boards/board-1?state=backlog&archived=1')
+
+    expect(await screen.findByRole('article', { name: 'CARD-0005 Duplicate of CARD-0042' }))
+      .toBeInTheDocument()
+  })
+})
+
 describe('creating a card', () => {
   async function openCreateDialog() {
     renderBoardRoute('/boards/board-1')

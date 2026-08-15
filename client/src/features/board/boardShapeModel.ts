@@ -7,11 +7,16 @@ import { displayIdentifier, matchesIdentifierQuery } from '../../shared/cardIden
  * fetches — there is no server projection in v1.
  *
  * What this deliberately does NOT compute is as important as what it does: **time in state** and
- * **per-edge flow counts** are not derivable. Nothing records when a card entered its current
- * state (`UpdatedAt` is bumped by any write, including concurrency-token churn) and nothing
- * records a move at all, so "sitting in Review for 11 days" cannot be distinguished from "moved
- * here an hour ago". Every age below is CARD AGE since `CreatedAt`, and says so in its wording.
- * Both unlock with CARD-0019's `CardRevision`.
+ * **per-edge flow counts** are not derivable HERE. Moves ARE recorded now — CARD-0019 landed
+ * `CardRevision`, and a card's `Move` entries carry from/to and a timestamp — but they arrive
+ * only from `GET /cards/{id}/revisions`, one card at a time. The board payload still carries no
+ * entered-state-at, and `UpdatedAt` is bumped by any write including concurrency-token churn, so
+ * "sitting in Review for 11 days" still cannot be distinguished from "moved here an hour ago" at
+ * board scale. Every age below is CARD AGE since `CreatedAt`, and says so in its wording. What is
+ * left is the server-side projection, deferred per feature 011 §5.
+ *
+ * Archived cards need no filtering here: they are simply absent from the payload unless the page
+ * asks for them (`useBoard(id, { includeArchived })`).
  */
 
 /** Priorities the board renders, most important first. */

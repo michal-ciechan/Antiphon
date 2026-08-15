@@ -1,6 +1,9 @@
+import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
+import { Notifications } from '@mantine/notifications'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, within } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
+import { server } from '../../test/mocks/server'
 import { CardRow } from './CardRow'
 import { StateNode } from './StateNode'
 import { buildBoardShape, EMPTY_FILTER } from './boardShapeModel'
@@ -68,13 +71,16 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
 
 function renderRow(overrides: Partial<CardDto> = {}, onOpen = vi.fn()) {
   renderWithProviders(
-    <CardRow
-      card={card(overrides)}
-      boardId="board-1"
-      columns={columns}
-      now={NOW}
-      onOpen={onOpen}
-    />,
+    <>
+      <Notifications />
+      <CardRow
+        card={card(overrides)}
+        boardId="board-1"
+        columns={columns}
+        now={NOW}
+        onOpen={onOpen}
+      />
+    </>,
   )
   return { onOpen }
 }
@@ -140,6 +146,121 @@ describe('CardRow', () => {
     expect(onOpen).not.toHaveBeenCalled()
     expect(await screen.findByTestId('move-to-in-progress'))
       .toBeInTheDocument()
+  })
+})
+
+const ARCHIVED = {
+  archivedAt: '2026-08-12T09:00:00Z',
+  archivedReason: 'duplicate of CARD-0042',
+  archivedBy: 'operator',
+} satisfies Partial<CardDto>
+
+describe('an archived card', () => {
+  it('renders dimmed and badged — visible, but plainly not part of the live board', () => {
+    renderRow(ARCHIVED)
+    const row = screen.getByRole('article', { name: /CARD-0041/ })
+    expect(within(row).getByText('archived')).toBeInTheDocument()
+    expect(row).toHaveStyle({ opacity: '0.55' })
+  })
+
+  it('offers Unarchive and NO move targets — the server refuses to move an archived card', async () => {
+    renderRow(ARCHIVED)
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+
+    expect(await screen.findByTestId('unarchive-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('move-to-in-progress')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('archive-card')).not.toBeInTheDocument()
+    // Copy id survives everywhere: an archived card's identifier is exactly what still gets cited.
+    expect(screen.getByTestId('copy-card-id')).toBeInTheDocument()
+  })
+})
+
+describe('archiving from the card actions menu', () => {
+  it('requires a reason and POSTs it with the token to /archive', async () => {
+    const archiveSpy = vi.fn()
+    server.use(http.post('/api/cards/card-1/archive', async ({ request }) => {
+      archiveSpy(await request.json())
+      return HttpResponse.json({ ...card(), ...ARCHIVED })
+    }))
+    renderRow()
+
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    await userEvent.click(await screen.findByTestId('archive-card'))
+
+    const submit = await screen.findByRole('button', { name: 'Archive' })
+    expect(submit).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText(/^Reason/), 'duplicate of CARD-0042')
+    await userEvent.click(submit)
+
+    // POST, never DELETE — archive is not a delete, and the row has to stay.
+    await waitFor(() => expect(archiveSpy).toHaveBeenCalledWith({
+      concurrencyToken: 'token-1',
+      reason: 'duplicate of CARD-0042',
+      archivedBy: 'operator',
+    }))
+  })
+
+  it('shows the server\'s refusal verbatim when a session is still live on the card', async () => {
+    server.use(http.post('/api/cards/card-1/archive', () =>
+      HttpResponse.json({
+        title: 'Conflict',
+        detail: "Card 'CARD-0041' has a live owner session; stop it before archiving.",
+        status: 409,
+      }, { status: 409 })))
+    renderRow()
+
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    await userEvent.click(await screen.findByTestId('archive-card'))
+    await userEvent.type(screen.getByLabelText(/^Reason/), 'no longer wanted')
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
+
+    // The server's sentence says what to do about it; a generic "Archive failed" would not.
+    expect(await screen.findByText("Card 'CARD-0041' has a live owner session; stop it before archiving."))
+      .toBeInTheDocument()
+  })
+
+  it('warns before the round trip when the card already has a live session', async () => {
+    renderRow({
+      sessions: [{
+        id: 's1',
+        definitionName: 'claude',
+        agentKind: 'ClaudeCode',
+        status: 'Running',
+        cwd: 'C:/src/Antiphon',
+        createdAt: '2026-08-13T00:00:00Z',
+        startedAt: '2026-08-13T00:00:00Z',
+        lastSeenAt: '2026-08-13T00:00:00Z',
+        endedAt: null,
+        exitCode: null,
+        failureReason: null,
+      }],
+    })
+
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    await userEvent.click(await screen.findByTestId('archive-card'))
+
+    expect(await screen.findByText(/Stop the session first/)).toBeInTheDocument()
+  })
+
+  it('unarchives with its own reason', async () => {
+    const unarchiveSpy = vi.fn()
+    server.use(http.post('/api/cards/card-1/unarchive', async ({ request }) => {
+      unarchiveSpy(await request.json())
+      return HttpResponse.json(card())
+    }))
+    renderRow(ARCHIVED)
+
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    await userEvent.click(await screen.findByTestId('unarchive-card'))
+    await userEvent.type(screen.getByLabelText(/^Reason/), 'archived by mistake')
+    await userEvent.click(screen.getByRole('button', { name: 'Unarchive' }))
+
+    await waitFor(() => expect(unarchiveSpy).toHaveBeenCalledWith({
+      concurrencyToken: 'token-1',
+      reason: 'archived by mistake',
+      unarchivedBy: 'operator',
+    }))
   })
 })
 
