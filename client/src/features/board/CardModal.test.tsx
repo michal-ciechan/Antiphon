@@ -100,6 +100,20 @@ describe('CardModal', () => {
     }))
   })
 
+  it('opens the edit dialog from the header actions, prefilled', async () => {
+    server.use(agentDefinitionsHandler())
+    renderWithProviders(
+      <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
+    )
+
+    expect(screen.queryByRole('heading', { name: 'Edit #1' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit card' }))
+
+    expect(await screen.findByRole('heading', { name: 'Edit #1' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Title')).toHaveValue('Implement terminal')
+    expect(screen.getByLabelText('Description')).toHaveValue('Wire xterm to the session stream')
+  })
+
   it('disables spawn while a session is stopping', async () => {
     server.use(agentDefinitionsHandler())
     renderWithProviders(

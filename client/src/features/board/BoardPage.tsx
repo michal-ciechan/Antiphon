@@ -22,11 +22,13 @@ import {
   Title,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
+import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbFileCode, TbFilter, TbPlus, TbSearch } from 'react-icons/tb'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
+  CARD_LIMITS,
   type BoardColumnDto,
   type BoardDetailDto,
   type CardStatus,
@@ -36,7 +38,9 @@ import {
   useCreateBoard,
   useCreateCard,
 } from '../../api/boards'
+import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { BoardColumn } from './BoardColumn'
+import { LimitCounter } from './CardEditModal'
 import { CardListSection } from './CardListSection'
 import { CardModal } from './CardModal'
 import { ShapeStrip } from './ShapeStrip'
@@ -687,9 +691,17 @@ function CardCreateModal({
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<number | string>(1)
   const [labels, setLabels] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+
+  // Same limits as the edit dialog, checked the same way: the counter is the UX and the server's
+  // 422 is the backstop, whose message is shown verbatim on the input that caused it.
+  const titleOverLimit = title.length > CARD_LIMITS.title
+  const descriptionOverLimit = description.length > CARD_LIMITS.description
+  const canSubmit = !!title.trim() && !titleOverLimit && !descriptionOverLimit
 
   const handleSubmit = () => {
-    if (!title.trim()) return
+    if (!canSubmit) return
+    setFieldErrors({})
     createCard.mutate(
       {
         title,
@@ -705,6 +717,13 @@ function CardCreateModal({
           setLabels('')
           onClose()
         },
+        onError: (error) => {
+          const fields = getApiFieldErrors(error)
+          setFieldErrors(fields)
+          if (Object.keys(fields).length === 0) {
+            notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Create failed') })
+          }
+        },
       },
     )
   }
@@ -712,13 +731,31 @@ function CardCreateModal({
   return (
     <Modal opened={opened} onClose={onClose} title="New Card">
       <Stack>
-        <TextInput label="Title" value={title} onChange={(event) => setTitle(event.currentTarget.value)} />
-        <Textarea label="Description" value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
+        <TextInput
+          label="Title"
+          value={title}
+          error={fieldErrors.Title
+            ?? (titleOverLimit
+              ? `Title must be at most ${CARD_LIMITS.title.toLocaleString()} characters.`
+              : undefined)}
+          onChange={(event) => setTitle(event.currentTarget.value)}
+        />
+        <Textarea
+          label="Description"
+          value={description}
+          autosize
+          minRows={3}
+          maxRows={12}
+          inputWrapperOrder={['label', 'input', 'description', 'error']}
+          description={<LimitCounter value={description.length} limit={CARD_LIMITS.description} />}
+          error={fieldErrors.Description}
+          onChange={(event) => setDescription(event.currentTarget.value)}
+        />
         <NumberInput label="Priority" min={0} value={priority} onChange={setPriority} />
         <TextInput label="Labels" value={labels} onChange={(event) => setLabels(event.currentTarget.value)} />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSubmit} loading={createCard.isPending} disabled={!title.trim()}>
+          <Button onClick={handleSubmit} loading={createCard.isPending} disabled={!canSubmit}>
             Create
           </Button>
         </Group>

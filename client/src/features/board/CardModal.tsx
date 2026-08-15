@@ -1,11 +1,12 @@
 import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbInfoCircle, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
+import { TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
+import { CardEditModal } from './CardEditModal'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { SessionTabs } from './SessionTabs'
@@ -22,6 +23,7 @@ interface CardModalProps {
 
 export function CardModal({ boardId, card, columns = [], opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
   const spawnCard = useSpawnCard(boardId)
   const hasActiveSession = useMemo(
     () => card?.sessions.some((session) =>
@@ -96,6 +98,14 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap" className="card-page__actions">
+            {/*
+              Not a pencil beside the title: identifier, title and badges already share one line
+              (and collapse further on a phone), and this group is where every other card-level
+              action sits.
+            */}
+            <ActionIcon variant="subtle" aria-label="Edit card" onClick={() => setEditing(true)}>
+              <TbPencil size={18} />
+            </ActionIcon>
             {columns.length > 0 && (
               <MoveMenu boardId={boardId} card={card} columns={columns} variant="button" />
             )}
@@ -163,6 +173,10 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
           </Box>
         </Box>
       </Box>
+
+      {editing && (
+        <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
+      )}
     </Modal>
   )
 }

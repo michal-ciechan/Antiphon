@@ -363,6 +363,57 @@ describe('moving a card', () => {
   })
 })
 
+describe('creating a card', () => {
+  async function openCreateDialog() {
+    renderBoardRoute('/boards/board-1')
+    await userEvent.click(await screen.findByRole('button', { name: 'New Card' }))
+    return {
+      title: screen.getByLabelText('Title') as HTMLInputElement,
+      description: screen.getByLabelText('Description') as HTMLTextAreaElement,
+    }
+  }
+
+  it('counts the description against the shared limit and blocks an over-limit create', async () => {
+    server.use(...boardHandlers())
+    const { title, description } = await openCreateDialog()
+
+    await userEvent.type(title, 'A new card')
+    expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
+
+    setInputValue(description, 'x'.repeat(20_001))
+    expect(screen.getByText('20,001 / 20,000')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+  })
+
+  it('renders a 422 on the field it names, not as an opaque failure', async () => {
+    server.use(
+      ...boardHandlers(),
+      http.post('/api/boards/board-1/cards', () =>
+        HttpResponse.json({
+          title: 'One or more validation errors occurred.',
+          status: 422,
+          errors: { Title: ['Title must be at most 300 characters; got 301.'] },
+        }, { status: 422 })),
+    )
+    const { title } = await openCreateDialog()
+
+    await userEvent.type(title, 'A new card')
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    expect(await screen.findByText('Title must be at most 300 characters; got 301.')).toBeInTheDocument()
+  })
+})
+
+/** Sets a controlled input's value in one shot — 20k characters is not a thing to type. */
+function setInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+    'value',
+  )?.set
+  setter?.call(element, value)
+  element.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
 describe('the mobile state pager', () => {
   it('shows one state with the states that feed it and the ones it leads to', async () => {
     setViewport(true)
