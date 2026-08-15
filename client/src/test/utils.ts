@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react';
-import { render, type RenderOptions } from '@testing-library/react';
+import { render, renderHook, type RenderOptions } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
@@ -53,7 +53,30 @@ export function renderWithProviders(
 ) {
   const queryClient = createTestQueryClient();
 
-  function AllProviders({ children }: { children: React.ReactNode }) {
+  return {
+    ...render(ui, { wrapper: providersFor(queryClient), ...options }),
+    queryClient,
+  };
+}
+
+/**
+ * The same provider stack as `renderWithProviders`, for testing a hook directly rather than
+ * through a component. Exists here rather than in each test so no test file ever hand-rolls a raw
+ * `MantineProvider` — see the `env="test"` note above for why that matters.
+ */
+export function renderHookWithProviders<Result, Props>(
+  hook: (initialProps: Props) => Result,
+) {
+  const queryClient = createTestQueryClient();
+
+  return {
+    ...renderHook(hook, { wrapper: providersFor(queryClient) }),
+    queryClient,
+  };
+}
+
+function providersFor(queryClient: QueryClient) {
+  return function AllProviders({ children }: { children: React.ReactNode }) {
     return createElement(
       BrowserRouter,
       null,
@@ -63,11 +86,6 @@ export function renderWithProviders(
         createElement(QueryClientProvider, { client: queryClient }, children),
       ),
     );
-  }
-
-  return {
-    ...render(ui, { wrapper: AllProviders, ...options }),
-    queryClient,
   };
 }
 

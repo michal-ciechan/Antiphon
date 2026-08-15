@@ -30,6 +30,10 @@ const reviewCard: CardDto = {
   completedAt: null,
   terminalReason: null,
   sessions: [],
+  revisionCount: 0,
+  archivedAt: null,
+  archivedReason: null,
+  archivedBy: null,
 }
 
 function diffHandler(patchLines?: string[]) {

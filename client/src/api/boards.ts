@@ -70,7 +70,60 @@ export interface CardDto {
   completedAt: string | null
   terminalReason: string | null
   sessions: AgentSessionSummaryDto[]
+  /**
+   * How many history entries this card has. Counts **moves** as well as content edits and
+   * archives, so it is non-zero on almost every card and is NOT an "edited" marker — it is the
+   * History tab's count and nothing else.
+   */
+  revisionCount: number
+  archivedAt: string | null
+  archivedReason: string | null
+  archivedBy: string | null
 }
+
+/**
+ * What a history entry records. Lockstep with `server/Domain/Enums/CardRevisionKind.cs`; the API
+ * serializes enums as strings.
+ */
+export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive'
+
+/**
+ * One entry of a card's immutable history. `revisionNumber` is a single monotonic sequence across
+ * ALL kinds, so the four kinds interleave into one timeline; the server serves it newest first.
+ *
+ * Which fields are populated depends on `kind`: a `ContentEdit` carries the values it SUPERSEDED
+ * (entry n plus the current card is the whole history), a `Move` carries the transition and no
+ * text, `Archive`/`Unarchive` carry only their reason.
+ */
+export interface CardRevisionDto {
+  id: string
+  cardId: string
+  revisionNumber: number
+  kind: CardRevisionKind
+  title: string | null
+  description: string | null
+  priority: number | null
+  labels: string[] | null
+  fromColumnId: string | null
+  toColumnId: string | null
+  fromStatus: CardStatus | null
+  toStatus: CardStatus | null
+  reason: string | null
+  editedBy: string | null
+  createdAt: string
+}
+
+/**
+ * LOCKSTEP PAIR with `CardService.MaxTitleLength` / `MaxDescriptionLength` / `MaxReasonLength`.
+ * No endpoint serves these and adding one is not worth it for three integers — the counters here
+ * are the UX and the server's 422 is the backstop, whose message the UI shows verbatim precisely
+ * so that drift is visible rather than silent.
+ */
+export const CARD_LIMITS = {
+  title: 300,
+  description: 20_000,
+  reason: 4_000,
+} as const
 
 export interface AgentSessionSummaryDto {
   id: string
@@ -105,10 +158,42 @@ export interface MoveCardRequest {
   boardColumnId: string
   concurrencyToken: string
   /**
-   * Why the card is moving. The server keeps it as `TerminalReason` on a move into a terminal
-   * column and drops it otherwise, pending CARD-0019's card history — send one regardless.
+   * Why the card is moving. It PERSISTS on every move, as the reason on the card's `Move`
+   * revision; a move into a terminal column additionally stamps `TerminalReason`, the
+   * cheap-to-read summary.
    */
   reason?: string | null
+}
+
+/**
+ * A correction to a card's text — deliberately not an overload of the move PATCH.
+ *
+ * `null`/omitted means UNCHANGED for every content field, so send only what actually changed.
+ * `reason` is required: a correction that does not say why is how a record silently rots.
+ * `editedBy` is self-reported free text (the server has no principals) — the web UI sends
+ * `"operator"`.
+ */
+export interface UpdateCardContentRequest {
+  concurrencyToken: string
+  reason: string
+  title?: string | null
+  description?: string | null
+  priority?: number | null
+  labels?: string[] | null
+  editedBy?: string | null
+}
+
+/** Archive is what "delete" means for a card: the row stays, so no identifier ever dangles. */
+export interface ArchiveCardRequest {
+  concurrencyToken: string
+  reason: string
+  archivedBy?: string | null
+}
+
+export interface UnarchiveCardRequest {
+  concurrencyToken: string
+  reason: string
+  unarchivedBy?: string | null
 }
 
 export interface SpawnCardRequest {
@@ -183,10 +268,18 @@ export interface UpdateBoardWorkflowRequest {
 export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
+  /**
+   * The archived-inclusive board is a SIBLING of `detail`, not a variant of it: the two payloads
+   * differ and must not share a cache entry. Nesting it under `['boards', id]` is what keeps every
+   * existing `invalidateQueries({ queryKey: boardKeys.detail(id) })` covering it too — prefix
+   * matching means no mutation's invalidation list has to learn about archived cards.
+   */
+  detailArchived: (id: string) => ['boards', id, 'archived'] as const,
   allDetails: ['boards', 'all-details'] as const,
   allDetailsFor: (ids: string[]) => [...boardKeys.allDetails, ids] as const,
   workflow: (id: string) => ['boards', id, 'workflow'] as const,
   cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
+  cardRevisions: (cardId: string) => ['cards', cardId, 'revisions'] as const,
 }
 
 export function useBoards() {
@@ -196,10 +289,14 @@ export function useBoards() {
   })
 }
 
-export function useBoard(id: string | undefined) {
+export function useBoard(id: string | undefined, options: { includeArchived?: boolean } = {}) {
+  const includeArchived = options.includeArchived ?? false
   return useQuery({
-    queryKey: id ? boardKeys.detail(id) : ['boards', 'missing'],
-    queryFn: () => apiGet<BoardDetailDto>(`/boards/${id}`),
+    queryKey: id
+      ? (includeArchived ? boardKeys.detailArchived(id) : boardKeys.detail(id))
+      : ['boards', 'missing'],
+    queryFn: () =>
+      apiGet<BoardDetailDto>(`/boards/${id}${includeArchived ? '?includeArchived=true' : ''}`),
     enabled: !!id,
   })
 }
@@ -289,6 +386,56 @@ export function useMoveCard(boardId: string) {
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },
+  })
+}
+
+/**
+ * Every card write that produces a revision invalidates the same set: the board detail (whose
+ * prefix also covers the archived-inclusive sibling), the board list, the all-boards aggregate and
+ * — the one `useMoveCard` never needed — that card's revision list.
+ */
+function invalidateAfterCardWrite(queryClient: ReturnType<typeof useQueryClient>, boardId: string, cardId: string) {
+  queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+  queryClient.invalidateQueries({ queryKey: boardKeys.all })
+  queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+  queryClient.invalidateQueries({ queryKey: boardKeys.cardRevisions(cardId) })
+}
+
+export function useUpdateCardContent(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ cardId, request }: { cardId: string; request: UpdateCardContentRequest }) =>
+      apiPatch<CardDto>(`/cards/${cardId}/content`, request),
+    onSuccess: (_card, { cardId }) => invalidateAfterCardWrite(queryClient, boardId, cardId),
+  })
+}
+
+// POST, not DELETE: archive is not a delete — the row stays so references to the identifier never
+// dangle, and the allocator never hands the number out again.
+export function useArchiveCard(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ cardId, request }: { cardId: string; request: ArchiveCardRequest }) =>
+      apiPost<CardDto>(`/cards/${cardId}/archive`, request),
+    onSuccess: (_card, { cardId }) => invalidateAfterCardWrite(queryClient, boardId, cardId),
+  })
+}
+
+export function useUnarchiveCard(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ cardId, request }: { cardId: string; request: UnarchiveCardRequest }) =>
+      apiPost<CardDto>(`/cards/${cardId}/unarchive`, request),
+    onSuccess: (_card, { cardId }) => invalidateAfterCardWrite(queryClient, boardId, cardId),
+  })
+}
+
+/** A card's history, newest first. `enabled` is how the History tab pays for it only once opened. */
+export function useCardRevisions(cardId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: cardId ? boardKeys.cardRevisions(cardId) : ['cards', 'missing', 'revisions'],
+    queryFn: () => apiGet<CardRevisionDto[]>(`/cards/${cardId}/revisions`),
+    enabled: !!cardId && enabled,
   })
 }
 

@@ -58,6 +58,10 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
     completedAt: null,
     terminalReason: null,
     sessions: [],
+    revisionCount: 0,
+    archivedAt: null,
+    archivedReason: null,
+    archivedBy: null,
     ...overrides,
   }
 }

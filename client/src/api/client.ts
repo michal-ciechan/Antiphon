@@ -46,6 +46,39 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+/**
+ * The problem-details `errors` dict flattened to one message per field, for hanging a validation
+ * failure on the input that caused it rather than in a notification.
+ *
+ * Keys come back exactly as the server sends them — PascalCase C# member names (`Title`,
+ * `Description`, `Reason`, `EditedBy`), because that is what `ValidationException` is constructed
+ * with (`nameof(request.Description)`). Callers map those names onto their own inputs.
+ *
+ * Empty for anything that is not a validation failure (a 409, a network error, a non-`ApiError`),
+ * so "nothing matched" and "not a validation error" are the same case at the call site: fall back
+ * to `getApiErrorMessage` in a notification.
+ */
+export function getApiFieldErrors(error: unknown): Record<string, string> {
+  const fields: Record<string, string> = {}
+  if (!(error instanceof ApiError)) return fields
+
+  const body = error.body
+  if (!body || typeof body !== 'object') return fields
+  const maybeErrors = 'errors' in body ? body.errors : undefined
+  if (!maybeErrors || typeof maybeErrors !== 'object') return fields
+
+  for (const [field, value] of Object.entries(maybeErrors)) {
+    if (Array.isArray(value)) {
+      const first = value.find((item) => typeof item === 'string' && item.trim())
+      if (typeof first === 'string') fields[field] = first
+    } else if (typeof value === 'string' && value.trim()) {
+      fields[field] = value
+    }
+  }
+
+  return fields
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text()

@@ -34,6 +34,10 @@ function card(overrides: Partial<CardDto> & { id: string; identifier: string }):
     completedAt: null,
     terminalReason: null,
     sessions: [],
+    revisionCount: 0,
+    archivedAt: null,
+    archivedReason: null,
+    archivedBy: null,
     ...overrides,
   }
 }
