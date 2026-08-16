@@ -35,7 +35,7 @@ On this machine, create **OpenCode Gateway** as wrapper-managed:
 
 Do **not** copy API keys or proxy values out of `ocg.ps1`.
 
-Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`; pick a discovered model or curated `llmgateway/grok-4-5` for an exact model.
+Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`; pick an exact identifier from the profile's discovery catalogue. On this local `ocg.ps1` wrapper, the runnable Grok 4.5 selection is the discovered `maven/grok-4.5` identifier. Do not rewrite a selected identifier to a wrapper default.
 
 ## Key custody
 
@@ -78,13 +78,17 @@ Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`
   -BaseUrl http://localhost:17282 `
   -AgentName Atlas-Orchestrator `
   -ProfileName "OpenCode Gateway" `
-  -ModelId "llmgateway/grok-4-5" `
+  -ModelId "maven/grok-4.5" `
   -ExpectedReply "Atlas OpenCode explicit model verified."
 
 .\verify-dev-stack.ps1 -SimpleMode
 ```
 
 The smoke script refuses to retain evidence containing a supplied canary secret.
+
+## Deployment scope
+
+This checkout has no separate DEV, production, GitOps, or CI deployment target. The Mikeys.Tools-hosted simple stack is the accepted local DEV-equivalent and release installation for this feature. Run the two OpenCode probes above and `verify-dev-stack.ps1 -SimpleMode` after a restart; retain only their sanitized evidence. A future deployed target must name its key-ring custody and release owner before it is treated as a production deployment.
 
 ## Observability
 

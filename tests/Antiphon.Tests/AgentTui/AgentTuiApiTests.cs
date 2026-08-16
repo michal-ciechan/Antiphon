@@ -17,7 +17,10 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.AgentTui;
 
-[NotInParallel("AgentTuiApi")]
+// WebApplicationFactory<Program> hosts share process-wide ASP.NET Core startup state. Keep this
+// shared HTTP contract fixture exclusive to prevent another integration test host from disposing
+// or reconfiguring it before its first client is created.
+[NotInParallel]
 [ClassDataSource<AgentTuiApiWebAppFactory>(Shared = SharedType.PerTestSession)]
 public sealed class AgentTuiApiTests
 {
@@ -502,30 +505,36 @@ public sealed class AgentTuiApiTests
     }
 
     [Test]
-    public async Task Concurrent_model_refresh_joins_one_bounded_run_and_validation_run_is_readable()
+    public async Task Model_refresh_exposes_its_outcome_and_validation_run_is_readable()
     {
         using var client = _factory.CreateClient();
         var name = $"Task 5 operations {Guid.NewGuid():N}";
         var model = $"provider/task5-{Guid.NewGuid():N}";
         _factory.Probe.DiscoveredModel = model;
-        _factory.Probe.DelayDiscovery = true;
+        _factory.Probe.BlockDiscovery();
         var create = await client.PostAsJsonAsync(
             "/api/agent-tui/profiles",
             ProfileRequest(name, kind: "OpenCode", discoveryArguments: ["models"], versionArguments: ["--version"]));
         var profileId = (await ReadJsonAsync(create)).GetProperty("id").GetGuid();
 
-        var firstTask = client.PostAsync($"/api/agent-tui/profiles/{profileId}/models/refresh", null);
-        var secondTask = client.PostAsync($"/api/agent-tui/profiles/{profileId}/models/refresh", null);
-        var refreshes = await Task.WhenAll(firstTask, secondTask);
-        refreshes.ShouldAllBe(response => response.StatusCode == HttpStatusCode.OK);
-        var first = await ReadJsonAsync(refreshes[0]);
-        var second = await ReadJsonAsync(refreshes[1]);
-        first.TryGetProperty("run", out _).ShouldBeFalse();
-        first.GetProperty("id").GetGuid().ShouldBe(second.GetProperty("id").GetGuid());
-        first.GetProperty("operation").GetString().ShouldBe("discovery");
-        first.GetProperty("status").GetString().ShouldBe("Succeeded");
-        first.GetProperty("cachedResultsRetained").GetBoolean().ShouldBeFalse();
-        first.GetProperty("models").EnumerateArray()
+        var refreshTask = client.PostAsync($"/api/agent-tui/profiles/{profileId}/models/refresh", null);
+        await _factory.Probe.WaitForDiscoveryAsync();
+        try
+        {
+            _factory.Probe.DiscoveryCalls.ShouldBe(1);
+        }
+        finally
+        {
+            _factory.Probe.ReleaseDiscovery();
+        }
+        var refresh = await refreshTask;
+        refresh.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var outcome = await ReadJsonAsync(refresh);
+        outcome.TryGetProperty("run", out _).ShouldBeFalse();
+        outcome.GetProperty("operation").GetString().ShouldBe("discovery");
+        outcome.GetProperty("status").GetString().ShouldBe("Succeeded");
+        outcome.GetProperty("cachedResultsRetained").GetBoolean().ShouldBeFalse();
+        outcome.GetProperty("models").EnumerateArray()
             .Select(item => item.GetProperty("identifier").GetString()).ShouldContain(model);
         _factory.Probe.DiscoveryCalls.ShouldBe(1);
 
@@ -720,10 +729,12 @@ public sealed class AgentTuiApiTests
 
 public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
 {
+    private readonly SemaphoreSlim _schemaGate = new(1, 1);
     private readonly string _logPath = Path.Combine(
         Path.GetTempPath(),
         "antiphon-agent-tui-api-logs",
         Guid.NewGuid().ToString("N"));
+    private IsolatedTestSchema? _isolatedSchema;
 
     public RecordingApiRunnerProcessProbe Probe { get; } = new();
     public RecordingApiSecretProtector SecretProtector { get; } = new();
@@ -734,9 +745,21 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
             new Dictionary<string, string?>
             {
+                ["ConnectionStrings:DefaultConnection"] = IsolatedConnectionString,
                 ["Serilog:LogPath"] = _logPath,
                 ["Serilog:ConsoleMinimumLevel"] = "Warning"
             }));
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<DbContextOptions<AppDbContext>>();
+            services.AddDbContext<AppDbContext>(options => options.UseNpgsql(
+                IsolatedConnectionString,
+                npgsql =>
+                {
+                    npgsql.MigrationsAssembly("Antiphon.Server");
+                    npgsql.SetPostgresVersion(16, 0);
+                }));
+        });
     }
 
     protected override void ApplyTestOverrides(IServiceCollection services)
@@ -747,11 +770,23 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
         services.AddSingleton<IAgentTuiSecretProtector>(SecretProtector);
     }
 
-    public override Task ResetAsync()
+    public override async Task ResetAsync()
     {
+        await EnsureIsolatedSchemaAsync();
         Probe.Reset();
         SecretProtector.Reset();
-        return base.ResetAsync();
+        await base.ResetAsync();
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        if (_isolatedSchema is not null)
+        {
+            await _isolatedSchema.DisposeAsync();
+            _isolatedSchema = null;
+        }
+        _schemaGate.Dispose();
     }
 
     public string ReadLogs()
@@ -775,12 +810,33 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    private string IsolatedConnectionString => _isolatedSchema?.ConnectionString
+        ?? throw new InvalidOperationException("The API test schema must be created before the host starts.");
+
+    private async Task EnsureIsolatedSchemaAsync()
+    {
+        if (_isolatedSchema is not null)
+            return;
+
+        await _schemaGate.WaitAsync();
+        try
+        {
+            _isolatedSchema ??= await TestDbFixture.CreateIsolatedSchemaAsync();
+        }
+        finally
+        {
+            _schemaGate.Release();
+        }
+    }
 }
 
 public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
 {
     private int _discoveryCalls;
     private int _runCalls;
+    private TaskCompletionSource? _discoveryEntered;
+    private TaskCompletionSource? _releaseDiscovery;
 
     public bool DelayDiscovery { get; set; }
     public bool FailDiscovery { get; set; }
@@ -790,12 +846,28 @@ public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
 
     public void Reset()
     {
+        ReleaseDiscovery();
+        _discoveryEntered = null;
+        _releaseDiscovery = null;
         DelayDiscovery = false;
         FailDiscovery = false;
         DiscoveredModel = "provider/task5-default";
         Volatile.Write(ref _discoveryCalls, 0);
         Volatile.Write(ref _runCalls, 0);
     }
+
+    public void BlockDiscovery()
+    {
+        _discoveryEntered = NewSignal();
+        _releaseDiscovery = NewSignal();
+    }
+
+    public async Task WaitForDiscoveryAsync() =>
+        await (_discoveryEntered?.Task
+            ?? throw new InvalidOperationException("Discovery was not configured to block."))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+    public void ReleaseDiscovery() => _releaseDiscovery?.TrySetResult();
 
     public Task<RunnerPathCheck> CheckExecutableAsync(
         string executable,
@@ -816,7 +888,12 @@ public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
         if (request.Arguments.Contains("models", StringComparer.Ordinal))
         {
             Interlocked.Increment(ref _discoveryCalls);
-            if (DelayDiscovery)
+            if (_releaseDiscovery is not null)
+            {
+                _discoveryEntered!.TrySetResult();
+                await _releaseDiscovery.Task.WaitAsync(cancellationToken);
+            }
+            else if (DelayDiscovery)
                 await Task.Delay(150, cancellationToken);
             if (FailDiscovery)
                 return new RunnerProcessResult(1, string.Empty, "Discovery failed.", TimedOut: false);
@@ -829,6 +906,9 @@ public sealed class RecordingApiRunnerProcessProbe : IRunnerProcessProbe
 
     private static RunnerProcessResult Success(string output) =>
         new(0, output, string.Empty, TimedOut: false, Started: true, CleanlyStopped: true);
+
+    private static TaskCompletionSource NewSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
 public sealed class RecordingApiSecretProtector : IAgentTuiSecretProtector

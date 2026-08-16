@@ -32,12 +32,14 @@ param(
     [string]$ExpectedReply = "Atlas OpenCode default verified.",
     [string]$Canary = "",
     [string]$OcgPath = "C:\Users\mike.ciechan\.local\bin\ocg.ps1",
+    [string]$SessionRunnerUrl = "http://localhost:17283",
     [switch]$SkipLiveMessage,
     [string]$EvidenceDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 $BaseUrl = $BaseUrl.TrimEnd("/")
+$SessionRunnerUrl = $SessionRunnerUrl.TrimEnd("/")
 if (-not $EvidenceDir) {
     $EvidenceDir = Join-Path $env:TEMP ("antiphon-agent-tui-smoke-" + [guid]::NewGuid().ToString("N"))
 }
@@ -75,6 +77,55 @@ function Save-Evidence([string]$Name, [object]$Value) {
         throw "Canary secret leaked into evidence file $Name"
     }
     return $path
+}
+
+function Get-RunnerSnapshot([string]$SessionId) {
+    $response = Invoke-WebRequest -Uri "$SessionRunnerUrl/sessions/$SessionId/snapshot" -Method GET
+    return $response.Content | ConvertFrom-Json
+}
+
+function Wait-RunnerProcess([string]$SessionId) {
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $response = Invoke-WebRequest -Uri "$SessionRunnerUrl/sessions/$SessionId" -Method GET
+            $runnerSession = $response.Content | ConvertFrom-Json
+            $processId = 0
+            if ($null -ne $runnerSession -and [int]::TryParse([string]$runnerSession.pid, [ref]$processId) -and $processId -gt 0) {
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId"
+                if ($null -ne $process) {
+                    return [pscustomobject]@{
+                        Session = $runnerSession
+                        Process = $process
+                    }
+                }
+            }
+        } catch {
+            # The session runner may not have launched the TUI process yet.
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    throw "The runner did not expose a live TUI process within 30 seconds."
+}
+
+function Wait-ForOpenCodeComposer([string]$SessionId) {
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $snapshot = Get-RunnerSnapshot $SessionId
+            if ($snapshot.renderedScreen -and $snapshot.renderedScreen.Contains("Ask anything...", [StringComparison]::Ordinal)) {
+                return $snapshot
+            }
+        } catch {
+            # The runner may still be establishing the terminal snapshot.
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    throw "The OpenCode composer did not become ready within 60 seconds."
 }
 
 Write-Host "Evidence: $EvidenceDir"
@@ -131,6 +182,10 @@ Save-Evidence "models-refresh.json" $refresh | Out-Null
 Write-Host "Validating…"
 $validation = Invoke-Json POST "/api/agent-tui/profiles/$($profile.id)/validate"
 Save-Evidence "validation.json" $validation | Out-Null
+$startupStage = @($validation.stages) | Where-Object { $_.name -eq "startup" } | Select-Object -First 1
+if ($null -eq $startupStage -or $startupStage.status -ne "Passed" -or -not $validation.suitability.interactive) {
+    throw "Profile validation did not establish interactive startup readiness."
+}
 
 $agents = Invoke-Json GET "/api/agents"
 $agent = @($agents) | Where-Object { $_.name -eq $AgentName } | Select-Object -First 1
@@ -175,14 +230,34 @@ $sessionId = $started.liveSession.id
 if (-not $sessionId) { $sessionId = $started.persistentSessionId }
 if (-not $sessionId) { throw "No live session id after start" }
 
-$prompt = "Reply with exactly: $ExpectedReply"
-Write-Host "Sending prompt to session $sessionId…"
-try {
-    Invoke-Json POST "/api/sessions/$sessionId/messages" @{ message = $prompt } | Out-Null
-} catch {
-    # Fallback channel-style endpoint names vary; try input path.
-    Invoke-Json POST "/api/sessions/$sessionId/input" @{ input = $prompt } | Out-Null
+if ($IsWindows) {
+    $runnerProcess = Wait-RunnerProcess $sessionId
+    $commandLine = $runnerProcess.Process.CommandLine
+    $hasModelArgument = $commandLine.Contains('"--model"', [StringComparison]::Ordinal)
+    $hasExpectedModelPair = if ([string]::IsNullOrWhiteSpace($ModelId)) {
+        $false
+    } else {
+        $commandLine.Contains(('"--model" "' + $ModelId + '"'), [StringComparison]::Ordinal)
+    }
+    if ([string]::IsNullOrWhiteSpace($ModelId) -and $hasModelArgument) {
+        throw "The default-model launch unexpectedly contained a model argument."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ModelId) -and -not $hasExpectedModelPair) {
+        throw "The explicit-model launch did not contain the expected separate model arguments."
+    }
+    Save-Evidence "launch-arguments.json" ([pscustomobject]@{
+        processId = $runnerProcess.Session.pid
+        modelArgumentPresent = $hasModelArgument
+        expectedModelPairPresent = $hasExpectedModelPair
+    }) | Out-Null
 }
+
+$readySnapshot = Wait-ForOpenCodeComposer $sessionId
+Save-Evidence "ready-snapshot.json" $readySnapshot | Out-Null
+
+$prompt = "Reply with exactly: $ExpectedReply"
+Write-Host "Queueing prompt to session $sessionId…"
+Invoke-Json POST "/api/sessions/$sessionId/messages" @{ body = $prompt; mode = "WhenIdle" } | Out-Null
 
 $deadline = (Get-Date).AddSeconds(120)
 $found = $false
@@ -192,8 +267,10 @@ while ((Get-Date) -lt $deadline) {
     try {
         $buffer = Invoke-Json GET "/api/sessions/$sessionId/buffer"
         Save-Evidence "buffer-latest.json" $buffer | Out-Null
-        $text = if ($buffer.buffer) { $buffer.buffer } else { ($buffer | ConvertTo-Json -Depth 5) }
-        if ($text -and $text.Contains($ExpectedReply)) {
+        $snapshot = Get-RunnerSnapshot $sessionId
+        Save-Evidence "snapshot-latest.json" $snapshot | Out-Null
+        $lines = @($snapshot.renderedScreen -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($lines -contains $ExpectedReply) {
             $found = $true
             break
         }
@@ -214,6 +291,13 @@ if ($agentAfter.liveSessionSelection) {
         $agentAfter.liveSessionSelection.tuiProfileRevisionId, `
         $agentAfter.liveSessionSelection.effectiveModelId, `
         $agentAfter.liveSessionSelection.pendingRestart)
+}
+if (
+    ($null -eq $agentAfter.liveSessionSelection) -or
+    ($agentAfter.liveSessionSelection.tuiProfileRevisionId -ne $profile.revisionId) -or
+    ($agentAfter.liveSessionSelection.effectiveModelId -ne $modelValue)
+) {
+    throw "Live session selection does not match the requested profile revision and model."
 }
 
 Write-Host "SMOKE OK — profile='$ProfileName' model='$ModelId' reply verified."

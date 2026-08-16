@@ -16,7 +16,7 @@ public sealed class OrchestratorService
 {
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
-    private readonly AgentTuiLaunchResolver _launchResolver;
+    private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly AgentSessionService _sessionService;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly RetryScheduler _retryScheduler;
@@ -31,7 +31,6 @@ public sealed class OrchestratorService
     public OrchestratorService(
         AppDbContext db,
         AgentRegistry agentRegistry,
-        AgentTuiLaunchResolver launchResolver,
         AgentSessionService sessionService,
         AgentSessionLaunchQueue launchQueue,
         RetryScheduler retryScheduler,
@@ -41,7 +40,8 @@ public sealed class OrchestratorService
         IOptions<OrchestratorSettings> settings,
         TimeProvider timeProvider,
         ILogger<OrchestratorService> logger,
-        AgentSessionRuntime? runtime = null)
+        AgentSessionRuntime? runtime = null,
+        AgentTuiLaunchResolver? launchResolver = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -595,10 +595,19 @@ public sealed class OrchestratorService
             var agent = await _db.Agents.AsNoTracking()
                 .SingleOrDefaultAsync(a => a.Id == assignedAgentId, ct);
             if (agent is not null)
-                return await _launchResolver.ResolveForAgentAsync(agent, options, ct);
+                return await AgentLaunchResolution.ResolveForAgentAsync(
+                    agent,
+                    _agentRegistry,
+                    _launchResolver,
+                    options,
+                    ct);
         }
 
-        return await _launchResolver.ResolveDefaultAsync(options, ct);
+        return await AgentLaunchResolution.ResolveDefaultAsync(
+            _agentRegistry,
+            _launchResolver,
+            options,
+            ct);
     }
 
     private static void ClearCardClaim(Card card, DateTime utcNow)

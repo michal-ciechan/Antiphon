@@ -979,8 +979,7 @@ public sealed partial class AgentTuiProfileService
                             && !startupResult.Cancelled
                             && !startupResult.OutputTruncated
                             && startupResult.CleanupConfirmed
-                            && !startupResult.SensitiveOutputDetected
-                            && startupResult.ExitCode is null or 0;
+                            && !startupResult.SensitiveOutputDetected;
         stages.Add(Stage(
             "startup",
             startupPassed

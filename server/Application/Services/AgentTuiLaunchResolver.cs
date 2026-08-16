@@ -15,10 +15,79 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed record ResolvedAgentTuiLaunch(
     AgentLaunchSpec Spec,
-    Guid ProfileId,
-    Guid ProfileRevisionId,
+    Guid? ProfileId,
+    Guid? ProfileRevisionId,
     string? EffectiveModelId,
     AgentTuiLaunchActivityMode ActivityMode);
+
+/// <summary>
+/// Selects the managed-profile resolver when it is available, retaining the configured-file
+/// registry as the migration and rollback path when no managed installation default exists.
+/// </summary>
+internal static class AgentLaunchResolution
+{
+    public static async Task<ResolvedAgentTuiLaunch> ResolveForAgentAsync(
+        Agent agent,
+        AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver? launchResolver,
+        AgentLaunchOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (launchResolver is null)
+        {
+            if (agent.TuiProfileId is not null)
+            {
+                throw new ConflictException(
+                    "The selected runner profile cannot be resolved by this installation.",
+                    "profile_resolution_unavailable");
+            }
+
+            return ResolveLegacy(agentRegistry, options);
+        }
+
+        try
+        {
+            return await launchResolver.ResolveForAgentAsync(agent, options, cancellationToken);
+        }
+        catch (ConflictException exception)
+            when (agent.TuiProfileId is null && exception.Code == "profile_not_found")
+        {
+            return ResolveLegacy(agentRegistry, options);
+        }
+    }
+
+    public static async Task<ResolvedAgentTuiLaunch> ResolveDefaultAsync(
+        AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver? launchResolver,
+        AgentLaunchOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (launchResolver is null)
+            return ResolveLegacy(agentRegistry, options);
+
+        try
+        {
+            return await launchResolver.ResolveDefaultAsync(options, cancellationToken);
+        }
+        catch (ConflictException exception) when (exception.Code == "profile_not_found")
+        {
+            return ResolveLegacy(agentRegistry, options);
+        }
+    }
+
+    private static ResolvedAgentTuiLaunch ResolveLegacy(
+        AgentRegistry agentRegistry,
+        AgentLaunchOptions options)
+    {
+        var spec = agentRegistry.Resolve(agentRegistry.Settings.DefaultDefinition, options);
+        return new ResolvedAgentTuiLaunch(
+            spec,
+            ProfileId: null,
+            ProfileRevisionId: null,
+            EffectiveModelId: null,
+            ActivityMode: AgentTuiLaunchActivityMode.Unknown);
+    }
+}
 
 public sealed class AgentTuiLaunchResolver
 {

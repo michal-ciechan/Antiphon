@@ -41,6 +41,9 @@ out/
 # --property:OutputPath=bin-orch/ that nobody had thought of got committed by a git add -A.
 bin-*/
 
+# TUnit's isolated build/test runs can leave disposable per-project temp output directories.
+**/.tmp/
+
 # pts-vibe-coding (managed by /pts-vibe-init)
 .pts-vibe/state.json
 .pts-vibe/implementation.json

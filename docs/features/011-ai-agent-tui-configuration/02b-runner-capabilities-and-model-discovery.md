@@ -87,6 +87,8 @@ The local profile is named `OpenCode Gateway` and launches PowerShell with:
 
 The existing wrapper forwards trailing OpenCode arguments and remains responsible for its API key, proxy, and provider configuration. If an agent selects a model, Antiphon appends `--model` and the exact provider/model identifier. If the selection is empty, no model argument is appended. This makes the model parameter optional without copying gateway credentials into Antiphon.
 
+The generic curated fallback remains a catalogue suggestion, not proof that a particular wrapper can authenticate to that provider. For this installation's `ocg.ps1` wrapper, the explicit Grok 4.5 smoke uses the discovered `maven/grok-4.5` identifier; it is forwarded unchanged and the wrapper does not inject its own second model argument.
+
 The OpenCode capability probe checks the installed version and supported `models`, session, and event/ACP surfaces. The adapter uses a supported structured session/event surface for turn state when available and exposes PTY quiet detection only as degraded fallback. Degraded mode is acceptable for direct interactive use but must not be represented as reliable structured activity for unattended queued delivery or delegation.
 
 ### 3.7 Profile validation

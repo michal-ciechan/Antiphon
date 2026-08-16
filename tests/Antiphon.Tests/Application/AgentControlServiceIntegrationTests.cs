@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Tui;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.SessionRunner.Contracts;
@@ -22,6 +23,118 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentControl")]
 public class AgentControlServiceIntegrationTests
 {
+    [Test]
+    public async Task Legacy_only_provider_starts_unprofiled_agent_through_configured_registry()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "legacy-agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+
+            var now = DateTime.UtcNow;
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Legacy Registry Agent",
+                Slug = $"legacy-registry-agent-{Guid.NewGuid():N}",
+                WorkingDirectory = workspace,
+                Details = string.Empty,
+                Status = AgentStatus.Idle,
+                CreatedAt = now,
+                UpdatedAt = now,
+                TuiProfileId = null,
+                ModelId = null
+            };
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync();
+
+            var detail = await harness.Control.StartAsync(
+                agent.Id,
+                new StartAgentRequest(Fresh: true),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.PersistentSessionId.ShouldNotBeNull();
+            adapter.Started.ShouldBeTrue();
+
+            await using var verify = CreateContext();
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id.ToString() == detail.PersistentSessionId);
+            session.DefinitionName.ShouldBe("fake");
+            session.AgentKind.ShouldBe(AgentKind.Raw);
+            session.TuiProfileRevisionId.ShouldBeNull();
+            session.EffectiveModelId.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Registered_profile_resolver_without_default_preserves_legacy_claude_launch_arguments()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(isolatedSchema.ConnectionString);
+        var tempRoot = NewTempRoot();
+        try
+        {
+            (await db.AgentTuiProfiles.AnyAsync()).ShouldBeFalse();
+            var workspace = Path.Combine(tempRoot, "legacy-claude-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot,
+                [adapter],
+                defaultKind: "ClaudeCode",
+                includeLaunchResolver: true,
+                connectionString: isolatedSchema.ConnectionString);
+
+            var now = DateTime.UtcNow;
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = "Legacy Claude",
+                Slug = $"legacy-claude-{Guid.NewGuid():N}",
+                WorkingDirectory = workspace,
+                Details = string.Empty,
+                Status = AgentStatus.Idle,
+                ModelLevel = AgentModelLevel.Low,
+                SystemPromptAppend = "Keep responses concise.",
+                CreatedAt = now,
+                UpdatedAt = now,
+                TuiProfileId = null,
+                ModelId = null
+            };
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync();
+
+            await harness.Control.StartAsync(
+                agent.Id,
+                new StartAgentRequest(Fresh: true),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldContain("--name");
+            adapter.StartedArgs.ShouldContain("Legacy Claude");
+            adapter.StartedArgs.ShouldContain("--model");
+            adapter.StartedArgs.ShouldContain("haiku");
+            var preambleIndex = Array.IndexOf(adapter.StartedArgs.ToArray(), "--append-system-prompt");
+            preambleIndex.ShouldNotBe(-1);
+            var preambleArgument = adapter.StartedArgs[preambleIndex + 1];
+            preambleArgument.ShouldContain("Keep responses concise.");
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task Start_with_remote_control_boots_queue_head_and_sends_rename_then_remote_control_before_work()
     {
@@ -718,14 +831,19 @@ public class AgentControlServiceIntegrationTests
         await db.SaveChangesAsync();
     }
 
-    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+    private static AppDbContext CreateContext(string? connectionString = null) =>
+        new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     private static Harness BuildHarness(
-        string tempRoot, IReadOnlyList<IAgentProtocolAdapter> adapters, string defaultKind = "Raw")
+        string tempRoot,
+        IReadOnlyList<IAgentProtocolAdapter> adapters,
+        string defaultKind = "Raw",
+        bool includeLaunchResolver = false,
+        string? connectionString = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            options.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
@@ -753,6 +871,13 @@ public class AgentControlServiceIntegrationTests
             Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
         }));
         services.AddSingleton<AgentRegistry>();
+        if (includeLaunchResolver)
+        {
+            services.AddSingleton<IAgentTuiSecretProtector, NoOpAgentTuiSecretProtector>();
+            services.AddSingleton<AgentTuiMetrics>();
+            services.AddSingleton<AgentTuiRunnerCatalog>();
+            services.AddScoped<AgentTuiLaunchResolver>();
+        }
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
         services.AddSingleton<IAgentProtocolAdapterFactory>(new QueueAdapterFactory(adapters));
         services.AddSingleton<IWorkspaceHookRunner>(new WorkspaceHookRunner(NullLogger<WorkspaceHookRunner>.Instance));
@@ -980,6 +1105,13 @@ public class AgentControlServiceIntegrationTests
 
             throw new InvalidOperationException("No fake adapter was queued for dispatch.");
         }
+    }
+
+    private sealed class NoOpAgentTuiSecretProtector : IAgentTuiSecretProtector
+    {
+        public string Protect(Guid profileId, string environmentName, string plaintext) => plaintext;
+
+        public string Unprotect(Guid profileId, string environmentName, string protectedValue) => protectedValue;
     }
 
     private sealed class FakeWorktreeManager : IWorktreeManager

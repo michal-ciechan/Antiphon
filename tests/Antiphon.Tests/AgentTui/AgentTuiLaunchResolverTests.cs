@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Tui;
@@ -11,6 +12,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -21,7 +23,8 @@ public sealed class AgentTuiLaunchResolverTests
     [Test]
     public async Task Resolve_omits_model_argument_when_agent_has_no_exact_model()
     {
-        await using var provider = BuildProvider();
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
         var (profile, revision) = await SeedProfileAsync(provider, AgentKind.OpenCode);
         var agent = new Agent
         {
@@ -42,7 +45,8 @@ public sealed class AgentTuiLaunchResolverTests
     [Test]
     public async Task Resolve_appends_exact_model_as_separate_arguments()
     {
-        await using var provider = BuildProvider();
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
         var (profile, revision) = await SeedProfileAsync(
             provider,
             AgentKind.OpenCode,
@@ -66,7 +70,8 @@ public sealed class AgentTuiLaunchResolverTests
     public async Task Resolve_injects_managed_secrets_and_keeps_wrapper_profiles_secret_free()
     {
         var protector = new RecordingLaunchSecretProtector();
-        await using var provider = BuildProvider(protector);
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString, protector);
         var (managed, _) = await SeedProfileAsync(
             provider,
             AgentKind.OpenCode,
@@ -102,7 +107,8 @@ public sealed class AgentTuiLaunchResolverTests
     [Test]
     public async Task Resolve_fails_closed_for_disabled_profile_and_unknown_model()
     {
-        await using var provider = BuildProvider();
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
         var (profile, _) = await SeedProfileAsync(
             provider,
             AgentKind.OpenCode,
@@ -137,7 +143,9 @@ public sealed class AgentTuiLaunchResolverTests
     [Test]
     public async Task Resolve_uses_installation_default_when_agent_has_no_profile()
     {
-        await using var provider = BuildProvider();
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        await AssertNoProfilesAsync(provider);
         var defaultName = $"Default OpenCode {Guid.NewGuid():N}";
         await SeedProfileAsync(
             provider,
@@ -157,6 +165,54 @@ public sealed class AgentTuiLaunchResolverTests
         resolved.Spec.DefinitionName.ShouldBe(defaultName);
     }
 
+    [Test]
+    public async Task Resolver_test_schemas_start_profile_empty_and_do_not_share_profiles()
+    {
+        await using var firstSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var firstProvider = BuildProvider(firstSchema.ConnectionString);
+        await using var secondSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var secondProvider = BuildProvider(secondSchema.ConnectionString);
+
+        await AssertNoProfilesAsync(firstProvider);
+        await AssertNoProfilesAsync(secondProvider);
+        await SeedProfileAsync(firstProvider, AgentKind.OpenCode, isDefault: true);
+
+        await AssertNoProfilesAsync(secondProvider);
+    }
+
+    [Test]
+    public async Task Legacy_resolution_rejects_selected_profile_when_resolver_is_absent()
+    {
+        var registry = new AgentRegistry(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+        {
+            DefaultDefinition = "legacy",
+            Definitions =
+            {
+                ["legacy"] = new AgentDefinition
+                {
+                    Kind = "Raw",
+                    Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                }
+            }
+        }));
+        var selectedAgent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Selected profile",
+            TuiProfileId = Guid.NewGuid()
+        };
+
+        var exception = await Should.ThrowAsync<ConflictException>(() =>
+            AgentLaunchResolution.ResolveForAgentAsync(
+                selectedAgent,
+                registry,
+                launchResolver: null,
+                new AgentLaunchOptions(Cols: 120, Rows: 30),
+                CancellationToken.None));
+
+        exception.Code.ShouldBe("profile_resolution_unavailable");
+    }
+
     private static async Task<ResolvedAgentTuiLaunch> ResolveAsync(
         ServiceProvider provider,
         Agent agent)
@@ -169,11 +225,13 @@ public sealed class AgentTuiLaunchResolverTests
             CancellationToken.None);
     }
 
-    private static ServiceProvider BuildProvider(RecordingLaunchSecretProtector? protector = null)
+    private static ServiceProvider BuildProvider(
+        string connectionString,
+        RecordingLaunchSecretProtector? protector = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options => options.UseNpgsql(
-            TestDbFixture.ConnectionString));
+            connectionString));
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddSingleton(protector ?? new RecordingLaunchSecretProtector());
         services.AddSingleton<IAgentTuiSecretProtector>(sp =>
@@ -182,6 +240,14 @@ public sealed class AgentTuiLaunchResolverTests
         services.AddSingleton<AgentTuiRunnerCatalog>();
         services.AddScoped<AgentTuiLaunchResolver>();
         return services.BuildServiceProvider();
+    }
+
+    private static async Task AssertNoProfilesAsync(ServiceProvider provider)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.AgentTuiProfiles.AnyAsync()).ShouldBeFalse(
+            "each resolver test must use a new schema, so profile seeds cannot leak to another test");
     }
 
     private static async Task<(AgentTuiProfile Profile, AgentTuiProfileRevision Revision)> SeedProfileAsync(
@@ -285,4 +351,18 @@ public sealed class RecordingLaunchSecretProtector : IAgentTuiSecretProtector
             throw new CryptographicException("Purpose mismatch.");
         return protectedValue[prefix.Length..];
     }
+}
+
+internal sealed class OptionsMonitorStub<T> : IOptionsMonitor<T>
+{
+    public OptionsMonitorStub(T currentValue)
+    {
+        CurrentValue = currentValue;
+    }
+
+    public T CurrentValue { get; }
+
+    public T Get(string? name) => CurrentValue;
+
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

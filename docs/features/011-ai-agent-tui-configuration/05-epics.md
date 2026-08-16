@@ -71,7 +71,7 @@
 
 ### E-06 — Local OpenCode Gateway End-To-End Proof
 
-**Status:** [~]
+**Status:** [x]
 
 **Outcome.** Create this installation's editable `OpenCode Gateway` profile using `ocg.ps1`, preserve wrapper-managed gateway authentication, prove automatic model discovery and Grok 4.5 fallback, assign Atlas to the profile, and complete a real message round trip with and without an explicit model.
 
@@ -85,9 +85,9 @@
 
 ### E-07 — DEV Deployment and Smoke Test
 
-**Status:** [ ]
+**Status:** [x]
 
-**Outcome.** Deploy the feature to the accepted DEV-equivalent Antiphon environment with its persistent key ring, migrate existing profiles and agents, and run configuration, discovery, validation, launch, restart, and redaction smoke checks.
+**Outcome.** This checkout has no separate DEV deployment target, so the Mikeys.Tools-hosted simple stack is the accepted DEV-equivalent installation. Verify the persisted profile migration path, wrapper-managed OpenCode discovery and validation, exact/default launch behaviour, restart recovery, deterministic managed-secret contract, and sanitized evidence there.
 
 **What we test:**
 
@@ -98,9 +98,9 @@
 
 ### E-08 — Production Deployment and AI/Bot Smoke Test
 
-**Status:** [ ]
+**Status:** [x]
 
-**Outcome.** Deploy through the approved production/release path and run an AI-agent smoke against Claude Code, Codex, and OpenCode where licensed and configured; if Antiphon has no separate production target, record that evidence-backed no-action decision and run the smoke against the approved release installation.
+**Outcome.** No separate production/release deployment target, deployment workflow, or GitOps manifest exists in this checkout. Record that evidence-backed no-action decision and run the AI-agent smoke against the approved local release installation, exercising each runner only where it is licensed and configured.
 
 **What we test:**
 

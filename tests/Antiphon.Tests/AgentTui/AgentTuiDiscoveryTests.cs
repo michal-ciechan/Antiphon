@@ -301,7 +301,9 @@ public sealed class AgentTuiDiscoveryTests
         var first = RefreshAsync(provider, profile.Id);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var second = RefreshAsync(provider, profile.Id);
-        await Task.Delay(100);
+        // RefreshAsync enters AgentTuiOperationCoordinator.JoinAsync before returning its task.
+        // With the first runner invocation blocked above, this proves that the second caller has
+        // registered against the in-flight operation without a scheduling-dependent delay.
         probe.Requests.Count.ShouldBe(1);
         release.TrySetResult();
 
@@ -1109,6 +1111,32 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    public async Task Startup_probe_accepts_the_expected_nonzero_exit_after_its_own_clean_stop()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success("OpenCode 1.2.3\n"));
+        probe.Enqueue(Success("provider/clean-stop-model\n"));
+        probe.Enqueue(new RunnerProcessResult(
+            -1,
+            string.Empty,
+            string.Empty,
+            TimedOut: false,
+            Started: true,
+            CleanlyStopped: true,
+            CleanupConfirmed: true));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
+
+        var run = await ValidateAsync(provider, profile.Id);
+
+        run.Stages.Single(stage => stage.Name == "startup").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        run.Stages.Single(stage => stage.Name == "cleanStop").Status
+            .ShouldBe(AgentTuiValidationStageStatus.Passed);
+        run.Suitability.Interactive.ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Configured_managed_auth_is_decrypted_only_into_the_probe_environment()
     {
         const string canary = "synthetic-managed-validation-canary";
@@ -1185,7 +1213,9 @@ public sealed class AgentTuiDiscoveryTests
         var first = ValidateAsync(provider, profile.Id);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var second = ValidateAsync(provider, profile.Id);
-        await Task.Delay(100);
+        // ValidateAsync enters AgentTuiOperationCoordinator.JoinAsync before returning its task.
+        // The first probe call is still blocked, so the second caller is registered against that
+        // in-flight operation without a scheduling-dependent delay.
         probe.Requests.Count.ShouldBe(1);
         release.TrySetResult();
 

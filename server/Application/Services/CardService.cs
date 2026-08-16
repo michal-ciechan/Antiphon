@@ -13,7 +13,7 @@ public sealed class CardService
 {
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
-    private readonly AgentTuiLaunchResolver _launchResolver;
+    private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly OrchestratorService _orchestrator;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
@@ -23,12 +23,12 @@ public sealed class CardService
     public CardService(
         AppDbContext db,
         AgentRegistry agentRegistry,
-        AgentTuiLaunchResolver launchResolver,
         OrchestratorService orchestrator,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        AgentReviewCheckpointService reviewCheckpoints)
+        AgentReviewCheckpointService reviewCheckpoints,
+        AgentTuiLaunchResolver? launchResolver = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -167,8 +167,10 @@ public sealed class CardService
         }
         else if (card.AssignedAgent is { } assignedAgent)
         {
-            var resolved = await _launchResolver.ResolveForAgentAsync(
+            var resolved = await AgentLaunchResolution.ResolveForAgentAsync(
                 assignedAgent,
+                _agentRegistry,
+                _launchResolver,
                 new AgentLaunchOptions(
                     Cwd: null,
                     Cols: request.Cols,
@@ -183,7 +185,9 @@ public sealed class CardService
         }
         else
         {
-            var resolved = await _launchResolver.ResolveDefaultAsync(
+            var resolved = await AgentLaunchResolution.ResolveDefaultAsync(
+                _agentRegistry,
+                _launchResolver,
                 new AgentLaunchOptions(
                     Cwd: null,
                     Cols: request.Cols,

@@ -28,7 +28,7 @@ public sealed class AgentControlService
     private readonly CardService _cardService;
     private readonly AgentSessionService _agentSessionService;
     private readonly AgentRegistry _agentRegistry;
-    private readonly AgentTuiLaunchResolver _launchResolver;
+    private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
@@ -41,12 +41,12 @@ public sealed class AgentControlService
         CardService cardService,
         AgentSessionService agentSessionService,
         AgentRegistry agentRegistry,
-        AgentTuiLaunchResolver launchResolver,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider,
         IOptions<DelegationSettings> delegationSettings,
-        ILogger<AgentControlService> logger)
+        ILogger<AgentControlService> logger,
+        AgentTuiLaunchResolver? launchResolver = null)
     {
         _db = db;
         _agentService = agentService;
@@ -170,8 +170,10 @@ public sealed class AgentControlService
             }
         }
 
-        var resolved = await _launchResolver.ResolveForAgentAsync(
+        var resolved = await AgentLaunchResolution.ResolveForAgentAsync(
             agent,
+            _agentRegistry,
+            _launchResolver,
             new AgentLaunchOptions(
                 Cols: 120,
                 Rows: 30,
@@ -262,10 +264,22 @@ public sealed class AgentControlService
                 .FirstOrDefaultAsync(ct);
         }
 
-        return await _db.AgentTuiProfiles.AsNoTracking()
-            .Where(profile => profile.IsDefault)
-            .Select(profile => (AgentKind?)profile.Kind)
-            .FirstOrDefaultAsync(ct);
+        if (_launchResolver is not null)
+        {
+            var defaultProfileKind = await _db.AgentTuiProfiles.AsNoTracking()
+                .Where(profile => profile.IsDefault)
+                .Select(profile => (AgentKind?)profile.Kind)
+                .FirstOrDefaultAsync(ct);
+            if (defaultProfileKind is not null)
+                return defaultProfileKind;
+        }
+
+        return Enum.TryParse<AgentKind>(
+            _agentRegistry.LookupByName(_agentRegistry.Settings.DefaultDefinition).Kind,
+            ignoreCase: true,
+            out var legacyKind)
+            ? legacyKind
+            : null;
     }
 
     // The agent's last interactive session is resumable when it is the same Claude-kind definition,

@@ -27,16 +27,47 @@ public sealed class AgentTuiProfileConcurrencyTests
 {
     private static readonly DateTimeOffset FixedNow =
         new(2026, 8, 12, 13, 0, 0, TimeSpan.Zero);
+    private IsolatedTestSchema? _isolatedSchema;
 
     public AgentTuiProfileConcurrencyTests(TestDbFixture fixture)
     {
     }
 
     [Before(Test)]
-    public async Task CleanBeforeAsync() => await CleanProfileStateAsync();
+    public async Task CreateIsolatedSchemaAsync()
+    {
+        _isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+    }
 
     [After(Test)]
-    public async Task CleanAfterAsync() => await CleanProfileStateAsync();
+    public async Task DisposeIsolatedSchemaAsync()
+    {
+        if (_isolatedSchema is not null)
+        {
+            await _isolatedSchema.DisposeAsync();
+            _isolatedSchema = null;
+        }
+    }
+
+    [Test]
+    public async Task Concurrent_contexts_share_a_disposable_test_schema()
+    {
+        await using var firstDb = CreateContext();
+        await using var secondDb = CreateContext();
+
+        var firstSearchPath = new NpgsqlConnectionStringBuilder(firstDb.Database.GetConnectionString())
+            .SearchPath;
+        var secondSearchPath = new NpgsqlConnectionStringBuilder(secondDb.Database.GetConnectionString())
+            .SearchPath;
+
+        (firstSearchPath?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
+            "profile concurrency tests must not use the shared public schema");
+        secondSearchPath.ShouldBe(firstSearchPath);
+        (await firstDb.AgentTuiProfiles.AnyAsync()).ShouldBeFalse(
+            "a new profile concurrency schema must not inherit profiles from another test");
+        (await firstDb.Agents.AnyAsync()).ShouldBeFalse(
+            "a new profile concurrency schema must not inherit agents from another test");
+    }
 
     [Test]
     public async Task Concurrent_default_profile_creates_translate_commit_serialization_failure_to_conflict()
@@ -172,34 +203,15 @@ public sealed class AgentTuiProfileConcurrencyTests
         new AgentTuiRunnerCatalog(),
         new FakeTimeProvider(FixedNow));
 
-    private static AppDbContext CreateContext(params IInterceptor[] interceptors)
+    private AppDbContext CreateContext(params IInterceptor[] interceptors)
     {
-        var builder = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
-            {
-                npgsql.MigrationsAssembly("Antiphon.Server");
-                npgsql.SetPostgresVersion(16, 0);
-            });
+        var isolatedSchema = _isolatedSchema
+            ?? throw new InvalidOperationException("The test schema must be created before a context is opened.");
+        var builder = new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(isolatedSchema.ConnectionString));
         if (interceptors.Length > 0)
             builder.AddInterceptors(interceptors);
         return new AppDbContext(builder.Options);
-    }
-
-    private static async Task CleanProfileStateAsync()
-    {
-        await using var db = CreateContext();
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            UPDATE "Agents" SET "TuiProfileId" = NULL, "ModelId" = NULL
-            WHERE "TuiProfileId" IS NOT NULL;
-            DELETE FROM "Agents" WHERE "Slug" LIKE 'agent-tui-concurrency-%';
-            UPDATE "AgentSessions" SET "TuiProfileRevisionId" = NULL, "EffectiveModelId" = NULL
-            WHERE "TuiProfileRevisionId" IS NOT NULL;
-            UPDATE "AgentTuiProfiles" SET "ActiveRevisionId" = NULL
-            WHERE "ActiveRevisionId" IS NOT NULL;
-            DELETE FROM "AgentTuiProfiles";
-            DELETE FROM "AuditRecords" WHERE "Summary" LIKE 'Agent TUI secret:%';
-            """);
     }
 
     private static AgentTuiProfileWriteRequest NewRequest(string displayName) => new(

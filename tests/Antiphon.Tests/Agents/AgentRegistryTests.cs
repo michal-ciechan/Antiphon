@@ -75,7 +75,7 @@ public class AgentRegistryTests
 
         spec.DefinitionName.ShouldBe("claude");
         spec.Kind.ShouldBe(AgentKind.ClaudeCode);
-        spec.Exe.ShouldBe("cl.bat");
+        spec.Exe.ShouldBe(AgentExecutableResolver.Default.TryResolve("cl.bat") ?? "cl.bat");
         spec.Args.ShouldBe(new[] { "--print", "--debug" });
         spec.Env["BASE_ENV"].ShouldBe("v1");
         spec.Env["EXTRA"].ShouldBe("yes");

@@ -15,20 +15,68 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests;
 
 [Category("Integration")]
-[NotInParallel]
+// Each test owns an isolated schema, but its 38-migration setup is DDL-heavy. Serializing this
+// class's setup avoids exhausting PostgreSQL shared memory while keeping it independent of public.
+[NotInParallel("AgentTuiProfileServiceSchema")]
 [ClassDataSource<TestDbFixture>(Shared = SharedType.PerTestSession)]
-public class AgentTuiProfileServiceTests : TransactionalTestBase
+public class AgentTuiProfileServiceTests
 {
     private static readonly DateTimeOffset FixedNow = new(2026, 8, 12, 12, 0, 0, TimeSpan.Zero);
+    private IsolatedTestSchema? _isolatedSchema;
+    protected AppDbContext DbContext { get; private set; } = null!;
 
-    public AgentTuiProfileServiceTests(TestDbFixture fixture) : base(fixture)
+    public AgentTuiProfileServiceTests(TestDbFixture fixture)
     {
+    }
+
+    [Before(Test)]
+    public async Task CreateIsolatedSchemaAsync()
+    {
+        _isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        DbContext = new AppDbContext(
+            TestDbFixture.CreateDbContextOptions(_isolatedSchema.ConnectionString));
+        await DbContext.Database.BeginTransactionAsync();
+    }
+
+    [After(Test)]
+    public async Task DisposeIsolatedSchemaAsync()
+    {
+        try
+        {
+            if (DbContext.Database.CurrentTransaction is not null)
+                await DbContext.Database.RollbackTransactionAsync();
+        }
+        finally
+        {
+            if (DbContext is not null)
+                await DbContext.DisposeAsync();
+            DbContext = null!;
+
+            if (_isolatedSchema is not null)
+            {
+                await _isolatedSchema.DisposeAsync();
+                _isolatedSchema = null;
+            }
+        }
+    }
+
+    [Test]
+    public async Task Uses_a_fresh_non_public_schema_for_each_test()
+    {
+        var searchPath = new NpgsqlConnectionStringBuilder(DbContext.Database.GetConnectionString())
+            .SearchPath;
+
+        (searchPath?.StartsWith("test_", StringComparison.Ordinal) == true).ShouldBeTrue(
+            "profile service tests must not write managed-profile state into the shared public schema");
+        (await DbContext.AgentTuiProfiles.AnyAsync()).ShouldBeFalse();
+        (await DbContext.Agents.AnyAsync()).ShouldBeFalse();
     }
 
     [Test]
@@ -1049,9 +1097,12 @@ public class AgentTuiProfileServiceTests : TransactionalTestBase
             environmentNameComparer);
     }
 
-    private static AppDbContext CreateIndependentContext(params IInterceptor[] interceptors)
+    private AppDbContext CreateIndependentContext(params IInterceptor[] interceptors)
     {
-        var builder = new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions());
+        var isolatedSchema = _isolatedSchema
+            ?? throw new InvalidOperationException("The test schema must be created before a context is opened.");
+        var builder = new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(isolatedSchema.ConnectionString));
         if (interceptors.Length > 0)
             builder.AddInterceptors(interceptors);
         return new AppDbContext(builder.Options);

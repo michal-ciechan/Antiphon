@@ -2,6 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { notifications } from '@mantine/notifications'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto } from '../../api/agents'
+import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -46,6 +47,50 @@ const agentSummary: AgentSummaryDto = {
 const agentDetail: AgentDetailDto = {
   ...agentSummary,
   queue: [],
+}
+
+const agentTuiProfile: AgentTuiProfileDto = {
+  id: 'tui-profile-1',
+  displayName: 'Local Claude',
+  kind: 'ClaudeCode',
+  isEnabled: true,
+  isDefault: true,
+  source: 'User',
+  sourceDefinitionName: null,
+  revisionId: 'tui-profile-revision-1',
+  revision: 1,
+  revisionDetails: {
+    id: 'tui-profile-revision-1',
+    revision: 1,
+    executable: 'claude',
+    arguments: [],
+    discoveryArguments: [],
+    versionArguments: ['--version'],
+    workingDirectory: 'D:/src/app',
+    authenticationMode: 'WrapperManaged',
+    nonSecretEnvironment: {},
+    secretEnvironmentNames: [],
+    modelArgumentName: '--model',
+    guidance: '',
+    createdAt: '2026-05-18T09:00:00Z',
+  },
+  commandPreview: {
+    executable: 'claude',
+    arguments: [],
+    workingDirectory: 'D:/src/app',
+  },
+  secretEnvironment: [],
+  models: [],
+  capabilities: [],
+  validationSummary: {
+    status: 'Succeeded',
+    profileRevisionId: 'tui-profile-revision-1',
+    isCurrentRevision: true,
+    runnerVersion: 'Claude Code',
+    probedAt: '2026-05-18T09:00:00Z',
+  },
+  createdAt: '2026-05-18T09:00:00Z',
+  updatedAt: '2026-05-18T09:00:00Z',
 }
 
 const liveSession: AgentSessionSummaryDto = {
@@ -123,6 +168,8 @@ function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: Agen
   return [
     http.get('/api/agents', () => HttpResponse.json(summary)),
     http.get('/api/agents/:id', () => HttpResponse.json(detail)),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([agentTuiProfile])),
+    http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
   ]
 }
 
@@ -499,8 +546,9 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/app',
         details: 'UI work',
         assignmentPolicy: 'AutoPick',
-        modelLevel: 'High',
         createWorkingDirectory: false,
+        tuiProfileId: 'tui-profile-1',
+        modelId: null,
       }),
     )
   })
@@ -562,8 +610,9 @@ describe('AgentsPage', () => {
         workingDirectory: 'D:/src/Antiphon/client',
         details: 'Owns React and Mantine UI work.',
         assignmentPolicy: 'ManualConfirm',
-        modelLevel: 'High',
         createWorkingDirectory: false,
+        tuiProfileId: 'tui-profile-1',
+        modelId: null,
       }),
     )
   })
