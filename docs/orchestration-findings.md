@@ -211,3 +211,36 @@ assumption to be pinned implicitly framed the canary as a validation-or-bug-repo
 carrying forward: when a spec names a contingency for an assumption's failure, treat the canary
 that measures the assumption as also deciding whether the contingency gets built — a held
 assumption is itself a reason to cut planned scope, not just a green checkmark.
+
+---
+
+## 2026-08-16 — Two brakes that read the same source fail together
+
+**What we learned:** the notable defect in the CARD-0055 delivery-verification miss (session
+`e809ce65`) was not that one safety check had a blind spot — it's that a *second*, independently
+designed safety check shared the exact same blind spot, because both were built on the same data
+source without anyone asking whether that made them correlated instead of independent.
+
+**The evidence:** `SessionMessageQueueService.HandleDeliveryFailureAsync` decides whether to kill
+an always-on session on a `NoTranscriptRecord` delivery verdict, gated by a working-guard so a
+mid-turn session is never killed on a bookkeeping doubt. Both halves of that safety net —
+`GraceConfirmAsync`'s late-confirm read and `IsWorkingAsync`'s working check — query the same
+table, `db.TranscriptEntries` (`SessionMessageQueueService.cs:983`, `:1224`). On session `e809ce65`
+the confirming `UserPrompt` record existed 0.9s after the real submit but wasn't persisted for 45
+seconds; the kill fired inside that gap and both checks read it the same wrong way at once —
+delivery verification reported no record, *and* the working-guard reported `working=false` about a
+session that was visibly mid-turn on screen. Worse, the kill itself was what finally flushed the
+six queued records that would have proven it wrong: the ingestion flush is triggered by the
+session ending, so **the kill produced the evidence that the kill was unjustified, after it was
+already too late to matter.** A 90-second wait (tried on a second session, `5536ae88`) still lost
+the same race by 1.2s — waiting cannot win against a flush that only fires on termination.
+
+**What changed:** `HandleDeliveryFailureAsync` now pulls the transcript itself
+(`CatchUpTranscriptAsync`) before anything destructive, rather than trusting the passive stream to
+have caught up — see the CLAUDE.md gotcha ("Never kill a session on 'the transcript does not
+contain X' without PULLING the transcript first"). The generalizable lesson for future briefs and
+specs: when two mechanisms are meant to protect the same action independently, check whether they
+actually read independent sources. If they share a table, a queue, a cache, or any other single
+point of truth, an outage in that one source doesn't degrade one brake to nothing — it silently
+removes both at once, and the two failing together looks like bad luck instead of what it is, a
+structural single point of failure.
