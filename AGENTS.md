@@ -4,6 +4,9 @@ All AI coding agents working on this project MUST read and follow:
 
 - **Primary conventions:** [docs/project-context.md](docs/project-context.md)
 - **Telegram integration** (formatting, gateway, settings): [docs/telegram.md](docs/telegram.md)
+- **Orchestrating work through delegates** (card → plan → implement → verify → deploy → close, the
+  model tiers, how to write a brief, how to check on a delegate without waiting for a notification):
+  [docs/orchestration-loop.md](docs/orchestration-loop.md)
 
 This file contains naming conventions, layer boundaries, enforcement rules,
 and architectural decisions that all code must comply with.
