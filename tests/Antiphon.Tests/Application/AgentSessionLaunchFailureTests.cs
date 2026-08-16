@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -154,6 +155,115 @@ public class AgentSessionLaunchFailureTests
         session.FailureReason.ShouldBe("Agent process did not become ready.");
     }
 
+    // ---- Slice 2: /remote-control is best-effort ------------------------------------------------
+
+    /// <summary>
+    /// The incident itself, inverted. A healthy resuming orchestrator swallowed a 15-character
+    /// "/remote-control" while re-rendering its history; the submitter correctly found no composer
+    /// evidence, and that verdict — about a MONITORING command — failed the whole launch. Now the
+    /// session stays Running, the rest of the boot sequence still happens, and the degradation is
+    /// an incident instead of a dead session.
+    /// </summary>
+    [Test]
+    public async Task Remote_control_delivery_failure_leaves_the_session_running_and_records_an_incident()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptOutput = "remote-control is active",
+            PromptFailure = prompt => prompt.StartsWith("/remote-control", StringComparison.Ordinal)
+                ? new PromptDeliveryException("No composer evidence appeared for the typed body.")
+                : null,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        fixture.WireDelivery(adapter);
+        // Already Pending when the launch starts — the enqueue path refuses to type into a booting
+        // TUI, so this is what the boot's closing FlushSessionAsync exists to release.
+        var queued = await fixture.SeedPendingMessageAsync("queued while the session was Starting");
+
+        await fixture.LaunchInteractiveAsync(
+            remoteControlName: "Antiphon-Orchestrator",
+            notes: new LaunchNotes("launch note body", null));
+
+        adapter.Prompts.ShouldBe(["/remote-control"]);
+        adapter.Prompts.ShouldNotContain(
+            p => p.StartsWith("/rename", StringComparison.Ordinal),
+            "never append to a composer that may still be holding the first body");
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running, "a monitoring command must not fail a healthy session");
+        var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+        agent.Status.ShouldBe(AgentStatus.Running);
+
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.SessionId.ShouldBe(fixture.SessionId);
+        incident.FailureReason.ShouldBe("RemoteControlNotDelivered");
+        // Incidents are the supervisor's alerts 1:1, deduped per agent+kind.
+        var alert = await db.Alerts.SingleAsync(
+            a => a.AgentId == fixture.AgentId
+                && a.DedupKey == $"supervisor:{AgentIncidentKind.RcDegraded}:{fixture.AgentId}");
+        alert.Severity.ShouldBe(AlertSeverity.Warning);
+
+        // The launch ran to completion: the note went out and the boot's flush released the queue.
+        adapter.SubmittedBodies.ShouldContain("launch note body");
+        var released = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued);
+        released.Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    /// <summary>
+    /// The other half: the command lands but the bridge never reports itself armed. That was
+    /// log-only, so a session that is silently unreachable from claude.ai looked identical to a
+    /// healthy one. It is an incident now — and the /rename still goes out, as it always did.
+    /// </summary>
+    [Test]
+    public async Task Remote_control_that_never_arms_records_an_incident_and_still_renames()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "some output, but never the marker" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Antiphon-Orchestrator"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.FailureReason.ShouldBe("RemoteControlNotArmed");
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+    }
+
+    /// <summary>
+    /// The line slice 2 must not cross: the card WORK prompt is the session's purpose, so its
+    /// delivery failure still fails the launch — now with the process killed on the way out.
+    /// </summary>
+    [Test]
+    public async Task Card_work_prompt_delivery_failure_still_fails_the_launch()
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            PromptOutput = "remote-control is active",
+            PromptFailure = prompt => prompt.StartsWith('/')
+                ? null
+                : new PromptDeliveryException("No composer evidence appeared for the work prompt."),
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+
+        var start = fixture.StartCardSessionAsync(card, "do the work", remoteControlName: "Card Agent");
+
+        await Should.ThrowAsync<PromptDeliveryException>(start);
+        adapter.Prompts.ShouldBe(["/remote-control", "/rename Card Agent", "do the work"]);
+        adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
+        session.Status.ShouldBe(SessionStatus.Failed);
+    }
+
     // ---- Fixture --------------------------------------------------------------------------------
 
     /// <summary>
@@ -297,6 +407,22 @@ public class AgentSessionLaunchFailureTests
 
         private static AgentLaunchSpec LaunchSpec(string cwd) =>
             new("fake", AgentKind.Raw, "fake", [], new Dictionary<string, string>(), cwd, 120, 30);
+
+        /// <summary>
+        /// Makes the adapter reachable as this session's live terminal and models a whole delivery
+        /// round trip, not just the composer half: a real Claude records the submitted prompt in its
+        /// JSONL and the tailer turns it into the UserPrompt row that CARD-0055 confirms against.
+        /// Needed by any test that asserts the boot's launch note / queue flush actually landed.
+        /// </summary>
+        public void WireDelivery(FakeAgentProtocolAdapter adapter)
+        {
+            adapter.RegisterOnStart = Runtime;
+            adapter.OnSubmitted = async submitted =>
+            {
+                await InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, submitted);
+                await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            };
+        }
 
         public Task<long> InsertTranscriptEntryAsync(string kind, string? text = null, string? stopReason = null) =>
             Harness.InsertTranscriptEntryAsync(kind, text, stopReason, SessionId);

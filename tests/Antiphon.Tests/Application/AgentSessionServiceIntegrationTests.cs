@@ -1112,6 +1112,7 @@ public class AgentSessionServiceIntegrationTests
             runtime,
             eventBus,
             BuildMessageQueue(provider, runtime, eventBus),
+            provider.GetRequiredService<IServiceScopeFactory>(),
             sessionSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);
@@ -1152,6 +1153,7 @@ public class AgentSessionServiceIntegrationTests
             runtime,
             eventBus,
             BuildMessageQueue(provider, runtime, eventBus),
+            provider.GetRequiredService<IServiceScopeFactory>(),
             sessionSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);
