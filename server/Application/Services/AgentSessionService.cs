@@ -218,6 +218,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to start agent session for card {CardId}", card.Id);
+
+            // FIRST, before any bookkeeping: kill what this launch started. Anything thrown outside
+            // the two timeout branches above (WaitForReadyOrThrowAsync, the remote-control commands,
+            // a SaveChanges) used to reach only DisposeAsync — which leaks the process (see
+            // KillAndDisposeAsync). Teardown must not depend on the DB write below succeeding.
+            if (adapter is not null)
+                await KillAndDisposeAsync(adapter);
+
             attempt.ErrorDetails = ex.Message;
             if (!RunAttemptStateMachine.IsTerminal(attempt.Phase))
                 RunAttemptStateMachine.Transition(attempt, RunPhase.Failed, UtcNow());
@@ -230,9 +238,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
 
             await _db.SaveChangesAsync(CancellationToken.None);
-
-            if (adapter is not null)
-                await adapter.DisposeAsync();
 
             throw;
         }
@@ -369,16 +374,54 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // Read the adapter's output BEFORE tearing it down — that is where the "No conversation
+            // found with session ID:" evidence lives.
             var sessionNotFound = resumeMode == AgentSessionResumeMode.Resume
                 && IsClaudeSessionNotFound(adapter, ex);
             if (adapter is not null)
-                await adapter.DisposeAsync();
+                await KillAndDisposeAsync(adapter);
 
             if (sessionNotFound)
                 throw new ClaudeSessionNotFoundException();
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Tears down the process a failed launch started, in the only order that actually ends it:
+    /// kill, THEN dispose. <see cref="IAsyncDisposable.DisposeAsync"/> is not teardown — on the
+    /// production adapter it is literally <c>=&gt; ValueTask.CompletedTask</c>, because the agent
+    /// lives in a detached pty-host that deliberately outlives this server (the pty-host split). So
+    /// a catch that only disposed left a real, billable agent running while its row read Failed and
+    /// the always-on supervisor started a replacement: two such sessions were found live on
+    /// 2026-08-16, one of them three days old (CARD-0056).
+    ///
+    /// This also makes the resume-not-found fallback correct by construction: that fallback
+    /// relaunches under the SAME session id, which until now only worked if the first process
+    /// happened to have died on its own.
+    ///
+    /// <see cref="CancellationToken.None"/> matches the cleanup posture of the callers' catches
+    /// (their own token may already be cancelled). A kill failure is swallowed: it must never
+    /// replace the launch failure the caller is about to rethrow, and an HttpClient timeout arrives
+    /// here as a TaskCanceledException with nothing cancelled, so the catch is deliberately broad.
+    /// Killing an already-killed session is harmless — the runner answers false for a session it no
+    /// longer knows.
+    /// </summary>
+    private async Task KillAndDisposeAsync(IAgentProtocolAdapter adapter)
+    {
+        try
+        {
+            await adapter.KillAsync(
+                TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Killing the agent process after a failed launch threw; disposing anyway");
+        }
+
+        await adapter.DisposeAsync();
     }
 
     // Internal control-flow marker: a Claude --resume launch failed because the conversation is gone.
@@ -547,7 +590,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Failed to resume agent session {SessionId}", session.Id);
+            // Same evidence-then-teardown order as the interactive launch: read the adapter's output
+            // for the not-found needle, then kill what this resume started (KillAndDisposeAsync —
+            // disposing alone leaks the process).
             var sessionNotFound = IsClaudeSessionNotFound(adapter, ex);
+            if (adapter is not null)
+                await KillAndDisposeAsync(adapter);
+
             var failureReason = sessionNotFound
                 ? ClaudeSessionNotFoundFailureReason
                 : ex.Message;
@@ -559,9 +608,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.Card.ConcurrencyToken = Guid.NewGuid();
             session.Card.UpdatedAt = session.EndedAt.Value;
             await _db.SaveChangesAsync(CancellationToken.None);
-
-            if (adapter is not null)
-                await adapter.DisposeAsync();
 
             if (sessionNotFound)
                 throw new ConflictException(ClaudeSessionNotFoundFailureReason);
