@@ -119,8 +119,21 @@ Rules earned the hard way. Each one maps to a real failure.
 
 ## 4. Checking on a delegate
 
-**Do not infer from silence.** Completion notifications have arrived 90 minutes late and have failed
-to arrive at all within a working session. Silence says nothing.
+**Check-ins are automatic now (CARD-0047, slices 1-3).** Delegate with `-ExpectAbout <minutes>`
+(1-1440, defaults to 10) and the server arms a schedule: a deterministic, read-only probe of the
+task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
+worktree task — lands in your session as a `[check <id> #n] ...` note, first around the minute mark
+you declared, then backing off (starting at `max(5, expected/2)` minutes, doubling to a 30-minute
+ceiling) for up to 10 checks. It costs no model call today and cannot write to the delegate at all.
+**A check note is a progress report, never a completion** — the delegate's own `[task <id> done]`
+note still arrives separately, and a check note can never be mistaken for it or settle anything
+(see `.claude/skills/antiphon-delegate/SKILL.md`).
+
+**Do not infer from silence** still holds — completion notifications have arrived 90 minutes late
+and have failed to arrive at all within a working session, and the schedule above is a safety net
+on top of that, not a fix for it. The manual probes below are now the fallback: reach for them when
+you want to look *before* the first automatic check fires, when `DelegationSettings.CheckEnabled`
+is off, or when you just want a fresher answer than the schedule will give you.
 
 Cheapest first:
 
@@ -148,9 +161,6 @@ curl -s localhost:17202/api/sessions/<sessionId>/transcript
   committed" when the commit existed and was pushed. Check the repo.
 - **`*.ansi.log` files are raw pty capture**, not structured logs. Grepping them yields escape
   sequences. Use `GET /capabilities` and the API instead.
-
-CARD-0047 proposes automating this: declare an expected duration at launch, and a haiku checker
-looks when it expires.
 
 ---
 
@@ -215,11 +225,10 @@ cannot open it.
 
 ## 9. What to automate first
 
-In rough order of payback:
+**The check-in timer (CARD-0047) shipped** — §4 now describes it running, not proposed. In rough
+order of payback for what's left:
 
-1. **The check-in timer** (CARD-0047) — removes the manual forensics this document spends a section
-   on. Measured at $0.12 per check.
-2. **`scripts/card.ps1`** (CARD-0051) — every card operation here is currently a hand-written script,
+1. **`scripts/card.ps1`** (CARD-0051) — every card operation here is currently a hand-written script,
    because there is no card CLI and shell quoting mangles card text.
-3. **The unmerged-branch sweep** from §1 — a scheduled job that reports genuinely unapplied work.
-4. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
+2. **The unmerged-branch sweep** from §1 — a scheduled job that reports genuinely unapplied work.
+3. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.

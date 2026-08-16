@@ -75,6 +75,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
 | `-Scope "<glob>"` | declare the files this task owns; intersecting scopes are serialised |
 | `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
+| `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
 Pass `-Worktree` when several delegates will write the same files at once, or when you want the
@@ -113,6 +114,33 @@ pwsh -NoProfile -File scripts/delegate.ps1 -OnAgent 7f3a2b91 -Goal "now add the 
 Unrelated new work needs nothing special — the pool handles it: an idle warm agent in the same
 directory is reused automatically (compacted first, focused on the new task), and a fresh one is
 spawned only when none fits.
+
+## Check-ins while it runs
+
+A dispatched task with `-ExpectAbout` (or the 10-minute default) is checked on automatically. The
+first check lands around the minute mark you declared; later ones back off — starting at
+`max(5, expected/2)` minutes and doubling up to every 30 minutes — for up to 10 checks, then it
+stops with a note saying so. Each check is a deterministic, read-only probe (task row, the
+delegate's session and transcript tail, its pending queue, its incidents, and — for a worktree
+task — its git log): it costs no model call, and it cannot type into, kill or commit for the
+delegate it is inspecting.
+
+It shows up in your session as a `[check <id> #n] ...` line, for example:
+
+```
+[check 7f3a2b91 #2] add Fizz(int) in Calc.cs · 18m elapsed (expected 10m) · session Running · working
+```
+
+**This is a progress report about the delegate, never its result, and never something to act on as
+if the task had finished.** The delegate's own report still arrives separately as
+`[task <id> done] ...` when the work actually completes — a check note is never that, never begins
+with `[task `, and never uses completion language. If a note says the check budget is spent, the
+task is still running, just no longer being watched on a schedule; ask `-Status <id>` if you want
+to know where it stands.
+
+`-ExpectAbout` is a hint that schedules the first check, never a deadline — nothing about the task
+fails, escalates or gets killed off it. Declare the honest duration: padding it just delays the
+first check, and it doesn't buy the delegate more time to run.
 
 ## Rules
 
