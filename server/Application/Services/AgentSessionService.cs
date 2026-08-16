@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -9,6 +10,7 @@ using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -28,6 +30,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private readonly AgentSessionRuntime _runtime;
     private readonly IEventBus _eventBus;
     private readonly SessionMessageQueueService _messageQueue;
+    // Incidents are recorded through AgentSupervisorService, which reaches back to this service via
+    // AgentControlService — so it can only be resolved from a scope of its own, not injected.
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentSessionSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
@@ -40,6 +45,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         AgentSessionRuntime runtime,
         IEventBus eventBus,
         SessionMessageQueueService messageQueue,
+        IServiceScopeFactory scopeFactory,
         IOptions<AgentSessionSettings> settings,
         TimeProvider timeProvider,
         ILogger<AgentSessionService> logger)
@@ -51,6 +57,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _runtime = runtime;
         _eventBus = eventBus;
         _messageQueue = messageQueue;
+        _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -163,7 +170,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 new { boardId = card.BoardId, cardId = card.Id },
                 ct);
 
-            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, ct);
+            // Best-effort (it is monitoring here too); the WORK prompt below stays fatal on failure
+            // — that prompt is the session's whole purpose.
+            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session.Id, agentId: null, ct);
 
             await adapter.SendPromptAsync(prompt, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
@@ -350,7 +359,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
-            await SendRemoteControlCommandsAsync(adapter, remoteControlName, ct);
+            // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
+            await SendRemoteControlCommandsAsync(adapter, remoteControlName, session.Id, agentId, ct);
 
             // Channel-facing agents get a launch note: bootstrap on a fresh conversation (including
             // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
@@ -810,28 +820,72 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // just for prompt echo: a 3s echo wait proved too short live — the rename fired before the
     // bridge finished connecting (title lost) and typing into the still-busy resume composer
     // jammed "/remote-control /rename <name>" into one submission that armed the bridge twice.
+    //
+    // BEST-EFFORT (CARD-0056). Remote control is MONITORING, not the session's purpose, so nothing
+    // in here may fail a launch. On 2026-08-16 a 15-character "/remote-control" was typed into a
+    // healthy, resuming orchestrator and never surfaced in its composer while the TUI re-rendered a
+    // large resume history; VerifiedPromptSubmitter correctly reported no evidence, the launch was
+    // declared failed, the process was left running (slice 1) and the supervisor started a second
+    // orchestrator against that false signal. Every decision after the false signal was correct —
+    // the signal was the defect. A delivery failure now costs an RcDegraded incident and the
+    // session keeps running, un-monitored but alive.
+    //
+    // The /rename is skipped by construction when /remote-control fails: the exception leaves the
+    // try block, so nothing appends to a composer that may still be holding the first body.
     private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
+        Guid sessionId,
+        Guid? agentId,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(remoteControlName))
             return;
 
-        // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
-        // active" line, which must not satisfy the wait.
-        var baseline = adapter.SnapshotRawOutput().Length;
-        await adapter.SendPromptAsync("/remote-control", ct);
-        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
-        await WaitForRemoteControlArmedAsync(adapter, baseline, ct);
-        await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
-        await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+        try
+        {
+            // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
+            // active" line, which must not satisfy the wait.
+            var baseline = adapter.SnapshotRawOutput().Length;
+            await adapter.SendPromptAsync("/remote-control", ct);
+            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+            if (!await WaitForRemoteControlArmedAsync(adapter, baseline, ct))
+            {
+                await RaiseRemoteControlDegradedAsync(
+                    sessionId,
+                    agentId,
+                    $"Remote control did not report itself armed within {_settings.RemoteControlArmTimeoutMs}ms. "
+                    + "The session is running; it may not be reachable from claude.ai, and its entry there "
+                    + "may keep its first-message title. /rename was sent anyway.",
+                    "RemoteControlNotArmed",
+                    ct);
+            }
+
+            await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
+            await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
+        }
+        catch (PromptDeliveryException ex)
+        {
+            _logger.LogWarning(ex,
+                "Remote-control setup could not be delivered to session {SessionId}; continuing the launch "
+                + "without it", sessionId);
+            await RaiseRemoteControlDegradedAsync(
+                sessionId,
+                agentId,
+                $"Remote control could not be set up: {ex.Message} The session is running and usable, but it "
+                + "is not reachable from claude.ai. A monitoring command's delivery must never fail a healthy "
+                + "session (CARD-0056), so the launch continued.",
+                "RemoteControlNotDelivered",
+                ct);
+        }
     }
 
     // Polls the raw output (append-only — the rendered screen can scroll the line away) for the
-    // armed marker appearing AFTER the baseline. On timeout the boot proceeds anyway: the local
-    // rename is still worth sending, and holding the launch hostage to a claude.ai outage isn't.
-    private async Task WaitForRemoteControlArmedAsync(
+    // armed marker appearing AFTER the baseline. Returns whether it arrived. On timeout the boot
+    // proceeds anyway: the local rename is still worth sending, and holding the launch hostage to a
+    // claude.ai outage isn't — but the caller now records the miss as an incident rather than one
+    // log line, so a silently un-monitored session is always visible (CARD-0056).
+    private async Task<bool> WaitForRemoteControlArmedAsync(
         IAgentProtocolAdapter adapter, int baseline, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(_settings.RemoteControlArmTimeoutMs);
@@ -841,7 +895,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             ct.ThrowIfCancellationRequested();
             var raw = adapter.SnapshotRawOutput();
             if (raw.IndexOf(RemoteControlArmedMarker, Math.Min(searchFrom, raw.Length), StringComparison.OrdinalIgnoreCase) >= 0)
-                return;
+                return true;
 
             await Task.Delay(250, ct);
         }
@@ -849,6 +903,54 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _logger.LogWarning(
             "Remote-control armed marker did not appear within {TimeoutMs}ms; sending /rename anyway "
             + "(the claude.ai entry may keep its first-message title)", _settings.RemoteControlArmTimeoutMs);
+        return false;
+    }
+
+    /// <summary>
+    /// Records the degraded remote control as an <see cref="AgentIncidentKind.RcDegraded"/> incident
+    /// (Warning, alert included — incidents are the supervisor's alerts 1:1). Best-effort in every
+    /// direction: it runs in a scope of its own because <see cref="AgentSupervisorService"/> reaches
+    /// back into this service through <see cref="AgentControlService"/>, and a failure to RECORD a
+    /// degradation must never do what the degradation itself is no longer allowed to do — fail the
+    /// launch. An incident needs an owning agent; a session nothing claims gets the log line only.
+    /// </summary>
+    private async Task RaiseRemoteControlDegradedAsync(
+        Guid sessionId, Guid? agentId, string message, string failureReason, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var owner = agentId ?? await db.Agents
+                .Where(a => a.PersistentSessionId == sessionId.ToString("D"))
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync(ct);
+            if (owner is not Guid ownerId)
+            {
+                _logger.LogWarning(
+                    "Remote control is degraded for session {SessionId} ({FailureReason}) but no agent claims "
+                    + "it, so there is nothing to hang an incident on: {Message}",
+                    sessionId, failureReason, message);
+                return;
+            }
+
+            // RecordIncidentAsync adds the row without saving; this scope's SaveChanges commits it.
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                ownerId,
+                sessionId,
+                AgentIncidentKind.RcDegraded,
+                AlertSeverity.Warning,
+                message,
+                failureReason: failureReason,
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Recording the degraded remote control for session {SessionId} failed", sessionId);
+        }
     }
 
     // Delivers the launch note (bootstrap on fresh/effective-fresh, restart note on resume) through
