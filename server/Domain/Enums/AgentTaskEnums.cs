@@ -91,4 +91,11 @@ public enum AgentTaskEventType
     Rejected = 11,
     /// <summary>Something legal but risky — an orchestrator sharing its caller's directory.</summary>
     Warning = 12,
+
+    /// <summary>
+    /// A scheduled check-in ran (CARD-0047). Records the digest's head so the drawer shows what the
+    /// caller was told and when — a check is an observation, never a state change, so this is the
+    /// only trace it leaves on the task.
+    /// </summary>
+    Check = 13,
 }

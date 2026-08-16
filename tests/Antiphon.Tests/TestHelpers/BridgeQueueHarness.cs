@@ -81,6 +81,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     PollIntervalMs = 50,
                     PostSubmitAdvanceTimeoutSeconds = 1,
                     StrandedAgeSeconds = 0,
+                    // Same shape as production, compressed: one re-press window inside the deadline
+                    // so a swallowed Enter recovers and a never-recorded body still fails fast.
+                    TranscriptConfirmTimeoutSeconds = 3,
+                    ReEnterIntervalSeconds = 1,
                 },
             }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));
@@ -176,6 +180,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        // CARD-0055: a delivery is Delivered only once its prompt exists as a UserPrompt transcript
+        // row, so the fake has to model the whole round trip, not just the composer. A real Claude
+        // that takes a prompt records it and then WORKS; the trailing TurnEnd keeps the fake's
+        // post-delivery state where it has always been (idle), so the working-rule suites keep
+        // measuring the working rule rather than this addition.
+        adapter.OnSubmitted = async submitted =>
+        {
+            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted);
+            await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        };
         runtime.Register(sessionId, adapter);
 
         return new BridgeQueueHarness
@@ -193,23 +207,36 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         };
     }
 
-    /// <summary>Inserts one transcript entry with the next sequence for the harness session.</summary>
-    public async Task<long> InsertTranscriptEntryAsync(
-        string kind, string? text = null, string? stopReason = null, Guid? sessionId = null)
+    /// <summary>
+    /// Inserts one transcript entry with the next sequence for the harness session. <paramref
+    /// name="timestamp"/> is the RECORD's own timestamp (the one the working rule's backfill
+    /// override reads) — leave it null unless the test is about ordering; real transcripts are
+    /// non-monotonic against sequence, so a test that must not be rescued by the override sets it.
+    /// </summary>
+    public Task<long> InsertTranscriptEntryAsync(
+        string kind,
+        string? text = null,
+        string? stopReason = null,
+        Guid? sessionId = null,
+        DateTime? timestamp = null) =>
+        InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp);
+
+    private static async Task<long> InsertEntryAsync(
+        Guid sessionId, string kind, string? text = null, string? stopReason = null, DateTime? timestamp = null)
     {
-        var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sid)
+            .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
-            AgentSessionId = sid,
+            AgentSessionId = sessionId,
             Sequence = seq,
             Kind = kind,
             Text = text,
             StopReason = stopReason,
+            Timestamp = timestamp,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
@@ -228,7 +255,17 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public Task MarkWorkingAsync(Guid? sessionId = null) =>
         InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "working on it", sessionId: sessionId);
 
-    public async Task SeedPendingMessageAsync(string body, Guid? sessionId = null)
+    /// <summary>
+    /// A Pending message already in the queue. <paramref name="deliveryAttempts"/> and
+    /// <paramref name="baselineSequence"/> reproduce a message that has ALREADY been typed once
+    /// (CARD-0055): attempts is the retry brake, and the baseline is the transcript floor the
+    /// late-confirm re-runs the matcher over before anything re-types it.
+    /// </summary>
+    public async Task<Guid> SeedPendingMessageAsync(
+        string body,
+        Guid? sessionId = null,
+        int deliveryAttempts = 0,
+        long? baselineSequence = null)
     {
         var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
@@ -236,14 +273,48 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var seq = ((await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
+        var id = Guid.NewGuid();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
-            Id = Guid.NewGuid(),
+            Id = id,
             AgentSessionId = sid,
             Body = body,
             Status = QueuedMessageStatus.Pending,
             Sequence = seq,
             CreatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(5),
+            DeliveryAttempts = deliveryAttempts,
+            LastDeliveryStartedAt = deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null,
+            LastDeliveryBaselineSequence = baselineSequence,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    /// <summary>The transcript sequence a delivery starting now would use as its confirmation floor.</summary>
+    public async Task<long> CurrentTranscriptMaxSequenceAsync(Guid? sessionId = null)
+    {
+        var sid = sessionId ?? SessionId;
+        await using var db = CreateContext();
+        return (await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sid)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+    }
+
+    /// <summary>Binds a chat channel to the harness agent — the Critical-escalation condition.</summary>
+    public async Task BindChannelAsync()
+    {
+        await using var db = CreateContext();
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = Guid.NewGuid(),
+            Provider = "telegram",
+            ExternalId = $"bridge-queue-{Guid.NewGuid():N}",
+            Kind = ChatChannelKind.Direct,
+            Title = "Bound channel (test)",
+            AgentId = AgentId,
+            Enabled = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }

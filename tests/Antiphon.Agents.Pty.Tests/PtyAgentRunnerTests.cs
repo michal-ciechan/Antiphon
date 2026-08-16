@@ -300,10 +300,15 @@ public partial class PtyAgentRunnerTests
     /// <summary>
     /// Writes <paramref name="chars"/> 'x' characters as one line and returns the length the child
     /// actually read back through the console's line-input path.
+    ///
+    /// <para>CARD-0045: pinned to the <b>inbox conhost</b>. The cap this measures is a property of
+    /// that console host's line-input path — on the modern pseudoconsole it is different or absent,
+    /// so a test inheriting <c>ANTIPHON_PTY_BACKEND</c> measured whichever host the launching shell
+    /// happened to name. The inbox path still ships as the fallback, so it stays pinned.</para>
     /// </summary>
     private static async Task<int> ReadLineLengthSeenByChildAsync(int chars)
     {
-        await using var runner = new PtyAgentRunner();
+        await using var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(
             "pwsh.exe",
             new[]
@@ -313,6 +318,11 @@ public partial class PtyAgentRunnerTests
                 "-Command",
                 "$line=[Console]::In.ReadLine(); Write-Output \"LEN:$($line.Length)\""
             });
+
+        runner.Backend!.Backend.ShouldBe(
+            PtyBackend.InboxConhost,
+            "the console input cap measured here is an inbox-conhost fact and must be declared, not "
+            + "inherited from ANTIPHON_PTY_BACKEND");
 
         runner.ClearLiveBuffer();
         await runner.WriteAsync($"{new string('x', chars)}\r");

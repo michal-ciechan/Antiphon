@@ -16,7 +16,18 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     private readonly SessionRunnerRuntime _runtime;
 
-    public DirectSessionRunnerClient(string sessionLogPath)
+    /// <param name="ptyBackend">
+    /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
+    /// <c>modern</c>), or null to leave it to the environment.
+    ///
+    /// <para>CARD-0045 slice 3: a host-mediated test could not declare a backend at all before this.
+    /// <c>PtyAgentRunner</c>'s per-instance override lives three processes away — here →
+    /// <c>SessionRunnerRuntime</c> → a detached <c>Antiphon.PtyHost</c> whose <c>HostSession</c>
+    /// built a bare runner and inherited the TEST PROCESS's environment — so a test asserting an
+    /// inbox-conhost fact silently ran on whatever the launching shell had exported. Now it says
+    /// which one it means, and the runtime states it on the host's command line.</para>
+    /// </param>
+    public DirectSessionRunnerClient(string sessionLogPath, string? ptyBackend = null)
     {
         _runtime = new SessionRunnerRuntime(
             Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
@@ -24,6 +35,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
                 SessionLogPath = sessionLogPath,
                 // Tests must not strand detached hosts for the production 24 h linger.
                 PtyHostLingerHours = 0.02,
+                PtyBackend = ptyBackend,
             }),
             NullLogger<SessionRunnerRuntime>.Instance);
     }

@@ -55,6 +55,15 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [string]$Scope,
 
+    # Roughly how long you expect this to take, in minutes. It schedules the first check-in on the
+    # delegate - a short note back saying whether it is working, has produced something, looks
+    # stuck, or has already settled - and nothing else. It is a HINT, NEVER A DEADLINE: nothing
+    # fails, escalates or cancels a task for running past it, so declare an honest number rather
+    # than padding it.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateRange(1, 1440)]
+    [int]$ExpectAbout,
+
     # Answer a blocked delegate's question: -Reply <taskId> "your answer"
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
@@ -140,6 +149,8 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Level) { $body['modelLevel'] = $Level }
         if ($Dir) { $body['workingDirectory'] = $Dir }
         if ($Scope) { $body['scopeGlob'] = $Scope }
+        # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
+        if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
 
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
         Write-Output ("queued task {0} ({1} {2} on {3}) - its report will arrive in your session" -f `

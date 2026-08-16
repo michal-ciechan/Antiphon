@@ -38,8 +38,13 @@ function summary(overrides: Partial<AgentTaskSummaryDto> & { id: string }): Agen
     tokensOut: 0,
     costUsd: 0,
     costPricingVersion: 2,
+    worktreePath: null,
+    worktreeBranch: null,
     subtreeCostUsd: 0,
     childCount: 0,
+    expectedDurationMinutes: 10,
+    nextCheckAt: null,
+    checkCount: 0,
     ...overrides,
   }
 }

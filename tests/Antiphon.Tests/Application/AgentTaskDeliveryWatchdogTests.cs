@@ -118,6 +118,89 @@ public class AgentTaskDeliveryWatchdogTests
         stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
     }
 
+    /// <summary>
+    /// CARD-0046's grace has to have a clock. Settlement defers while the turn-ending response's own
+    /// text is still in flight, and the ordinary resolution is that text's arrival re-triggering
+    /// settlement — but a response that never writes text is real (1 in 180 measured: a lone
+    /// <c>end_turn</c> thinking record, then "API Error: Connection lost mid-response"), and nothing
+    /// would ever come back for it. TickAsync sweeps those, so the task settles instead of sitting
+    /// Dispatched until this watchdog kills it ten minutes later.
+    /// </summary>
+    [Test]
+    public async Task a_deferred_settlement_is_swept_after_the_grace_window()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedSplitTurnTailAsync(sessionId, task.Id, storedMinutesAgo: 3);
+
+        // The sweep TickAsync runs, driven directly: TickAsync itself also dispatches every Queued
+        // task in the shared test database, which is not this test's business (CLAUDE.md's
+        // shared-Postgres rule) — the wiring is the one call in TickAsync above the early return.
+        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(
+            AgentTaskStatus.Succeeded,
+            "no transcript arrives for a response that never writes text — only the sweep can end this");
+        settled.Result.ShouldBe("I'll start by reading the spec.");
+    }
+
+    [Test]
+    public async Task a_deferred_settlement_inside_the_grace_window_is_left_alone()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 3);
+        await SeedSplitTurnTailAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 0);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "the text is very probably still ~1 s away");
+    }
+
+    /// <summary>
+    /// Slice 4's grace needs the same clock, for the same reason: a turn that launched background
+    /// subagents defers until their notifications return, and a subagent can die without ever
+    /// notifying. Nothing else would come back for that task — the announcement turn already ended,
+    /// so no transcript arrives to re-trigger settlement.
+    /// </summary>
+    [Test]
+    public async Task a_task_waiting_on_a_dead_subagent_is_swept_after_the_subagent_grace()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 40);
+        await SeedAbandonedSubagentFanOutAsync(
+            task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 35);
+
+        (await harness.SettleDeferredReportsAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1, "a global sweep count, so other suites' rows may add to it");
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(
+            AgentTaskStatus.Succeeded,
+            "the subagent is never reporting — only the sweep can end this");
+        settled.Result.ShouldContain("Four review agents are running in parallel");
+    }
+
+    [Test]
+    public async Task a_task_still_inside_the_subagent_grace_is_left_alone()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 5);
+        await SeedAbandonedSubagentFanOutAsync(task.AgentSessionId!.Value, task.Id, storedMinutesAgo: 2);
+
+        await harness.SettleDeferredReportsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "the reviewers are still working");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness()
@@ -147,6 +230,10 @@ public class AgentTaskDeliveryWatchdogTests
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
         services.AddScoped<DelegationWorktreeService>();
         services.AddScoped<AgentTaskService>();
+        // CARD-0046: the dispatcher's deferred-settlement sweep calls into the reply service, so it
+        // has to be a real one here (it is optional in the constructor — an unregistered one simply
+        // leaves the sweep unarmed, which every other harness relies on).
+        services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
@@ -227,6 +314,60 @@ public class AgentTaskDeliveryWatchdogTests
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// CARD-0046's split shape, stored <paramref name="storedMinutesAgo"/> ago: the marked brief,
+    /// mid-turn narration under its own API call, and the turn-ending response's BARE TurnEnd — a
+    /// thinking record carrying only the response id. Its text never arrives.
+    ///
+    /// CreatedAt is what the grace reads (never the record Timestamp, which is backdated up to 30 s),
+    /// so that is what this back-dates.
+    /// </summary>
+    private static async Task SeedSplitTurnTailAsync(Guid sessionId, Guid taskId, int storedMinutesAgo)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-storedMinutesAgo);
+        await using var db = CreateContext();
+        db.TranscriptEntries.AddRange(
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"deferred-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 2,
+                Kind = TranscriptKinds.AssistantText,
+                Uuid = $"deferred-{Guid.NewGuid():N}",
+                Role = "assistant",
+                Text = "I'll start by reading the spec.",
+                ApiCallId = $"msg_{Guid.NewGuid():N}",
+                Timestamp = at,
+                CreatedAt = at,
+            },
+            new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = 3,
+                Kind = TranscriptKinds.TurnEnd,
+                Uuid = $"deferred-{Guid.NewGuid():N}",
+                Role = "assistant",
+                StopReason = "end_turn",
+                ApiCallId = $"msg_{Guid.NewGuid():N}",
+                Timestamp = at,
+                CreatedAt = at,
+            });
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>The mark the reply path leaves when a finished turn fails the marker gate.</summary>
     private static async Task SeedUncorrelatedIncidentAsync(Guid sessionId)
     {
@@ -256,6 +397,68 @@ public class AgentTaskDeliveryWatchdogTests
             Message = "Report could not be correlated to the task.",
             CreatedAt = DateTime.UtcNow.AddMinutes(-5),
         });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// CARD-0046 slice 4's shape (session ac09cffd), all of it stored
+    /// <paramref name="storedMinutesAgo"/> ago: the marked brief, four background <c>Agent</c>
+    /// launches each answered by the async-launch marker, and the announcement turn that really did
+    /// end — text and TurnEnd under one ApiCallId, so the slice-1 arm of the sweep passes it over.
+    /// No notification ever arrives.
+    ///
+    /// CreatedAt is the grace clock; Timestamp only has to sit after the task's dispatch.
+    /// </summary>
+    private static async Task SeedAbandonedSubagentFanOutAsync(
+        Guid sessionId, Guid taskId, int storedMinutesAgo)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-storedMinutesAgo);
+        var seq = 0L;
+        TranscriptEntry Entry(string kind, string? text) => new()
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = ++seq,
+            Kind = kind,
+            Uuid = $"subagent-{Guid.NewGuid():N}",
+            Text = text,
+            Timestamp = at,
+            CreatedAt = at,
+        };
+
+        await using var db = CreateContext();
+        db.TranscriptEntries.Add(Entry(
+            TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(taskId) + "\n\nJudge whether commit ce48f50 is correct."));
+
+        for (var i = 0; i < 4; i++)
+        {
+            var toolUseId = $"toolu_{Guid.NewGuid():N}";
+            var call = Entry(TranscriptKinds.ToolCall, null);
+            call.ToolName = TranscriptKinds.AgentToolName;
+            call.ToolUseId = toolUseId;
+            call.ApiCallId = $"msg_{Guid.NewGuid():N}";
+            db.TranscriptEntries.Add(call);
+
+            var result = Entry(
+                TranscriptKinds.ToolResult,
+                TranscriptKinds.AsyncAgentLaunchMarker + " successfully. (internal metadata)");
+            result.ToolUseId = toolUseId;
+            db.TranscriptEntries.Add(result);
+        }
+
+        var announcementCall = $"msg_{Guid.NewGuid():N}";
+        var announcement = Entry(
+            TranscriptKinds.AssistantText,
+            "Four review agents are running in parallel — I'll synthesize when they report.");
+        announcement.ApiCallId = announcementCall;
+        db.TranscriptEntries.Add(announcement);
+
+        var end = Entry(TranscriptKinds.TurnEnd, null);
+        end.StopReason = "end_turn";
+        end.ApiCallId = announcementCall;
+        db.TranscriptEntries.Add(end);
+
         await db.SaveChangesAsync();
     }
 

@@ -157,6 +157,15 @@ public sealed class ShadowCopyStore(string binRoot)
             "Antiphon.PtyHost.pdb",
             "Antiphon.PtyHost.deps.json",
             "Antiphon.PtyHost.runtimeconfig.json",
+            // The shipped pseudoconsole (CARD-0037). It is a Content item, not a package asset, so
+            // it never appears in deps.json — without these two names the shadow copy would silently
+            // drop them and every detached host would fall back to the inbox conhost, i.e. to the
+            // clipping behaviour the flag exists to escape. Their relative path (conpty\win-x64\) is
+            // preserved by the copy; only the basename is matched here. Named literally rather than
+            // via Antiphon.Agents.Pty.ConPtyRedistributable so this assembly keeps its single
+            // dependency — PtyBackendRedistributableTests asserts the two lists agree.
+            "conpty.dll",
+            "OpenConsole.exe",
         };
 
         try

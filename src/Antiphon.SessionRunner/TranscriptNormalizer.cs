@@ -174,7 +174,9 @@ public static class TranscriptNormalizer
     // System records are pure metadata EXCEPT the compact boundary — the signal compaction
     // recovery keys on. Shape pinned by ClaudeCompactionCanaryTests (Fixtures/compact-boundary.jsonl):
     // type=system, subtype=compact_boundary, compactMetadata{trigger,preTokens,...}. Deliberately
-    // NOT a turn end (no StopReason): compaction happens between turns, not as one.
+    // NOT a turn end HERE (no StopReason, no TurnEnd part): compaction happens between turns, not
+    // as one. The working/idle rules do treat a MANUAL boundary as a turn end (CARD-0041) — they
+    // key on the "(manual)" trigger this text carries, which is why the trigger must stay in it.
     private static List<TranscriptPart> FromSystem(JsonElement root)
     {
         if (GetString(root, "subtype") != "compact_boundary")

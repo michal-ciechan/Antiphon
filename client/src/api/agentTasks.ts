@@ -50,6 +50,8 @@ export type AgentTaskEventType =
   | 'Rejected'
   /** Something legal but risky — an orchestrator sharing its caller's directory. */
   | 'Warning'
+  /** A scheduled check-in ran (CARD-0047) — an observation, never a state change. */
+  | 'Check'
 
 export interface AgentTaskSummaryDto {
   id: string
@@ -92,6 +94,14 @@ export interface AgentTaskSummaryDto {
   /** This task plus everything under it — what a collapsed sub-orchestrator row reports. */
   subtreeCostUsd: number
   childCount: number
+  /**
+   * The caller's declared duration hint, in minutes (CARD-0047). NEVER a deadline — a task past it
+   * is not late, it has only reached the point where the first check-in was scheduled.
+   */
+  expectedDurationMinutes: number
+  /** When the next scheduled check-in is due; null means this task is never checked. */
+  nextCheckAt: string | null
+  checkCount: number
 }
 
 export interface AgentTaskEventDto {

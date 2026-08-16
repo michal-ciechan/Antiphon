@@ -3,9 +3,14 @@ using Porta.Pty;
 
 namespace Antiphon.Agents.Pty;
 
-public sealed class PtyAgentRunner : IAsyncDisposable
+/// <param name="backendOverride">
+/// Which pseudoconsole to spawn under, overriding <c>ANTIPHON_PTY_BACKEND</c> for this runner only
+/// (see <see cref="PtyBackendPolicy"/>). Null = read the environment, which defaults to the inbox
+/// conhost. Tests pass this because they must pin BOTH backends in one process.
+/// </param>
+public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDisposable
 {
-    private IPtyConnection? _conn;
+    private IPtySession? _conn;
     private CancellationTokenSource? _readCts;
     private Task? _readTask;
     private readonly StringBuilder _liveBuffer = new();
@@ -35,6 +40,14 @@ public sealed class PtyAgentRunner : IAsyncDisposable
     /// <summary>Path to the audit directory written for this session.</summary>
     public string? AuditDirectory => _audit?.Directory;
 
+    /// <summary>
+    /// Which pseudoconsole this session got, and why. Set by <see cref="StartAsync"/>; null before.
+    /// Worth logging on every launch: a "modern" request that quietly fell back to the inbox conhost
+    /// is the difference between a body arriving whole and arriving clipped at 1 KB, and the two are
+    /// indistinguishable from anywhere else.
+    /// </summary>
+    public PtyBackendDecision? Backend { get; private set; }
+
     public async Task StartAsync(
         string app,
         string[] commandLine,
@@ -62,14 +75,21 @@ public sealed class PtyAgentRunner : IAsyncDisposable
 
         _screen = new TerminalScreen(cols, rows);
 
-        _conn = await PtyProvider.SpawnAsync(options, ct);
-        _conn.ProcessExited += (_, e) =>
+        // The ONLY difference between the two arms is which module provides CreatePseudoConsole.
+        // Default (flag unset) is the inbox conhost via Porta.Pty — byte-identical to what shipped
+        // before CARD-0037, ceilings and all.
+        var backend = PtyBackendPolicy.Resolve(backendOverride);
+        Backend = backend;
+        _conn = backend.Backend == PtyBackend.ModernConPty
+            ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options)
+            : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));
+        _conn.Exited += exitCode =>
         {
             if (_jobObject?.HasReachedMemoryLimit() == true)
                 SetExitReason(PtyExitReason.MemoryKilled);
             else
                 SetExitReason(PtyExitReason.ProcessExited);
-            _exitTcs.TrySetResult(e.ExitCode);
+            _exitTcs.TrySetResult(exitCode);
         };
 
         if (memoryLimitMb > 0)

@@ -23,4 +23,15 @@ public enum QueuedMessageOrigin
     /// turns — but with a size cap, since task reports are far bigger than chat messages.
     /// </summary>
     Delegation = 3,
+
+    /// <summary>
+    /// A scheduled check-in on a running delegate (CARD-0047), delivered to the delegate's CALLER.
+    /// Deliberately NOT batched like <see cref="Delegation"/>: checks are small and rare, and
+    /// coalescing two of them would merge the state of two different delegates into one note.
+    ///
+    /// <para>Its own value rather than a reuse of <see cref="Delegation"/> so a check is
+    /// distinguishable from a completion everywhere the origin is read — a check must never be
+    /// mistaken for a report.</para>
+    /// </summary>
+    Check = 4,
 }

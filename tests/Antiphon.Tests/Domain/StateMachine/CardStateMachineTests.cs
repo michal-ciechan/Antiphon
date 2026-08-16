@@ -8,24 +8,49 @@ namespace Antiphon.Tests.Domain.StateMachine;
 [Category("Unit")]
 public class CardStateMachineTests
 {
+    /// <summary>
+    /// Backlog -> Done is ALLOWED (changed 2026-08-13). It was forbidden on the reading that a
+    /// card must not skip its own work, but two ordinary closes do not fit that: a card nobody
+    /// wants any more, and a card already fixed as part of another card. Routing those through
+    /// InProgress -> Review invents a history that never happened — six cards were walked that way
+    /// by hand on 2026-08-13 — and Canceled is wrong for the second, because the work DID happen.
+    /// What separates a close from a completion is the reason, not the path.
+    /// </summary>
     [Test]
-    public void Card_state_machine_rejects_backlog_to_done_direct_transition()
+    public void Card_can_be_closed_straight_from_backlog()
     {
         CardStateMachine.CanTransition(CardStatus.Backlog, CardStatus.Done)
-            .ShouldBeFalse();
+            .ShouldBeTrue("a card can be closed without being worked — no longer wanted, or "
+                          + "already fixed as part of another card");
     }
 
+    /// <summary>
+    /// Every live state reaches every other one DIRECTLY (widened 2026-08-13). The reason is not a
+    /// preference for permissiveness: a transition has side effects — moving into an ACTIVE column
+    /// spawns an agent — so forcing a path makes the caller pay for every state on the way. Moving
+    /// six finished cards to Done for bookkeeping launched six agent sessions, six worktrees and
+    /// six branches, purely because the only legal route ran through InProgress.
+    /// </summary>
     [Test]
-    public void CardStateMachine_legal_transitions_match_spec()
+    [Arguments(CardStatus.Backlog)]
+    [Arguments(CardStatus.InProgress)]
+    [Arguments(CardStatus.Review)]
+    [Arguments(CardStatus.Blocked)]
+    public void Every_live_state_reaches_every_other_directly(CardStatus from)
     {
-        CardStateMachine.GetAvailableTransitions(CardStatus.Backlog)
-            .ShouldBe([CardStatus.InProgress, CardStatus.Blocked, CardStatus.Canceled]);
+        foreach (var to in Enum.GetValues<CardStatus>())
+        {
+            if (to == from)
+            {
+                CardStateMachine.CanTransition(from, to)
+                    .ShouldBeFalse($"{from} -> {from} is not a move");
+                continue;
+            }
 
-        CardStateMachine.GetAvailableTransitions(CardStatus.InProgress)
-            .ShouldBe([CardStatus.Review, CardStatus.Blocked, CardStatus.Canceled]);
-
-        CardStateMachine.GetAvailableTransitions(CardStatus.Review)
-            .ShouldBe([CardStatus.InProgress, CardStatus.Done, CardStatus.Blocked, CardStatus.Canceled]);
+            CardStateMachine.CanTransition(from, to)
+                .ShouldBeTrue($"{from} -> {to} must not require passing through another state, "
+                              + "because transiting a state has side effects");
+        }
     }
 
     [Test]

@@ -19,6 +19,25 @@ public static class CardEndpoints
             return Results.Ok(await service.MoveAsync(id, request, cancellationToken));
         });
 
+        // Separate from PATCH /{id}, which is move-only: one verb that both moves and rewrites
+        // invites partial-intent bugs, and the two have different concurrency stories.
+        cards.MapPatch("/{id:guid}/content", async (
+            Guid id,
+            UpdateCardContentRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UpdateContentAsync(id, request, cancellationToken));
+        });
+
+        cards.MapGet("/{id:guid}/revisions", async (
+            Guid id,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetRevisionsAsync(id, cancellationToken));
+        });
+
         cards.MapPost("/{id:guid}/spawn", async (
             Guid id,
             SpawnCardRequest request,
@@ -26,6 +45,26 @@ public static class CardEndpoints
             CancellationToken cancellationToken) =>
         {
             return Results.Accepted($"/api/cards/{id}", await service.SpawnAsync(id, request, cancellationToken));
+        });
+
+        // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
+        // and this is not a delete — hard delete deliberately does not exist for cards.
+        cards.MapPost("/{id:guid}/archive", async (
+            Guid id,
+            ArchiveCardRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ArchiveAsync(id, request, cancellationToken));
+        });
+
+        cards.MapPost("/{id:guid}/unarchive", async (
+            Guid id,
+            UnarchiveCardRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UnarchiveAsync(id, request, cancellationToken));
         });
 
         cards.MapGet("/{id:guid}/diff", async (

@@ -92,9 +92,13 @@ public sealed class CompactionRecoveryService
 
         try
         {
-            // WhenIdle is safe here BECAUSE the boundary kind is excluded from IsWorkingAsync
-            // (PR 6's inseparable pair): an idle-but-just-compacted session takes the idle
-            // fast-path immediately; a mid-work compaction waits for the next turn end.
+            // WhenIdle is safe here BECAUSE a MANUAL boundary is a turn END for the working rule
+            // and AgentSessionRuntime flushes the queue right after this dispatch (CARD-0041).
+            // The older claim — "safe because the boundary kind is excluded from IsWorkingAsync" —
+            // was falsified: exclusion only stops the boundary ITSELF counting as activity, and the
+            // raw typed "/compact …" prompt and the continuation prompt that follow it are activity
+            // under that rule, so the note stranded on every real compaction. An AUTO boundary
+            // lands mid-turn and is NOT an end: its note waits for the real turn end, as before.
             await _queue.EnqueueAsync(
                 sessionId, recoveryBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
             _logger.LogInformation("Compaction recovery note queued for session {SessionId} (seq {Sequence})",

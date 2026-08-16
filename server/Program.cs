@@ -47,6 +47,9 @@ try
                 ctx.Configuration["Serilog:ConsoleMinimumLevel"], ignoreCase: true, out var parsed)
                 ? parsed
                 : Serilog.Events.LogEventLevel.Verbose;
+        var retention =
+            Antiphon.Server.Infrastructure.Logging.FileLogRetentionPolicy.FromConfiguration(
+                ctx.Configuration);
         lc
             .ReadFrom.Configuration(ctx.Configuration)
             // Hosting.Diagnostics includes the full query string in request start/finish events.
@@ -63,11 +66,14 @@ try
             .WriteTo.File(
                 Path.Combine(logPath, "antiphon-.log"),
                 rollingInterval: RollingInterval.Day,
-                // Cap each day's file and roll within the day if exceeded; keep a bounded window of files
-                // so logs can never run the disk out (they previously rolled daily but were never deleted).
-                fileSizeLimitBytes: 100 * 1024 * 1024,
+                // Cap each day's file and roll within the day if exceeded. Retention is by TIME
+                // (5 days) — the file COUNT cap is only a disk backstop, because counting files is
+                // not counting days: before CARD-0043 turned the noisy sources down, 14 files was
+                // between 5 and 45 hours of history, not 14 days. See FileLogRetentionPolicy.
+                fileSizeLimitBytes: retention.FileSizeLimitBytes,
                 rollOnFileSizeLimit: true,
-                retainedFileCountLimit: 14,
+                retainedFileCountLimit: retention.RetainedFileCountLimit,
+                retainedFileTimeLimit: retention.RetainedFileTimeLimit,
                 outputTemplate:
                     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
             )
@@ -103,6 +109,24 @@ try
         .Bind(builder.Configuration.GetSection("Orchestrator"))
         .ValidateOnStart();
     builder.Services.Configure<DelegationSettings>(builder.Configuration.GetSection("Delegation"));
+
+    // The pty backend switch (CARD-0037), read from the SAME config key the session runner uses and
+    // exported into this process's environment — the server spawns in-proc ptys of its own
+    // (ClaudeAdapter/CodexAdapter/RawPtyAdapter), and PtyDeliveryProfile sizes every typed body
+    // against whatever this resolves to. An env var already set wins, so one machine can be flipped
+    // without editing config. Setting it here does NOT make the runner's ptys modern — that is the
+    // runner's own config, and PtyDeliveryProfile verifies the two agree before using the raised
+    // ceilings.
+    {
+        var configuredBackend = builder.Configuration[Antiphon.Agents.Pty.PtyBackendPolicy.ConfigKey];
+        if (!string.IsNullOrWhiteSpace(configuredBackend)
+            && string.IsNullOrEmpty(
+                Environment.GetEnvironmentVariable(Antiphon.Agents.Pty.PtyBackendPolicy.EnvVar)))
+        {
+            Environment.SetEnvironmentVariable(
+                Antiphon.Agents.Pty.PtyBackendPolicy.EnvVar, configuredBackend);
+        }
+    }
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
@@ -202,6 +226,12 @@ try
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
+    // Scheduled check-ins on a running delegate (CARD-0047). The probe is read-only by
+    // construction — see its constructor; the queue is the hand-off that keeps the dispatcher's
+    // 5 s tick from ever waiting on a check.
+    builder.Services.AddScoped<DelegateCheckProbe>();
+    builder.Services.AddSingleton<AgentTaskCheckQueue>();
+    builder.Services.AddScoped<AgentTaskCheckService>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -262,6 +292,9 @@ try
     builder.Services.AddScoped<IWorkflowFileStore, WorkflowFileStore>();
     builder.Services.AddSingleton<IFileSystemWatcher, WorkflowFileSystemWatcher>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
+    // Which delivery ceilings are in force, from the pseudoconsole actually serving the ptys
+    // (CARD-0037). Must be registered before anything that types into a terminal.
+    builder.Services.AddSingleton<PtyDeliveryProfile>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
@@ -325,6 +358,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
+    builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.
     builder.Services.AddHostedService<DelegationCostBackfillService>();
@@ -360,6 +394,13 @@ try
     // and runs ValidateOnStart for AgentRegistrySettings. Throws here rather than at first use.
     _ = app.Services.GetRequiredService<AgentRegistry>();
     _ = app.Services.GetRequiredService<IAgentProtocolAdapterFactory>();
+
+    // Settle the delivery ceilings BEFORE anything can type into a terminal (CARD-0037). Resolved
+    // lazily this would leave a window where the first deliveries used this process's own guess at
+    // the backend while the runner's contradicting answer was still in flight — and that guess
+    // being wrong is a 43 KB body typed into a pty that clips at 1 KB. Best-effort: an unreachable
+    // runner is not evidence, so the local decision stands and the profile re-probes on its own.
+    await app.Services.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None);
 
     // Middleware pipeline order: CorrelationId → CurrentUser → ExceptionHandler → routing → endpoints
     app.UseMiddleware<CorrelationIdMiddleware>();

@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -432,7 +433,7 @@ public class DelegationReportFormatterTests
     }
 
     /// <summary>
-    /// The ceiling that governs a brief must be BriefInlineMaxChars, not ReplyInlineMaxChars.
+    /// The ceiling that governs a brief must be BriefInlineMaxBytes, not ReplyInlineMaxChars.
     /// Four briefs stranded on 2026-08-11 at 1 366-2 320 characters, each arriving as its final
     /// sub-1024-byte chunk alone with the head — and therefore the task — gone. Every one of them
     /// was under ReplyInlineMaxChars (3 000) and under PtyInlineSafeChars (4 000), which is exactly
@@ -448,7 +449,7 @@ public class DelegationReportFormatterTests
         var settings = new DelegationSettings();
 
         length.ShouldBeGreaterThan(
-            settings.BriefInlineMaxChars,
+            settings.BriefInlineMaxBytes,
             "a brief this size must spill — it is a size measured to lose its head in delivery");
         length.ShouldBeLessThan(
             settings.ReplyInlineMaxChars,
@@ -470,7 +471,7 @@ public class DelegationReportFormatterTests
             NewTask(), Settings, spillPath: null, fullLength: 2_320);
 
         pointer.Length.ShouldBeLessThanOrEqualTo(
-            new DelegationSettings().BriefInlineMaxChars,
+            new DelegationSettings().BriefInlineMaxBytes,
             "a pointer over the brief ceiling could lose its own head, which is the whole failure "
             + "it exists to prevent");
     }
@@ -752,5 +753,247 @@ public class DelegationCostTests
 
         DelegationCost.Estimate(emptied, AgentModelLevel.Medium, new TokenSpend(1_000_000, 0, 0, 0), AfterPromo)
             .ShouldBeGreaterThan(0m);
+    }
+}
+
+/// <summary>
+/// CARD-0027. The transport boundary is ONE ~1024-byte read chunk: a body that fits in one arrives
+/// whole, a body that spans two or more is truncated to a whole number of chunks, unpredictably.
+/// Measured against the real Claude TUI — 810 and 972-byte bodies arrived whole 3/3, 1 026 and
+/// 1 350-byte bodies lost their heads 3/3, and the cut sits at body byte 1029 at 7-byte resolution.
+/// See docs/investigations/2026-08-11-pty-chunk-loss-root-cause-CARD-0027.md.
+/// </summary>
+[Category("Unit")]
+public class PtyInlineCeilingTests
+{
+    /// <summary>The measured single-read-chunk boundary, in UTF-8 BYTES.</summary>
+    private const int SingleChunkBytes = 1024;
+
+    /// <summary>
+    /// The brief ceiling is the one gate that already sits under a single chunk, which is why the
+    /// brief-pointer mitigation holds. Raising it above one chunk puts briefs back in the failure
+    /// mode that stranded four tasks on 2026-08-11 — with no new evidence, that is a regression.
+    /// </summary>
+    [Test]
+    public void the_brief_ceiling_stays_within_one_read_chunk()
+    {
+        new DelegationSettings().BriefInlineMaxBytes
+            .ShouldBeLessThanOrEqualTo(SingleChunkBytes,
+                "a brief must fit in ONE ~1024-byte read chunk — a body spanning two or more is "
+                + "truncated to whole chunks by the receiving TUI (CARD-0027)");
+    }
+
+    /// <summary>
+    /// The ceiling must be counted in UTF-8 BYTES, because that is the unit of the read chunk the
+    /// TUI drops. It shipped counting <c>string.Length</c> (UTF-16 chars), and briefs here are
+    /// em-dash-heavy at 3 bytes each — so a 900-CHARACTER brief could be 2 700 bytes, span three
+    /// chunks, and mangle exactly as before while passing the guard.
+    ///
+    /// This is the arithmetic that made the char gate unsafe. It is kept as a test so the ceiling
+    /// can never quietly go back to counting characters.
+    /// </summary>
+    [Test]
+    public void the_brief_ceiling_is_counted_in_utf8_bytes_not_characters()
+    {
+        var settings = new DelegationSettings();
+        var emDashHeavy = new string('—', settings.BriefInlineMaxBytes);
+
+        emDashHeavy.Length.ShouldBeLessThanOrEqualTo(settings.BriefInlineMaxBytes,
+            "a char-counting gate would wave this through");
+        System.Text.Encoding.UTF8.GetByteCount(emDashHeavy)
+            .ShouldBeGreaterThan(SingleChunkBytes,
+                "yet it crosses the transport boundary — which is why the gate counts bytes");
+    }
+
+    /// <summary>
+    /// The gate as actually applied: an em-dash-heavy brief under the ceiling in characters but
+    /// over it in bytes must spill. This is the case that would still have mangled after 8c42ebd.
+    /// </summary>
+    [Test]
+    public void a_multibyte_brief_over_the_byte_ceiling_is_not_typed_inline()
+    {
+        var settings = new DelegationSettings();
+        var body = new string('—', 400); // 400 chars, 1 200 bytes
+
+        body.Length.ShouldBeLessThan(settings.BriefInlineMaxBytes);
+        System.Text.Encoding.UTF8.GetByteCount(body)
+            .ShouldBeGreaterThan(settings.BriefInlineMaxBytes,
+                "over the ceiling once measured in the unit the transport actually uses, so it "
+                + "must spill to a file rather than be typed");
+    }
+}
+
+/// <summary>
+/// The two classifiers settlement uses to tell compaction's own USER records apart from the
+/// prompts a turn could have answered (CARD-0041 shapes, CARD-0046 walk-back). SETTLEMENT ONLY —
+/// no working/idle rule consumes them, so there is nothing to keep in lockstep here.
+/// </summary>
+[Category("Unit")]
+public class TranscriptLocalCommandEchoTests
+{
+    private const string Wrapper =
+        "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n"
+        + "            <command-args>Keep only what serves the new task.</command-args>";
+
+    [Test]
+    public void the_wrapper_names_the_command_it_invoked()
+    {
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, Wrapper).ShouldBe("/compact");
+    }
+
+    [Test]
+    public void an_ordinary_prompt_names_no_command()
+    {
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, "/compact do the thing")
+            .ShouldBeNull("the raw typed line is not the wrapper — only the wrapper proves a command ran");
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, "read the spec").ShouldBeNull();
+        TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.AssistantText, Wrapper).ShouldBeNull();
+    }
+
+    [Test]
+    public void the_raw_typed_line_is_an_echo_of_the_command_that_ran()
+    {
+        // Claude records the literal typed text as a plain user record IN ADDITION to the wrapper.
+        var invoked = new[] { "/compact" };
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compact Keep only what serves the new task.", invoked)
+            .ShouldBeTrue();
+        TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, "/compact", invoked).ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_real_prompt_that_merely_begins_with_a_slash_is_not_an_echo()
+    {
+        // Why the wrapper is required rather than a '/' prefix: a real prompt may begin with a
+        // slash, and skipping it in the walk-back would attribute someone else's turn to the task.
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compact do the thing", []).ShouldBeFalse("no command ran");
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/compaction is the topic", ["/compact"])
+            .ShouldBeFalse("the invocation ends at the command name, not mid-word");
+        TranscriptKinds.IsRawLocalCommandEcho(
+            TranscriptKinds.UserPrompt, "/status of the build please", ["/compact"]).ShouldBeFalse();
+    }
+
+    [Test]
+    public void the_wrapper_itself_is_not_also_an_echo()
+    {
+        // It is already excluded as a local-command record; double-counting it would be harmless
+        // but the classifiers must stay disjoint to read.
+        TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, Wrapper, ["/compact"])
+            .ShouldBeFalse();
+    }
+}
+
+/// <summary>
+/// The classifiers behind CARD-0046 slice 4: telling a BACKGROUND subagent launch from a
+/// synchronous one, and pairing each launch with the notification that answers it. Shapes pinned
+/// from session ac09cffd (seqs 10-20). Settlement only.
+/// </summary>
+[Category("Unit")]
+public class SubagentNotificationTests
+{
+    private const string Notification =
+        "<task-notification>\n<task-id>a548067d72b9d6de9</task-id>\n"
+        + "<tool-use-id>toolu_016EchwymsdkwrMZzwUnmtvg</tool-use-id>\n<status>completed</status>\n"
+        + "<summary>Agent \"Review CardService allocator (c)\" finished</summary>\n</task-notification>";
+
+    [Test]
+    public void a_notification_is_not_a_prompt_anybody_typed()
+    {
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, Notification).ShouldBeTrue();
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, "review the commit")
+            .ShouldBeFalse();
+        TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.AssistantText, Notification)
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void a_notification_names_the_launch_it_answers()
+    {
+        // The strong link: pairing by id makes four launches and three notifications an unambiguous
+        // "one still running", where counting them would have to assume nothing else launches.
+        TranscriptKinds.TryReadNotifiedToolUseId(Notification)
+            .ShouldBe("toolu_016EchwymsdkwrMZzwUnmtvg");
+        TranscriptKinds.TryReadNotifiedToolUseId("<task-notification>\n<status>completed</status>")
+            .ShouldBeNull();
+        TranscriptKinds.TryReadNotifiedToolUseId(null).ShouldBeNull();
+    }
+
+    [Test]
+    public void the_async_launch_marker_separates_a_launch_from_an_answer()
+    {
+        // A background spawn answers instantly with metadata; a SYNCHRONOUS Agent call returns the
+        // subagent's actual work, so only the marker means "not started yet".
+        const string async_ =
+            "Async agent launched successfully. (This tool result is internal metadata — never quote "
+            + "or paste any part of it, including the agentId below, into a user-facing reply.)";
+        async_.Contains(TranscriptKinds.AsyncAgentLaunchMarker, StringComparison.Ordinal).ShouldBeTrue();
+        "All checks done by reading; I did not run the tests."
+            .Contains(TranscriptKinds.AsyncAgentLaunchMarker, StringComparison.Ordinal).ShouldBeFalse();
+    }
+}
+
+/// <summary>
+/// The check-in backoff (CARD-0047 §1.5), as arithmetic. A gap that is wrong by a factor of two is
+/// invisible in an integration test that only asserts "a later check was scheduled", so the curve
+/// gets pinned directly: it starts at half the declared duration (floored), doubles, and stops at
+/// the ceiling.
+/// </summary>
+[Category("Unit")]
+public class CheckScheduleBackoffTests
+{
+    private static readonly DelegationSettings Shipped = new();
+
+    [Test]
+    public void the_first_gap_is_half_the_declared_duration()
+    {
+        // A 60-minute task has already had its first look at 60m; the next is 30m later, not an hour.
+        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 60, checkNumber: 1)
+            .ShouldBe(TimeSpan.FromMinutes(30));
+    }
+
+    [Test]
+    public void a_short_task_cannot_generate_a_check_a_minute()
+    {
+        // half of 4 is 2, which the floor (5) outranks — the declared duration cannot buy a cadence
+        // finer than the configured minimum.
+        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 4, checkNumber: 1)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMinIntervalMinutes));
+    }
+
+    [Test]
+    public void the_gap_doubles_with_each_check()
+    {
+        // The declared-10-minute curve from the spec: checked at ~10m, then +5, +10, +20 …
+        CheckSchedule.NextInterval(Shipped, 10, 1).ShouldBe(TimeSpan.FromMinutes(5));
+        CheckSchedule.NextInterval(Shipped, 10, 2).ShouldBe(TimeSpan.FromMinutes(10));
+        CheckSchedule.NextInterval(Shipped, 10, 3).ShouldBe(TimeSpan.FromMinutes(20));
+    }
+
+    [Test]
+    public void the_doubling_stops_at_the_ceiling()
+    {
+        // Otherwise a long-lived task's fourth check lands 40 minutes out and its tenth next week.
+        CheckSchedule.NextInterval(Shipped, 10, 4)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes));
+        CheckSchedule.NextInterval(Shipped, 10, 40)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
+                "a huge check number must clamp, not overflow into a negative TimeSpan");
+        CheckSchedule.NextInterval(Shipped, 1440, 1)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
+                "the ceiling outranks half of a day-long declaration too");
+    }
+
+    [Test]
+    public void a_degenerate_configuration_still_produces_a_positive_gap()
+    {
+        // A ceiling below the floor would otherwise schedule the next check in the past, and a
+        // sweep that re-arms into the past checks on every tick forever.
+        var upsideDown = new DelegationSettings { CheckMinIntervalMinutes = 20, CheckMaxIntervalMinutes = 5 };
+
+        CheckSchedule.NextInterval(upsideDown, 10, 1).ShouldBe(TimeSpan.FromMinutes(20));
+        CheckSchedule.NextInterval(new DelegationSettings { CheckMinIntervalMinutes = 0 }, 1, 1)
+            .ShouldBeGreaterThan(TimeSpan.Zero);
     }
 }

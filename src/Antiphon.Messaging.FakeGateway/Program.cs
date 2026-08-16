@@ -11,6 +11,11 @@ using Confluent.Kafka;
 // deployed environments run the real Antiphon.Messaging.Service.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+// appsettings.json here exists ONLY to turn Microsoft.AspNetCore down to Warning (CARD-0043).
+// With no settings file at all this ran at the framework default of Information, and the AppHost's
+// 30-second /health poll (plus the Aspire dashboard's own, much faster, one while it is open) wrote
+// three request-lifecycle lines each: measured, 99.6% of the 57 MB logs/fake-gateway.log was those
+// three sources and 130,072 health polls. The recorder's own logs stay at Information.
 var builder = WebApplication.CreateBuilder(args);
 
 var bootstrap = builder.Configuration["AntiphonMessaging:BootstrapServers"] ?? "localhost:19092";

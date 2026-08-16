@@ -22,7 +22,14 @@ public static class DelegationReportFormatter
     /// The full brief: marker, metadata, the caller's goal verbatim, then the reporting contract.
     /// Composed SERVER-SIDE so a calling agent cannot forget it and every delegate gets the same one.
     /// </summary>
-    public static string BuildBrief(AgentTask task, DelegationSettings settings)
+    /// <param name="replyInlineMaxChars">
+    /// The report ceiling QUOTED TO THE DELEGATE, which must be the one its report will actually be
+    /// measured against — that depends on the pseudoconsole serving the pty (CARD-0037), so the
+    /// caller passes the resolved value. Null keeps <see cref="DelegationSettings.ReplyInlineMaxChars"/>,
+    /// the conservative inbox-conhost number.
+    /// </param>
+    public static string BuildBrief(
+        AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null)
     {
         var sb = new StringBuilder();
         sb.Append(TaskMarker(task.Id))
@@ -41,7 +48,8 @@ public static class DelegationReportFormatter
         if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
 
-        sb.Append(ReportingContract(task.Id, task.Kind, settings.ReplyInlineMaxChars));
+        sb.Append(ReportingContract(
+            task.Id, task.Kind, replyInlineMaxChars ?? settings.ReplyInlineMaxChars));
         return sb.ToString();
     }
 
@@ -159,8 +167,20 @@ public static class DelegationReportFormatter
     /// when it fits, because the report is the deliverable and clipping it just forces a second
     /// call to read what was already paid for.
     /// </summary>
+    /// <param name="replyInlineMaxChars">
+    /// The ceiling the report is measured against. Depends on the pseudoconsole that will carry the
+    /// note (CARD-0037); null keeps the conservative inbox-conhost number.
+    /// </param>
+    /// <param name="warning">
+    /// A caveat about the report itself, placed between the header and the report so the caller
+    /// reads it FIRST — currently "this may be preamble, not the verdict" when the turn-ending
+    /// response never wrote its own text (CARD-0046 slice 3). Deliberately outside
+    /// <see cref="FitReport"/>: the ceiling and the excerpt arithmetic are about the report, and a
+    /// warning that could itself be excerpted away would be worthless.
+    /// </param>
     public static Note BuildCompletionNote(
-        AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null)
+        AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
+        int? replyInlineMaxChars = null, string? warning = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -175,7 +195,9 @@ public static class DelegationReportFormatter
         if (!string.IsNullOrWhiteSpace(workspaceNote)) bits.Add(workspaceNote.Trim());
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
-        var (body, excerpted) = FitReport(report ?? string.Empty, task, settings);
+        var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
+        if (!string.IsNullOrWhiteSpace(warning))
+            body = $"{warning.Trim()}\n\n{body}";
         return new Note($"{header}\n\n{body}".ReplaceLineEndings("\n"), excerpted);
     }
 
@@ -187,10 +209,12 @@ public static class DelegationReportFormatter
     /// miss so hard to see: "...cherry-pick co" welded onto "== a667cbcc, worktree list..." reads
     /// as prose damage, not as a boundary, so nobody can tell an excerpt from a corruption.
     /// </summary>
-    public static (string Body, bool Excerpted) FitReport(string report, AgentTask task, DelegationSettings settings)
+    public static (string Body, bool Excerpted) FitReport(
+        string report, AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null)
     {
+        var ceiling = replyInlineMaxChars ?? settings.ReplyInlineMaxChars;
         var trimmed = report.Trim();
-        if (trimmed.Length <= settings.ReplyInlineMaxChars)
+        if (trimmed.Length <= ceiling)
             return (trimmed, false);
 
         var head = Math.Max(0, settings.ReplyExcerptHeadChars);
@@ -198,7 +222,7 @@ public static class DelegationReportFormatter
         // Degenerate config (head+tail >= the original) must not produce something LONGER than the
         // input by adding the elision banner — fall back to a head-only cut.
         if (head + tail >= trimmed.Length)
-            return (trimmed[..Math.Min(trimmed.Length, settings.ReplyInlineMaxChars)], true);
+            return (trimmed[..Math.Min(trimmed.Length, ceiling)], true);
 
         var headEnd = SnapBack(trimmed, head);
         var tailStart = SnapForward(trimmed, trimmed.Length - tail);

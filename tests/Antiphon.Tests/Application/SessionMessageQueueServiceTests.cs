@@ -396,16 +396,20 @@ public class SessionMessageQueueServiceTests
         }
     }
 
-    private static async Task InsertEntryAsync(Harness h, string kind, string? text, DateTime? timestamp = null)
+    private static Task InsertEntryAsync(Harness h, string kind, string? text, DateTime? timestamp = null) =>
+        InsertEntryForAsync(h.SessionId, kind, text, timestamp);
+
+    private static async Task InsertEntryForAsync(
+        Guid sessionId, string kind, string? text, DateTime? timestamp = null)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
         var baseSeq = (await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == h.SessionId)
+            .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
-            AgentSessionId = h.SessionId,
+            AgentSessionId = sessionId,
             Sequence = baseSeq + 1,
             Kind = kind,
             Text = text,
@@ -445,6 +449,18 @@ public class SessionMessageQueueServiceTests
         services.AddSingleton<IEventBus>(eventBus);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
+        {
+            DeliveryVerification = new DeliveryVerificationSettings
+            {
+                Enabled = true,
+                EvidenceTimeoutSeconds = 1,
+                PollIntervalMs = 50,
+                PostSubmitAdvanceTimeoutSeconds = 1,
+                TranscriptConfirmTimeoutSeconds = 3,
+                ReEnterIntervalSeconds = 1,
+            },
+        }));
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddLogging();
@@ -475,6 +491,14 @@ public class SessionMessageQueueServiceTests
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        // CARD-0055: a submitted prompt becomes a UserPrompt transcript record, which is what a
+        // delivery is now confirmed against. The trailing TurnEnd keeps the fake's post-delivery
+        // state idle, exactly as it was before this modelling was added.
+        adapter.OnSubmitted = async submitted =>
+        {
+            await InsertEntryForAsync(sessionId, TranscriptKinds.UserPrompt, submitted);
+            await InsertEntryForAsync(sessionId, TranscriptKinds.TurnEnd, null);
+        };
         runtime.Register(sessionId, adapter);
 
         return new Harness(

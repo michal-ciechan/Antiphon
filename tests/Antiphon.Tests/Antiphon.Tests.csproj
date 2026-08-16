@@ -36,7 +36,10 @@
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">
     <ItemGroup>
-      <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\bin\$(Configuration)\net9.0\**\*" />
+      <!-- $(OutputPath), not a hardcoded bin\$(Configuration)\net9.0 — see the note in
+           Antiphon.Agents.Pty.Tests.csproj: an OutputPath=bin-fake/ build (needed because the
+           daemons lock bin\) otherwise stages a stale exe or none, and the tests skip silently. -->
+      <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\$(OutputPath)**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(FakeClaudeOutput)"
           DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"

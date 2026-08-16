@@ -17,12 +17,15 @@ public static class BoardEndpoints
             return Results.Ok(await service.GetAllAsync(cancellationToken));
         });
 
+        // Archived cards are hidden by default and shown on request — archive is not deletion, so
+        // the rows are always there to ask for.
         boards.MapGet("/{id:guid}", async (
             Guid id,
             BoardService service,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            bool includeArchived = false) =>
         {
-            return Results.Ok(await service.GetByIdAsync(id, cancellationToken));
+            return Results.Ok(await service.GetByIdAsync(id, includeArchived, cancellationToken));
         });
 
         boards.MapPost("/", async (

@@ -56,6 +56,25 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             ?? throw new InvalidOperationException("Session runner returned an empty start response."));
     }
 
+    /// <summary>
+    /// Null on ANY failure — an old runner without the endpoint, an unreachable one, a malformed
+    /// body. "I could not find out" must be indistinguishable from "this client cannot say", because
+    /// the caller's conservative branch is the only correct answer to both: guessing modern here
+    /// would size bodies for a pty that may be stripping every paste marker.
+    /// </summary>
+    public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<RunnerCapabilitiesDto>("capabilities", JsonOptions, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or NotSupportedException or JsonException
+                                       or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
     public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
     {
         var sessions = await _httpClient.GetFromJsonAsync<IReadOnlyList<RunnerSessionDto>>("sessions", JsonOptions, ct)

@@ -1,9 +1,11 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -30,6 +32,9 @@ public sealed class AgentTaskDispatcher
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskDispatcher> _logger;
+    private readonly PtyDeliveryProfile? _ptyProfile;
+    private readonly AgentTaskReplyService? _replies;
+    private readonly AgentTaskCheckQueue? _checkQueue;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -42,8 +47,18 @@ public sealed class AgentTaskDispatcher
         IOptions<DelegationSettings> settings,
         IEventBus eventBus,
         TimeProvider timeProvider,
-        ILogger<AgentTaskDispatcher> logger)
+        ILogger<AgentTaskDispatcher> logger,
+        PtyDeliveryProfile? ptyProfile = null,
+        // Optional so every harness that predates CARD-0046 keeps constructing this; where it is
+        // absent the deferred-settlement sweep is simply not armed.
+        AgentTaskReplyService? replies = null,
+        // Same contract for CARD-0047: no queue registered means no check sweep, so a harness that
+        // predates it keeps working and never claims a check it has no worker to run.
+        AgentTaskCheckQueue? checkQueue = null)
     {
+        _checkQueue = checkQueue;
+        _replies = replies;
+        _ptyProfile = ptyProfile;
         _db = db;
         _agentRegistry = agentRegistry;
         _launchQueue = launchQueue;
@@ -57,25 +72,51 @@ public sealed class AgentTaskDispatcher
         _logger = logger;
     }
 
-    public sealed record TickResult(int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures);
+    /// <param name="SweepFailures">
+    /// How many of the tick's five clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// sweep did nothing this time round — and each failure is logged at Error by
+    /// <see cref="RunSweepAsync"/> naming which one it was.
+    /// </param>
+    public sealed record TickResult(
+        int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures,
+        int SweepFailures = 0);
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
+        // The five clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // used to be five bare awaits, which quietly made every one of them a single point of
+        // failure for all the others AND for dispatching: one poisoned session in the settlement
+        // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
+        // tick, and the only trace was one "Delegation dispatch tick failed" line that named
+        // neither which clock had died nor what had stopped as a result.
+        var sweepFailures = 0;
+
         // Before dispatching new work, deal with running work that has gone quiet — a stalled
         // opus Debug task escalating to fable IS the tier ladder working, not an error path.
-        await AutoEscalateStalledAsync(ct);
+        sweepFailures += await RunSweepAsync("auto-escalate stalled", AutoEscalateStalledAsync, ct);
 
         // And with work that never STARTED — zero transcript entries long after dispatch means the
         // boot prompt was lost, which is categorically different from slow progress and must fail
         // loudly, never escalate (a bigger model can't fix an undelivered brief).
-        await FailNeverStartedAsync(ct);
+        sweepFailures += await RunSweepAsync("delivery watchdog", FailNeverStartedAsync, ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
-        await RetireIdleWarmAgentsAsync(ct);
+        sweepFailures += await RunSweepAsync("retire idle warm agents", RetireIdleWarmAgentsAsync, ct);
+
+        // And with settlements deferred waiting for a turn-ending response's own text (CARD-0046).
+        // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
+        // this is the one that already runs on a 5 s cadence before the early return below.
+        sweepFailures += await RunSweepAsync("settle deferred reports", SettleDeferredReportsAsync, ct);
+
+        // And with running work that is DUE A LOOK (CARD-0047). This is where every other
+        // "running-work-gone-quiet" clock already lives, and check-due times have minute
+        // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
+        // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
+        sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -85,7 +126,7 @@ public sealed class AgentTaskDispatcher
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
         if (queued.Count == 0)
-            return new TickResult(0, 0, 0, 0, 0);
+            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
 
         // Shared tasks that declare overlapping file scopes must not run concurrently — the second
         // waits rather than racing on read-modify-write. This is the cost of Shared being the
@@ -146,7 +187,44 @@ public sealed class AgentTaskDispatcher
             }
         }
 
-        return new TickResult(queued.Count, dispatched, skippedConcurrency, skippedScope, failures);
+        return new TickResult(
+            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures);
+    }
+
+    /// <summary>
+    /// Run one of the tick's clocks so that its failure costs ONLY itself.
+    ///
+    /// <para>Every sweep here scans the whole table, so any one of them can meet a row, a session or
+    /// a downstream service that throws — and the condition is usually persistent, so it repeats on
+    /// every 5 s tick. Bare-awaited, that made the tick a chain: a throw in the second sweep meant
+    /// the third, fourth and fifth never ran and nothing was dispatched, indefinitely, and the only
+    /// evidence was a "Delegation dispatch tick failed" warning that named neither the dead clock
+    /// nor its casualties. A check-in that silently stopped firing because the settlement sweep met
+    /// a bad session is exactly the failure this shape prevents.</para>
+    ///
+    /// <para>Error, not Warning: a clock that is not running is not a transient hiccup, and it is
+    /// also counted into <see cref="TickResult.SweepFailures"/> so the caller can see the tick ran
+    /// degraded without reading the log.</para>
+    ///
+    /// <para>A cancellation that is OUR cancellation is shutdown and rethrown. Every other
+    /// <see cref="OperationCanceledException"/> is a timeout wearing the same type (an HttpClient
+    /// timeout is a TaskCanceledException) and is a transient failure like any other.</para>
+    /// </summary>
+    private async Task<int> RunSweepAsync(
+        string name, Func<CancellationToken, Task<int>> sweep, CancellationToken ct)
+    {
+        try
+        {
+            await sweep(ct);
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex, "Delegation sweep '{Sweep}' failed and did nothing this tick; "
+                + "the remaining sweeps and dispatching continue", name);
+            return 1;
+        }
     }
 
     /// <summary>
@@ -344,6 +422,201 @@ public sealed class AgentTaskDispatcher
         return failed;
     }
 
+    /// <summary>
+    /// The clock behind CARD-0046's grace window. Settlement defers when the turn-ending response
+    /// has not written its own text yet; the ordinary resolution is the text's own arrival
+    /// re-triggering <see cref="AgentTaskReplyService.OnTurnEndAsync"/>. But a response that never
+    /// writes text at all is real — 1 in 180 measured, a lone <c>end_turn</c> thinking record
+    /// followed by "API Error: Connection lost mid-response" — and nothing would ever come back for
+    /// it, so that task would sit Dispatched until the 10-minute delivery watchdog killed it.
+    ///
+    /// Deliberately NARROW: it re-invokes settlement only for a session whose LATEST TurnEnd is
+    /// still missing its own response's text past the grace. Every other running task is left
+    /// untouched rather than being re-settled on a cadence.
+    ///
+    /// <para>Slice 4 adds the second clock, for the same reason: a turn that launched BACKGROUND
+    /// subagents defers until their notifications return, and a subagent can die without ever
+    /// notifying. That one is measured from the session's last transcript entry — a notification
+    /// arriving resets it — and it is self-limiting, because the settlement it triggers takes the
+    /// task out of Dispatched and out of this scan.</para>
+    /// </summary>
+    internal async Task<int> SettleDeferredReportsAsync(CancellationToken ct)
+    {
+        if (_replies is null)
+            return 0;
+        var finalMessageArmed = _settings.FinalMessageGraceSeconds > 0;
+        var subagentsArmed = _settings.SubagentGraceMinutes > 0;
+        if (!finalMessageArmed && !subagentsArmed)
+            return 0;
+
+        var cutoff = UtcNow() - TimeSpan.FromSeconds(_settings.FinalMessageGraceSeconds);
+        var subagentCutoff = UtcNow() - TimeSpan.FromMinutes(_settings.SubagentGraceMinutes);
+        var sessions = await _db.AgentTasks.AsNoTracking()
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.AgentSessionId != null)
+            .Select(t => t.AgentSessionId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var swept = 0;
+        foreach (var sessionId in sessions)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var end = await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.TurnEnd)
+                .OrderByDescending(e => e.Sequence)
+                .Select(e => new { e.ApiCallId, e.CreatedAt })
+                .FirstOrDefaultAsync(ct);
+            if (end is null)
+                continue; // no boundary at all — nothing has been deferred here
+
+            // (1) The turn-ending response never wrote its own text. No id to wait on, or still
+            // inside the grace, means nothing was deferred. CreatedAt, never the record's
+            // Timestamp: that one is backdated up to 30 s (CARD-0046).
+            if (finalMessageArmed && end.ApiCallId is string apiCallId && end.CreatedAt <= cutoff)
+            {
+                var landed = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
+                    e => e.AgentSessionId == sessionId
+                        && e.Kind == TranscriptKinds.AssistantText
+                        && e.ApiCallId == apiCallId, ct);
+                if (!landed)
+                {
+                    _logger.LogWarning(
+                        "Session {SessionId}: no text from the turn-ending response after {Grace}s — "
+                        + "settling on what the turn produced",
+                        sessionId, _settings.FinalMessageGraceSeconds);
+                    await _replies.OnTurnEndAsync(sessionId, ct);
+                    swept++;
+                    continue;
+                }
+            }
+
+            // (2) Background subagents that never notified. Silence on the WHOLE session is the
+            // signal — while they are working there is nothing else to write, and a notification
+            // landing resets the clock. Settlement itself decides whether any launch is actually
+            // outstanding; this is only the clock, and a no-op in every other case.
+            if (!subagentsArmed)
+                continue;
+            var lastEntryAt = await _db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (DateTime?)e.CreatedAt, ct);
+            if (lastEntryAt is DateTime quietSince && quietSince <= subagentCutoff)
+            {
+                _logger.LogDebug(
+                    "Session {SessionId}: silent for {Grace}+ minutes — re-checking settlement for "
+                    + "background subagents that never reported",
+                    sessionId, _settings.SubagentGraceMinutes);
+                await _replies.OnTurnEndAsync(sessionId, ct);
+                swept++;
+            }
+        }
+
+        return swept;
+    }
+
+    /// <summary>
+    /// The check-in sweep (CARD-0047 §1.1, §1.5). Selects tasks whose <see cref="AgentTask.NextCheckAt"/>
+    /// has come, advances the schedule, and hands the ids to <see cref="AgentTaskCheckQueue"/>.
+    ///
+    /// <para><b>It claims and hands off; it never runs a check.</b> <see cref="TickAsync"/> is serial
+    /// and runs every 5 s; a check takes seconds and, from slice 4, a model call. Awaiting one here
+    /// would stall dispatching for its duration, so the only thing this method does with a due task
+    /// is write its next schedule and drop the id on a channel.</para>
+    ///
+    /// <para><b>Re-arm BEFORE run.</b> The schedule is advanced and COMMITTED before the id is
+    /// handed off, so a crash (or a throwing check) costs one skipped check instead of a task that
+    /// is due forever and re-claimed on every 5 s tick. The claim itself is one conditional UPDATE
+    /// keyed on the values this sweep read, so two ticks — or two server instances — cannot both
+    /// claim the same check.</para>
+    ///
+    /// <para>Checking stops on three conditions, all handled here rather than in the worker: the
+    /// task leaving Dispatched/Working (the filter — settlement needs no bookkeeping), the caller's
+    /// session being gone or exited (nobody is listening, so the schedule is cleared), and the
+    /// check budget being spent (the last check still RUNS, and its note says the budget is spent).</para>
+    /// </summary>
+    internal async Task<int> RunScheduledChecksAsync(CancellationToken ct)
+    {
+        if (!_settings.CheckEnabled || _checkQueue is null)
+            return 0;
+
+        var now = UtcNow();
+        var due = await _db.AgentTasks.AsNoTracking()
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.NextCheckAt != null
+                && t.NextCheckAt <= now
+                && t.ReplyTo == AgentTaskReplyTo.Session
+                && t.ParentSessionId != null)
+            .OrderBy(t => t.NextCheckAt)
+            .ToListAsync(ct);
+
+        var claimed = 0;
+        foreach (var task in due)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!await CallerIsListeningAsync(task, ct))
+            {
+                // Disarm rather than keep gathering facts nobody will read. Not an error: a caller
+                // whose session ended has usually just finished with the run.
+                if (await ClaimCheckAsync(task, nextCheckAt: null, checkCount: task.CheckCount, ct))
+                {
+                    _logger.LogInformation(
+                        "Checks on task {ShortId} stopped — its caller session {SessionId} is gone",
+                        DelegationReportFormatter.Short(task.Id), task.ParentSessionId);
+                }
+                continue;
+            }
+
+            var checkNumber = task.CheckCount + 1;
+            var budgetSpent = checkNumber >= Math.Max(1, _settings.CheckMaxCount);
+            var nextCheckAt = budgetSpent
+                ? (DateTime?)null
+                : now + CheckSchedule.NextInterval(_settings, task.ExpectedDurationMinutes, checkNumber);
+
+            if (!await ClaimCheckAsync(task, nextCheckAt, checkNumber, ct))
+                continue; // another tick took this one
+
+            _checkQueue.TryEnqueue(task.Id);
+            claimed++;
+        }
+
+        return claimed;
+    }
+
+    /// <summary>
+    /// Advance the schedule atomically. The WHERE carries the values this sweep READ, so the update
+    /// applies exactly once even if two ticks race; a zero row count means someone else won.
+    /// </summary>
+    private async Task<bool> ClaimCheckAsync(
+        AgentTask task, DateTime? nextCheckAt, int checkCount, CancellationToken ct)
+    {
+        var seenNextCheckAt = task.NextCheckAt;
+        var seenCheckCount = task.CheckCount;
+        var rows = await _db.AgentTasks
+            .Where(t => t.Id == task.Id
+                && t.NextCheckAt == seenNextCheckAt
+                && t.CheckCount == seenCheckCount)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(t => t.NextCheckAt, nextCheckAt)
+                      .SetProperty(t => t.CheckCount, checkCount),
+                ct);
+        return rows > 0;
+    }
+
+    /// <summary>Is there still a caller session to deliver a check note into?</summary>
+    private async Task<bool> CallerIsListeningAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.ParentSessionId is not Guid parent)
+            return false;
+        return await _db.AgentSessions.AsNoTracking().AnyAsync(
+            s => s.Id == parent
+                && (s.Status == SessionStatus.Created
+                    || s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running),
+            ct);
+    }
+
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)
     {
         // Transactional claim: re-read under the concurrency token so a second tick (or another
@@ -436,6 +709,7 @@ public sealed class AgentTaskDispatcher
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
 
         agent.PersistentSessionId = session.Id.ToString("D");
         agent.Status = AgentStatus.Running;
@@ -460,7 +734,7 @@ public sealed class AgentTaskDispatcher
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
         // that normalises line endings, wraps in a bracketed paste, and submits with a separate CR.
         // A raw multi-line write fragments into several turns (documented live miss).
-        var brief = FitBriefForTyping(claimed);
+        var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger);
         try
         {
             await _queue.EnqueueAsync(
@@ -487,8 +761,30 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
+    /// Schedule the first check-in on a delegate that has just started running (CARD-0047 §1.2):
+    /// <c>NextCheckAt = DispatchedAt + ExpectedDurationMinutes</c>.
+    ///
+    /// <para>Only for <see cref="AgentTaskReplyTo.Session"/>. A task whose report lands on the board
+    /// alone has nobody to deliver a check note to, so arming one would gather facts and throw them
+    /// away — <see cref="AgentTask.NextCheckAt"/> stays null and the sweep never sees it.</para>
+    ///
+    /// <para>This is the ONLY thing <see cref="AgentTask.ExpectedDurationMinutes"/> does. It never
+    /// feeds the stall clock, the delivery watchdog, or any status transition: past its expected
+    /// duration a task is not late, it has merely reached the point where someone wanted a look.</para>
+    /// </summary>
+    private void ArmFirstCheck(AgentTask claimed, DateTime dispatchedAt)
+    {
+        if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)
+            return;
+
+        var expected = Math.Clamp(claimed.ExpectedDurationMinutes, 1, 1440);
+        claimed.NextCheckAt = dispatchedAt.AddMinutes(expected);
+        claimed.CheckCount = 0;
+    }
+
+    /// <summary>
     /// The brief as it will actually be TYPED. A brief past
-    /// <see cref="DelegationSettings.BriefInlineMaxChars"/> is written to a file and replaced by a
+    /// <see cref="DelegationSettings.BriefInlineMaxBytes"/> is written to a file and replaced by a
     /// pointer, because handing a body of any size to a pty is how the 2026-08-10 and 2026-08-11
     /// live misses happened: a 5 203-character brief arrived spliced mid-word, and four briefs of
     /// 1 366-2 320 characters arrived as their last chunk alone, losing the head that carried the
@@ -500,11 +796,29 @@ public sealed class AgentTaskDispatcher
     ///
     /// The full text is on the task row either way, so if the file cannot be written the pointer
     /// names the API instead; what we never do is type a body big enough to be silently mangled.
+    ///
+    /// <para>Static and internal so the gate itself — not a copy of its arithmetic — can be driven
+    /// end to end through a real ConPTY into a fake that CLIPS like the real TUI
+    /// (<c>DelegationBriefCeilingPtyTests</c>, CARD-0028). A ceiling nobody has watched survive the
+    /// transport is a number in a comment.</para>
+    ///
+    /// <para><paramref name="ceilings"/> is which pty is on the other end (CARD-0037). Null — every
+    /// caller that has no <see cref="PtyDeliveryProfile"/>, which is every test that predates it —
+    /// means the inbox conhost and the ceilings that shipped with it. The gate is never widened by
+    /// omission.</para>
     /// </summary>
-    private string FitBriefForTyping(AgentTask task)
+    internal static string FitBriefForTyping(
+        AgentTask task,
+        DelegationSettings settings,
+        PtyDeliveryCeilings? ceilings = null,
+        ILogger? logger = null)
     {
-        var brief = DelegationReportFormatter.BuildBrief(task, _settings);
-        if (brief.Length <= _settings.BriefInlineMaxChars)
+        var limits = ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+        var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars);
+        // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
+        // and an em-dash costs 3 of them (CARD-0027).
+        var briefBytes = System.Text.Encoding.UTF8.GetByteCount(brief);
+        if (briefBytes <= limits.BriefInlineMaxBytes)
             return brief;
 
         string? spillPath = null;
@@ -521,17 +835,17 @@ public sealed class AgentTaskDispatcher
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Not fatal: the API pointer needs no filesystem at all.
-            _logger.LogWarning(
+            logger?.LogWarning(
                 ex, "Task {ShortId}: could not write the brief spill file; pointing at the API instead",
                 DelegationReportFormatter.Short(task.Id));
         }
 
-        _logger.LogInformation(
-            "Task {ShortId}: brief is {Chars:N0} chars (> {Ceiling:N0}); delivering a pointer to {Where}",
-            DelegationReportFormatter.Short(task.Id), brief.Length, _settings.BriefInlineMaxChars,
-            spillPath ?? "the API");
+        logger?.LogInformation(
+            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0} on {Backend}); delivering a pointer to {Where}",
+            DelegationReportFormatter.Short(task.Id), briefBytes, limits.BriefInlineMaxBytes,
+            limits.Backend, spillPath ?? "the API");
 
-        return DelegationReportFormatter.BuildBriefPointer(task, _settings, spillPath, brief.Length);
+        return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length);
     }
 
     /// <summary>
@@ -741,6 +1055,7 @@ public sealed class AgentTaskDispatcher
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
 
         // The session's environment still holds the PREVIOUS task's raw token — env can't change
         // on a live process. So the previous task's hash moves to THIS task: the delegate keeps
@@ -811,7 +1126,7 @@ public sealed class AgentTaskDispatcher
                     MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
             }
 
-            var brief = FitBriefForTyping(task);
+            var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger);
             await _queue.EnqueueAsync(
                 session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
         }

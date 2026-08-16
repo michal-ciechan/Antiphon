@@ -40,16 +40,21 @@ public sealed class BoardService
                 b.Description,
                 b.TrackerKind,
                 b.MaxConcurrentSessions,
-                b.Cards.Count,
+                // Archived cards are off the board, so they are not what "this board has N cards"
+                // means to a reader of the list.
+                b.Cards.Count(c => c.ArchivedAt == null),
                 b.CreatedAt,
                 b.UpdatedAt))
             .ToListAsync(ct);
     }
 
-    public async Task<BoardDetailDto> GetByIdAsync(Guid id, CancellationToken ct)
+    public async Task<BoardDetailDto> GetByIdAsync(Guid id, CancellationToken ct) =>
+        await GetByIdAsync(id, includeArchived: false, ct);
+
+    public async Task<BoardDetailDto> GetByIdAsync(Guid id, bool includeArchived, CancellationToken ct)
     {
         var board = await LoadBoardAsync(id, ct);
-        return ToDetailDto(board);
+        return ToDetailDto(board, includeArchived);
     }
 
     public async Task<BoardDetailDto> CreateAsync(CreateBoardRequest request, CancellationToken ct)
@@ -116,9 +121,19 @@ public sealed class BoardService
         return new DeleteBoardResultDto(id, board.ProjectId, projectIsEmpty);
     }
 
-    internal static BoardDetailDto ToDetailDto(Board board)
+    internal static BoardDetailDto ToDetailDto(Board board) => ToDetailDto(board, includeArchived: false);
+
+    /// <remarks>
+    /// Archived cards are filtered HERE, not by a global EF query filter. A global filter would
+    /// also shrink <c>CardService.NextIdentifierAsync</c>'s view of the board, which is how the
+    /// identifier allocator learns a number is taken — and resurrect CARD-0005 (an archived
+    /// CARD-0007's number handed out again to a new card) for every card ever archived. A test
+    /// pins that.
+    /// </remarks>
+    internal static BoardDetailDto ToDetailDto(Board board, bool includeArchived)
     {
         var cardsByColumn = board.Cards
+            .Where(c => includeArchived || c.ArchivedAt == null)
             .GroupBy(c => c.BoardColumnId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Priority).ThenBy(c => c.CreatedAt).ToList());
 
@@ -193,7 +208,31 @@ public sealed class BoardService
                     s.FailureReason,
                     s.TuiProfileRevisionId,
                     s.EffectiveModelId))
-                .ToList());
+                .ToList(),
+            card.RevisionCount,
+            card.ArchivedAt,
+            card.ArchivedReason,
+            card.ArchivedBy);
+    }
+
+    internal static CardRevisionDto ToRevisionDto(CardRevision revision)
+    {
+        return new CardRevisionDto(
+            revision.Id,
+            revision.CardId,
+            revision.RevisionNumber,
+            revision.Kind,
+            revision.Title,
+            revision.Description,
+            revision.Priority,
+            revision.LabelsJson is null ? null : ParseLabels(revision.LabelsJson),
+            revision.FromColumnId,
+            revision.ToColumnId,
+            revision.FromStatus,
+            revision.ToStatus,
+            revision.Reason,
+            revision.EditedBy,
+            revision.CreatedAt);
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)
@@ -248,7 +287,7 @@ public sealed class BoardService
         };
     }
 
-    private static IReadOnlyList<string> ParseLabels(string labelsJson)
+    internal static IReadOnlyList<string> ParseLabels(string labelsJson)
     {
         if (string.IsNullOrWhiteSpace(labelsJson))
             return [];

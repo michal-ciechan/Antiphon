@@ -34,6 +34,7 @@ public sealed class SessionMessageQueueService
     private readonly DeliveryVerificationSettings _verification;
     private readonly Settings.ChannelBridgeSettings _bridgeSettings;
     private readonly DelegationSettings _delegationSettings;
+    private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
 
     public SessionMessageQueueService(
@@ -44,8 +45,10 @@ public sealed class SessionMessageQueueService
         ILogger<SessionMessageQueueService> logger,
         IOptions<SupervisionSettings>? supervisionSettings = null,
         IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null,
-        IOptions<DelegationSettings>? delegationSettings = null)
+        IOptions<DelegationSettings>? delegationSettings = null,
+        PtyDeliveryProfile? ptyProfile = null)
     {
+        _ptyProfile = ptyProfile;
         _scopeFactory = scopeFactory;
         _runtime = runtime;
         _eventBus = eventBus;
@@ -55,6 +58,22 @@ public sealed class SessionMessageQueueService
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
         _logger = logger;
     }
+
+    /// <summary>
+    /// The ceilings for the pty on the other end (CARD-0037). No profile — every test construction,
+    /// which passes none — is the inbox conhost and the numbers that shipped with it: the raised
+    /// paste-path ceilings are only ever reached by explicitly resolving the backend, never by
+    /// defaulting into them.
+    /// </summary>
+    private PtyDeliveryCeilings Ceilings =>
+        _ptyProfile?.Ceilings
+        ?? _delegationSettings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+
+    /// <summary>
+    /// Typing attempts a queued message gets before it parks for a human (CARD-0055). Floored at 1:
+    /// a misconfigured 0 would park every message on creation, i.e. deliver nothing at all.
+    /// </summary>
+    private int MaxAttempts => Math.Max(1, _verification.MaxDeliveryAttempts);
 
     /// <summary>Queue a message ("wait until idle") or deliver it immediately ("send now").</summary>
     public async Task<SessionQueueDto> EnqueueAsync(
@@ -195,10 +214,23 @@ public sealed class SessionMessageQueueService
             if (message.Status != QueuedMessageStatus.Pending)
                 throw new ConflictException("Message is no longer pending.");
 
+            // Same late-confirm as the automatic paths: a previously attempted message whose body
+            // is already in the transcript went in, and re-typing it here would put it in twice.
+            if (await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct) > 0)
+            {
+                var confirmed = await GetQueueAsync(sessionId, ct);
+                await PublishQueueChangedAsync(confirmed, ct);
+                return confirmed;
+            }
+
+            var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
             message.Status = QueuedMessageStatus.Sent;
             message.SentAt = UtcNow();
+            message.DeliveryAttempts++;
+            message.LastDeliveryStartedAt = UtcNow();
+            message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             await db.SaveChangesAsync(ct);
-            var verdict = await DeliverAsync(sessionId, message.Body, ct);
+            var verdict = await DeliverAsync(sessionId, message.Body, ct, baseline);
             if (verdict != DeliveryVerdict.Delivered)
             {
                 await HandleDeliveryFailureAsync(sessionId, [message.Id], verdict, ct);
@@ -265,9 +297,16 @@ public sealed class SessionMessageQueueService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Parked messages (CARD-0055: at MaxDeliveryAttempts) are excluded here and in the
+            // delegation query below. This watchdog is the automatic retry path, and parking means
+            // exactly "no automatic retry" — a session whose only pending message is parked must not
+            // even be woken up for it.
+            var maxAttempts = MaxAttempts;
             var pendingSessionIds = await db.SessionQueuedMessages
                 .AsNoTracking()
-                .Where(m => m.Status == QueuedMessageStatus.Pending && m.CreatedAt <= cutoff)
+                .Where(m => m.Status == QueuedMessageStatus.Pending
+                    && m.CreatedAt <= cutoff
+                    && m.DeliveryAttempts < maxAttempts)
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
@@ -291,6 +330,7 @@ public sealed class SessionMessageQueueService
                 .AsNoTracking()
                 .Where(m => m.Status == QueuedMessageStatus.Pending
                     && m.CreatedAt <= cutoff
+                    && m.DeliveryAttempts < maxAttempts
                     && m.Origin == QueuedMessageOrigin.Delegation)
                 .Select(m => m.AgentSessionId)
                 .Distinct()
@@ -328,8 +368,11 @@ public sealed class SessionMessageQueueService
                 flushed++;
                 _logger.LogInformation(
                     "Stranded-queue watchdog delivered a pending message to idle session {SessionId}", sessionId);
-                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
             }
+
+            // A late-confirm is not a delivery — nothing was typed — but the queue still changed.
+            if (result is FlushResult.Delivered or FlushResult.LateConfirmed)
+                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
         }
 
         return flushed;
@@ -363,6 +406,42 @@ public sealed class SessionMessageQueueService
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
     }
 
+    /// <summary>
+    /// NARROW flush for a manual compaction boundary (CARD-0041): deliver the next queued message
+    /// if the session is idle, and nothing else. A manual boundary IS a turn end for the working
+    /// rule — without a flush here, messages queued before the compaction sit until the stranded
+    /// watchdog's next sweep, which only serves always-on sessions (the CARD-0029 delegation brief
+    /// is the live case), and a session that never takes another turn never flushes at all.
+    ///
+    /// Deliberately NOT <see cref="OnTurnEndAsync"/>: an empty queue must NOT publish
+    /// <c>SessionFinished</c> (every idle /compact would fire a spurious "Agent finished" toast —
+    /// the SessionFinishedDuplicateTests domain), and the channel/review/task dispatchers must NOT
+    /// run (task settlement would be attempted against the STALE pre-compaction report, the exact
+    /// mis-settle CARD-0029 warns about). Compaction is not a report.
+    /// </summary>
+    public async Task FlushIfIdleAsync(Guid sessionId, CancellationToken ct)
+    {
+        var result = FlushResult.Nothing;
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Same Starting-session guard as the enqueue path: a boundary arriving while the TUI
+            // still boots must not put text in front of the launch's ready probe.
+            if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
+                result = await DeliverNextLockedAsync(db, sessionId, ct);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (result != FlushResult.Nothing)
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+    }
+
     // The DB session status is the ready gate: Starting means the launch's ready probe has not
     // yet seen an idle composer, so nothing may type into the terminal (see EnqueueAsync).
     private async Task<bool> IsAcceptingInputAsync(Guid sessionId, CancellationToken ct)
@@ -373,7 +452,7 @@ public sealed class SessionMessageQueueService
             .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
     }
 
-    private enum FlushResult { Nothing, Delivered, Failed }
+    private enum FlushResult { Nothing, Delivered, Failed, LateConfirmed }
 
     // Claims and delivers the oldest pending message (caller holds the per-session lock). With
     // batching enabled, a CONTIGUOUS head run of Channel-origin messages from the SAME conversation
@@ -389,6 +468,23 @@ public sealed class SessionMessageQueueService
         if (pending.Count == 0)
             return FlushResult.Nothing;
 
+        // THE anti-duplicate keystone (CARD-0055 D3): nothing may re-type a message that has been
+        // typed before without first asking the transcript whether it actually went in. A delivery
+        // fails verification for two very different reasons — the body never reached Claude, or it
+        // did and the matcher was blind (ingestion stall, a fork, a text transform) — and only the
+        // transcript can tell them apart. Automatic retry is safe BECAUSE the retry looks first.
+        var lateConfirmed = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
+        if (lateConfirmed > 0)
+            pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+
+        // Parked messages (at the attempts cap) stay Pending and visible, but no automatic path
+        // types them again — that is what "parks for a human" means. They are still late-confirmed
+        // above, so a park resolves itself if the body turns out to have landed.
+        var deliverable = pending.Where(m => m.DeliveryAttempts < MaxAttempts).ToList();
+        if (deliverable.Count == 0)
+            return lateConfirmed > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        pending = deliverable;
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
 
@@ -404,7 +500,7 @@ public sealed class SessionMessageQueueService
         if (batches)
         {
             var budget = head.Origin == QueuedMessageOrigin.Delegation
-                ? Math.Max(head.Body.Length, _delegationSettings.ReplyInlineMaxChars)
+                ? Math.Max(head.Body.Length, Ceilings.ReplyInlineMaxChars)
                 : int.MaxValue;
             var used = head.Body.Length;
 
@@ -424,18 +520,25 @@ public sealed class SessionMessageQueueService
             : ChannelPromptFormat.FormatBatch(
                 run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
 
+        // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
+        // attempt happened, and the baseline is what the next attempt's late-confirm reads. A crash
+        // between here and the write costs one attempt, which is the safe direction to be wrong in.
         var now = UtcNow();
+        var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
         foreach (var m in run)
         {
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = now;
+            m.DeliveryAttempts++;
+            m.LastDeliveryStartedAt = now;
+            m.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
         }
         await db.SaveChangesAsync(ct);
 
         DeliveryVerdict verdict;
         try
         {
-            verdict = await DeliverAsync(sessionId, body, ct);
+            verdict = await DeliverAsync(sessionId, body, ct, baseline);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -466,6 +569,60 @@ public sealed class SessionMessageQueueService
 
         await HandleDeliveryFailureAsync(sessionId, run.Select(m => m.Id).ToList(), verdict, ct);
         return FlushResult.Failed;
+    }
+
+    /// <summary>
+    /// CARD-0055 D3's late-confirm: for every Pending message that has already been typed at least
+    /// once, re-run the prompt matcher over the <c>UserPrompt</c> rows that arrived after that
+    /// attempt's stored baseline. A match means the body DID reach Claude — the first attempt's
+    /// verification was simply blind (ingestion stall, a mid-session fork, a slow tailer) — so the
+    /// message is marked Sent with ZERO writes to the terminal and never typed again.
+    ///
+    /// This is what makes the automatic retry above safe. The re-pressed Enter inside a delivery
+    /// cannot double-submit (empty composer, per-session lock); the place a duplicate to a human
+    /// could originate is a REDELIVERY that re-types, and this runs before every one of them.
+    ///
+    /// Two deliberate restrictions:
+    /// <list type="bullet">
+    /// <item>Text match only. The weak arm — "any UserPrompt past the baseline counts" — is fine
+    /// inside a 30-second confirm window but not here, where the window is however long the message
+    /// has sat Pending: some prompt will always have arrived. A short body that cannot be identified
+    /// by text is therefore redelivered rather than assumed delivered. Duplicating an auto-continue
+    /// is cheap; silently dropping a human's "yes please" is not.</item>
+    /// <item>A message with no stored baseline (the session had no observable transcript at attempt
+    /// time) is never late-confirmed — there is no floor, so a match would prove nothing.</item>
+    /// </list>
+    /// </summary>
+    private async Task<int> LateConfirmAttemptedMessagesAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending, CancellationToken ct)
+    {
+        if (!_verification.TranscriptConfirmEnabled)
+            return 0;
+
+        var confirmed = 0;
+        foreach (var m in pending)
+        {
+            if (m.DeliveryAttempts == 0 || m.LastDeliveryBaselineSequence is not { } floor)
+                continue;
+            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
+                continue;
+            if (!await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct))
+                continue;
+
+            m.Status = QueuedMessageStatus.Sent;
+            m.SentAt = UtcNow();
+            confirmed++;
+            _logger.LogInformation(
+                "Message {MessageId} on session {SessionId} late-confirmed: its body became a UserPrompt "
+                + "record past sequence {Baseline} after attempt {Attempt}, so it is marked Sent and the "
+                + "redelivery is skipped",
+                m.Id, sessionId, floor, m.DeliveryAttempts);
+        }
+
+        if (confirmed > 0)
+            await db.SaveChangesAsync(ct);
+
+        return confirmed;
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
@@ -511,7 +668,8 @@ public sealed class SessionMessageQueueService
     // Sibling of RecordTransportFailureAsync: surfaces an oversize delivery on the agent card and
     // the alert feed. Best-effort by design — an unowned session (no agent row) still gets the log
     // line above, and failing to record must never abort the delivery it is only annotating.
-    private async Task RecordOversizeAsync(Guid sessionId, int length, CancellationToken ct)
+    private async Task RecordOversizeAsync(
+        Guid sessionId, int length, PtyDeliveryCeilings ceilings, CancellationToken ct)
     {
         try
         {
@@ -525,9 +683,15 @@ public sealed class SessionMessageQueueService
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             await supervisor.RecordIncidentAsync(
                 agent.Id, sessionId, AgentIncidentKind.OversizedTerminalDelivery, AlertSeverity.Warning,
-                $"A {length:N0}-character message was typed into this terminal, over the {_delegationSettings.PtyInlineSafeChars:N0}-character "
-                + "size the pty has been measured to deliver intact. The middle of it may be missing "
-                + "without any visible sign — treat what the agent read as unverified.",
+                $"A {length:N0}-byte message was written into this terminal, past the "
+                + $"{ceilings.SingleWriteMaxBytes:N0} bytes measured to arrive whole on {ceilings.Backend}. "
+                + (ceilings.IsPastePath
+                    ? "Beyond that envelope nothing has been measured, and a paste the composer "
+                      + "abandons leaves NOTHING rather than a fragment."
+                    : "The receiving TUI keeps ONE read chunk per event-loop turn and discards the "
+                      + "rest, so part of this — the head, the middle, or all but one chunk — may be "
+                      + "missing.")
+                + " There is no visible sign either way. Treat what the agent read as unverified.",
                 ct: ct);
             await db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
@@ -538,14 +702,45 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput }
+    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord }
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
         DeliveryVerdict.NoComposerEvidence => "the typed message never appeared in the composer",
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
+        DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         _ => "delivered",
     };
+
+    /// <summary>
+    /// What the session's transcript looked like the instant before we typed. <see cref="Observable"/>
+    /// is the CARD-0055 observability gate: with no stored entry at all the transcript is either not
+    /// bound yet (a fresh session's launch note is queued before its JSONL exists — CARD-0006) or
+    /// binding failed, and there is no ground truth to confirm against. Degrade to the legacy
+    /// screen-only verdict there; never fail a delivery for want of a signal.
+    ///
+    /// <see cref="MaxSequence"/> is the confirmation floor. Stored sequences are ARRIVAL-ordered and
+    /// rebased past the session max (the 2026-08-08 backfill bullet), so anything ingested after
+    /// this moment sits strictly above it — backfill reordering can neither fake nor hide a match.
+    /// </summary>
+    private readonly record struct TranscriptBaseline(bool Observable, long MaxSequence);
+
+    private async Task<TranscriptBaseline> CaptureTranscriptBaselineAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await CaptureTranscriptBaselineAsync(db, sessionId, ct);
+    }
+
+    private static async Task<TranscriptBaseline> CaptureTranscriptBaselineAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var max = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+        return new TranscriptBaseline(max is not null, max ?? 0);
+    }
 
     // Inject text into the session terminal and submit it, reusing the runtime's input path (which also
     // kicks off manual-turn tracking). The body and the submitting carriage return are sent as two
@@ -556,10 +751,23 @@ public sealed class SessionMessageQueueService
     //
     // For Claude sessions the gap between the two writes is also the VERIFICATION window: the rendered
     // screen must show evidence of the typed body (ComposerDeliveryEvidence — the contract pinned by
-    // ClaudeComposerRenderCanaryTests) before the Enter is sent, and the output sequence must advance
-    // after it. A wedged terminal leaves neither fingerprint, and crucially the Enter is withheld so the
-    // message is never lost into a dead composer.
-    private async Task<DeliveryVerdict> DeliverAsync(Guid sessionId, string body, CancellationToken ct)
+    // ClaudeComposerRenderCanaryTests) before the Enter is sent. A wedged terminal leaves no
+    // fingerprint, and crucially the Enter is withheld so the message is never lost into a dead
+    // composer.
+    //
+    // What happens AFTER the Enter is CARD-0055's subject. "The output sequence advanced" used to be
+    // the delivery verdict, and it is satisfied by any redraw — a spinner, a status line, the composer
+    // re-rendering the text it is STILL HOLDING. Measured consequences (session cefed08a): one note
+    // marked Sent at 15:16:20Z did not reach Claude until 17:00:09Z, when the NEXT delivery's Enter
+    // pushed it in; the next note's own Enter submitted that STALE body, a new UserPrompt record duly
+    // appeared with the wrong text, and its own body died with the composer — never in the transcript
+    // at all. So a record ARRIVING is not confirmation either: the record's TEXT must be ours.
+    //
+    // <paramref name="stampedBaseline"/> is the floor the caller already captured and persisted on
+    // the message rows before typing; passing it through keeps the stored baseline and the one this
+    // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
+    private async Task<DeliveryVerdict> DeliverAsync(
+        Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -582,14 +790,26 @@ public sealed class SessionMessageQueueService
         // refusing would strand the message with no path forward — but never silently: the caller
         // paths that produce multi-KB bodies (delegation briefs and reports) now spill to a file
         // instead, so anything still arriving here is a case we have not yet given a file path to.
-        if (trimmed.Length > _delegationSettings.PtyInlineSafeChars)
+        // Measured in UTF-8 BYTES, because that is the unit loss is measured in (CARD-0027). This
+        // used to compare string.Length against PtyInlineSafeChars (4 000 CHARACTERS), which left
+        // everything from ~1 KB to 4 KB typed, clipped and silent — the window that swallowed four
+        // briefs on 2026-08-11 without raising a thing.
+        //
+        // WHERE the threshold sits is the pty's business, not ours (CARD-0037): on the inbox conhost
+        // it is one 1 024-byte read chunk, on the shipped modern pseudoconsole it is the 86 400-byte
+        // single write measured whole. The tripwire is not removed on the modern backend, only
+        // moved — anything past the measured envelope is past all evidence, and a delivery nobody
+        // has ever watched arrive is exactly what this exists to name.
+        var ceilings = Ceilings;
+        var bodyBytes = System.Text.Encoding.UTF8.GetByteCount(trimmed);
+        if (bodyBytes > ceilings.SingleWriteMaxBytes)
         {
             _logger.LogError(
-                "Delivering an OVERSIZED body to session {SessionId}: {Length:N0} chars exceeds the "
-                + "pty-safe ceiling of {Ceiling:N0}. The terminal may drop 1024-byte chunks from the "
-                + "middle and the recipient cannot tell. Give this path a spill file.",
-                sessionId, trimmed.Length, _delegationSettings.PtyInlineSafeChars);
-            await RecordOversizeAsync(sessionId, trimmed.Length, ct);
+                "Delivering an OVERSIZED body to session {SessionId}: {Bytes:N0} UTF-8 bytes is past "
+                + "the {Limit:N0}-byte single write measured whole on {Backend}. Beyond it we have no "
+                + "evidence the body survives, and the recipient cannot tell. Give this path a spill file.",
+                sessionId, bodyBytes, ceilings.SingleWriteMaxBytes, ceilings.Backend);
+            await RecordOversizeAsync(sessionId, bodyBytes, ceilings, ct);
         }
 
         var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);
@@ -602,6 +822,20 @@ public sealed class SessionMessageQueueService
             _logger.LogDebug(
                 "Delivery to session {SessionId} is unverifiable (no live snapshot); sending blind", sessionId);
             verify = false;
+        }
+
+        // The confirmation floor, captured BEFORE a byte is written: everything ingested from here
+        // on sits above it. Also the observability gate — a session with no transcript rows at all
+        // has no ground truth to confirm against, so it keeps the legacy screen-only verdict.
+        var baseline = verify && _verification.TranscriptConfirmEnabled
+            ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
+            : default;
+        var confirmTranscript = baseline.Observable;
+        if (verify && _verification.TranscriptConfirmEnabled && !confirmTranscript)
+        {
+            _logger.LogDebug(
+                "Delivery to session {SessionId} cannot be transcript-confirmed (no transcript entries "
+                + "yet — unbound or pre-first-turn); falling back to the screen-only verdict", sessionId);
         }
 
         // Multi-line bodies MUST travel as one bracketed paste (\e[200~..\e[201~): ConPTY chunks
@@ -628,8 +862,11 @@ public sealed class SessionMessageQueueService
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
         await _runtime.SendInputAsync(sessionId, "\r", ct);
 
-        if (sequenceBeforeSubmit is { } baseline
-            && !await WaitForSequenceAdvanceAsync(sessionId, baseline, ct))
+        if (confirmTranscript)
+            return await WaitForTranscriptConfirmAsync(sessionId, trimmed, baseline, sequenceBeforeSubmit, ct);
+
+        if (sequenceBeforeSubmit is { } advanceFrom
+            && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
         {
             _logger.LogWarning(
                 "Delivery verification failed for session {SessionId}: submit Enter produced no output "
@@ -639,6 +876,107 @@ public sealed class SessionMessageQueueService
         }
 
         return DeliveryVerdict.Delivered;
+    }
+
+    /// <summary>
+    /// CARD-0055's confirm loop, and the only thing that may now produce <c>Delivered</c> on a
+    /// transcript-observable Claude session: poll for a <c>UserPrompt</c> row past
+    /// <paramref name="baseline"/> whose text carries our body, re-pressing Enter every
+    /// <c>ReEnterIntervalSeconds</c> until <c>SubmitAttempts</c> is spent.
+    ///
+    /// The retry is ENTER-ONLY and this is not negotiable. If the first Enter really did submit,
+    /// the composer is empty and a re-press is a no-op (the documented <c>VerifiedSubmitOptions</c>
+    /// contract the boot path has relied on since 2026-08-08); the per-session queue lock guarantees
+    /// no OTHER body can be standing in the composer for a re-press to submit. Re-TYPING the body
+    /// would be the one move that can double-send to a human, so nothing here does it — and the
+    /// redelivery path that could (slice 3) late-confirms before it types.
+    ///
+    /// Both measured shapes resolve here: a swallowed Enter gets a re-press that submits the body
+    /// still held in the composer, and a stale-body submit produces a record whose text FAILS the
+    /// match, so the re-press submits ours and the next record matches.
+    /// </summary>
+    private async Task<DeliveryVerdict> WaitForTranscriptConfirmAsync(
+        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct)
+    {
+        var strong = PromptSubmissionMatch.RequiresTextMatch(body);
+        var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
+        var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
+        var lastEnter = UtcNow();
+        var entersSent = 1; // the caller's submitting Enter
+        var sawSequenceAdvance = false;
+
+        while (true)
+        {
+            if (await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct))
+            {
+                _logger.LogDebug(
+                    "Delivery to session {SessionId} confirmed by a UserPrompt record past sequence "
+                    + "{Baseline} after {Enters} Enter(s) ({Strength} match)",
+                    sessionId, baseline.MaxSequence, entersSent, strong ? "text" : "weak");
+                return DeliveryVerdict.Delivered;
+            }
+
+            // Kept only as a wedge signal for the log: a terminal that redrew but produced no record
+            // is a different failure from one that did nothing at all. It can no longer say Delivered.
+            if (!sawSequenceAdvance
+                && sequenceBeforeSubmit is { } from
+                && _runtime.TryGetLiveMetadata(sessionId, out var meta)
+                && meta.LastSequence > from)
+            {
+                sawSequenceAdvance = true;
+            }
+
+            if (UtcNow() >= deadline)
+            {
+                _logger.LogWarning(
+                    "Delivery verification failed for session {SessionId}: the body ({Length} chars) never "
+                    + "became a UserPrompt record past sequence {Baseline} within {Timeout}s after {Enters} "
+                    + "Enter(s); screen output {Advanced} in that window",
+                    sessionId, body.Length, baseline.MaxSequence,
+                    _verification.TranscriptConfirmTimeoutSeconds, entersSent,
+                    sawSequenceAdvance ? "DID advance (the terminal redrew but nothing was submitted)" : "never advanced");
+                return DeliveryVerdict.NoTranscriptRecord;
+            }
+
+            if (entersSent < _verification.SubmitAttempts && UtcNow() - lastEnter >= reEnterAfter)
+            {
+                _logger.LogInformation(
+                    "No transcript record yet for the delivery to session {SessionId}; pressing Enter again "
+                    + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
+                    + "submit, the composer is empty and this is a no-op",
+                    sessionId, entersSent + 1, _verification.SubmitAttempts);
+                await _runtime.SendInputAsync(sessionId, "\r", ct);
+                entersSent++;
+                lastEnter = UtcNow();
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+        }
+    }
+
+    // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
+    // transcript ingestion path is committing from its own scope, concurrently.
+    private async Task<bool> TryFindConfirmingRecordAsync(
+        Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct);
+    }
+
+    private static async Task<bool> TryFindConfirmingRecordAsync(
+        AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+    {
+        var texts = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > baselineSequence)
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+
+        return texts.Any(text => PromptSubmissionMatch.IsConfirmedBy(body, text));
     }
 
     private async Task<bool> WaitForComposerEvidenceAsync(
@@ -689,6 +1027,16 @@ public sealed class SessionMessageQueueService
     // the wedged session — the supervisor's ladder restarts it (resuming the SAME session row, so
     // the reverted message redelivers via the stranded-queue watchdog), and the kill guarantees a
     // fresh composer so redelivery cannot double-type.
+    //
+    // CARD-0055 adds two brakes to that kill. A session that is now WORKING is evidence the submit
+    // may have succeeded with the matcher blind — killing it would abort a live turn to settle a
+    // bookkeeping doubt, so it is left alone and the next turn-end flush late-confirms the message.
+    // The guard covers every verdict, not just NoTranscriptRecord, and costs no wedge recovery: a
+    // session that reads working already blocks every QUEUED delivery, so the only deliveries that
+    // can reach one are human-initiated (Now-mode / send-now), where killing is plainly wrong.
+    // And a message that has hit MaxDeliveryAttempts PARKS: still Pending and visible in the queue
+    // UI, but no automatic path types it again, and the incident escalates to Critical when the
+    // agent is channel-bound, because a parked channel reply is a human waiting on a dead line.
     private async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
     {
@@ -700,7 +1048,9 @@ public sealed class SessionMessageQueueService
             var agent = await db.Agents.FirstOrDefaultAsync(
                 a => a.PersistentSessionId == sessionId.ToString("D"), ct);
 
-            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert).
+            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert). The
+            // attempt metadata deliberately survives the revert — it is the retry brake.
+            var parked = 0;
             if (messageIds is { Count: > 0 })
             {
                 var messages = await db.SessionQueuedMessages
@@ -711,17 +1061,37 @@ public sealed class SessionMessageQueueService
                     message.Status = QueuedMessageStatus.Pending;
                     message.SentAt = null;
                 }
+                parked = messages.Count(m => m.DeliveryAttempts >= MaxAttempts);
             }
+
+            // Asked before the kill decision AND before the incident text is written, so both tell
+            // the same story.
+            var working = await IsWorkingAsync(db, sessionId, ct);
+            var kill = agent is { AlwaysOn: true } && !working;
 
             if (agent is not null)
             {
+                var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
+                var severity = parked > 0 && channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
+                var fate = parked > 0
+                    ? $" It has now failed {MaxAttempts} delivery attempts and is PARKED in the queue"
+                      + " for a human — nothing will retry it automatically."
+                      + (channelBound ? " This agent is channel-bound: someone is waiting on a reply." : string.Empty)
+                    : working
+                        ? " The session is mid-turn, so the submit may have succeeded unseen. The message"
+                          + " stays queued and is re-checked against the transcript before any redelivery."
+                        : " The message has been returned to the queue.";
+                var restart = kill
+                    ? " Restarting the session; a fresh composer is what makes redelivery safe."
+                    : agent.AlwaysOn && working
+                        ? " The session was NOT restarted — killing it would abort a live turn."
+                        : string.Empty;
+                var detail = fate + restart;
+
                 var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
                 await supervisor.RecordIncidentAsync(
-                    agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed, AlertSeverity.Error,
-                    $"Message delivery could not be verified: {Describe(verdict)}; the terminal looks wedged."
-                    + (agent.AlwaysOn
-                        ? " Restarting the session; the message stays queued and redelivers after the restart."
-                        : " The message has been returned to the queue."),
+                    agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed, severity,
+                    $"Message delivery could not be verified: {Describe(verdict)}." + detail,
                     ct: ct);
             }
 
@@ -730,7 +1100,7 @@ public sealed class SessionMessageQueueService
             if (agent is not null)
             {
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
-                if (agent.AlwaysOn)
+                if (kill)
                 {
                     var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
                     await sessions.KillAsync(sessionId, ct);
@@ -738,8 +1108,9 @@ public sealed class SessionMessageQueueService
             }
 
             _logger.LogWarning(
-                "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, alwaysOn={AlwaysOn}",
-                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false);
+                "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, "
+                + "alwaysOn={AlwaysOn}, working={Working}, killed={Killed}, parked={Parked}",
+                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false, working, kill, parked);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -756,11 +1127,22 @@ public sealed class SessionMessageQueueService
         // activity — an aborted turn writes NO TurnEnd, and counting the marker as activity left
         // the session permanently "working" and stranded every WhenIdle delivery (2026-07-29).
         // A SessionRestartBoundary is a turn end for the same reason: the relaunch proved the old
-        // turn's process is gone (2026-08-08).
+        // turn's process is gone (2026-08-08). A MANUAL compaction boundary is one too: /compact
+        // runs only between turns, and no TurnEnd is ever coming for it (2026-08-11, CARD-0041 —
+        // a compacted session read "working" for two days because TWO post-compaction records
+        // escaped the exclusions below: the RAW typed "/compact …" prompt, which Claude records in
+        // addition to the <command-name> wrapper, and the synthetic continuation prompt. Both are
+        // outranked once the boundary itself is the turn's end; the continuation is excluded from
+        // activity as well, because it lands AFTER the boundary). An AUTO boundary stays
+        // housekeeping — it fires mid-turn, so counting it as an end would read a working session
+        // as idle. Predicates inlined for EF translation, like the interrupt prefix.
         var end = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Kind == TranscriptKinds.TurnEnd
                     || t.Kind == TranscriptKinds.SessionRestartBoundary
+                    || (t.Kind == TranscriptKinds.CompactBoundary
+                        && t.Text != null
+                        && t.Text.Contains(TranscriptKinds.ManualCompactMarker))
                     || (t.Kind == TranscriptKinds.UserPrompt
                         && t.Text != null
                         && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
@@ -780,8 +1162,15 @@ public sealed class SessionMessageQueueService
                         || t.Text.StartsWith(TranscriptKinds.LocalCommandStdoutPrefix)))
                 // Compaction is idle-time housekeeping, not work: counting the boundary as
                 // activity would flip an idle session to permanently "working" (no TurnEnd ever
-                // follows), stranding every WhenIdle message — including the recovery note.
+                // follows), stranding every WhenIdle message — including the recovery note. The
+                // blanket exclusion stays: manual boundaries are ranked as ENDS above, and
+                // auto/trigger-less ones are neither activity nor an end.
                 && t.Kind != TranscriptKinds.CompactBoundary
+                // The synthetic "This session is being continued from a previous conversation…"
+                // record compaction writes: nobody typed it and no TurnEnd follows (CARD-0041).
+                && !(t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text != null
+                    && t.Text.StartsWith(TranscriptKinds.CompactionContinuationPromptPrefix))
                 && !(t.Kind == TranscriptKinds.UserPrompt
                     && t.Text != null
                     && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))

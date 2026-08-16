@@ -16,6 +16,15 @@
     get captured by that job and die when the runner is torn down. Running the exe directly
     removes that muxer job so pty-hosts survive a runner restart. Build-before-launch keeps
     the "soft restart picks up new code" behaviour 'dotnet run' gave us for free. ASCII-only.
+
+    Log rotation (CARD-0043): LogFile had NO retention - logs/fake-gateway.log reached 57 MB
+    unrolled. It is rotated HERE, at (re)launch, and nowhere else, because the service's
+    stdout is attached to it by a cmd.exe '>>' redirection that holds the handle open for the
+    whole service lifetime: the file can only be renamed while no service is running. Rolls
+    are pruned by age (LogRetainDays) and count (LogRetainCount), so worst case on disk is
+    LogMaxMb x (LogRetainCount + 1) per daemon. Cutting the WRITE RATE is the other half and
+    lives with each service (fake-gateway appsettings.json); rotation alone would still lose
+    a day of history to a noisy service.
 #>
 param(
     [string]$Name,
@@ -25,7 +34,10 @@ param(
     [string]$LogFile,
     [string]$ServicePidFile,
     [string]$StateFile,
-    [string]$BuildProjectDir = ''
+    [string]$BuildProjectDir = '',
+    [int]$LogMaxMb = 20,
+    [int]$LogRetainDays = 5,
+    [int]$LogRetainCount = 10
 )
 
 $ErrorActionPreference = 'Continue'
@@ -48,6 +60,45 @@ function Get-DesiredState {
     try { (Get-Content -LiteralPath $StateFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower() } catch { 'running' }
 }
 
+# Roll $LogFile aside when it is over the cap, then prune old rolls. Only safe here, between
+# service runs: while a service is up, cmd.exe holds the log handle for the '>>' redirection.
+function Invoke-LogRotation {
+    if ($LogMaxMb -le 0) { return }
+    try {
+        $item = Get-Item -LiteralPath $LogFile -ErrorAction SilentlyContinue
+        if ($item -and $item.Length -gt ($LogMaxMb * 1MB)) {
+            $dir     = Split-Path $LogFile -Parent
+            $base    = [System.IO.Path]::GetFileNameWithoutExtension($LogFile)
+            $ext     = [System.IO.Path]::GetExtension($LogFile)
+            $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $rolled  = Join-Path $dir "$base.$stamp$ext"
+            Move-Item -LiteralPath $LogFile -Destination $rolled -Force -ErrorAction Stop
+            Write-Log ("Rotated log at {0:N1} MB -> {1}" -f ($item.Length / 1MB), (Split-Path $rolled -Leaf))
+        }
+    } catch {
+        # A locked or vanished log must never stop the service from starting.
+        Write-Log "[WRN] Log rotation skipped: $_"
+        return
+    }
+
+    try {
+        $dir  = Split-Path $LogFile -Parent
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($LogFile)
+        $ext  = [System.IO.Path]::GetExtension($LogFile)
+        $rolls = @(Get-ChildItem -LiteralPath $dir -Filter "$base.*$ext" -File -ErrorAction SilentlyContinue |
+                   Where-Object { $_.BaseName -match "^$([regex]::Escape($base))\.\d{8}-\d{6}$" } |
+                   Sort-Object LastWriteTime -Descending)
+        $cutoff = (Get-Date).AddDays(-$LogRetainDays)
+        for ($i = 0; $i -lt $rolls.Count; $i++) {
+            if ($i -ge $LogRetainCount -or $rolls[$i].LastWriteTime -lt $cutoff) {
+                Remove-Item -LiteralPath $rolls[$i].FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        Write-Log "[WRN] Log prune skipped: $_"
+    }
+}
+
 Write-Log "Supervisor started (PID $PID)"
 
 while ($true) {
@@ -57,6 +108,8 @@ while ($true) {
         Remove-Item $ServicePidFile -ErrorAction SilentlyContinue
         exit 0
     }
+
+    Invoke-LogRotation
 
     # Build before launch so a soft restart (kill the service; the loop relaunches) picks up
     # new code, exactly as 'dotnet run' did - but we then launch the built exe directly so no

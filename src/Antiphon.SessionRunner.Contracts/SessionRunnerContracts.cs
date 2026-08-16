@@ -116,11 +116,54 @@ public static class TranscriptKinds
 
     /// <summary>
     /// A context compaction boundary (Claude Code JSONL: type=system, subtype=compact_boundary —
-    /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). NOT a turn
-    /// end, and excluded from working/idle activity checks — compaction is normal idle-time
-    /// housekeeping, not agent work.
+    /// shape pinned by ClaudeCompactionCanaryTests / Fixtures/compact-boundary.jsonl). Never a turn
+    /// end at the NORMALIZER level (no stop_reason is emitted), and never activity — compaction is
+    /// housekeeping, not agent work. For the working/idle rules the trigger decides: a MANUAL
+    /// boundary counts as a turn END (see <see cref="IsManualCompactBoundary"/>), an auto/unknown
+    /// one stays pure housekeeping (CARD-0041).
     /// </summary>
     public const string CompactBoundary = "CompactBoundary";
+
+    /// <summary>
+    /// The trigger marker <c>TranscriptNormalizer.FromSystem</c> writes into a boundary's text
+    /// ("Context compacted ({trigger})"). A MANUAL <c>/compact</c> only ever runs BETWEEN turns, so
+    /// its boundary proves the previous turn is over and counts as that turn's end — nothing else
+    /// ever will, since compaction makes no API call and writes no TurnEnd (live miss 2026-08-11,
+    /// CARD-0041: a compacted session read "working" for two days and stranded its delegation
+    /// brief). An AUTO boundary is the opposite: auto-compaction fires when a request starts over
+    /// the context threshold, i.e. MID-turn, so treating it as an end would inject a WhenIdle
+    /// message into a working composer and feed a false "proven idle" to the runner's CPU watchdog.
+    /// A boundary with no trigger in its text (old rows) stays housekeeping — the conservative read.
+    /// </summary>
+    public const string ManualCompactMarker = "(manual)";
+
+    /// <summary>True when a transcript entry is a MANUAL compaction boundary (see <see cref="ManualCompactMarker"/>).</summary>
+    public static bool IsManualCompactBoundary(string? kind, string? text) =>
+        kind == CompactBoundary
+        && text is not null
+        && text.Contains(ManualCompactMarker, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Compaction writes a synthetic USER record carrying the summary of the conversation so far.
+    /// Nobody typed it, NO TurnEnd follows it, and counting it as activity left a compacted session
+    /// reading "working" forever with every WhenIdle delivery stranded (live miss 2026-08-11,
+    /// CARD-0041). The real record carries <c>isCompactSummary: true</c>, but matching is by TEXT:
+    /// the rule must also heal already-stored rows, and the client only ever sees the text.
+    /// <para>The prefix stops where the wording starts varying, and that is MEASURED, not cautious:
+    /// the 2026-08-11 live record read "…from a previous conversation THAT RAN OUT OF CONTEXT. The
+    /// summary below covers…" while the 2026-08-13 canary capture read "…from a previous
+    /// conversation. The summary below covers…" — same CLI family, same manual trigger. Do not
+    /// lengthen this constant past the common prefix (fixture:
+    /// tests/Antiphon.Tests/Agents/Fixtures/compact-full-manual.jsonl).</para>
+    /// </summary>
+    public const string CompactionContinuationPromptPrefix =
+        "This session is being continued from a previous conversation";
+
+    /// <summary>True when a transcript entry is a compaction continuation prompt (see <see cref="CompactionContinuationPromptPrefix"/>).</summary>
+    public static bool IsCompactionContinuationPrompt(string? kind, string? text) =>
+        kind == UserPrompt
+        && text is not null
+        && text.TrimStart().StartsWith(CompactionContinuationPromptPrefix, StringComparison.Ordinal);
 
     /// <summary>
     /// SERVER-SYNTHESIZED (never read from a JSONL): written when a session is relaunched and its
@@ -166,6 +209,115 @@ public static class TranscriptKinds
         var trimmed = text.TrimStart();
         return trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal)
             || trimmed.StartsWith(LocalCommandStdoutPrefix, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The command a <see cref="IsLocalCommandRecord"/> wrapper invoked ("/compact"), read out of
+    /// its <c>&lt;command-name&gt;</c> tag — or null when this is not such a record. The wrapper is
+    /// the PROOF that the text Claude also recorded verbatim was a local command and not a prompt;
+    /// see <see cref="IsRawLocalCommandEcho"/>.
+    /// </summary>
+    public static string? TryReadLocalCommandName(string? kind, string? text)
+    {
+        if (kind != UserPrompt || text is null)
+            return null;
+        var trimmed = text.TrimStart();
+        if (!trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal))
+            return null;
+
+        var close = trimmed.IndexOf("</command-name>", StringComparison.Ordinal);
+        if (close <= LocalCommandPrefix.Length)
+            return null;
+        var name = trimmed[LocalCommandPrefix.Length..close].Trim();
+        return name.Length == 0 ? null : name;
+    }
+
+    /// <summary>
+    /// True when this USER record is the literal text a local slash-command was typed as. Claude
+    /// records that raw line as a plain user record IN ADDITION to the
+    /// <see cref="IsLocalCommandRecord"/> wrapper (CARD-0041), so a transcript carries the same
+    /// <c>/compact …</c> twice in two different shapes.
+    ///
+    /// <para>Matching raw <c>/</c>-prefixed text ON ITS OWN stays rejected — a real prompt may begin
+    /// with a slash — so this needs <paramref name="invokedCommands"/>: the command names actually
+    /// read out of wrappers in the same span (<see cref="TryReadLocalCommandName"/>). A command that
+    /// exists produces a wrapper and matches here; a prompt that merely starts with a slash produces
+    /// no wrapper and cannot.</para>
+    ///
+    /// <para>SETTLEMENT ONLY. No working/idle rule may consume it: there the manual compact boundary
+    /// already outranks this record (CARD-0041), and reproducing the judgement in three lockstep
+    /// implementations would be three chances to disagree.</para>
+    /// </summary>
+    public static bool IsRawLocalCommandEcho(
+        string? kind, string? text, IReadOnlyCollection<string> invokedCommands)
+    {
+        if (kind != UserPrompt || text is null || invokedCommands.Count == 0)
+            return false;
+        if (IsLocalCommandRecord(kind, text))
+            return false;
+
+        var trimmed = text.TrimStart();
+        foreach (var name in invokedCommands)
+        {
+            if (name.Length == 0 || !trimmed.StartsWith(name, StringComparison.Ordinal))
+                continue;
+            // "/compact" must not match a prompt that opens "/compacting is broken" — the
+            // invocation ends at the command name or at whitespace before its arguments.
+            if (trimmed.Length == name.Length || char.IsWhiteSpace(trimmed[name.Length]))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Claude Code's built-in subagent tool, as it appears in a ToolCall's tool name.</summary>
+    public const string AgentToolName = "Agent";
+
+    /// <summary>
+    /// The head of the ToolResult Claude Code returns for a BACKGROUND <see cref="AgentToolName"/>
+    /// spawn: "Async agent launched successfully. (This tool result is internal metadata …)". A
+    /// synchronous Agent call returns the subagent's actual answer instead, so this string is what
+    /// separates "the work is done" from "the work has not started" (pinned from session ac09cffd
+    /// seq 11; the launch itself is invisible to Antiphon — the built-in tool is not a delegate).
+    /// </summary>
+    public const string AsyncAgentLaunchMarker = "Async agent launched";
+
+    /// <summary>
+    /// The USER record Claude Code writes when a background subagent finishes. It carries the
+    /// subagent's whole report and is NOT a prompt anybody typed — a turn that answers one is still
+    /// answering the brief that launched it.
+    /// </summary>
+    public const string TaskNotificationPrefix = "<task-notification>";
+
+    /// <summary>True when a transcript entry is a background-subagent notification.</summary>
+    public static bool IsTaskNotificationPrompt(string? kind, string? text) =>
+        kind == UserPrompt
+        && text is not null
+        && text.TrimStart().StartsWith(TaskNotificationPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The <c>toolu_…</c> id a notification answers, read out of its <c>&lt;tool-use-id&gt;</c> tag.
+    /// This is the STRONG link between a launch and its completion: pairing by id makes four
+    /// launches and three notifications an unambiguous "one still running", where counting them
+    /// would have to assume nothing else ever launches an agent in the same turn.
+    /// </summary>
+    public static string? TryReadNotifiedToolUseId(string? text)
+    {
+        if (text is null)
+            return null;
+
+        const string open = "<tool-use-id>";
+        const string close = "</tool-use-id>";
+        var start = text.IndexOf(open, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        start += open.Length;
+        var end = text.IndexOf(close, start, StringComparison.Ordinal);
+        if (end <= start)
+            return null;
+
+        var id = text[start..end].Trim();
+        return id.Length == 0 ? null : id;
     }
 }
 
@@ -244,6 +396,26 @@ public static class TranscriptBindMethods
     /// <summary>Restart re-adopt of a session that predates sidecars (see the migration shim).</summary>
     public const string MigrationShim = "migration-shim";
 }
+
+/// <summary>
+/// What this runner's sessions are actually served by (<c>GET /capabilities</c>).
+///
+/// <para>The delivery ceilings are COUPLED to the pseudoconsole (CARD-0037): the inbox conhost
+/// strips the bracketed-paste markers and clips every body at ~1 KB, the shipped modern pair
+/// forwards them and takes 86 400 bytes in one write. The server sizes bodies against ONE of those
+/// two envelopes, so it must be able to ASK rather than assume its own environment matches the
+/// runner's — a server configured <c>modern</c> in front of an inbox runner would type bodies 48x
+/// larger than that pty can carry, silently.</para>
+/// </summary>
+/// <param name="PtyBackend"><c>InboxConhost</c> or <c>ModernConPty</c> — the resolved value, not the request.</param>
+/// <param name="PtyBackendRequested">The raw flag value that was resolved.</param>
+/// <param name="PtyBackendReason">Human-readable explanation, always populated.</param>
+/// <param name="PtyBackendFellBack">True when modern was asked for and the redistributable was not there.</param>
+public sealed record RunnerCapabilitiesDto(
+    string PtyBackend,
+    string PtyBackendRequested,
+    string PtyBackendReason,
+    bool PtyBackendFellBack);
 
 public static class SessionRunnerEventNames
 {

@@ -81,6 +81,67 @@ public class TranscriptWorkingStateTests
         ]).ShouldBeTrue();
     }
 
+    // ---- CARD-0041, in FILE order (which is what this judgement always sees) ------------------
+    // The tailer's mirror follows the JSONL: raw typed prompt, boundary, continuation, wrapper,
+    // stdout. There is no timestamp override here — deliberately, since file order is truthful —
+    // so both halves of the fix have to carry their own weight.
+    private const string Continuation =
+        "This session is being continued from a previous conversation that ran out of context. "
+        + "The conversation is summarized below:";
+
+    [Test]
+    public void Manual_compaction_after_a_turn_is_proven_idle()
+    {
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.UserPrompt, "the real work"),
+            Evt(2, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(3, TranscriptKinds.UserPrompt, "/compact This session is being handed NEW work"),
+            Evt(4, TranscriptKinds.CompactBoundary, "Context compacted (manual)"),
+            Evt(5, TranscriptKinds.UserPrompt, Continuation),
+            Evt(6, TranscriptKinds.UserPrompt, "<command-name>/compact</command-name>"),
+            Evt(7, TranscriptKinds.UserPrompt, "<local-command-stdout>Compacted</local-command-stdout>"),
+        ]).ShouldBeTrue("a manual /compact runs between turns — the boundary is the previous turn's end");
+    }
+
+    [Test]
+    public void Continuation_prompt_after_a_manual_boundary_is_not_activity()
+    {
+        // The exclusion, alone: in file order the continuation lands AFTER the boundary, so
+        // boundary-as-end cannot rescue this one (and no timestamp override exists to).
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(2, TranscriptKinds.CompactBoundary, "Context compacted (manual)"),
+            Evt(3, TranscriptKinds.UserPrompt, Continuation),
+        ]).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Raw_slash_prefixed_prompt_with_no_boundary_is_not_idle()
+    {
+        // Matching raw "/"-prefixed text was rejected: a real prompt may start with a slash.
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(2, TranscriptKinds.UserPrompt, "/compact keep the API contract notes"),
+        ]).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Auto_compaction_boundary_mid_turn_is_not_proven_idle()
+    {
+        // Auto-compaction fires when a request starts over the context threshold — mid-turn. The
+        // CPU watchdog reads this verdict: "cannot prove idle" must never come back as idle.
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(2, TranscriptKinds.UserPrompt, "now do the big thing"),
+            Evt(3, TranscriptKinds.CompactBoundary, "Context compacted (auto)"),
+            Evt(4, TranscriptKinds.UserPrompt, Continuation),
+        ]).ShouldBeFalse();
+    }
+
     private static RunnerTranscriptEvent Evt(long seq, string kind, string? text = null, string? stopReason = null) =>
         new(
             Guid.Empty, seq, kind,

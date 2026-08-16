@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<BoardColumn> BoardColumns => Set<BoardColumn>();
     public DbSet<Card> Cards => Set<Card>();
     public DbSet<Agent> Agents => Set<Agent>();
+    public DbSet<CardRevision> CardRevisions => Set<CardRevision>();
     public DbSet<CardWorkflowRun> CardWorkflowRuns => Set<CardWorkflowRun>();
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
@@ -772,14 +773,24 @@ public class AppDbContext : DbContext
             entity.Property(c => c.AgentQueuePosition);
             entity.Property(c => c.Identifier).IsRequired().HasMaxLength(100);
             entity.Property(c => c.Title).IsRequired().HasMaxLength(300);
-            entity.Property(c => c.Description).HasMaxLength(4000);
+            // text, not varchar(n): the ceiling belongs in CardService.MaxDescriptionLength, where
+            // raising it is a one-line change instead of a migration. As varchar(4000) with no
+            // application check, an over-long description sailed past validation and came back as a
+            // raw 500 from Postgres ("22001: value too long") — the whole point of the fix.
+            entity.Property(c => c.Description).HasColumnType("text");
             entity.Property(c => c.Priority).IsRequired();
             entity.Property(c => c.LabelsJson).IsRequired().HasColumnType("jsonb");
             entity.Property(c => c.Status).IsRequired();
             entity.Property(c => c.ConcurrencyToken).IsConcurrencyToken();
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.Property(c => c.UpdatedAt).IsRequired();
-            entity.Property(c => c.TerminalReason).HasMaxLength(1000);
+            // Same treatment as Description, and for the same live failure: varchar(1000) turned a
+            // long close-out reason into a 500 twice while closing CARD-0042 and CARD-0046, and a
+            // review verdict had to be hand-trimmed to exactly 1000 characters to fit.
+            entity.Property(c => c.TerminalReason).HasColumnType("text");
+            entity.Property(c => c.ArchivedReason).HasColumnType("text");
+            entity.Property(c => c.ArchivedBy).HasMaxLength(200);
+            entity.Property(c => c.RevisionCount).IsRequired();
 
             entity.HasIndex(c => c.BoardId).HasDatabaseName("IX_Cards_BoardId");
             entity.HasIndex(c => c.BoardColumnId).HasDatabaseName("IX_Cards_BoardColumnId");
@@ -824,6 +835,32 @@ public class AppDbContext : DbContext
                 .WithOne()
                 .HasForeignKey<Card>(c => c.ActiveWorkflowRunId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CardRevision>(entity =>
+        {
+            entity.ToTable("CardRevisions");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CardId).IsRequired();
+            entity.Property(r => r.RevisionNumber).IsRequired();
+            entity.Property(r => r.Kind).IsRequired();
+            entity.Property(r => r.Title).HasMaxLength(300);
+            // text + application ceiling, matching Cards.Description — a revision holds a copy of
+            // exactly that value, so a tighter column here would 500 on the very edit it records.
+            entity.Property(r => r.Description).HasColumnType("text");
+            entity.Property(r => r.LabelsJson).HasColumnType("jsonb");
+            entity.Property(r => r.Reason).HasColumnType("text");
+            entity.Property(r => r.EditedBy).HasMaxLength(200);
+            entity.Property(r => r.CreatedAt).IsRequired();
+
+            entity.HasIndex(r => new { r.CardId, r.RevisionNumber })
+                .IsUnique()
+                .HasDatabaseName("IX_CardRevisions_CardId_RevisionNumber");
+
+            entity.HasOne(r => r.Card)
+                .WithMany(c => c.Revisions)
+                .HasForeignKey(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<CardWorkflowRun>(entity =>
@@ -976,6 +1013,7 @@ public class AppDbContext : DbContext
             entity.Property(m => m.Status).IsRequired();
             entity.Property(m => m.Sequence).IsRequired();
             entity.Property(m => m.CreatedAt).IsRequired();
+            entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
 
             // Pending messages for a session are flushed in FIFO order.
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
@@ -1192,6 +1230,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.CostPricingVersion).IsRequired().HasDefaultValue(0);
             entity.Property(t => t.CreatedAt).IsRequired();
             entity.Property(t => t.ConcurrencyToken).IsRequired();
+            // CARD-0047. Pre-existing rows get the shipped default expectation and no schedule:
+            // a task dispatched before this migration is never retro-armed.
+            entity.Property(t => t.ExpectedDurationMinutes).IsRequired().HasDefaultValue(10);
+            entity.Property(t => t.CheckCount).IsRequired().HasDefaultValue(0);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

@@ -26,13 +26,36 @@ namespace Antiphon.FakeClaude;
 ///    typed body before submitting; a fake that swallowed input silently would make every verified
 ///    delivery look wedged.
 ///  * <b>Readiness</b> — print a banner then go quiet, so the quiet-period ready detector settles.
-///  * <b>Compaction</b> — a submitted <c>/compact</c> (or <c>ANTIPHON_FAKE_COMPACT_AFTER_TURNS=N</c>
-///    after the Nth turn) renders the pinned <c>Compacted (ctrl+o to see full summary)</c> screen line
-///    with NO turn-end signal — compaction is not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set,
-///    a compact-boundary JSONL line is appended too (shape mirrors the canary fixture).
+///  * <b>Compaction</b> — a submitted <c>/compact</c>, with or without arguments (or
+///    <c>ANTIPHON_FAKE_COMPACT_AFTER_TURNS=N</c> after the Nth turn) renders the pinned
+///    <c>Compacted (ctrl+o to see full summary)</c> screen line with NO turn-end signal — compaction is
+///    not a turn. With <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c> set, the FULL measured record set is
+///    appended (CARD-0041): manual = raw typed prompt, <c>trigger:"manual"</c> boundary,
+///    <c>isCompactSummary</c> continuation, <c>isMeta</c> caveat, <c>&lt;command-name&gt;</c> +
+///    <c>&lt;local-command-stdout&gt;</c>; auto = <c>trigger:"auto"</c> boundary + continuation only
+///    (nothing was typed). Always on — this is transcript-shape modelling, not input-loss behaviour.
+///  * <b>Chunk clipping</b> (OPT-IN, <c>ANTIPHON_FAKE_STDIN_CLIP</c>) — the real TUI keeps ONE
+///    ~1024-byte read chunk per event-loop turn and silently discards the rest, which is how briefs
+///    arrived with their heads missing (CARD-0027). Default OFF: our transport is genuinely
+///    lossless and <c>PtyLargeWriteTests</c> pins that. See <see cref="StdinClipModel"/>.
+///    <b>Clipping is a property of TYPED input only</b> (CARD-0030/0037): content inside a
+///    bracketed paste is exempt, because the composer accumulates from <c>ESC[200~</c> to
+///    <c>ESC[201~</c> without the per-turn discard, and real Claude took 86 400 bytes that way in
+///    ONE write with zero loss while the same body unwrapped on the same binary still clipped.
+///  * <b>Paste placeholder</b> (OPT-IN, <c>ANTIPHON_FAKE_PASTE_PLACEHOLDER</c>) — a real paste of
+///    any size collapses in the composer to <c>[Pasted text #N +M lines]</c> and the body is not
+///    rendered at all, which is what delivery verification has to survive
+///    (<c>ComposerDeliveryEvidence</c>).
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
-///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>) line on turn end, in the shapes
-///    <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
+///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>, +<c>message.id</c>) line on turn end,
+///    in the shapes <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
+///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
+///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
+///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
+///    The thinking record therefore reaches consumers as a BARE <c>TurnEnd</c>, which is what
+///    settled six delegated tasks on their own preamble (CARD-0046). Default OFF: the one-record
+///    shape is also real (measured 40% of fable's <c>end_turn</c> responses, 78% of opus's), and it
+///    is what every existing transcript test counts.
 ///
 /// <para><b>Why timing, not read boundaries.</b> ConPTY does not preserve write boundaries as read
 /// boundaries — a single <c>WriteFile("body\r")</c> can surface to the child as one read or several, and
@@ -50,6 +73,9 @@ internal static class Program
     // OSC 0 ; U+2733 BEL — idle title, like Claude at turn end. (ConPTY usually consumes this; emitted anyway.)
     private const string IdleTitle = "\x1b]0;✳\x07";
 
+    /// <summary>Bracketed-paste opener, matched on the RAW bytes: the path decision precedes the decode.</summary>
+    private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
+
     // PINNED-BY: ClaudeCompactionCanaryTests — the screen line real Claude renders after a compaction.
     private const string CompactedScreenLine = "Compacted (ctrl+o to see full summary)";
 
@@ -60,6 +86,20 @@ internal static class Program
         var burstGapMs = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_BURST_MS"), out var g) ? g : 12;
         var compactAfterTurns = int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_AFTER_TURNS"), out var cat) ? cat : 0;
         var transcriptPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_TRANSCRIPT_PATH");
+        // OPT-IN (CARD-0046): write the turn-ending response as the TWO records real Claude writes —
+        // a signature-only thinking record, then the text record, sharing one message.id. Default
+        // OFF, like the clip model: the one-record shape is also real (f2bf457c settled correctly
+        // from it), and every existing transcript test counts lines.
+        var splitFinal = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SPLIT_FINAL") == "1";
+        // OPT-IN: models the real TUI dropping all but one read chunk per event-loop turn. Unset =
+        // null = the fake stays the lossless peer PtyLargeWriteTests pins. See StdinClipModel.
+        var clip = StdinClipModel.FromEnvironment();
+        // OPT-IN: collapse a bracketed paste to "[Pasted text #N +M lines]" instead of echoing it,
+        // the way the real composer does. Default OFF for two reasons — the exact line count at
+        // which real Claude collapses has not been MEASURED (defaulting it on would be modelling a
+        // guess), and every existing test that reads the fake's composer echo for the body it sent
+        // is a pin worth keeping. Tests that need the paste-path rendering ask for it.
+        var placeholder = PastePlaceholderModel.FromEnvironment();
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -72,11 +112,15 @@ internal static class Program
 
         // Startup banner, then quiet — lets the quiet-period readiness detector settle.
         Write(banner + "\r\n");
+        // Printed only when clipping is on, and it carries the SEED: a non-deterministic failure is
+        // only useful if it can be replayed.
+        if (clip is not null) Write(clip.Describe() + "\r\n");
+        if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
         if (debugInput)
         {
             var h = GetStdHandle(STD_INPUT_HANDLE);
             Write(GetConsoleMode(h, out var m)
-                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0}\r\n"
+                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0} cp={GetConsoleCP()}\r\n"
                 : "INMODE:unavailable\r\n");
         }
         // --echo-args: print the argv verbatim (newline-escaped) so tests can assert that args —
@@ -128,6 +172,9 @@ internal static class Program
         var turnCount = 0;
         // Inside a bracketed paste whose closing 201~ hasn't arrived yet (paste split across reads).
         var inPaste = false;
+        // What the current paste has accumulated, when the placeholder model is rendering it: the
+        // composer shows ONE placeholder for the whole paste, not one per read.
+        var pasteBuffer = new StringBuilder();
 
         while (true)
         {
@@ -161,6 +208,14 @@ internal static class Program
             if (current.Count > 0)
                 bursts.Add(current.ToArray());
 
+            // The burst grouping is load-bearing for BOTH submit semantics and the clip model (one
+            // burst = one event-loop turn), and ConPTY's read cadence is the thing that decides it.
+            // Printing the per-read arrival stamps makes that cadence observable instead of a
+            // guess — it is how the clip tests' burst-gap sizing was chosen.
+            if (debugInput)
+                Write($"READS:{drained.Count} bursts={bursts.Count} stamps=["
+                    + string.Join(",", drained.Select(d => $"{d.AtMs}:{d.Bytes.Length}")) + "]\r\n");
+
             foreach (var burst in bursts)
             {
                 if (!ProcessBurst(burst))
@@ -176,6 +231,34 @@ internal static class Program
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
+
+            // WHICH INPUT PATH this burst is on, decided before the clip model sees a byte.
+            //
+            // Clipping is what happens to TYPING (CARD-0027/0028): the composer keeps one read
+            // chunk per event-loop turn and drops the rest. A bracketed paste is a DIFFERENT code
+            // path — the composer accumulates from ESC[200~ until ESC[201~ and the per-turn discard
+            // never applies to it — and the difference is measured, not assumed: through a modern
+            // pseudoconsole real Claude took 86 400 bytes in one bracketed write with zero loss
+            // (2/2), while the identical body unwrapped on the SAME binary still lost 25%
+            // (CARD-0030). Our writes only ever took the typing path because the inbox conhost ate
+            // the markers before the TUI could see them; with those markers delivered, a fake that
+            // clipped anyway would assert a behaviour production no longer has — which is the exact
+            // drift CARD-0028 exists to prevent, in the other direction.
+            //
+            // Paste MODE, not "this burst has a marker": ConPTY splits one bracketed write across
+            // several reads and the continuation bursts carry no markers at all, so the exemption
+            // has to persist from 200~ to 201~ the way the real TUI's does.
+            var burstIsPaste = inPaste || Contains(burst, PasteStartBytes);
+
+            // The burst IS the event-loop turn: bytes that arrived without a quiet gap between
+            // them. Clipping (opt-in) keeps one read chunk of it and discards the rest, in UTF-8
+            // BYTES — before the string decode, because the read quantum the real TUI drops is
+            // measured in bytes and a char-based cut would disagree on any multibyte body.
+            if (clip is not null && !burstIsPaste)
+            {
+                burst = clip.Apply(burst, out var clipNote);
+                if (clipNote is not null) Write(clipNote + "\r\n");
+            }
 
             var chunk = Encoding.UTF8.GetString(burst);
             if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1")
@@ -206,19 +289,19 @@ internal static class Program
                 composer.Clear();
                 if (text.Length == 0) return true; // bare Enter on an empty composer — nothing to submit.
 
-                if (text == "/compact")
+                if (IsCompactCommand(text))
                 {
                     // Compaction is NOT a turn: no response echo, no " for Ns" done pattern.
                     Write("\r\n");
-                    Write("SUBMITTED:/compact\r\n");
-                    EmitCompaction(Write, transcriptPath);
+                    Write($"SUBMITTED:{text}\r\n");
+                    EmitManualCompaction(Write, transcriptPath, text);
                     return true;
                 }
 
-                SubmitTurn(Write, text, transcriptPath);
+                SubmitTurn(Write, text, transcriptPath, splitFinal);
                 turnCount++;
                 if (compactAfterTurns > 0 && turnCount == compactAfterTurns)
-                    EmitCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
+                    EmitAutoCompaction(Write, transcriptPath); // spontaneous (auto) compaction after the Nth turn
                 return true;
             }
 
@@ -237,7 +320,20 @@ internal static class Program
                 // Wrapped content is always literal, CRs included.
                 var pasted = chunk.Replace("\r\n", "\n").Replace('\r', '\n');
                 composer.Append(pasted);
-                Write(pasted.Replace("\n", "\r\n"));
+
+                if (placeholder is null)
+                {
+                    Write(pasted.Replace("\n", "\r\n"));
+                    return true;
+                }
+
+                // The real composer shows ONE placeholder for the whole paste, however many reads
+                // it took, and shows it once the paste closes — so accumulate until 201~.
+                pasteBuffer.Append(pasted);
+                if (inPaste) return true;
+
+                Write(placeholder.Render(pasteBuffer.ToString()) + "\r\n");
+                pasteBuffer.Clear();
                 return true;
             }
 
@@ -256,7 +352,7 @@ internal static class Program
                     Write("\r\n");
                     if (fragment.Length > 0)
                     {
-                        SubmitTurn(Write, fragment, transcriptPath);
+                        SubmitTurn(Write, fragment, transcriptPath, splitFinal);
                         turnCount++;
                     }
                 }
@@ -283,7 +379,8 @@ internal static class Program
     // they submit as real turns.
     private static readonly string[] LocalCommands = ["/clear", "/model", "/status", "/help", "/config"];
 
-    private static void SubmitTurn(Action<string> write, string text, string? transcriptPath)
+    private static void SubmitTurn(
+        Action<string> write, string text, string? transcriptPath, bool splitFinal = false)
     {
         // Deterministic, assertable echo. Slash-commands echo their name so slash routing/dispatch tests
         // can assert behaviour without depending on Claude's real (variable) output. Newlines in the
@@ -320,16 +417,82 @@ internal static class Program
         // Turn-end signals: the " for Ns" done pattern (survives ConPTY) AND the idle title (usually consumed).
         write("Crunched for 1s\r\n");
         write(IdleTitle);
-        if (transcriptPath is not null)
-            AppendTranscript(transcriptPath, JsonAssistantLine(echo));
+        if (transcriptPath is null)
+            return;
+
+        // ONE response, and it decides its own message.id up front — the two records below have to
+        // share it, because that shared id is the only thing that tells a consumer they are one
+        // response (CARD-0046).
+        var apiCallId = NewApiCallId();
+        if (splitFinal)
+        {
+            // The measured shape, in this order: the thinking record — signature only, thinking
+            // text EMPTY in all 1 936 thinking blocks measured — carrying the response's
+            // stop_reason, and therefore normalizing to a BARE TurnEnd. Then the text record, with
+            // the same stop_reason and the same id.
+            AppendTranscript(transcriptPath, JsonAssistantThinkingLine(apiCallId));
+        }
+        AppendTranscript(transcriptPath, JsonAssistantLine(echo, apiCallId));
     }
 
-    private static void EmitCompaction(Action<string> write, string? transcriptPath)
+    // Faithful, and safe for every existing test: within ONE record the AssistantText part is
+    // persisted before that record's TurnEnd part, so the same-id check settlement now makes
+    // (CARD-0046) passes and no fake-driven test defers.
+    private static string NewApiCallId() => $"msg_fake_{Guid.NewGuid():N}";
+
+    // "/compact" with or without arguments — arguments are the normal shape (the live CARD-0041
+    // session typed "/compact This session is being handed NEW, unrelated work…") and they are what
+    // produced the RAW user record that the working rule tripped over.
+    private static bool IsCompactCommand(string text) =>
+        text == "/compact" || text.StartsWith("/compact ", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A MANUAL <c>/compact</c>, modelled as the full record set real Claude writes (CARD-0041,
+    /// measured from session e77fb0a7's JSONL). All six records matter to the working/idle rules:
+    /// the RAW typed prompt and the continuation summary are the two that escaped the exclusions
+    /// and left a compacted session reading "working" forever, and the boundary's <c>manual</c>
+    /// trigger is what now ends the turn. Emitting only the boundary — as this fake used to — made
+    /// the bug unreproducible in tests.
+    /// </summary>
+    private static void EmitManualCompaction(Action<string> write, string? transcriptPath, string typedText)
     {
         write(CompactedScreenLine + "\r\n");
         write(IdleTitle);
-        if (transcriptPath is not null)
-            AppendTranscript(transcriptPath, JsonCompactBoundaryLine());
+        if (transcriptPath is null)
+            return;
+
+        // 1. The literal typed text, as a plain user record — NOT isMeta, NOT isCompactSummary.
+        AppendTranscript(transcriptPath, JsonUserLine(typedText));
+        // 2. The boundary itself.
+        AppendTranscript(transcriptPath, JsonCompactBoundaryLine("manual"));
+        // 3. Compaction's synthetic continuation prompt (carries isCompactSummary).
+        AppendTranscript(transcriptPath, JsonCompactSummaryLine());
+        // 4. The caveat, isMeta — the normalizer drops these, and this pins that it keeps doing so.
+        AppendTranscript(transcriptPath, JsonMetaUserLine(
+            "Caveat: The messages below were generated by the user while running local commands."));
+        // 5-6. The local-command wrapper pair, exactly as any other slash command writes them.
+        var commandArgs = typedText.Split(' ', 2, StringSplitOptions.None) is [_, var rest] ? rest : "";
+        AppendTranscript(transcriptPath, JsonUserLine(
+            "<command-name>/compact</command-name>\n"
+            + "            <command-message>compact</command-message>\n"
+            + $"            <command-args>{commandArgs}</command-args>"));
+        AppendTranscript(transcriptPath, JsonUserLine(
+            $"<local-command-stdout>{CompactedScreenLine}</local-command-stdout>"));
+    }
+
+    /// <summary>
+    /// AUTO compaction: fires when a request starts over the context threshold, i.e. MID-turn, with
+    /// nothing typed — so there is no raw prompt and no command-wrapper pair, and the trigger says
+    /// <c>auto</c>. The working rules must NOT read this boundary as a turn end.
+    /// </summary>
+    private static void EmitAutoCompaction(Action<string> write, string? transcriptPath)
+    {
+        write(CompactedScreenLine + "\r\n");
+        write(IdleTitle);
+        if (transcriptPath is null)
+            return;
+        AppendTranscript(transcriptPath, JsonCompactBoundaryLine("auto"));
+        AppendTranscript(transcriptPath, JsonCompactSummaryLine());
     }
 
     // JSONL lines in the shapes TranscriptNormalizer parses. The boundary shape must stay in sync with
@@ -342,22 +505,78 @@ internal static class Program
         message = new { role = "user", content = text },
     });
 
-    private static string JsonAssistantLine(string text) => JsonSerializer.Serialize(new
+    private static string JsonAssistantLine(string text, string? apiCallId = null) => JsonSerializer.Serialize(new
     {
         type = "assistant",
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
         message = new
         {
+            // The Anthropic message id, always present on a real assistant record. Emitting it is
+            // what lets anything below the service layer exercise same-response identity at all.
+            id = apiCallId ?? NewApiCallId(),
             role = "assistant",
             stop_reason = "end_turn",
             content = new object[] { new { type = "text", text } },
         },
     });
 
+    /// <summary>
+    /// The first record of a SPLIT turn-ending response (CARD-0046, measured from session 7f9d06a5,
+    /// response <c>msg_011Ce2Xog1xCJs9P</c>): a thinking block with an EMPTY <c>thinking</c> string
+    /// and a signature, stamped with the response's <c>stop_reason</c>. Because the text is empty,
+    /// <c>TranscriptNormalizer.FromAssistant</c> emits no Thinking part and the record yields a bare
+    /// <c>TurnEnd</c> and nothing else — which is the record settlement used to fire on while the
+    /// report was still 0.01-1.17 s away. Shares its id with the text record that follows.
+    /// </summary>
+    private static string JsonAssistantThinkingLine(string apiCallId) => JsonSerializer.Serialize(new
+    {
+        type = "assistant",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        message = new
+        {
+            id = apiCallId,
+            role = "assistant",
+            stop_reason = "end_turn",
+            content = new object[]
+            {
+                new { type = "thinking", thinking = "", signature = "FAKEsignature" },
+            },
+        },
+    });
+
+    // The synthetic user record compaction writes to carry the summary forward. The prefix is the
+    // one TranscriptKinds.CompactionContinuationPromptPrefix matches; isCompactSummary is the
+    // structural flag a future migration could key on instead (CARD-0041).
+    private static string JsonCompactSummaryLine() => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        isCompactSummary = true,
+        message = new
+        {
+            role = "user",
+            content = "This session is being continued from a previous conversation that ran out of "
+                + "context. The conversation is summarized below:\nFAKE summary of the conversation.",
+        },
+    });
+
+    // isMeta:true user records (caveats, command output) are system-injected, not the user talking —
+    // TranscriptNormalizer.FromUser drops them before any rule sees them.
+    private static string JsonMetaUserLine(string text) => JsonSerializer.Serialize(new
+    {
+        type = "user",
+        uuid = Guid.NewGuid().ToString(),
+        timestamp = DateTime.UtcNow.ToString("o"),
+        isMeta = true,
+        message = new { role = "user", content = text },
+    });
+
     // Key set mirrors the pinned fixture (tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl,
     // captured from claude 2.1.217 on 2026-07-22). PINNED-BY: ClaudeCompactionCanaryTests.
-    private static string JsonCompactBoundaryLine() => JsonSerializer.Serialize(new
+    private static string JsonCompactBoundaryLine(string trigger) => JsonSerializer.Serialize(new
     {
         parentUuid = (string?)null,
         logicalParentUuid = Guid.NewGuid().ToString(),
@@ -366,7 +585,7 @@ internal static class Program
         subtype = "compact_boundary",
         content = "Conversation compacted",
         level = "info",
-        compactMetadata = new { trigger = "manual", preTokens = 1000, postTokens = 100 },
+        compactMetadata = new { trigger, preTokens = 1000, postTokens = 100 },
         uuid = Guid.NewGuid().ToString(),
         timestamp = DateTime.UtcNow.ToString("o"),
         userType = "external",
@@ -383,6 +602,18 @@ internal static class Program
         if (string.IsNullOrEmpty(path)) return;
         try { File.AppendAllText(path, jsonLine + "\n"); }
         catch { /* transcript emission is best-effort test plumbing */ }
+    }
+
+    private static bool Contains(byte[] haystack, byte[] needle)
+    {
+        for (var i = 0; i + needle.Length <= haystack.Length; i++)
+        {
+            var match = true;
+            for (var j = 0; j < needle.Length && match; j++)
+                match = haystack[i + j] == needle[j];
+            if (match) return true;
+        }
+        return false;
     }
 
     private static string? GetArg(string[] args, string name)
@@ -442,6 +673,9 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleCP(uint wCodePageID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetConsoleCP();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);

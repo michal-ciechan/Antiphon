@@ -1,23 +1,30 @@
 import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbInfoCircle, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
-import type { CardDto } from '../../api/boards'
+import { TbHistory, TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
+import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
+import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
+import { CardEditModal } from './CardEditModal'
+import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
+import { MoveMenu } from './MoveMenu'
 import { SessionTabs } from './SessionTabs'
 import './CardModal.css'
 
 interface CardModalProps {
   boardId: string
   card: CardDto | null
+  /** The board's states, so the card can be moved from here. Empty on the all-boards view. */
+  columns?: BoardColumnDto[]
   opened: boolean
   onClose: () => void
 }
 
-export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
+export function CardModal({ boardId, card, columns = [], opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
   const spawnCard = useSpawnCard(boardId)
   const hasActiveSession = useMemo(
     () => card?.sessions.some((session) =>
@@ -30,6 +37,7 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
 
   if (!card) return null
   const description = card.description.trim()
+  const archived = !!card.archivedAt
   const activeSessionCount = card.sessions.filter((session) =>
     session.status === 'Starting' || session.status === 'Running' || session.status === 'Stopping',
   ).length
@@ -71,12 +79,19 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
         <Group className="card-page__header" justify="space-between" wrap="nowrap">
           <Stack gap={2} className="card-page__titleBlock">
             <Group gap={6} wrap="nowrap" className="card-page__titleLine">
-              <Badge color="gray" variant="outline">{card.identifier}</Badge>
+              <Badge color="gray" variant="outline" title={card.identifier}>
+                {displayIdentifier(card.identifier)}
+              </Badge>
               <Title order={3} className="card-page__title">
                 {card.title}
               </Title>
             </Group>
             <Group gap={6} wrap="nowrap" className="card-page__badges">
+              {archived && (
+                <Badge color="gray" variant="filled" title={card.archivedReason ?? undefined}>
+                  archived
+                </Badge>
+              )}
               <Badge variant="light">{card.status}</Badge>
               <Badge color="gray" variant="outline">P{card.priority}</Badge>
               {activeSessionCount > 0 && (
@@ -90,13 +105,34 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap" className="card-page__actions">
+            {/*
+              Not a pencil beside the title: identifier, title and badges already share one line
+              (and collapse further on a phone), and this group is where every other card-level
+              action sits.
+            */}
+            <ActionIcon variant="subtle" aria-label="Edit card" onClick={() => setEditing(true)}>
+              <TbPencil size={18} />
+            </ActionIcon>
+            {columns.length > 0 && (
+              <MoveMenu
+                boardId={boardId}
+                card={card}
+                columns={columns}
+                variant="button"
+                // The archived card leaves the default board payload, so this page would resolve
+                // to nothing anyway — closing explicitly is the difference between a clean exit
+                // and a modal that blinks out mid-refetch.
+                onArchived={onClose}
+              />
+            )}
             <AgentPicker value={definitionName} onChange={setDefinitionName} compact />
             <Button
               size="xs"
               leftSection={<TbPlayerPlay size={16} />}
               onClick={handleSpawn}
               loading={spawnCard.isPending}
-              disabled={hasActiveSession}
+              disabled={hasActiveSession || archived}
+              title={archived ? 'Unarchive this card before starting work on it' : undefined}
             >
               Spawn
             </Button>
@@ -118,6 +154,13 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
                     Diff
                   </Tabs.Tab>
                 )}
+                {/*
+                  `revisionCount` counts MOVES as well as edits, so it is a count and nothing
+                  else — never an "edited" badge.
+                */}
+                <Tabs.Tab value="history" leftSection={<TbHistory size={14} />}>
+                  History ({card.revisionCount})
+                </Tabs.Tab>
                 <Tabs.Tab value="details" leftSection={<TbInfoCircle size={14} />} className="card-page__detailsTab">
                   Details
                 </Tabs.Tab>
@@ -139,6 +182,14 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
                 </Tabs.Panel>
               )}
 
+              {/* `keepMounted={false}` above is what makes this lazy: the revisions query does
+                  not fire until the tab is first opened. */}
+              <Tabs.Panel value="history" className="card-page__panel">
+                <ScrollArea h="100%" type="auto" offsetScrollbars>
+                  <CardHistory cardId={card.id} columns={columns} />
+                </ScrollArea>
+              </Tabs.Panel>
+
               <Tabs.Panel value="details" className="card-page__panel card-page__detailsPanel">
                 <ScrollArea h="100%" type="auto" offsetScrollbars>
                   <CardDetails card={card} description={description} />
@@ -154,6 +205,10 @@ export function CardModal({ boardId, card, opened, onClose }: CardModalProps) {
           </Box>
         </Box>
       </Box>
+
+      {editing && (
+        <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
+      )}
     </Modal>
   )
 }

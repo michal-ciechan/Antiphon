@@ -34,6 +34,26 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool EchoTypedInputToScreen { get; set; } = true;
     public string SubmitAck { get; set; } = "\n";
     private readonly StringBuilder _composer = new();
+
+    // ---- CARD-0055: what happens to a submitted prompt AFTER the Enter --------------------------
+    //
+    // Real Claude writes the submitted prompt into its JSONL, the tailer ingests it and the server
+    // persists a UserPrompt row — that record is the ground truth a delivery is now confirmed
+    // against. Harnesses wire this to insert the row so the fake models a whole delivery, not just
+    // the composer half. Awaited inside SendInputAsync, so the row is committed by the time the
+    // confirm loop's first poll runs.
+    public Func<string, Task>? OnSubmitted { get; set; }
+
+    // The measured ea2feb92 composer state: the Enter is SWALLOWED — the screen still redraws (so
+    // "output advanced" is satisfied, which is exactly why the old verdict was wrong) but nothing
+    // is submitted and the composer keeps holding the body. A later Enter pushes it in.
+    public int SwallowSubmits { get; set; }
+
+    // The measured 15c9150e shape: the first Enter submits the PREVIOUS delivery's stale body. A
+    // new UserPrompt record really does appear — with the wrong text — while our body stays in the
+    // composer waiting for an Enter that the old code never sent.
+    public string? StaleSubmitBody { get; set; }
+    private bool _staleSubmitUsed;
     public int PromptOutputDelayMs { get; set; } = 10;
     public bool ReadyResult { get; set; } = true;
     public bool TurnCompleted { get; set; } = true;
@@ -132,16 +152,47 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     private readonly List<string> _submittedBodies = [];
     public IReadOnlyList<string> SubmittedBodies => _submittedBodies;
 
-    public Task SendInputAsync(string input, CancellationToken ct)
+    public async Task SendInputAsync(string input, CancellationToken ct)
     {
         SentInput += input;
         _inputs.Add(input);
         if (input == "\r")
         {
-            _submittedBodies.Add(_composer.ToString());
+            // Ordered so the two can compose: StaleSubmitBody claims the FIRST Enter (the measured
+            // 15c9150e shape), SwallowSubmits then eats the re-presses behind it.
+            if (StaleSubmitBody is { } stale && !_staleSubmitUsed)
+            {
+                // Someone else's body goes in; ours stays in the composer.
+                _staleSubmitUsed = true;
+                _submittedBodies.Add(stale);
+                if (SubmitAck.Length > 0)
+                    Emit(SubmitAck);
+                if (OnSubmitted is { } recordStale)
+                    await recordStale(stale);
+                return;
+            }
+
+            if (SwallowSubmits > 0)
+            {
+                // Swallowed: the screen redraws, the composer keeps the body, nothing is submitted.
+                SwallowSubmits--;
+                if (SubmitAck.Length > 0)
+                    Emit(SubmitAck);
+                return;
+            }
+
+            var submitted = _composer.ToString();
             _composer.Clear();
             if (SubmitAck.Length > 0)
                 Emit(SubmitAck);
+            // Enter on an EMPTY composer is a no-op — the contract the whole Enter-only re-press
+            // design leans on (slice 4 pins it against real Claude). Nothing submitted, no record.
+            if (submitted.Length == 0)
+                return;
+
+            _submittedBodies.Add(submitted);
+            if (OnSubmitted is { } record)
+                await record(submitted);
         }
         else if (EchoTypedInputToScreen)
         {
@@ -149,7 +200,6 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
             // as composer text on a real TUI, so strip them before echoing.
             _composer.Append(StripBracketedPasteMarkers(input));
         }
-        return Task.CompletedTask;
     }
 
     private static string StripBracketedPasteMarkers(string input) =>

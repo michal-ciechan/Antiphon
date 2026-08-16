@@ -95,6 +95,18 @@ public sealed class AgentTaskService
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
 
+        // Rejected rather than reinterpreted. 0 does NOT mean "never check" and a negative is not a
+        // silent default: opting a single task out of checking is not offered until someone needs
+        // it, and a caller who typed a nonsense number should hear about it (CARD-0047 §1.5).
+        var expectedMinutes = request.ExpectedMinutes ?? Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440);
+        if (expectedMinutes is < 1 or > 1440)
+        {
+            throw new ValidationException(
+                nameof(request.ExpectedMinutes),
+                $"Expected duration must be between 1 and 1440 minutes (got {expectedMinutes}). "
+                + "It is a hint that schedules the first check-in, not a deadline.");
+        }
+
         // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
         // task inherits that agent's directory (that is where the context lives) and its TIER —
         // the model is already running; a role policy cannot change it mid-session.
@@ -212,6 +224,9 @@ public sealed class AgentTaskService
             MaxAttempts = 2,
             CreatedAt = now,
             TokenHash = tokenHash,
+            // Stored RESOLVED — the row always carries a number, so nothing downstream has to know
+            // whether the caller declared one. NextCheckAt stays null until dispatch.
+            ExpectedDurationMinutes = expectedMinutes,
         };
 
         _db.AgentTasks.Add(task);
@@ -469,6 +484,10 @@ public sealed class AgentTaskService
         task.DispatchedAt = null;
         task.CompletedAt = null;
         task.ConcurrencyToken = Guid.NewGuid();
+        // A new attempt gets a new check schedule: the old NextCheckAt was measured from a dispatch
+        // that no longer exists, and the previous attempt's checks are not this one's budget.
+        task.NextCheckAt = null;
+        task.CheckCount = 0;
 
         // Result and FailureReason are deliberately KEPT: they are the handoff the next attempt gets
         // (DelegationReportFormatter.BuildBrief), and the drawer still shows what the last try said.
@@ -606,6 +625,7 @@ public sealed class AgentTaskService
             MaxAttempts = 2,
             CreatedAt = now,
             TokenHash = tokenHash,
+            ExpectedDurationMinutes = Math.Clamp(_settings.DefaultExpectedMinutes, 1, 1440),
         };
 
         _db.AgentTasks.Add(task);
@@ -709,7 +729,8 @@ public sealed class AgentTaskService
             task.AgentSessionId, task.Attempt,
             task.CreatedAt, task.DispatchedAt, task.CompletedAt,
             task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
-            task.CostUsd, task.CostPricingVersion, subtreeCost, childCount);
+            task.CostUsd, task.CostPricingVersion, subtreeCost, childCount,
+            task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount);
     }
 
     private static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)

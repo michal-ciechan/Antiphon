@@ -52,6 +52,14 @@ var server = builder
     // would load appsettings.Production.json.
     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
     .WithEnvironment("ChannelBridge__Enabled", "true")
+    // The modern pseudoconsole, ON for this deployment (CARD-0037 step 3). The session-runner gets
+    // it from its own appsettings (SessionRunner:PtyBackend) and its detached pty-hosts inherit
+    // that; this is the server's half — its in-proc pty adapters and, through PtyDeliveryProfile,
+    // the delivery ceilings every typed body is sized against. The two are resolved independently
+    // and PtyDeliveryProfile verifies they agree before it uses the raised ceilings, so a machine
+    // where the redistributable is missing falls back to the inbox conhost with the old ceilings
+    // rather than typing 43 KB into a pty that clips at 1 KB.
+    .WithEnvironment("ANTIPHON_PTY_BACKEND", "modern")
     // LIVE Telegram bridge (2026-07-23): consume the deployed am-redpanda on server2 (Tailscale)
     // that the @antiphon_assistant_bot gateway (am-service) produces to — the Family agent talks
     // to the real "Antiphon-Family" group. Comment this line out to fall back to the LOCAL broker

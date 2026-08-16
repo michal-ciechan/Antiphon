@@ -44,6 +44,9 @@ bin-*/
 # TUnit's isolated build/test runs can leave disposable per-project temp output directories.
 **/.tmp/
 
+# Agent scratch: delegation brief/report spill files, regenerable from the task row
+.antiphon/
+
 # pts-vibe-coding (managed by /pts-vibe-init)
 .pts-vibe/state.json
 .pts-vibe/implementation.json

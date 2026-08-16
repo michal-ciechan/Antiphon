@@ -226,7 +226,34 @@ public sealed class AgentSessionRuntime
         // recovery watermark must stay comparable across tailer generations, and a boundary that
         // deduped away (replay) was already handled.
         if (entry.Kind == TranscriptKinds.CompactBoundary && persisted.LastStoredSeq is long boundarySeq)
+        {
             await DispatchCompactionRecoveryAsync(entry.SessionId, boundarySeq, ct);
+
+            // A MANUAL boundary is a turn end for the working rule (CARD-0041) and nothing else
+            // will ever flush this session: compaction makes no API call, so no TurnEnd follows.
+            // Recovery dispatch runs FIRST so its note is already queued when the flush looks.
+            // Narrow on purpose — FlushIfIdleAsync, not the turn-end path: no "Agent finished",
+            // no reply/task settlement against the stale pre-compaction report.
+            if (TranscriptKinds.IsManualCompactBoundary(entry.Kind, entry.Text))
+                await FlushQueueAfterManualCompactionAsync(entry.SessionId, ct);
+        }
+    }
+
+    // Resolved lazily from a scope for the same constructor-cycle reason as FlushQueueOnIdleAsync.
+    private async Task FlushQueueAfterManualCompactionAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
+            if (queue is not null)
+                await queue.FlushIfIdleAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Failed to flush the message queue after a manual compaction for session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
@@ -394,14 +421,21 @@ public sealed class AgentSessionRuntime
             await FlushQueueOnIdleAsync(sessionId, ct);
         else if (persisted.AddedAssistantText)
             await DispatchChannelRepliesAsync(sessionId, ct);
+
+        // A MANUAL compaction boundary is a turn end too, and it can arrive ONLY via backfill —
+        // same argument as the TurnEnd case above. It gets the NARROW flush, never the turn-end
+        // path: a compaction is not a report to settle a task against (CARD-0041).
+        if (persisted.AddedManualCompactBoundary)
+            await FlushQueueAfterManualCompactionAsync(sessionId, ct);
     }
 
     // What one persist call actually changed — LastStoredSeq is the stored (session-monotonic)
     // sequence of the last NEWLY persisted entry, or null when everything deduped away or
     // persistence failed.
-    private sealed record PersistResult(long? LastStoredSeq, bool AddedTurnBoundary, bool AddedAssistantText)
+    private sealed record PersistResult(
+        long? LastStoredSeq, bool AddedTurnBoundary, bool AddedAssistantText, bool AddedManualCompactBoundary)
     {
-        public static PersistResult Empty { get; } = new(null, false, false);
+        public static PersistResult Empty { get; } = new(null, false, false, false);
     }
 
     private async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
@@ -453,6 +487,7 @@ public sealed class AgentSessionRuntime
             var added = false;
             var addedTurnBoundary = false;
             var addedAssistantText = false;
+            var addedManualCompactBoundary = false;
             foreach (var e in entries)
             {
                 if (e.Uuid is not null)
@@ -467,6 +502,9 @@ public sealed class AgentSessionRuntime
 
                 addedTurnBoundary |= IsTurnBoundary(e);
                 addedAssistantText |= e.Kind == TranscriptKinds.AssistantText;
+                // Tracked SEPARATELY from IsTurnBoundary on purpose: it must reach the narrow
+                // flush only, never actOnTurnBoundary / the finished toast / settlement.
+                addedManualCompactBoundary |= TranscriptKinds.IsManualCompactBoundary(e.Kind, e.Text);
 
                 var storedSeq = e.Sequence > maxSeq ? e.Sequence : maxSeq + 1;
                 maxSeq = storedSeq;
@@ -501,7 +539,7 @@ public sealed class AgentSessionRuntime
                 await db.SaveChangesAsync();
 
             return added
-                ? new PersistResult(maxSeq, addedTurnBoundary, addedAssistantText)
+                ? new PersistResult(maxSeq, addedTurnBoundary, addedAssistantText, addedManualCompactBoundary)
                 : PersistResult.Empty;
         }
         catch (Exception ex)

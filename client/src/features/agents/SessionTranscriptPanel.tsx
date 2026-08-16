@@ -104,10 +104,27 @@ function isLocalCommandRecord(e: TranscriptEntryDto): boolean {
   return t.startsWith('<command-name>') || t.startsWith('<local-command-stdout>')
 }
 
+// A MANUAL /compact runs only BETWEEN turns, so its boundary is the previous turn's end — nothing
+// else ever will be, since compaction makes no API call (live miss 2026-08-11, CARD-0041). An AUTO
+// boundary fires mid-turn and stays housekeeping. Mirror of TranscriptKinds.ManualCompactMarker /
+// CompactionContinuationPromptPrefix; the continuation prompt is compaction's own synthetic USER
+// record — nobody typed it, and counting it as activity read "working" forever.
+const MANUAL_COMPACT_MARKER = '(manual)'
+const CONTINUATION_PREFIX = 'This session is being continued from a previous conversation'
+
+function isManualCompactBoundary(e: TranscriptEntryDto): boolean {
+  return e.kind === 'CompactBoundary' && (e.text ?? '').includes(MANUAL_COMPACT_MARKER)
+}
+
+function isCompactionContinuation(e: TranscriptEntryDto): boolean {
+  return e.kind === 'UserPrompt' && (e.text ?? '').trimStart().startsWith(CONTINUATION_PREFIX)
+}
+
 // Idle once the latest meaningful entry is a TurnEnd; working while activity outranks the last end.
 // CompactBoundary is idle-time housekeeping, not activity (mirror of the server's IsWorkingAsync —
-// counting it would show a phantom "working" agent after every compaction). Interrupt markers are
-// turn ENDS — counting them as activity showed a phantom "working" agent forever after an interrupt.
+// counting it would show a phantom "working" agent after every compaction), and a MANUAL one is a
+// turn END. Interrupt markers are turn ENDS — counting them as activity showed a phantom "working"
+// agent forever after an interrupt.
 // SessionRestartBoundary (server-synthesized on relaunch of a mid-turn transcript) is a turn END too.
 // Exported for tests: the exclusion list must stay in lockstep with the server.
 export function isWorking(entries: TranscriptEntryDto[]): boolean {
@@ -117,10 +134,20 @@ export function isWorking(entries: TranscriptEntryDto[]): boolean {
   let lastEndTs: number | null = null
   for (const e of entries) {
     const t = e.timestamp ? Date.parse(e.timestamp) : null
-    if (e.kind === 'TurnEnd' || e.kind === 'SessionRestartBoundary' || isInterruptPrompt(e)) {
+    if (
+      e.kind === 'TurnEnd' ||
+      e.kind === 'SessionRestartBoundary' ||
+      isManualCompactBoundary(e) ||
+      isInterruptPrompt(e)
+    ) {
       lastEndSeq = Math.max(lastEndSeq, e.sequence)
       if (t !== null) lastEndTs = lastEndTs === null ? t : Math.max(lastEndTs, t)
-    } else if (e.kind !== 'TurnTitle' && e.kind !== 'CompactBoundary' && !isLocalCommandRecord(e)) {
+    } else if (
+      e.kind !== 'TurnTitle' &&
+      e.kind !== 'CompactBoundary' &&
+      !isCompactionContinuation(e) &&
+      !isLocalCommandRecord(e)
+    ) {
       lastActivitySeq = Math.max(lastActivitySeq, e.sequence)
       if (t !== null) lastActivityTs = lastActivityTs === null ? t : Math.max(lastActivityTs, t)
     }

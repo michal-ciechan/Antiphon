@@ -17,7 +17,7 @@ namespace Antiphon.Server.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.18")
+                .HasAnnotation("ProductVersion", "9.0.19")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -336,6 +336,11 @@ namespace Antiphon.Server.Migrations
                     b.Property<long>("CacheReadTokens")
                         .HasColumnType("bigint");
 
+                    b.Property<int>("CheckCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -369,6 +374,11 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("EscalatedFrom")
                         .HasColumnType("integer");
 
+                    b.Property<int>("ExpectedDurationMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(10);
+
                     b.Property<string>("FailureReason")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
@@ -390,6 +400,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<int>("ModelLevel")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime?>("NextCheckAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
@@ -1096,6 +1109,16 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("AgentQueuePosition")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ArchivedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ArchivedReason")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("AssignedAgentId")
                         .HasColumnType("uuid");
 
@@ -1120,8 +1143,7 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("character varying(4000)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Identifier")
                         .IsRequired()
@@ -1138,6 +1160,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Priority")
                         .HasColumnType("integer");
 
+                    b.Property<int>("RevisionCount")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1145,8 +1170,7 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("TerminalReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -1188,6 +1212,65 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_Cards_BoardId_Status");
 
                     b.ToTable("Cards", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EditedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("FromColumnId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("FromStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("LabelsJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int?>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text");
+
+                    b.Property<int>("RevisionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid?>("ToColumnId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("ToStatus")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardId", "RevisionNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CardRevisions_CardId_RevisionNumber");
+
+                    b.ToTable("CardRevisions", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardWorkflowRun", b =>
@@ -1944,6 +2027,17 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DeliveryAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<long?>("LastDeliveryBaselineSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("LastDeliveryStartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Origin")
@@ -2745,6 +2839,17 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("OwnerSession");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
+                        .WithMany("Revisions")
+                        .HasForeignKey("CardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Card");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardWorkflowRun", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
@@ -3143,6 +3248,8 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("ExternalIssueRef");
 
                     b.Navigation("RetrySchedule");
+
+                    b.Navigation("Revisions");
 
                     b.Navigation("RunAttempts");
 

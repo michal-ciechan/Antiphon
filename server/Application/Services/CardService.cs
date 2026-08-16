@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -6,11 +6,49 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
 public sealed class CardService
 {
+    /// <summary>The <c>Cards.Title</c> column is varchar(300); anything longer is a 400, not a 500.</summary>
+    public const int MaxTitleLength = 300;
+
+    /// <summary>
+    /// The description ceiling, in CHARACTERS. Deliberately an application constant rather than a
+    /// schema fact — the column is <c>text</c>, so raising this is a one-line change with no
+    /// migration. 4,000 (the old <c>varchar</c>) was already too small for the house style, where
+    /// the detail is the point and a correction only makes a description grow.
+    /// </summary>
+    /// <remarks>
+    /// Callers composing corrections programmatically need a deterministic pre-check, so the limit
+    /// and the actual length are both named in the validation error.
+    ///
+    /// <para>Known exposure, inherited not introduced: <see cref="BuildPrompt"/> embeds the
+    /// description verbatim into the spawn prompt, which is TYPED INTO THE PTY and does not yet go
+    /// through the ceiling-aware spill that delegation briefs get (CARD-0025). On the modern conpty
+    /// backend this deployment runs, a 20,000-character mostly-ASCII description is ~20-22 KB and
+    /// sits under the 43,200-byte single-write ceiling; a worst-case multibyte one does not.</para>
+    /// </remarks>
+    public const int MaxDescriptionLength = 20_000;
+
+    /// <summary>
+    /// The ceiling for every free-text reason: a move reason, <c>Card.TerminalReason</c>, an
+    /// archive reason, a revision reason. 1,000 was measurably too small — a review verdict had to
+    /// be hand-trimmed to exactly 1,000 characters to fit, and two close-outs 500'd on it.
+    /// </summary>
+    public const int MaxReasonLength = 4_000;
+
+    /// <summary>The <c>EditedBy</c>/<c>ArchivedBy</c> columns are varchar(200).</summary>
+    public const int MaxActorLength = 200;
+
+    /// <summary>
+    /// The author recorded on a revision nothing human asked for. Self-reported like every other
+    /// actor here — the server has no principals — but distinguishable from a name a caller chose.
+    /// </summary>
+    internal const string SystemActor = "system";
+
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentTuiLaunchResolver? _launchResolver;
@@ -88,11 +126,17 @@ public sealed class CardService
 
     public async Task<CardDto> MoveAsync(Guid id, MoveCardRequest request, CancellationToken ct)
     {
+        ValidateMoveRequest(request);
+
         var card = await LoadCardForUpdateAsync(id, ct);
         if (request.ConcurrencyToken == Guid.Empty)
             throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
         if (request.ConcurrencyToken != card.ConcurrencyToken)
             throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+        // An archived card is out of play: moving it into an active column would spawn an agent on
+        // a record the operator has taken off the board. Unarchive first — that is one call.
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before moving it.");
 
         var targetColumn = await _db.BoardColumns
             .FirstOrDefaultAsync(c => c.Id == request.BoardColumnId, ct)
@@ -104,9 +148,9 @@ public sealed class CardService
         // The dequeue below clears AssignedAgentId — capture it first so the completion
         // checkpoint still knows whose workspace to snapshot.
         var assignedAgentId = card.AssignedAgentId;
-        ApplyColumnMove(card, targetColumn);
+        ApplyColumnMove(card, targetColumn, reason: request.Reason);
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
-        await _db.SaveChangesAsync(ct);
+        await SaveCardWriteAsync(card, ct);
 
         // Completing a card is the "work is done" sign-off — checkpoint the assigned agent's
         // workspace (HEAD sha + timestamp) so the Files review surface can show changes since
@@ -123,6 +167,159 @@ public sealed class CardService
         return await GetByIdAsync(card.Id, ct);
     }
 
+    /// <summary>
+    /// Corrects a card's text. The card SURFACE is correctable; the card RECORD is append-only —
+    /// the superseded values are archived as a revision, with a mandatory reason, before anything
+    /// is overwritten. Allowed in any column, including terminal ones: correcting the record of
+    /// work already done is the case that motivated this (CARD-0026's known-wrong closing note).
+    /// </summary>
+    public async Task<CardDto> UpdateContentAsync(
+        Guid id, UpdateCardContentRequest request, CancellationToken ct)
+    {
+        ValidateUpdateContentRequest(request);
+
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
+        if (request.ConcurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        var now = UtcNow();
+        // Snapshot BEFORE the overwrite — the revision holds what is being superseded.
+        CardRevisionLog.AppendContentEdit(card, request.Reason, request.EditedBy, now);
+
+        if (request.Title is not null)
+            card.Title = request.Title.Trim();
+        if (request.Description is not null)
+            card.Description = request.Description.Trim();
+        if (request.Priority is int priority)
+            card.Priority = priority;
+        if (request.Labels is not null)
+            card.LabelsJson = BoardService.SerializeLabels(request.Labels);
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        await SaveCardWriteAsync(card, ct);
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    /// <summary>
+    /// Archives a card. This is what "delete" means here — the row stays, so every reference to its
+    /// identifier (commit messages, docs, other cards' terminal reasons) keeps resolving, and the
+    /// identifier allocator keeps seeing the number as taken.
+    /// </summary>
+    /// <remarks>
+    /// Refused while an agent is actually working the card: archiving the record out from under a
+    /// live session is the one genuinely destructive shape here, and unlike everything else on this
+    /// card it cannot be undone by reading the history.
+    /// </remarks>
+    public async Task<CardDto> ArchiveAsync(Guid id, ArchiveCardRequest request, CancellationToken ct)
+    {
+        ValidateArchiveRequest(request.Reason, nameof(request.Reason), request.ArchivedBy, nameof(request.ArchivedBy));
+
+        var card = await LoadCardForArchiveAsync(id, request.ConcurrencyToken, ct);
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is already archived.");
+
+        if (card.OwnerSessionId is Guid ownerSessionId)
+        {
+            var liveSession = await _db.AgentSessions.AnyAsync(
+                s => s.Id == ownerSessionId
+                    && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
+                ct);
+            if (liveSession)
+            {
+                throw new ConflictException(
+                    $"Card '{card.Identifier}' has a live owner session; stop it before archiving.");
+            }
+        }
+
+        if (card.ActiveWorkflowRunId is Guid runId)
+        {
+            var runningWorkflow = await _db.CardWorkflowRuns.AnyAsync(
+                r => r.Id == runId
+                    && r.Status != CardWorkflowRunStatus.Completed
+                    && r.Status != CardWorkflowRunStatus.Failed
+                    && r.Status != CardWorkflowRunStatus.Canceled,
+                ct);
+            if (runningWorkflow)
+            {
+                throw new ConflictException(
+                    $"Card '{card.Identifier}' has an active workflow run; cancel it before archiving.");
+            }
+        }
+
+        var now = UtcNow();
+        CardRevisionLog.AppendArchiveChange(
+            card, CardRevisionKind.Archive, request.Reason, request.ArchivedBy, now);
+        card.ArchivedAt = now;
+        card.ArchivedReason = request.Reason.Trim();
+        card.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
+
+        return await SaveArchiveChangeAsync(card, now, ct);
+    }
+
+    /// <summary>Undoes an archive. Mistakes in archiving need correcting too.</summary>
+    public async Task<CardDto> UnarchiveAsync(Guid id, UnarchiveCardRequest request, CancellationToken ct)
+    {
+        ValidateArchiveRequest(
+            request.Reason, nameof(request.Reason), request.UnarchivedBy, nameof(request.UnarchivedBy));
+
+        var card = await LoadCardForArchiveAsync(id, request.ConcurrencyToken, ct);
+        if (card.ArchivedAt is null)
+            throw new ConflictException($"Card '{card.Identifier}' is not archived.");
+
+        var now = UtcNow();
+        // The Unarchive revision is why clearing these three fields is not a loss: the archive, its
+        // reason and its undoing all stay readable in the history.
+        CardRevisionLog.AppendArchiveChange(
+            card, CardRevisionKind.Unarchive, request.Reason, request.UnarchivedBy, now);
+        card.ArchivedAt = null;
+        card.ArchivedReason = null;
+        card.ArchivedBy = null;
+
+        return await SaveArchiveChangeAsync(card, now, ct);
+    }
+
+    private async Task<Card> LoadCardForArchiveAsync(Guid id, Guid concurrencyToken, CancellationToken ct)
+    {
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (concurrencyToken == Guid.Empty)
+            throw new ValidationException("ConcurrencyToken", "Card concurrency token is required.");
+        if (concurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        return card;
+    }
+
+    private async Task<CardDto> SaveArchiveChangeAsync(Card card, DateTime now, CancellationToken ct)
+    {
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+
+        await SaveCardWriteAsync(card, ct);
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    /// <summary>The card's history, newest first. One interleaved sequence across every kind.</summary>
+    public async Task<IReadOnlyList<CardRevisionDto>> GetRevisionsAsync(Guid id, CancellationToken ct)
+    {
+        if (!await _db.Cards.AnyAsync(c => c.Id == id, ct))
+            throw new NotFoundException(nameof(Card), id);
+
+        var revisions = await _db.CardRevisions
+            .AsNoTracking()
+            .Where(r => r.CardId == id)
+            .OrderByDescending(r => r.RevisionNumber)
+            .ToListAsync(ct);
+
+        return revisions.Select(BoardService.ToRevisionDto).ToList();
+    }
+
     public async Task<SpawnCardResult> SpawnAsync(Guid id, SpawnCardRequest request, CancellationToken ct)
     {
         ValidateSpawnRequest(request);
@@ -130,6 +327,9 @@ public sealed class CardService
         var card = await LoadCardForUpdateAsync(id, ct);
         if (request.ConcurrencyToken is Guid requestedToken && requestedToken != card.ConcurrencyToken)
             throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before spawning.");
 
         if (card.BoardColumn.IsTerminal)
             throw new ConflictException($"Card '{card.Identifier}' is already in a terminal column.");
@@ -140,15 +340,13 @@ public sealed class CardService
                 .OrderBy(c => c.ColumnOrder)
                 .FirstOrDefault(c => c.IsActive && !c.IsTerminal)
                 ?? throw new ConflictException($"Board '{card.Board.Name}' has no active column for spawning.");
-            ApplyColumnMove(card, activeColumn, enforceStateMachine: false);
-            try
-            {
-                await _db.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
-            }
+            ApplyColumnMove(
+                card,
+                activeColumn,
+                enforceStateMachine: false,
+                reason: "Moved into an active column to spawn an agent session.",
+                movedBy: SystemActor);
+            await SaveCardWriteAsync(card, ct);
         }
 
         string definitionName;
@@ -242,6 +440,44 @@ public sealed class CardService
         return new SpawnCardResult(card.Id, sessionId.Value);
     }
 
+    /// <summary>
+    /// Saves a card write, turning "somebody else got there first" into a 409 rather than a 500.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes mean the same thing. The card's concurrency token catches the ordinary race. The
+    /// revision sequence catches the rest: two writers who both read <c>RevisionCount = n</c> both
+    /// allocate n + 1, and the unique <c>(CardId, RevisionNumber)</c> index rejects the loser — as
+    /// a <see cref="DbUpdateException"/>, which is NOT a concurrency exception and would otherwise
+    /// escape as an unexplained 500. Two concurrent channel delegations of one card did exactly
+    /// that. The database's own message is attached rather than paraphrased, so a 409 that turns
+    /// out to be a misdiagnosis still has something to debug from.
+    /// </remarks>
+    private async Task SaveCardWriteAsync(Card card, CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.", ex);
+        }
+        catch (DbUpdateException ex) when (IsDuplicateRevisionNumber(ex))
+        {
+            throw new ConflictException(
+                $"Card '{card.Identifier}' was modified by another operation "
+                + $"({AgentService.DescribeDbFailure(ex)}).",
+                ex);
+        }
+    }
+
+    private static bool IsDuplicateRevisionNumber(DbUpdateException ex) =>
+        ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_CardRevisions_CardId_RevisionNumber"
+        };
+
     private async Task<Card> LoadCardAsync(Guid id, CancellationToken ct)
     {
         return await _db.Cards
@@ -266,7 +502,19 @@ public sealed class CardService
             ?? throw new NotFoundException(nameof(Card), id);
     }
 
-    private void ApplyColumnMove(Card card, BoardColumn targetColumn, bool enforceStateMachine = true)
+    /// <param name="reason">
+    /// Why the card is moving, from the caller. It now PERSISTS on every move, as the reason on the
+    /// card's <c>Move</c> revision — before CARD-0019 there was nowhere to put it and a non-terminal
+    /// move's reason was accepted and silently dropped. A move into a terminal column additionally
+    /// keeps stamping <see cref="Card.TerminalReason"/>, which stays as the cheap-to-read summary
+    /// it is today.
+    /// </param>
+    private void ApplyColumnMove(
+        Card card,
+        BoardColumn targetColumn,
+        bool enforceStateMachine = true,
+        string? reason = null,
+        string? movedBy = null)
     {
         if (card.BoardColumnId == targetColumn.Id)
             return;
@@ -281,6 +529,8 @@ public sealed class CardService
         }
 
         var now = UtcNow();
+        CardRevisionLog.AppendMove(
+            card, card.BoardColumnId, card.Status, targetColumn, reason, movedBy, now);
         card.BoardColumnId = targetColumn.Id;
         card.BoardColumn = targetColumn;
         card.Status = targetColumn.CardStatus;
@@ -292,7 +542,12 @@ public sealed class CardService
         if (targetColumn.IsTerminal)
         {
             card.CompletedAt ??= now;
-            card.TerminalReason ??= "Moved to terminal column.";
+            // A supplied reason WINS over an existing one: a card re-closed with a better
+            // explanation ("fixed by CARD-0041") should not keep the generic note it got first.
+            var supplied = reason?.Trim();
+            card.TerminalReason = !string.IsNullOrEmpty(supplied)
+                ? supplied
+                : card.TerminalReason ?? "Moved to terminal column.";
         }
         else
         {
@@ -301,10 +556,41 @@ public sealed class CardService
         }
     }
 
+    /// <summary>
+    /// The next identifier for a board: one past the HIGHEST suffix already handed out.
+    /// </summary>
+    /// <remarks>
+    /// This used to be <c>count + 1</c>, which reused an identifier after a delete (CARD-0005):
+    /// remove CARD-0007 from a seven-card board and the next create hands out CARD-0007 again,
+    /// silently pointing every existing reference — commit messages, docs, other cards' terminal
+    /// reasons — at a different card. Identifiers are cited outside the database, so the sequence
+    /// has to move forward even when rows leave. Suffixes that do not parse (a board synced from a
+    /// foreign tracker) are ignored rather than blocking allocation.
+    ///
+    /// <para>A HARD delete of the current highest card still frees its number, because the only
+    /// record that it was ever taken is the row itself. That is now avoidable rather than
+    /// inevitable: <see cref="ArchiveAsync"/> is what "delete" means for a card, and an archived
+    /// row is still counted here — which is exactly why archived cards are filtered at the read
+    /// site and NOT by a global EF query filter.</para>
+    /// </remarks>
     private async Task<string> NextIdentifierAsync(Guid boardId, CancellationToken ct)
     {
-        var count = await _db.Cards.CountAsync(c => c.BoardId == boardId, ct);
-        return $"CARD-{count + 1:0000}";
+        var identifiers = await _db.Cards
+            .Where(c => c.BoardId == boardId)
+            .Select(c => c.Identifier)
+            .ToListAsync(ct);
+
+        var highest = 0;
+        foreach (var identifier in identifiers)
+        {
+            if (string.IsNullOrEmpty(identifier))
+                continue;
+            var suffix = identifier.AsSpan(identifier.LastIndexOf('-') + 1);
+            if (int.TryParse(suffix, out var value) && value > highest)
+                highest = value;
+        }
+
+        return $"CARD-{highest + 1:0000}";
     }
 
     private static string BuildPrompt(Card card, BoardWorkflowDefinition? activeDefinition)
@@ -349,6 +635,75 @@ public sealed class CardService
             errors[nameof(request.Title)] = ["Card title is required."];
         if (request.Priority < 0)
             errors[nameof(request.Priority)] = ["Priority must not be negative."];
+        RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
+        RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    /// <summary>
+    /// Records an over-length field as a validation error instead of letting it reach Postgres.
+    /// A value past its column width comes back as <c>22001: value too long</c> inside a
+    /// <see cref="DbUpdateException"/>, which is not an <c>HttpException</c>, so the middleware
+    /// answers a raw 500 that names nothing — the failure this method exists to prevent. Both the
+    /// limit and the actual length are in the message: callers composing corrections
+    /// programmatically need a deterministic pre-check.
+    /// </summary>
+    private static void RequireWithinLimit(
+        Dictionary<string, string[]> errors, string field, string? value, int limit)
+    {
+        if (value is null || value.Length <= limit)
+            return;
+
+        errors[field] = [$"{field} must be at most {limit:N0} characters; got {value.Length:N0}."];
+    }
+
+    private static void ValidateUpdateContentRequest(UpdateCardContentRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            errors[nameof(request.Reason)] = ["A reason is required for a card correction."];
+        RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
+
+        var hasContent = request.Title is not null
+            || request.Description is not null
+            || request.Priority is not null
+            || request.Labels is not null;
+        if (!hasContent)
+        {
+            errors[nameof(request.Title)] =
+                ["At least one of Title, Description, Priority or Labels must be provided."];
+        }
+
+        if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
+            errors[nameof(request.Title)] = ["Card title must not be blank."];
+        if (request.Priority is int priority && priority < 0)
+            errors[nameof(request.Priority)] = ["Priority must not be negative."];
+
+        RequireWithinLimit(errors, nameof(request.Title), request.Title?.Trim(), MaxTitleLength);
+        RequireWithinLimit(errors, nameof(request.Description), request.Description?.Trim(), MaxDescriptionLength);
+        RequireWithinLimit(errors, nameof(request.EditedBy), request.EditedBy?.Trim(), MaxActorLength);
+
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private static void ValidateArchiveRequest(
+        string reason, string reasonField, string? actor, string actorField)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(reason))
+            errors[reasonField] = ["A reason is required."];
+        RequireWithinLimit(errors, reasonField, reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, actorField, actor?.Trim(), MaxActorLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private static void ValidateMoveRequest(MoveCardRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        RequireWithinLimit(errors, nameof(request.Reason), request.Reason?.Trim(), MaxReasonLength);
         if (errors.Count > 0)
             throw new ValidationException(errors);
     }
