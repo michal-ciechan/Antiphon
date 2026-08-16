@@ -594,14 +594,45 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput }
+    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord }
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
         DeliveryVerdict.NoComposerEvidence => "the typed message never appeared in the composer",
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
+        DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         _ => "delivered",
     };
+
+    /// <summary>
+    /// What the session's transcript looked like the instant before we typed. <see cref="Observable"/>
+    /// is the CARD-0055 observability gate: with no stored entry at all the transcript is either not
+    /// bound yet (a fresh session's launch note is queued before its JSONL exists — CARD-0006) or
+    /// binding failed, and there is no ground truth to confirm against. Degrade to the legacy
+    /// screen-only verdict there; never fail a delivery for want of a signal.
+    ///
+    /// <see cref="MaxSequence"/> is the confirmation floor. Stored sequences are ARRIVAL-ordered and
+    /// rebased past the session max (the 2026-08-08 backfill bullet), so anything ingested after
+    /// this moment sits strictly above it — backfill reordering can neither fake nor hide a match.
+    /// </summary>
+    private readonly record struct TranscriptBaseline(bool Observable, long MaxSequence);
+
+    private async Task<TranscriptBaseline> CaptureTranscriptBaselineAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await CaptureTranscriptBaselineAsync(db, sessionId, ct);
+    }
+
+    private static async Task<TranscriptBaseline> CaptureTranscriptBaselineAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var max = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+        return new TranscriptBaseline(max is not null, max ?? 0);
+    }
 
     // Inject text into the session terminal and submit it, reusing the runtime's input path (which also
     // kicks off manual-turn tracking). The body and the submitting carriage return are sent as two
@@ -612,9 +643,17 @@ public sealed class SessionMessageQueueService
     //
     // For Claude sessions the gap between the two writes is also the VERIFICATION window: the rendered
     // screen must show evidence of the typed body (ComposerDeliveryEvidence — the contract pinned by
-    // ClaudeComposerRenderCanaryTests) before the Enter is sent, and the output sequence must advance
-    // after it. A wedged terminal leaves neither fingerprint, and crucially the Enter is withheld so the
-    // message is never lost into a dead composer.
+    // ClaudeComposerRenderCanaryTests) before the Enter is sent. A wedged terminal leaves no
+    // fingerprint, and crucially the Enter is withheld so the message is never lost into a dead
+    // composer.
+    //
+    // What happens AFTER the Enter is CARD-0055's subject. "The output sequence advanced" used to be
+    // the delivery verdict, and it is satisfied by any redraw — a spinner, a status line, the composer
+    // re-rendering the text it is STILL HOLDING. Measured consequences (session cefed08a): one note
+    // marked Sent at 15:16:20Z did not reach Claude until 17:00:09Z, when the NEXT delivery's Enter
+    // pushed it in; the next note's own Enter submitted that STALE body, a new UserPrompt record duly
+    // appeared with the wrong text, and its own body died with the composer — never in the transcript
+    // at all. So a record ARRIVING is not confirmation either: the record's TEXT must be ours.
     private async Task<DeliveryVerdict> DeliverAsync(Guid sessionId, string body, CancellationToken ct)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
@@ -672,6 +711,20 @@ public sealed class SessionMessageQueueService
             verify = false;
         }
 
+        // The confirmation floor, captured BEFORE a byte is written: everything ingested from here
+        // on sits above it. Also the observability gate — a session with no transcript rows at all
+        // has no ground truth to confirm against, so it keeps the legacy screen-only verdict.
+        var baseline = verify && _verification.TranscriptConfirmEnabled
+            ? await CaptureTranscriptBaselineAsync(sessionId, ct)
+            : default;
+        var confirmTranscript = baseline.Observable;
+        if (verify && _verification.TranscriptConfirmEnabled && !confirmTranscript)
+        {
+            _logger.LogDebug(
+                "Delivery to session {SessionId} cannot be transcript-confirmed (no transcript entries "
+                + "yet — unbound or pre-first-turn); falling back to the screen-only verdict", sessionId);
+        }
+
         // Multi-line bodies MUST travel as one bracketed paste (\e[200~..\e[201~): ConPTY chunks
         // large writes at arbitrary boundaries, and without the markers the TUI's paste heuristic
         // fragments the body at line breaks — live miss 2026-07-29, where a 2.4 KB calendar message
@@ -696,8 +749,11 @@ public sealed class SessionMessageQueueService
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
         await _runtime.SendInputAsync(sessionId, "\r", ct);
 
-        if (sequenceBeforeSubmit is { } baseline
-            && !await WaitForSequenceAdvanceAsync(sessionId, baseline, ct))
+        if (confirmTranscript)
+            return await WaitForTranscriptConfirmAsync(sessionId, trimmed, baseline, sequenceBeforeSubmit, ct);
+
+        if (sequenceBeforeSubmit is { } advanceFrom
+            && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
         {
             _logger.LogWarning(
                 "Delivery verification failed for session {SessionId}: submit Enter produced no output "
@@ -707,6 +763,107 @@ public sealed class SessionMessageQueueService
         }
 
         return DeliveryVerdict.Delivered;
+    }
+
+    /// <summary>
+    /// CARD-0055's confirm loop, and the only thing that may now produce <c>Delivered</c> on a
+    /// transcript-observable Claude session: poll for a <c>UserPrompt</c> row past
+    /// <paramref name="baseline"/> whose text carries our body, re-pressing Enter every
+    /// <c>ReEnterIntervalSeconds</c> until <c>SubmitAttempts</c> is spent.
+    ///
+    /// The retry is ENTER-ONLY and this is not negotiable. If the first Enter really did submit,
+    /// the composer is empty and a re-press is a no-op (the documented <c>VerifiedSubmitOptions</c>
+    /// contract the boot path has relied on since 2026-08-08); the per-session queue lock guarantees
+    /// no OTHER body can be standing in the composer for a re-press to submit. Re-TYPING the body
+    /// would be the one move that can double-send to a human, so nothing here does it — and the
+    /// redelivery path that could (slice 3) late-confirms before it types.
+    ///
+    /// Both measured shapes resolve here: a swallowed Enter gets a re-press that submits the body
+    /// still held in the composer, and a stale-body submit produces a record whose text FAILS the
+    /// match, so the re-press submits ours and the next record matches.
+    /// </summary>
+    private async Task<DeliveryVerdict> WaitForTranscriptConfirmAsync(
+        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct)
+    {
+        var strong = PromptSubmissionMatch.RequiresTextMatch(body);
+        var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
+        var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
+        var lastEnter = UtcNow();
+        var entersSent = 1; // the caller's submitting Enter
+        var sawSequenceAdvance = false;
+
+        while (true)
+        {
+            if (await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct))
+            {
+                _logger.LogDebug(
+                    "Delivery to session {SessionId} confirmed by a UserPrompt record past sequence "
+                    + "{Baseline} after {Enters} Enter(s) ({Strength} match)",
+                    sessionId, baseline.MaxSequence, entersSent, strong ? "text" : "weak");
+                return DeliveryVerdict.Delivered;
+            }
+
+            // Kept only as a wedge signal for the log: a terminal that redrew but produced no record
+            // is a different failure from one that did nothing at all. It can no longer say Delivered.
+            if (!sawSequenceAdvance
+                && sequenceBeforeSubmit is { } from
+                && _runtime.TryGetLiveMetadata(sessionId, out var meta)
+                && meta.LastSequence > from)
+            {
+                sawSequenceAdvance = true;
+            }
+
+            if (UtcNow() >= deadline)
+            {
+                _logger.LogWarning(
+                    "Delivery verification failed for session {SessionId}: the body ({Length} chars) never "
+                    + "became a UserPrompt record past sequence {Baseline} within {Timeout}s after {Enters} "
+                    + "Enter(s); screen output {Advanced} in that window",
+                    sessionId, body.Length, baseline.MaxSequence,
+                    _verification.TranscriptConfirmTimeoutSeconds, entersSent,
+                    sawSequenceAdvance ? "DID advance (the terminal redrew but nothing was submitted)" : "never advanced");
+                return DeliveryVerdict.NoTranscriptRecord;
+            }
+
+            if (entersSent < _verification.SubmitAttempts && UtcNow() - lastEnter >= reEnterAfter)
+            {
+                _logger.LogInformation(
+                    "No transcript record yet for the delivery to session {SessionId}; pressing Enter again "
+                    + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
+                    + "submit, the composer is empty and this is a no-op",
+                    sessionId, entersSent + 1, _verification.SubmitAttempts);
+                await _runtime.SendInputAsync(sessionId, "\r", ct);
+                entersSent++;
+                lastEnter = UtcNow();
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+        }
+    }
+
+    // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
+    // transcript ingestion path is committing from its own scope, concurrently.
+    private async Task<bool> TryFindConfirmingRecordAsync(
+        Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct);
+    }
+
+    private static async Task<bool> TryFindConfirmingRecordAsync(
+        AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
+    {
+        var texts = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > baselineSequence)
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+
+        return texts.Any(text => PromptSubmissionMatch.IsConfirmedBy(body, text));
     }
 
     private async Task<bool> WaitForComposerEvidenceAsync(

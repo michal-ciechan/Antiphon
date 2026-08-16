@@ -58,9 +58,10 @@ public sealed class RcWatchSettings
 /// to a Claude session the body is typed, then the rendered screen must show evidence of it
 /// (<c>ComposerDeliveryEvidence</c> — tail/head fragment or a new paste placeholder, per the
 /// ClaudeComposerRenderCanaryTests contract) BEFORE the submitting Enter is sent; after Enter the
-/// output sequence must advance. On failure the message reverts to Pending, an incident is
-/// recorded, and always-on agents get a session restart (the composer dies with the process, so
-/// redelivery cannot double-type).
+/// prompt must become a <c>UserPrompt</c> transcript record carrying our body (CARD-0055 — the
+/// output sequence merely advancing is NOT delivery, it is a redraw). On failure the message
+/// reverts to Pending, an incident is recorded, and always-on agents get a session restart (the
+/// composer dies with the process, so redelivery cannot double-type).
 /// </summary>
 public sealed class DeliveryVerificationSettings
 {
@@ -86,4 +87,35 @@ public sealed class DeliveryVerificationSettings
     /// re-flushed (covers redelivery after a verification-failure restart and missed turn-ends).
     /// </summary>
     public int StrandedAgeSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// CARD-0055 kill switch. With it off, a delivery is Delivered as soon as the output sequence
+    /// advances after Enter — which any redraw satisfies, including the composer re-rendering the
+    /// text it is STILL HOLDING. That is how a note sat unsubmitted for 104 minutes and how a
+    /// second note was marked Sent while its Enter submitted the previous, stale body.
+    /// </summary>
+    public bool TranscriptConfirmEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How long a submitted prompt has to become a <c>UserPrompt</c> transcript record. The tailer
+    /// polls at 300 ms and the runner event pump is sub-second, so this is ~30x margin. Held under
+    /// the per-session queue lock on purpose: serialization is what makes the Enter re-press safe
+    /// (nothing else can put a different body in the composer). Lower it if the tail proves noisy —
+    /// do NOT release the lock mid-confirm.
+    /// </summary>
+    public int TranscriptConfirmTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// How long to wait for the record before pressing Enter again. Long enough that a slow but
+    /// SUCCESSFUL submit's record usually lands first, so most confirmations cost one Enter.
+    /// </summary>
+    public int ReEnterIntervalSeconds { get; set; } = 7;
+
+    /// <summary>
+    /// Total Enters per delivery, including the first (matches <c>VerifiedSubmitOptions</c>). The
+    /// retry is ENTER-ONLY and never a re-type: if the first Enter did submit, the composer is
+    /// empty and Enter on an empty composer is a no-op. Nothing here may ever re-type a body that
+    /// might already have gone in.
+    /// </summary>
+    public int SubmitAttempts { get; set; } = 3;
 }

@@ -81,6 +81,10 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     PollIntervalMs = 50,
                     PostSubmitAdvanceTimeoutSeconds = 1,
                     StrandedAgeSeconds = 0,
+                    // Same shape as production, compressed: one re-press window inside the deadline
+                    // so a swallowed Enter recovers and a never-recorded body still fails fast.
+                    TranscriptConfirmTimeoutSeconds = 3,
+                    ReEnterIntervalSeconds = 1,
                 },
             }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));
@@ -176,6 +180,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
+        // CARD-0055: a delivery is Delivered only once its prompt exists as a UserPrompt transcript
+        // row, so the fake has to model the whole round trip, not just the composer. A real Claude
+        // that takes a prompt records it and then WORKS; the trailing TurnEnd keeps the fake's
+        // post-delivery state where it has always been (idle), so the working-rule suites keep
+        // measuring the working rule rather than this addition.
+        adapter.OnSubmitted = async submitted =>
+        {
+            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted);
+            await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        };
         runtime.Register(sessionId, adapter);
 
         return new BridgeQueueHarness
@@ -199,22 +213,25 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     /// override reads) — leave it null unless the test is about ordering; real transcripts are
     /// non-monotonic against sequence, so a test that must not be rescued by the override sets it.
     /// </summary>
-    public async Task<long> InsertTranscriptEntryAsync(
+    public Task<long> InsertTranscriptEntryAsync(
         string kind,
         string? text = null,
         string? stopReason = null,
         Guid? sessionId = null,
-        DateTime? timestamp = null)
+        DateTime? timestamp = null) =>
+        InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp);
+
+    private static async Task<long> InsertEntryAsync(
+        Guid sessionId, string kind, string? text = null, string? stopReason = null, DateTime? timestamp = null)
     {
-        var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sid)
+            .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
-            AgentSessionId = sid,
+            AgentSessionId = sessionId,
             Sequence = seq,
             Kind = kind,
             Text = text,
