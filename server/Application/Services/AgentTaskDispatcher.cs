@@ -72,36 +72,51 @@ public sealed class AgentTaskDispatcher
         _logger = logger;
     }
 
-    public sealed record TickResult(int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures);
+    /// <param name="SweepFailures">
+    /// How many of the tick's five clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// sweep did nothing this time round — and each failure is logged at Error by
+    /// <see cref="RunSweepAsync"/> naming which one it was.
+    /// </param>
+    public sealed record TickResult(
+        int Eligible, int Dispatched, int SkippedConcurrency, int SkippedScope, int Failures,
+        int SweepFailures = 0);
 
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
+        // The five clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // used to be five bare awaits, which quietly made every one of them a single point of
+        // failure for all the others AND for dispatching: one poisoned session in the settlement
+        // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
+        // tick, and the only trace was one "Delegation dispatch tick failed" line that named
+        // neither which clock had died nor what had stopped as a result.
+        var sweepFailures = 0;
+
         // Before dispatching new work, deal with running work that has gone quiet — a stalled
         // opus Debug task escalating to fable IS the tier ladder working, not an error path.
-        await AutoEscalateStalledAsync(ct);
+        sweepFailures += await RunSweepAsync("auto-escalate stalled", AutoEscalateStalledAsync, ct);
 
         // And with work that never STARTED — zero transcript entries long after dispatch means the
         // boot prompt was lost, which is categorically different from slow progress and must fail
         // loudly, never escalate (a bigger model can't fix an undelivered brief).
-        await FailNeverStartedAsync(ct);
+        sweepFailures += await RunSweepAsync("delivery watchdog", FailNeverStartedAsync, ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
-        await RetireIdleWarmAgentsAsync(ct);
+        sweepFailures += await RunSweepAsync("retire idle warm agents", RetireIdleWarmAgentsAsync, ct);
 
         // And with settlements deferred waiting for a turn-ending response's own text (CARD-0046).
         // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
         // this is the one that already runs on a 5 s cadence before the early return below.
-        await SettleDeferredReportsAsync(ct);
+        sweepFailures += await RunSweepAsync("settle deferred reports", SettleDeferredReportsAsync, ct);
 
         // And with running work that is DUE A LOOK (CARD-0047). This is where every other
         // "running-work-gone-quiet" clock already lives, and check-due times have minute
         // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
-        await RunScheduledChecksAsync(ct);
+        sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -111,7 +126,7 @@ public sealed class AgentTaskDispatcher
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
         if (queued.Count == 0)
-            return new TickResult(0, 0, 0, 0, 0);
+            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
 
         // Shared tasks that declare overlapping file scopes must not run concurrently — the second
         // waits rather than racing on read-modify-write. This is the cost of Shared being the
@@ -172,7 +187,44 @@ public sealed class AgentTaskDispatcher
             }
         }
 
-        return new TickResult(queued.Count, dispatched, skippedConcurrency, skippedScope, failures);
+        return new TickResult(
+            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures);
+    }
+
+    /// <summary>
+    /// Run one of the tick's clocks so that its failure costs ONLY itself.
+    ///
+    /// <para>Every sweep here scans the whole table, so any one of them can meet a row, a session or
+    /// a downstream service that throws — and the condition is usually persistent, so it repeats on
+    /// every 5 s tick. Bare-awaited, that made the tick a chain: a throw in the second sweep meant
+    /// the third, fourth and fifth never ran and nothing was dispatched, indefinitely, and the only
+    /// evidence was a "Delegation dispatch tick failed" warning that named neither the dead clock
+    /// nor its casualties. A check-in that silently stopped firing because the settlement sweep met
+    /// a bad session is exactly the failure this shape prevents.</para>
+    ///
+    /// <para>Error, not Warning: a clock that is not running is not a transient hiccup, and it is
+    /// also counted into <see cref="TickResult.SweepFailures"/> so the caller can see the tick ran
+    /// degraded without reading the log.</para>
+    ///
+    /// <para>A cancellation that is OUR cancellation is shutdown and rethrown. Every other
+    /// <see cref="OperationCanceledException"/> is a timeout wearing the same type (an HttpClient
+    /// timeout is a TaskCanceledException) and is a transient failure like any other.</para>
+    /// </summary>
+    private async Task<int> RunSweepAsync(
+        string name, Func<CancellationToken, Task<int>> sweep, CancellationToken ct)
+    {
+        try
+        {
+            await sweep(ct);
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex, "Delegation sweep '{Sweep}' failed and did nothing this tick; "
+                + "the remaining sweeps and dispatching continue", name);
+            return 1;
+        }
     }
 
     /// <summary>

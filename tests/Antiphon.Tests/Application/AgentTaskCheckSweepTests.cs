@@ -133,9 +133,35 @@ public class AgentTaskCheckSweepTests
         after.NextCheckAt.ShouldBeNull("and nothing is scheduled after it");
 
         await harness.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None);
+        var final = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        final.ShouldContain("final check");
+        final.ShouldContain(
+            "#3]",
+            customMessage: "the third check of a three-check budget is #3 — the header must agree with the budget");
+    }
+
+    /// <summary>
+    /// The number the caller reads has to be the number of the check. It was not: the sweep counts a
+    /// check when it CLAIMS it (<c>CheckCount</c> is half the conditional UPDATE that makes the claim
+    /// atomic), and the probe then added one on top — so the very first check of a task announced
+    /// itself as <c>#2</c>, and the tenth and last of the default budget as <c>#11</c>. Seen live on
+    /// 2026-08-16: "Check #2 on task 8ae80695 delivered" for that task's first ever check.
+    /// </summary>
+    [Test]
+    public async Task the_first_check_of_a_task_is_numbered_one()
+    {
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1, checkCount: 0);
+
+        await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+        await harness.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None);
+
+        (await harness.ReloadAsync(seed.Task.Id)).CheckCount.ShouldBe(1, "one check has been spent");
         (await harness.NotesToCallerAsync(seed.CallerSessionId))
             .ShouldHaveSingleItem()
-            .ShouldContain("final check");
+            .ShouldStartWith(
+                $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1]",
+                customMessage: "the claim already counted this check — adding one again numbers it #2");
     }
 
     [Test]
@@ -223,6 +249,58 @@ public class AgentTaskCheckSweepTests
         await harness.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
         harness.DrainQueue().ShouldNotContain(
             seed.Task.Id, "it is not due again — a failed check is skipped, never retried in a loop");
+    }
+
+    // ---- the tick's clocks are independent -----------------------------------------------------
+
+    /// <summary>
+    /// The check sweep is the LAST of five clocks <c>TickAsync</c> runs before it dispatches, and
+    /// they used to be five bare awaits — so a throw in any earlier one aborted the tick before the
+    /// check sweep and the dispatch loop ever ran. Because the conditions that make a whole-table
+    /// sweep throw are persistent (one poisoned row, one unreachable service), that is not a skipped
+    /// tick, it is check-ins that stop firing for good, with nothing in the log naming what stopped.
+    ///
+    /// <para>The trigger here is the event-bus publish at the tail of the delivery watchdog — the one
+    /// call in that sweep with no guard of its own — poisoned for one specific task so the throw is
+    /// deterministic and no other row's handling changes.</para>
+    /// </summary>
+    [Test]
+    public async Task an_earlier_sweep_that_throws_does_not_take_the_check_sweep_down_with_it()
+    {
+        var bus = new PoisonEventBus();
+        var harness = new Harness(
+            s =>
+            {
+                // Only the sweeps are under test: hold every queued task on the concurrency gate so
+                // the dispatch loop cannot launch anything out of the shared database.
+                s.MaxConcurrentTasks = 0;
+                // And quiet the three clocks whose reach is global, so this test's throw is the only
+                // thing that moves a row it did not create.
+                s.RolePolicy.Clear();
+                s.FinalMessageGraceSeconds = 0;
+                s.SubagentGraceMinutes = 0;
+                s.PoolEnabled = true;
+                s.PoolIdleRetireMinutes = 525_600;
+                s.PoolMaxIdlePerDirectory = int.MaxValue;
+            },
+            bus);
+
+        // A task the delivery watchdog will fail: dispatched long ago, no transcript at all.
+        var neverStarted = await harness.SeedDelegateAsync(nextCheckInMinutes: 600, expectedMinutes: 30);
+        bus.PoisonTaskId = neverStarted.Task.Id;
+
+        // And a task whose check is due. Its transcript is what keeps the watchdog off it, so the
+        // only thing standing between it and its check is the throw.
+        var due = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
+        await harness.SeedDelegateTranscriptAsync(due.DelegateSessionId, due.Task.Id);
+
+        var result = await harness.Dispatcher.TickAsync(CancellationToken.None);
+
+        result.SweepFailures.ShouldBeGreaterThanOrEqualTo(
+            1, "the failure must be COUNTED and reported, not swallowed into a quiet tick");
+        harness.DrainQueue().ShouldContain(
+            due.Task.Id, "the check sweep runs even though an earlier clock threw");
+        (await harness.ReloadAsync(due.Task.Id)).CheckCount.ShouldBe(1);
     }
 
     // ---- running a check -----------------------------------------------------------------------
@@ -459,7 +537,7 @@ public class AgentTaskCheckSweepTests
     {
         private readonly ServiceProvider _provider;
 
-        public Harness(Action<DelegationSettings>? configure = null)
+        public Harness(Action<DelegationSettings>? configure = null, IEventBus? eventBus = null)
         {
             var settings = new DelegationSettings { MaxConcurrentTasks = 512 };
             configure?.Invoke(settings);
@@ -467,7 +545,7 @@ public class AgentTaskCheckSweepTests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
-            services.AddSingleton<IEventBus, MockEventBus>();
+            services.AddSingleton<IEventBus>(eventBus ?? new MockEventBus());
             services.AddSingleton(TimeProvider.System);
             services.AddSingleton(Options.Create(new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
@@ -823,6 +901,28 @@ public class AgentTaskCheckSweepTests
             StartedAt = at,
             LastSeenAt = at,
         };
+    }
+
+    /// <summary>
+    /// An event bus that fails for ONE task and behaves for every other. Scoped that tightly on
+    /// purpose: the sweeps under test scan the whole shared database, and a bus that threw for
+    /// everything would change how this test's tick handles other suites' rows.
+    /// </summary>
+    private sealed class PoisonEventBus : IEventBus
+    {
+        public Guid PoisonTaskId { get; set; }
+
+        public Task PublishToGroupAsync(
+            string group, string eventName, object payload, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default)
+        {
+            var taskId = payload.GetType().GetProperty("taskId")?.GetValue(payload) as Guid?;
+            if (PoisonTaskId != Guid.Empty && taskId == PoisonTaskId)
+                throw new InvalidOperationException("the event bus is down");
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>

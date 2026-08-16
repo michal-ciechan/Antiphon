@@ -71,6 +71,20 @@ public sealed class DelegateCheckProbe
         DateTime? DispatchedAt,
         TimeSpan? Age,
         int ExpectedDurationMinutes,
+        /// <summary>
+        /// Which check this is, counting from 1 — the number the caller reads in the note's header.
+        ///
+        /// <para>It is <see cref="AgentTask.CheckCount"/> ITSELF, not <c>+ 1</c>. The sweep counts a
+        /// check when it CLAIMS it: <c>ClaimCheckAsync</c> writes <c>CheckCount = checkNumber</c>
+        /// before the id is handed to the worker, because the count is half the conditional UPDATE
+        /// that makes the claim atomic. So by the time a probe reads the row, the running check is
+        /// already counted, and adding one announced the first check of a run as <c>#2</c> and the
+        /// last check of a 10-check budget as <c>#11</c> (live, 2026-08-16: "Check #2 on task
+        /// 8ae80695" for the first check that task ever had).</para>
+        ///
+        /// <para>Floored at 1 for the one caller that has not gone through a claim — an ad-hoc probe
+        /// of an unclaimed task — which would otherwise read <c>#0</c>.</para>
+        /// </summary>
         int CheckNumber,
         bool HasResult,
         string? FailureReason);
@@ -143,7 +157,7 @@ public sealed class DelegateCheckProbe
             task.DispatchedAt,
             task.DispatchedAt is { } from ? now - from : null,
             task.ExpectedDurationMinutes,
-            task.CheckCount + 1,
+            Math.Max(1, task.CheckCount),
             !string.IsNullOrWhiteSpace(task.Result),
             task.FailureReason);
 

@@ -101,8 +101,23 @@ public class DelegateCheckProbeTests
 
         facts.Task.ExpectedDurationMinutes.ShouldBe(15);
         facts.Task.Age!.Value.TotalMinutes.ShouldBeGreaterThanOrEqualTo(41);
-        facts.Task.CheckNumber.ShouldBe(3, "CheckCount is how many have run; this is the one running now");
+        facts.Task.CheckNumber.ShouldBe(
+            2,
+            "the sweep counts a check when it CLAIMS it — CheckCount already includes the one now "
+            + "running, so adding one numbered the first check of a task #2");
         facts.Task.Settled.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task an_unclaimed_task_still_reads_as_check_one_rather_than_zero()
+    {
+        // The floor. Every production check arrives through a claim that has already written
+        // CheckCount >= 1; an ad-hoc probe of an unclaimed row must not announce itself as "#0".
+        var seed = await SeedAsync(checkCount: 0);
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+
+        facts.Task.CheckNumber.ShouldBe(1);
     }
 
     [Test]
