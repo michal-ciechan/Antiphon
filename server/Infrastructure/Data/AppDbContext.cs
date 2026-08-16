@@ -1069,6 +1069,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.CostPricingVersion).IsRequired().HasDefaultValue(0);
             entity.Property(t => t.CreatedAt).IsRequired();
             entity.Property(t => t.ConcurrencyToken).IsRequired();
+            // CARD-0047. Pre-existing rows get the shipped default expectation and no schedule:
+            // a task dispatched before this migration is never retro-armed.
+            entity.Property(t => t.ExpectedDurationMinutes).IsRequired().HasDefaultValue(10);
+            entity.Property(t => t.CheckCount).IsRequired().HasDefaultValue(0);
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");

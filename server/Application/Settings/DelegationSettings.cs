@@ -287,6 +287,39 @@ public sealed class DelegationSettings
     /// </summary>
     public int SubagentGraceMinutes { get; set; } = 30;
 
+    // ── Scheduled check-ins on a running delegate (CARD-0047) ───────────────────────────────────
+    //
+    // An orchestrator hears nothing between dispatch and the report. These five knobs decide when a
+    // deterministic probe of the delegate's state is gathered and delivered back to the caller.
+    // None of them is a deadline: no code path fails, escalates or cancels a task off any of them.
+
+    /// <summary>The whole feature's off switch. False and no task is ever armed or swept.</summary>
+    public bool CheckEnabled { get; set; } = true;
+
+    /// <summary>
+    /// <see cref="AgentTask.ExpectedDurationMinutes"/> for a caller that declared nothing. Ten
+    /// minutes is roughly the median delegated task here, so an undeclared task still gets one
+    /// early check instead of silence.
+    /// </summary>
+    public int DefaultExpectedMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// Floor on the gap between checks. The backoff starts at
+    /// <c>max(this, ExpectedDurationMinutes / 2)</c>, so a task declared at 2 minutes still cannot
+    /// generate a check a minute.
+    /// </summary>
+    public int CheckMinIntervalMinutes { get; set; } = 5;
+
+    /// <summary>Ceiling on the doubling — a long task settles into a half-hourly heartbeat.</summary>
+    public int CheckMaxIntervalMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// After this many checks the task stops being checked and the last note says so. At ~$0.01 a
+    /// check the economics never bind; this exists so a forgotten immortal task doesn't check
+    /// forever.
+    /// </summary>
+    public int CheckMaxCount { get; set; } = 10;
+
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;
 

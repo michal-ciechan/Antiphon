@@ -42,6 +42,9 @@ function summary(overrides: Partial<AgentTaskSummaryDto> & { id: string }): Agen
     worktreeBranch: null,
     subtreeCostUsd: 0,
     childCount: 0,
+    expectedDurationMinutes: 10,
+    nextCheckAt: null,
+    checkCount: 0,
     ...overrides,
   }
 }

@@ -73,6 +73,9 @@ function task(overrides: Partial<AgentTaskSummaryDto>): AgentTaskSummaryDto {
     costPricingVersion: 2,
     subtreeCostUsd: 0,
     childCount: 0,
+    expectedDurationMinutes: 10,
+    nextCheckAt: null,
+    checkCount: 0,
     ...overrides,
   }
 }

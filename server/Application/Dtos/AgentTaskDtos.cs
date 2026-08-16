@@ -35,7 +35,14 @@ public sealed record CreateAgentTaskRequest(
     /// id), keeping its context. The task inherits that agent's directory and tier; it waits in
     /// the queue while the agent is still busy.
     /// </summary>
-    string? FollowUpOnTask = null);
+    string? FollowUpOnTask = null,
+    /// <summary>
+    /// Roughly how long the caller expects this to take (1..1440 minutes). Null takes
+    /// <c>Delegation:DefaultExpectedMinutes</c>. It schedules the first check-in and NOTHING else —
+    /// it is a hint, never a deadline, and no code path fails or escalates a task for running past
+    /// it (CARD-0047).
+    /// </summary>
+    int? ExpectedMinutes = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -78,7 +85,15 @@ public sealed record AgentTaskSummaryDto(
     int CostPricingVersion,
     /// <summary>Rolled-up spend for this task and everything under it — what the board chip shows.</summary>
     decimal SubtreeCostUsd,
-    int ChildCount);
+    int ChildCount,
+    /// <summary>
+    /// The caller's declared duration hint in minutes (CARD-0047). Never a deadline — a task past
+    /// it is not late, it is just past the point where the first check-in was scheduled.
+    /// </summary>
+    int ExpectedDurationMinutes,
+    /// <summary>When the next scheduled check-in is due; null means this task is never checked.</summary>
+    DateTime? NextCheckAt,
+    int CheckCount);
 
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,

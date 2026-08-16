@@ -544,6 +544,7 @@ public sealed class AgentTaskDispatcher
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
 
         agent.PersistentSessionId = session.Id.ToString("D");
         agent.Status = AgentStatus.Running;
@@ -592,6 +593,28 @@ public sealed class AgentTaskDispatcher
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
             ModelLevelAliases.ForClaude(claimed.ModelLevel), session.Id, claimed.WorkingDirectory);
         return true;
+    }
+
+    /// <summary>
+    /// Schedule the first check-in on a delegate that has just started running (CARD-0047 §1.2):
+    /// <c>NextCheckAt = DispatchedAt + ExpectedDurationMinutes</c>.
+    ///
+    /// <para>Only for <see cref="AgentTaskReplyTo.Session"/>. A task whose report lands on the board
+    /// alone has nobody to deliver a check note to, so arming one would gather facts and throw them
+    /// away — <see cref="AgentTask.NextCheckAt"/> stays null and the sweep never sees it.</para>
+    ///
+    /// <para>This is the ONLY thing <see cref="AgentTask.ExpectedDurationMinutes"/> does. It never
+    /// feeds the stall clock, the delivery watchdog, or any status transition: past its expected
+    /// duration a task is not late, it has merely reached the point where someone wanted a look.</para>
+    /// </summary>
+    private void ArmFirstCheck(AgentTask claimed, DateTime dispatchedAt)
+    {
+        if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)
+            return;
+
+        var expected = Math.Clamp(claimed.ExpectedDurationMinutes, 1, 1440);
+        claimed.NextCheckAt = dispatchedAt.AddMinutes(expected);
+        claimed.CheckCount = 0;
     }
 
     /// <summary>
@@ -867,6 +890,7 @@ public sealed class AgentTaskDispatcher
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
 
         // The session's environment still holds the PREVIOUS task's raw token — env can't change
         // on a live process. So the previous task's hash moves to THIS task: the delegate keeps

@@ -933,3 +933,67 @@ public class SubagentNotificationTests
             .Contains(TranscriptKinds.AsyncAgentLaunchMarker, StringComparison.Ordinal).ShouldBeFalse();
     }
 }
+
+/// <summary>
+/// The check-in backoff (CARD-0047 §1.5), as arithmetic. A gap that is wrong by a factor of two is
+/// invisible in an integration test that only asserts "a later check was scheduled", so the curve
+/// gets pinned directly: it starts at half the declared duration (floored), doubles, and stops at
+/// the ceiling.
+/// </summary>
+[Category("Unit")]
+public class CheckScheduleBackoffTests
+{
+    private static readonly DelegationSettings Shipped = new();
+
+    [Test]
+    public void the_first_gap_is_half_the_declared_duration()
+    {
+        // A 60-minute task has already had its first look at 60m; the next is 30m later, not an hour.
+        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 60, checkNumber: 1)
+            .ShouldBe(TimeSpan.FromMinutes(30));
+    }
+
+    [Test]
+    public void a_short_task_cannot_generate_a_check_a_minute()
+    {
+        // half of 4 is 2, which the floor (5) outranks — the declared duration cannot buy a cadence
+        // finer than the configured minimum.
+        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 4, checkNumber: 1)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMinIntervalMinutes));
+    }
+
+    [Test]
+    public void the_gap_doubles_with_each_check()
+    {
+        // The declared-10-minute curve from the spec: checked at ~10m, then +5, +10, +20 …
+        CheckSchedule.NextInterval(Shipped, 10, 1).ShouldBe(TimeSpan.FromMinutes(5));
+        CheckSchedule.NextInterval(Shipped, 10, 2).ShouldBe(TimeSpan.FromMinutes(10));
+        CheckSchedule.NextInterval(Shipped, 10, 3).ShouldBe(TimeSpan.FromMinutes(20));
+    }
+
+    [Test]
+    public void the_doubling_stops_at_the_ceiling()
+    {
+        // Otherwise a long-lived task's fourth check lands 40 minutes out and its tenth next week.
+        CheckSchedule.NextInterval(Shipped, 10, 4)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes));
+        CheckSchedule.NextInterval(Shipped, 10, 40)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
+                "a huge check number must clamp, not overflow into a negative TimeSpan");
+        CheckSchedule.NextInterval(Shipped, 1440, 1)
+            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
+                "the ceiling outranks half of a day-long declaration too");
+    }
+
+    [Test]
+    public void a_degenerate_configuration_still_produces_a_positive_gap()
+    {
+        // A ceiling below the floor would otherwise schedule the next check in the past, and a
+        // sweep that re-arms into the past checks on every tick forever.
+        var upsideDown = new DelegationSettings { CheckMinIntervalMinutes = 20, CheckMaxIntervalMinutes = 5 };
+
+        CheckSchedule.NextInterval(upsideDown, 10, 1).ShouldBe(TimeSpan.FromMinutes(20));
+        CheckSchedule.NextInterval(new DelegationSettings { CheckMinIntervalMinutes = 0 }, 1, 1)
+            .ShouldBeGreaterThan(TimeSpan.Zero);
+    }
+}

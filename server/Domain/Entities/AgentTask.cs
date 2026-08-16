@@ -123,6 +123,29 @@ public class AgentTask
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>
+    /// Roughly how long the caller thinks this will take, in minutes (CARD-0047). Resolved at
+    /// creation from the request or <c>Delegation:DefaultExpectedMinutes</c>, so it is always a
+    /// number and the scheduler never has to reason about "unset".
+    ///
+    /// <para>It is a HINT, NEVER A DEADLINE. Nothing fails, escalates, kills or reprioritises a
+    /// task because it ran past this — the existing stall and delivery clocks
+    /// (<c>AutoEscalateStalledAsync</c>, <c>FailNeverStartedAsync</c>) are independent and are not
+    /// fed by it. All it does is decide when the FIRST check-in happens.</para>
+    /// </summary>
+    public int ExpectedDurationMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// When the next scheduled check-in on this delegate is due, or null for "never check".
+    /// Armed at dispatch only when <see cref="ReplyTo"/> is Session — a check with nobody to
+    /// deliver to is dead weight — and advanced (re-armed BEFORE the check runs, so a crash
+    /// mid-check skips one check instead of looping) by the dispatcher's check sweep.
+    /// </summary>
+    public DateTime? NextCheckAt { get; set; }
+
+    /// <summary>How many check-ins have been claimed for this task; drives the backoff and the cap.</summary>
+    public int CheckCount { get; set; }
+
+    /// <summary>
     /// UNCACHED input tokens only. The three input counters are kept apart because they are priced
     /// apart — a cache read is ~0.1x this, a cache write 1.25x (CARD-0023). Anything showing a
     /// human "tokens in" wants the sum of all three, not this alone.

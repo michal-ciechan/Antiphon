@@ -43,6 +43,9 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
     worktreePath: null,
     worktreeBranch: null,
     childCount: 0,
+    expectedDurationMinutes: 10,
+    nextCheckAt: null,
+    checkCount: 0,
     ...overrides,
   }
   return {

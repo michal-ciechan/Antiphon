@@ -82,6 +82,9 @@ function task(overrides: Record<string, unknown>) {
     costPricingVersion: 2,
     subtreeCostUsd: 0.42,
     childCount: 0,
+    expectedDurationMinutes: 10,
+    nextCheckAt: null,
+    checkCount: 0,
     ...overrides,
   }
 }
