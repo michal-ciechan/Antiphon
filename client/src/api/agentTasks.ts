@@ -50,6 +50,8 @@ export type AgentTaskEventType =
   | 'Rejected'
   /** Something legal but risky — an orchestrator sharing its caller's directory. */
   | 'Warning'
+  /** A scheduled check-in ran (CARD-0047) — an observation, never a state change. */
+  | 'Check'
 
 export interface AgentTaskSummaryDto {
   id: string

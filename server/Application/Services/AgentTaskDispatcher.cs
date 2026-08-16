@@ -34,6 +34,7 @@ public sealed class AgentTaskDispatcher
     private readonly ILogger<AgentTaskDispatcher> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly AgentTaskReplyService? _replies;
+    private readonly AgentTaskCheckQueue? _checkQueue;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -50,8 +51,12 @@ public sealed class AgentTaskDispatcher
         PtyDeliveryProfile? ptyProfile = null,
         // Optional so every harness that predates CARD-0046 keeps constructing this; where it is
         // absent the deferred-settlement sweep is simply not armed.
-        AgentTaskReplyService? replies = null)
+        AgentTaskReplyService? replies = null,
+        // Same contract for CARD-0047: no queue registered means no check sweep, so a harness that
+        // predates it keeps working and never claims a check it has no worker to run.
+        AgentTaskCheckQueue? checkQueue = null)
     {
+        _checkQueue = checkQueue;
         _replies = replies;
         _ptyProfile = ptyProfile;
         _db = db;
@@ -91,6 +96,12 @@ public sealed class AgentTaskDispatcher
         // Nothing re-triggers a response that never writes text, so the grace needs a clock, and
         // this is the one that already runs on a 5 s cadence before the early return below.
         await SettleDeferredReportsAsync(ct);
+
+        // And with running work that is DUE A LOOK (CARD-0047). This is where every other
+        // "running-work-gone-quiet" clock already lives, and check-due times have minute
+        // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
+        // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
+        await RunScheduledChecksAsync(ct);
 
         var active = await _db.AgentTasks.CountAsync(
             t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
@@ -450,6 +461,108 @@ public sealed class AgentTaskDispatcher
         }
 
         return swept;
+    }
+
+    /// <summary>
+    /// The check-in sweep (CARD-0047 §1.1, §1.5). Selects tasks whose <see cref="AgentTask.NextCheckAt"/>
+    /// has come, advances the schedule, and hands the ids to <see cref="AgentTaskCheckQueue"/>.
+    ///
+    /// <para><b>It claims and hands off; it never runs a check.</b> <see cref="TickAsync"/> is serial
+    /// and runs every 5 s; a check takes seconds and, from slice 4, a model call. Awaiting one here
+    /// would stall dispatching for its duration, so the only thing this method does with a due task
+    /// is write its next schedule and drop the id on a channel.</para>
+    ///
+    /// <para><b>Re-arm BEFORE run.</b> The schedule is advanced and COMMITTED before the id is
+    /// handed off, so a crash (or a throwing check) costs one skipped check instead of a task that
+    /// is due forever and re-claimed on every 5 s tick. The claim itself is one conditional UPDATE
+    /// keyed on the values this sweep read, so two ticks — or two server instances — cannot both
+    /// claim the same check.</para>
+    ///
+    /// <para>Checking stops on three conditions, all handled here rather than in the worker: the
+    /// task leaving Dispatched/Working (the filter — settlement needs no bookkeeping), the caller's
+    /// session being gone or exited (nobody is listening, so the schedule is cleared), and the
+    /// check budget being spent (the last check still RUNS, and its note says the budget is spent).</para>
+    /// </summary>
+    internal async Task<int> RunScheduledChecksAsync(CancellationToken ct)
+    {
+        if (!_settings.CheckEnabled || _checkQueue is null)
+            return 0;
+
+        var now = UtcNow();
+        var due = await _db.AgentTasks.AsNoTracking()
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.NextCheckAt != null
+                && t.NextCheckAt <= now
+                && t.ReplyTo == AgentTaskReplyTo.Session
+                && t.ParentSessionId != null)
+            .OrderBy(t => t.NextCheckAt)
+            .ToListAsync(ct);
+
+        var claimed = 0;
+        foreach (var task in due)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!await CallerIsListeningAsync(task, ct))
+            {
+                // Disarm rather than keep gathering facts nobody will read. Not an error: a caller
+                // whose session ended has usually just finished with the run.
+                if (await ClaimCheckAsync(task, nextCheckAt: null, checkCount: task.CheckCount, ct))
+                {
+                    _logger.LogInformation(
+                        "Checks on task {ShortId} stopped — its caller session {SessionId} is gone",
+                        DelegationReportFormatter.Short(task.Id), task.ParentSessionId);
+                }
+                continue;
+            }
+
+            var checkNumber = task.CheckCount + 1;
+            var budgetSpent = checkNumber >= Math.Max(1, _settings.CheckMaxCount);
+            var nextCheckAt = budgetSpent
+                ? (DateTime?)null
+                : now + CheckSchedule.NextInterval(_settings, task.ExpectedDurationMinutes, checkNumber);
+
+            if (!await ClaimCheckAsync(task, nextCheckAt, checkNumber, ct))
+                continue; // another tick took this one
+
+            _checkQueue.TryEnqueue(task.Id);
+            claimed++;
+        }
+
+        return claimed;
+    }
+
+    /// <summary>
+    /// Advance the schedule atomically. The WHERE carries the values this sweep READ, so the update
+    /// applies exactly once even if two ticks race; a zero row count means someone else won.
+    /// </summary>
+    private async Task<bool> ClaimCheckAsync(
+        AgentTask task, DateTime? nextCheckAt, int checkCount, CancellationToken ct)
+    {
+        var seenNextCheckAt = task.NextCheckAt;
+        var seenCheckCount = task.CheckCount;
+        var rows = await _db.AgentTasks
+            .Where(t => t.Id == task.Id
+                && t.NextCheckAt == seenNextCheckAt
+                && t.CheckCount == seenCheckCount)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(t => t.NextCheckAt, nextCheckAt)
+                      .SetProperty(t => t.CheckCount, checkCount),
+                ct);
+        return rows > 0;
+    }
+
+    /// <summary>Is there still a caller session to deliver a check note into?</summary>
+    private async Task<bool> CallerIsListeningAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.ParentSessionId is not Guid parent)
+            return false;
+        return await _db.AgentSessions.AsNoTracking().AnyAsync(
+            s => s.Id == parent
+                && (s.Status == SessionStatus.Created
+                    || s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running),
+            ct);
     }
 
     private async Task<bool> DispatchOneAsync(AgentTask task, CancellationToken ct)

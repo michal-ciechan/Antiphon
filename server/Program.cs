@@ -183,8 +183,12 @@ try
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
-    // The scheduled check-in probe (CARD-0047). Read-only by construction — see its constructor.
+    // Scheduled check-ins on a running delegate (CARD-0047). The probe is read-only by
+    // construction — see its constructor; the queue is the hand-off that keeps the dispatcher's
+    // 5 s tick from ever waiting on a check.
     builder.Services.AddScoped<DelegateCheckProbe>();
+    builder.Services.AddSingleton<AgentTaskCheckQueue>();
+    builder.Services.AddScoped<AgentTaskCheckService>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -301,6 +305,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
+    builder.Services.AddHostedService<AgentTaskCheckHostedService>();
     // One-shot: re-prices tasks costed before CARD-0023, so the per-root ceiling stops reading
     // ~10x-inflated history. No-ops once every row carries the current pricing version.
     builder.Services.AddHostedService<DelegationCostBackfillService>();
