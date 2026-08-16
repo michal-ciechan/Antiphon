@@ -184,7 +184,9 @@ public class AgentSessionLaunchFailureTests
             remoteControlName: "Antiphon-Orchestrator",
             notes: new LaunchNotes("launch note body", null));
 
-        adapter.Prompts.ShouldBe(["/remote-control"]);
+        adapter.Prompts.ShouldBe(
+            ["/remote-control", "/remote-control", "/remote-control"],
+            "slice 3 retypes the whole verified submit before giving up on it");
         adapter.Prompts.ShouldNotContain(
             p => p.StartsWith("/rename", StringComparison.Ordinal),
             "never append to a composer that may still be holding the first body");
@@ -256,13 +258,184 @@ public class AgentSessionLaunchFailureTests
         var start = fixture.StartCardSessionAsync(card, "do the work", remoteControlName: "Card Agent");
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
-        adapter.Prompts.ShouldBe(["/remote-control", "/rename Card Agent", "do the work"]);
+        // The work prompt gets slice 3's retries too, and this session is brand new — no transcript
+        // file exists yet, so there is no ground truth to late-confirm against and the launch fails.
+        adapter.Prompts.ShouldBe(
+            ["/remote-control", "/rename Card Agent", "do the work", "do the work", "do the work"]);
         adapter.Lifecycle.ShouldBe(["Kill", "Dispose"]);
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.CardId == card);
         session.Status.ShouldBe(SessionStatus.Failed);
     }
+
+    // ---- Slice 3: boot retry + transcript late-confirm ------------------------------------------
+
+    /// <summary>
+    /// The fix the capture actually supports. cefed08a's replacement, resuming the SAME
+    /// conversation 60 seconds later, armed on its first try — so the swallow is transient and
+    /// re-typing is what beats it. Re-typing is safe because the exception means no composer
+    /// evidence appeared: the composer is not holding the body, so this cannot double-submit.
+    /// </summary>
+    [Test]
+    public async Task A_swallowed_boot_prompt_is_retyped_and_the_second_attempt_lands()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "remote-control is active" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var typed = 0;
+        adapter.PromptFailure = prompt =>
+            prompt.StartsWith("/remote-control", StringComparison.Ordinal) && ++typed == 1
+                ? new PromptDeliveryException("No composer evidence appeared for the typed body.")
+                : null;
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(
+            ["/remote-control", "/remote-control", "/rename Antiphon-Orchestrator"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        (await db.AgentIncidents.Where(i => i.AgentId == fixture.AgentId).ToListAsync())
+            .ShouldBeEmpty("a retry that succeeded is not a degradation");
+    }
+
+    /// <summary>
+    /// The residual case the retries cannot see: the command really did submit, and only the screen
+    /// reads were blind. Claude records a local slash command as a
+    /// <c>&lt;command-name&gt;</c> wrapper, and that record past the pre-attempt baseline is ground
+    /// truth — so the launch proceeds as delivered (the <c>/rename</c> goes out) instead of
+    /// degrading a session that is, in fact, fully monitored.
+    /// </summary>
+    [Test]
+    public async Task Exhausted_boot_retries_are_late_confirmed_by_the_transcript_record()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        // A resumed session with a day of ingestion behind it — the observability gate CARD-0055
+        // scoped fresh boots out of. Complete turn, so the launch writes no restart boundary.
+        await fixture.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "yesterday's work");
+        await fixture.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        var typed = 0;
+        adapter.PromptFailure = prompt =>
+        {
+            if (!prompt.StartsWith("/remote-control", StringComparison.Ordinal))
+                return null;
+            if (++typed == LaunchFixture.BootPromptAttempts)
+            {
+                // The command DID run — which is why the TUI prints the armed marker and Claude
+                // writes the wrapper. Only the composer echo was never seen. Blocking on purpose:
+                // the row must be committed before the retry loop's confirm poll reads it.
+                adapter.Emit("remote-control is active");
+                fixture.InsertTranscriptEntryAsync(
+                        TranscriptKinds.UserPrompt, RemoteControlWrapper, timestamp: DateTime.UtcNow)
+                    .GetAwaiter().GetResult();
+            }
+
+            return new PromptDeliveryException("No composer evidence appeared for the typed body.");
+        };
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe([
+            "/remote-control", "/remote-control", "/remote-control", "/rename Antiphon-Orchestrator"
+        ], "the confirmed command lets the launch continue to the rename it used to skip");
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+        (await db.AgentIncidents.Where(i => i.AgentId == fixture.AgentId).ToListAsync())
+            .ShouldBeEmpty("the command was delivered; only our screen reads were blind");
+    }
+
+    /// <summary>
+    /// The false positive the late-confirm must never produce. A <c>--resume</c> re-ingests the
+    /// conversation's copied history — which contains the PREVIOUS boot's own
+    /// <c>/remote-control</c> wrapper, arriving with a sequence past our baseline because backfill
+    /// rebases unseen entries onto the end. The record's own timestamp is what tells the two apart.
+    /// </summary>
+    [Test]
+    public async Task A_previous_boots_own_command_record_never_confirms_this_one()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        await fixture.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "yesterday's work");
+        await fixture.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        var typed = 0;
+        adapter.PromptFailure = prompt =>
+        {
+            if (!prompt.StartsWith("/remote-control", StringComparison.Ordinal))
+                return null;
+            if (++typed == LaunchFixture.BootPromptAttempts)
+            {
+                fixture.InsertTranscriptEntryAsync(
+                        TranscriptKinds.UserPrompt,
+                        RemoteControlWrapper,
+                        timestamp: DateTime.UtcNow.AddDays(-3))
+                    .GetAwaiter().GetResult();
+            }
+
+            return new PromptDeliveryException("No composer evidence appeared for the typed body.");
+        };
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId)).Status
+            .ShouldBe(SessionStatus.Running, "degrading still never fails a healthy session");
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.FailureReason.ShouldBe("RemoteControlNotDelivered");
+    }
+
+    /// <summary>
+    /// The observability gate, and why CARD-0055's boot scope-out still stands for fresh sessions:
+    /// with no transcript at baseline time there is no floor, so a record appearing during the
+    /// attempts proves nothing about which write produced it. Same seeded record as the confirming
+    /// test above — the ONLY difference is that this session had no transcript to measure against.
+    /// </summary>
+    [Test]
+    public async Task A_session_with_no_transcript_at_baseline_never_late_confirms()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+
+        var typed = 0;
+        adapter.PromptFailure = prompt =>
+        {
+            if (!prompt.StartsWith("/remote-control", StringComparison.Ordinal))
+                return null;
+            if (++typed == LaunchFixture.BootPromptAttempts)
+            {
+                fixture.InsertTranscriptEntryAsync(
+                        TranscriptKinds.UserPrompt, RemoteControlWrapper, timestamp: DateTime.UtcNow)
+                    .GetAwaiter().GetResult();
+            }
+
+            return new PromptDeliveryException("No composer evidence appeared for the typed body.");
+        };
+
+        await fixture.LaunchInteractiveAsync(remoteControlName: "Antiphon-Orchestrator");
+
+        adapter.Prompts.ShouldBe(["/remote-control", "/remote-control", "/remote-control"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.RcDegraded);
+        incident.FailureReason.ShouldBe("RemoteControlNotDelivered");
+    }
+
+    /// <summary>What Claude really writes to the JSONL when a local slash command runs.</summary>
+    private const string RemoteControlWrapper =
+        "<command-name>/remote-control</command-name>\n"
+        + "            <command-message>remote-control</command-message>\n"
+        + "            <command-args></command-args>";
 
     // ---- Fixture --------------------------------------------------------------------------------
 
@@ -424,8 +597,16 @@ public class AgentSessionLaunchFailureTests
             };
         }
 
-        public Task<long> InsertTranscriptEntryAsync(string kind, string? text = null, string? stopReason = null) =>
-            Harness.InsertTranscriptEntryAsync(kind, text, stopReason, SessionId);
+        /// <summary>
+        /// The production attempt count these tests run at — read from the settings object rather
+        /// than restated, so a change to the default cannot leave the tests asserting the old one.
+        /// (The harness compresses the DELAY between attempts to zero; the count is production's.)
+        /// </summary>
+        public static int BootPromptAttempts => new DeliveryVerificationSettings().BootPromptAttempts;
+
+        public Task<long> InsertTranscriptEntryAsync(
+            string kind, string? text = null, string? stopReason = null, DateTime? timestamp = null) =>
+            Harness.InsertTranscriptEntryAsync(kind, text, stopReason, SessionId, timestamp);
 
         public Task<Guid> SeedPendingMessageAsync(string body) =>
             Harness.SeedPendingMessageAsync(body, SessionId);

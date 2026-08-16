@@ -88,6 +88,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     // Compressed too: long enough for a record that lands just past the deadline,
                     // short enough that the genuine-failure suites do not pay for it.
                     PostFailureConfirmGraceSeconds = 3,
+                    // Production attempt COUNT (the retry is what CARD-0056 slice 3 is about) with
+                    // the pause between attempts compressed away.
+                    BootPromptRetryDelaySeconds = 0,
                 },
             }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));

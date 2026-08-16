@@ -34,6 +34,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // AgentControlService — so it can only be resolved from a scope of its own, not injected.
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentSessionSettings _settings;
+    // Boot-prompt retry + transcript late-confirm knobs live with the queue's delivery verification
+    // (CARD-0056 slice 3): both answer "did the body we typed actually reach the composer", and the
+    // late-confirm reuses the queue's matcher outright.
+    private readonly DeliveryVerificationSettings _verification;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
 
@@ -47,6 +51,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         SessionMessageQueueService messageQueue,
         IServiceScopeFactory scopeFactory,
         IOptions<AgentSessionSettings> settings,
+        IOptions<SupervisionSettings> supervision,
         TimeProvider timeProvider,
         ILogger<AgentSessionService> logger)
     {
@@ -59,6 +64,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _messageQueue = messageQueue;
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
+        _verification = supervision.Value.DeliveryVerification;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -174,7 +180,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // — that prompt is the session's whole purpose.
             await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session.Id, agentId: null, ct);
 
-            await adapter.SendPromptAsync(prompt, ct);
+            await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs)),
                 ct);
@@ -438,6 +444,167 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private sealed class ClaudeSessionNotFoundException : Exception
     {
         public ClaudeSessionNotFoundException() : base(ClaudeSessionNotFoundFailureReason) { }
+    }
+
+    /// <summary>
+    /// How stale a <c>UserPrompt</c> record's own timestamp may be and still count as evidence that
+    /// OUR boot prompt landed. This is the guard that keeps a resumed conversation's copied history
+    /// from confirming us: <c>--resume</c> legitimately re-ingests records that predate the relaunch
+    /// (which is exactly why CARD-0006's rule C3 waives its age check on resume), and that history
+    /// contains the PREVIOUS boot's own <c>/remote-control</c> wrapper. Sequence alone cannot tell
+    /// the two apart — backfill rebases unseen entries past the session max — but the record's own
+    /// timestamp can, because the copy keeps the original's. The tolerance covers clock granularity
+    /// between Claude's write and our baseline read, nothing more; it is minutes short of any
+    /// history. A record with no timestamp at all is not evidence (falling back to the degraded
+    /// path costs an incident, and a false "delivered" costs a silently unmonitored session).
+    /// </summary>
+    private static readonly TimeSpan BootConfirmClockTolerance = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Sends one BOOT prompt — a launch-time write that happens before the message queue exists —
+    /// and retries the WHOLE verified submit when the terminal never showed evidence of it.
+    ///
+    /// <para>Why re-typing is safe here and nowhere else: the only failure this retries is
+    /// <see cref="PromptDeliveryException"/>, which <c>VerifiedPromptSubmitter</c> throws when no
+    /// composer evidence ever appeared. That is the same check that would gate the submitting
+    /// Enter, so the exception is positive evidence that the composer does NOT hold the body and a
+    /// second typing cannot double-submit. CARD-0055's Enter-only rule governs the phase after
+    /// evidence; this is the phase before it.</para>
+    ///
+    /// <para>Before declaring failure, one last look at ground truth: if this session already has an
+    /// observable transcript, a <c>UserPrompt</c> record carrying this body proves the submit
+    /// actually happened while the screen reads were blind. That gate is why this is not a general
+    /// replacement for composer evidence — a FRESH boot has no transcript file at all (the first
+    /// submit creates it), so CARD-0055's boot scope-out still stands there. The case it does cover
+    /// is the one that produced CARD-0056: a resume-mode relaunch of a session with a full day of
+    /// ingestion behind it.</para>
+    /// </summary>
+    private async Task SendBootPromptWithRetryAsync(
+        IAgentProtocolAdapter adapter, string body, Guid sessionId, CancellationToken ct)
+    {
+        var attempts = Math.Max(1, _verification.BootPromptAttempts);
+        var delay = TimeSpan.FromSeconds(Math.Max(0, _verification.BootPromptRetryDelaySeconds));
+
+        // Captured ONCE, before the first keystroke: every attempt is confirmed against the same
+        // floor, so a record that landed during attempt 1 still counts after attempt 3.
+        var baseline = await CaptureBootConfirmBaselineAsync(sessionId, ct);
+        var confirmFrom = UtcNow() - BootConfirmClockTolerance;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await adapter.SendPromptAsync(body, ct);
+                return;
+            }
+            catch (PromptDeliveryException ex)
+            {
+                if (attempt < attempts)
+                {
+                    _logger.LogWarning(
+                        "Boot prompt to session {SessionId} showed no composer evidence on attempt {Attempt} "
+                        + "of {Attempts}: {Reason} Re-typing in {Delay}s — the missing evidence is itself proof "
+                        + "the composer is not holding the body",
+                        sessionId, attempt, attempts, ex.Message, delay.TotalSeconds);
+                    if (delay > TimeSpan.Zero)
+                        await Task.Delay(delay, _timeProvider, ct);
+                    continue;
+                }
+
+                if (await TryLateConfirmBootPromptAsync(sessionId, body, baseline, confirmFrom, ct))
+                    return;
+
+                _logger.LogWarning(ex,
+                    "Boot prompt to session {SessionId} failed all {Attempts} attempts and no transcript "
+                    + "record confirms it", sessionId, attempts);
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The transcript floor a boot-prompt confirmation is measured against, or null when this
+    /// session has no observable transcript — a fresh conversation, whose JSONL file does not exist
+    /// until the first submit creates it. Null means "no ground truth exists", not "nothing
+    /// matched": without a floor, any record found would prove nothing at all.
+    /// </summary>
+    private async Task<long?> CaptureBootConfirmBaselineAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (!_verification.TranscriptConfirmEnabled)
+            return null;
+
+        return await _db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+    }
+
+    /// <summary>
+    /// Did the boot prompt reach Claude after all? Pulls the runner's own transcript first — the
+    /// live event stream is not a reliable clock, and a decision made on "the transcript does not
+    /// contain X" without asking the runner is the mistake CARD-0055 slice 6 was filed for — then
+    /// looks for a <c>UserPrompt</c> record past the baseline that carries this body.
+    ///
+    /// <para>Two arms, both positive evidence: the record's <c>&lt;command-name&gt;</c> wrapper
+    /// names the slash command we typed, or <see cref="PromptSubmissionMatch.IsConfirmedBy"/>
+    /// matches the body's head window (which the wrapper also satisfies — <c>/remote-control</c>
+    /// normalizes to 15 chars, past <see cref="PromptSubmissionMatch.MinMatchChars"/>). A body too
+    /// short to identify by text takes NO weak arm here: unlike the queue's 30-second confirm
+    /// window, a boot runs while a resumed conversation's history is still being ingested, so "some
+    /// UserPrompt showed up" is not evidence of anything.</para>
+    /// </summary>
+    private async Task<bool> TryLateConfirmBootPromptAsync(
+        Guid sessionId, string body, long? baseline, DateTime confirmFrom, CancellationToken ct)
+    {
+        if (baseline is not long floor)
+            return false;
+        if (!PromptSubmissionMatch.RequiresTextMatch(body))
+            return false;
+
+        await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+
+        var candidates = await _db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Sequence > floor
+                && t.Timestamp != null
+                && t.Timestamp >= confirmFrom)
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+
+        var command = ReadSlashCommandName(body);
+        var confirmed = candidates.Any(text =>
+            (command is not null && string.Equals(
+                TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, text),
+                command,
+                StringComparison.OrdinalIgnoreCase))
+            || PromptSubmissionMatch.IsConfirmedBy(body, text));
+        if (!confirmed)
+            return false;
+
+        _logger.LogInformation(
+            "Boot prompt to session {SessionId} is late-confirmed: it became a UserPrompt record past "
+            + "sequence {Baseline} even though no composer evidence was ever seen, so it is treated as "
+            + "delivered", sessionId, floor);
+        return true;
+    }
+
+    /// <summary>
+    /// The command a boot prompt invokes ("/remote-control", "/rename"), or null when the body is
+    /// an ordinary prompt. Only the NAME is available as evidence: Claude's wrapper records the
+    /// arguments in a separate tag, so a head-window text match cannot see "/rename &lt;name&gt;" as
+    /// one string. The name alone is still positive, timestamped evidence that this command ran.
+    /// </summary>
+    private static string? ReadSlashCommandName(string body)
+    {
+        var trimmed = body.TrimStart();
+        if (trimmed.Length < 2 || trimmed[0] != '/')
+            return null;
+
+        var end = trimmed.IndexOfAny([' ', '\t', '\r', '\n']);
+        return end < 0 ? trimmed : trimmed[..end];
     }
 
     public async Task KillAsync(Guid sessionId, CancellationToken ct)
@@ -832,6 +999,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     //
     // The /rename is skipped by construction when /remote-control fails: the exception leaves the
     // try block, so nothing appends to a composer that may still be holding the first body.
+    //
+    // Both commands go through SendBootPromptWithRetryAsync (CARD-0056 slice 3), so "fails" here
+    // now means all three typings showed no composer evidence AND no transcript record confirms
+    // the command ran. Degrading is what is left after retrying and after asking ground truth.
     private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
@@ -847,7 +1018,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Baseline BEFORE arming: a resumed TUI can redraw a previous run's "remote-control is
             // active" line, which must not satisfy the wait.
             var baseline = adapter.SnapshotRawOutput().Length;
-            await adapter.SendPromptAsync("/remote-control", ct);
+            await SendBootPromptWithRetryAsync(adapter, "/remote-control", sessionId, ct);
             await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
             if (!await WaitForRemoteControlArmedAsync(adapter, baseline, ct))
             {
@@ -861,7 +1032,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     ct);
             }
 
-            await adapter.SendPromptAsync($"/rename {remoteControlName.Trim()}", ct);
+            await SendBootPromptWithRetryAsync(adapter, $"/rename {remoteControlName.Trim()}", sessionId, ct);
             await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, ct);
         }
         catch (PromptDeliveryException ex)

@@ -157,4 +157,31 @@ public sealed class DeliveryVerificationSettings
     /// is a human waiting on a dead line.
     /// </summary>
     public int MaxDeliveryAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Total attempts at a BOOT prompt — the launch-time writes (<c>/remote-control</c>,
+    /// <c>/rename</c>, a card's work prompt) that run before the queue exists (CARD-0056).
+    ///
+    /// <para>Unlike <see cref="SubmitAttempts"/>, which is Enter-only, this re-types the whole
+    /// verified submit. That is safe here and ONLY here: the attempt failed with a
+    /// <c>PromptDeliveryException</c>, which means no composer evidence appeared — the same check
+    /// that would gate an Enter says the composer does not hold the body, so typing it again cannot
+    /// double-submit. CARD-0055's never-re-type rule governs the phase AFTER evidence; this is the
+    /// phase before it.</para>
+    ///
+    /// <para>Retrying is the fix the evidence actually supports. On 2026-08-16 a 15-character
+    /// <c>/remote-control</c> was typed into a healthy orchestrator mid-resume-render and never
+    /// reached its composer; the supervisor's replacement, resuming the SAME conversation 60
+    /// seconds later, armed on its first try. Raising <see cref="EvidenceTimeoutSeconds"/> is
+    /// refuted by that capture and stays at 15: no poll duration can reveal text that was never
+    /// buffered. 3 × 15 s ≈ 45 s of typing spread over ~49 s also outlasts any history render
+    /// measured so far.</para>
+    /// </summary>
+    public int BootPromptAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Quiet period between boot-prompt attempts. The demonstrated race is type-at-ready vs
+    /// resume-history-render, so the retry wants the TUI to have moved on, not to type faster.
+    /// </summary>
+    public int BootPromptRetryDelaySeconds { get; set; } = 2;
 }
