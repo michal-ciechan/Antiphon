@@ -181,6 +181,31 @@ public class PromptSubmissionMatchTests
         PromptSubmissionMatch.IsConfirmedBy(typed, recorded).ShouldBeTrue();
     }
 
+    // ---- CARD-0056: a boot slash command confirms through its local-command wrapper ---------------
+
+    /// <summary>
+    /// A launch's <c>/remote-control</c> is not recorded verbatim: Claude wraps a local slash
+    /// command in <c>&lt;command-name&gt;</c> tags. CARD-0056's boot late-confirm leans on that
+    /// wrapper satisfying this matcher unchanged, so the wrapper is pinned here rather than a
+    /// second matcher being invented for it. 15 chars clears <see cref="MinMatchChars"/>, which is
+    /// what keeps it on the STRONG arm — the weak arm would confirm a slash command from any
+    /// unrelated record.
+    /// </summary>
+    [Test]
+    public void The_local_command_wrapper_confirms_the_slash_command_that_was_typed()
+    {
+        const string wrapper =
+            "<command-name>/remote-control</command-name>\n"
+            + "            <command-message>remote-control</command-message>\n"
+            + "            <command-args></command-args>";
+
+        PromptSubmissionMatch.RequiresTextMatch("/remote-control")
+            .ShouldBeTrue("15 chars — identifiable by text, so the weak arm never applies");
+        PromptSubmissionMatch.IsConfirmedBy("/remote-control", wrapper).ShouldBeTrue();
+        PromptSubmissionMatch.IsConfirmedBy("/remote-control", "<command-name>/clear</command-name>")
+            .ShouldBeFalse("a different command's wrapper is not our command");
+    }
+
     // ---- lockstep with C4 ------------------------------------------------------------------------
 
     // SessionInputLog must ask the extracted matcher the same question it used to answer itself:

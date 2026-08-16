@@ -1114,9 +1114,20 @@ public class AgentSessionServiceIntegrationTests
             BuildMessageQueue(provider, runtime, eventBus),
             provider.GetRequiredService<IServiceScopeFactory>(),
             sessionSettings,
+            BootPromptSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);
     }
+
+    /// <summary>
+    /// Production boot-prompt retry count, with the 2s pause between attempts compressed away —
+    /// these suites assert what a launch does, not how long it waits between typings.
+    /// </summary>
+    private static IOptions<SupervisionSettings> BootPromptSettings => Options.Create(
+        new SupervisionSettings
+        {
+            DeliveryVerification = new DeliveryVerificationSettings { BootPromptRetryDelaySeconds = 0 },
+        });
 
     private static SessionMessageQueueService BuildMessageQueue(
         ServiceProvider provider, AgentSessionRuntime runtime, MockEventBus eventBus) =>
@@ -1155,6 +1166,7 @@ public class AgentSessionServiceIntegrationTests
             BuildMessageQueue(provider, runtime, eventBus),
             provider.GetRequiredService<IServiceScopeFactory>(),
             sessionSettings,
+            BootPromptSettings,
             TimeProvider.System,
             NullLogger<AgentSessionService>.Instance);
 
