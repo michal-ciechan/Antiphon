@@ -118,8 +118,15 @@ public sealed class AgentTaskDispatcher
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
         sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
 
+        // The cap bounds concurrent Claude PROCESSES, so interpretation tasks are outside it both
+        // ways — they neither consume a slot nor wait for one. A Check task is pinned to the
+        // standing interpreter and delivered into a session that is already running, so it spawns
+        // nothing; counting it would let a system at the cap starve every interpretation and
+        // silently degrade all checks exactly when the operator most wants eyes on the fleet.
+        // Their own backlog is bounded separately, on the interpreter (CARD-0047 §1.3).
         var active = await _db.AgentTasks.CountAsync(
-            t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
+            t => t.Role != AgentTaskRole.Check
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
 
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
@@ -141,6 +148,8 @@ public sealed class AgentTaskDispatcher
             .ToList();
 
         var dispatched = 0;
+        // Only process-spawning dispatches count against the cap — see the `active` query above.
+        var dispatchedAgainstCap = 0;
         var skippedConcurrency = 0;
         var skippedScope = 0;
         var failures = 0;
@@ -149,7 +158,8 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
-            if (active + dispatched >= _settings.MaxConcurrentTasks)
+            if (task.Role != AgentTaskRole.Check
+                && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
             {
                 skippedConcurrency++;
                 continue;
@@ -174,6 +184,8 @@ public sealed class AgentTaskDispatcher
                 if (await DispatchOneAsync(task, ct))
                 {
                     dispatched++;
+                    if (task.Role != AgentTaskRole.Check)
+                        dispatchedAgainstCap++;
                     if (task.ScopeGlob is { } held)
                         heldScopes.Add((task.WorkingDirectory, held));
                 }
@@ -546,7 +558,11 @@ public sealed class AgentTaskDispatcher
                 && t.NextCheckAt != null
                 && t.NextCheckAt <= now
                 && t.ReplyTo == AgentTaskReplyTo.Session
-                && t.ParentSessionId != null)
+                && t.ParentSessionId != null
+                // RECURSION GUARD, the other half of the one in ArmFirstCheck: nothing arms
+                // NextCheckAt on an interpretation task, and nothing selects one either. Checks
+                // that checked checks would create an interpretation per interpretation.
+                && t.Role != AgentTaskRole.Check)
             .OrderBy(t => t.NextCheckAt)
             .ToListAsync(ct);
 
@@ -775,6 +791,13 @@ public sealed class AgentTaskDispatcher
     private void ArmFirstCheck(AgentTask claimed, DateTime dispatchedAt)
     {
         if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)
+            return;
+
+        // RECURSION GUARD. An interpretation task is created with ReplyTo=None, so the line above
+        // already declines it — this one is structural rather than incidental, because a future
+        // change that gave interpretations a reply route would otherwise silently arm checks ON
+        // checks, and each of those would create another interpretation task, forever.
+        if (claimed.Role == AgentTaskRole.Check)
             return;
 
         var expected = Math.Clamp(claimed.ExpectedDurationMinutes, 1, 1440);
@@ -1185,7 +1208,12 @@ public sealed class AgentTaskDispatcher
                 .Select(t => (Guid?)t.RootTaskId)
                 .FirstOrDefaultAsync(ct);
 
-            if (previousRoot is not null && previousRoot != task.RootTaskId)
+            // A Check task NEVER compacts its session. Every interpretation is its own root, so the
+            // "unrelated work" test is true of every single one — and it is exactly wrong here: the
+            // specialist's work is homogeneous, and the accumulated experience of reading bundles is
+            // the whole reason it is a standing agent rather than a fresh Claude per check.
+            if (task.Role != AgentTaskRole.Check
+                && previousRoot is not null && previousRoot != task.RootTaskId)
             {
                 // One line: a slash command is parsed from the submitted composer text, and the
                 // focus argument tells the summariser what the surviving context must serve.

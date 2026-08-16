@@ -42,6 +42,7 @@ public sealed class AgentTaskCheckService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskCheckService> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    private readonly CheckInterpreterProvisioner? _interpreter;
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -51,7 +52,11 @@ public sealed class AgentTaskCheckService
         IEventBus eventBus,
         TimeProvider timeProvider,
         ILogger<AgentTaskCheckService> logger,
-        PtyDeliveryProfile? ptyProfile = null)
+        PtyDeliveryProfile? ptyProfile = null,
+        // Optional, and its ABSENCE is not a degraded interpretation — it is a host that never wired
+        // the specialist in at all (every harness that predates CARD-0047 slice 4). Such a host gets
+        // exactly the slice-3 note: digest, no prefix, no interpretation task.
+        CheckInterpreterProvisioner? interpreter = null)
     {
         _db = db;
         _probe = probe;
@@ -61,6 +66,7 @@ public sealed class AgentTaskCheckService
         _timeProvider = timeProvider;
         _logger = logger;
         _ptyProfile = ptyProfile;
+        _interpreter = interpreter;
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -103,10 +109,10 @@ public sealed class AgentTaskCheckService
         var facts = await _probe.GatherAsync(task, ct);
         var digest = DelegateCheckProbe.RenderDigest(facts);
 
-        // Slice 4 replaces this with the interpreter's 3-5 lines and falls back to the digest when
-        // the model call fails. Until then the digest IS the note, which is exactly why slices 1-3
-        // are useful on their own.
-        var body = BuildNote(task, facts, digest);
+        // The ONE new path (CARD-0047 slice 4C). Everything it can return other than an
+        // interpretation is today's note plus a prefix naming why — see Interpretation.
+        var interpretation = await InterpretAsync(task, facts, digest, ct);
+        var body = BuildNote(task, facts, digest, interpretation.Text, interpretation.DegradedReason);
 
         try
         {
@@ -124,12 +130,17 @@ public sealed class AgentTaskCheckService
             return CheckOutcome.DeliveryFailed;
         }
 
+        // The timeline keeps the DIGEST whatever the note carried — it is the evidence, and an
+        // interpretation of facts nobody recorded is not reviewable. What the interpreter cost is
+        // recorded HERE as well as on the interpretation task's own row, so the question "what did
+        // watching this task cost" is answerable from the timeline without a join (§1.6).
+        var detail = interpretation.EventLine is { } line ? $"{line}\n\n{digest}" : digest;
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = task.Id,
             Type = AgentTaskEventType.Check,
-            Detail = digest.Length <= EventDetailChars ? digest : digest[..EventDetailChars] + "…",
+            Detail = detail.Length <= EventDetailChars ? detail : detail[..EventDetailChars] + "…",
             At = _timeProvider.GetUtcNow().UtcDateTime,
         });
         await _db.SaveChangesAsync(ct);
@@ -145,6 +156,247 @@ public sealed class AgentTaskCheckService
     /// <summary>One conversation per task, so a check never coalesces with anything else.</summary>
     public static string ConversationKey(Guid taskId) => $"check:{taskId:N}";
 
+    /// <summary>How often the wait re-reads the interpretation task's row (CARD-0047 §1.1).</summary>
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+
+    /// <param name="Text">The specialist's reading, or null — in which case the digest ships.</param>
+    /// <param name="DegradedReason">
+    /// Rendered into the note as <c>(unverified digest — &lt;reason&gt;)</c>. Null AND a null
+    /// <paramref name="Text"/> means the specialist is not wired into this host at all, which
+    /// produces the pre-slice-4 note byte for byte.
+    /// </param>
+    /// <param name="EventLine">The interpreter line for the checked task's timeline, if one ran.</param>
+    private readonly record struct Interpretation(string? Text, string? DegradedReason, string? EventLine)
+    {
+        public static Interpretation NotWiredIn { get; } = new(null, null, null);
+
+        public static Interpretation Degraded(string reason, string? eventLine = null) =>
+            new(null, reason, eventLine);
+    }
+
+    /// <summary>
+    /// Hand this check's bundle to the standing specialist and wait, briefly, for its reading
+    /// (CARD-0047 slice 4 amendment §1.1).
+    ///
+    /// <para><b>Every path out of here that is not a successful interpretation is today's digest
+    /// with a prefix.</b> That is the contract of the whole slice, not a convenience: the
+    /// deterministic digest ships and always delivers, and the specialist is garnish on top of it.
+    /// Disabled, unprovisioned, busy, uncreatable, slow, failed, or answering with nothing — the
+    /// caller still hears about the delegate, and hears why the reading is missing.</para>
+    ///
+    /// <para>The work reaches the specialist as a pinned <see cref="AgentTaskRole.Check"/> task and
+    /// the answer comes back on that task's own <see cref="AgentTask.Result"/>, through the settlement
+    /// path — so delivery confirmation is the TRANSCRIPT (settlement only fires on a marked turn that
+    /// actually happened), never the message queue's Sent flag, which CARD-0055 proved does not mean
+    /// what it says.</para>
+    /// </summary>
+    private async Task<Interpretation> InterpretAsync(
+        AgentTask task, DelegateCheckProbe.CheckFacts facts, string digest, CancellationToken ct)
+    {
+        if (_interpreter is null || !_settings.CheckInterpreterEnabled)
+            return Interpretation.NotWiredIn;
+
+        Domain.Entities.Agent? specialist;
+        try
+        {
+            specialist = await _interpreter.EnsureAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not provision the check interpreter for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
+            return Interpretation.Degraded("interpreter unavailable: could not be provisioned");
+        }
+
+        if (specialist is null)
+            return Interpretation.NotWiredIn;
+
+        // Depth policy. There is ONE specialist and many delegates can come due together; past this
+        // bound a check degrades IMMEDIATELY rather than waiting its full budget behind a pile.
+        var backlog = await _db.AgentTasks.CountAsync(
+            t => t.AgentId == specialist.Id
+                && t.Role == AgentTaskRole.Check
+                && (t.Status == AgentTaskStatus.Queued
+                    || t.Status == AgentTaskStatus.Dispatched
+                    || t.Status == AgentTaskStatus.Working),
+            ct);
+        if (backlog >= Math.Max(1, _settings.CheckInterpreterMaxBacklog))
+        {
+            _logger.LogInformation(
+                "Check on task {ShortId} degraded: {Backlog} interpretation(s) already pending",
+                DelegationReportFormatter.Short(task.Id), backlog);
+            return Interpretation.Degraded("interpreter busy");
+        }
+
+        AgentTask interpretation;
+        try
+        {
+            interpretation = await CreateInterpretationTaskAsync(task, specialist, facts, digest, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not queue an interpretation for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
+            return Interpretation.Degraded("interpreter unavailable: the interpretation could not be queued");
+        }
+
+        var shortId = DelegationReportFormatter.Short(interpretation.Id);
+        var settled = await WaitForInterpretationAsync(interpretation.Id, ct);
+
+        if (settled is null)
+        {
+            // Out of budget. Still Queued means it never reached the specialist and never will be
+            // worth anything — cancel it. Already Dispatched means the spend is committed: let it
+            // finish and settle onto its OWN row, where its late text is recorded and never
+            // delivered as a second note about a check the caller has already read.
+            await CancelIfStillQueuedAsync(interpretation.Id, ct);
+            _logger.LogInformation(
+                "Check on task {ShortId} degraded: interpretation {InterpretationId} did not settle "
+                + "within {Seconds}s", DelegationReportFormatter.Short(task.Id), shortId,
+                _settings.CheckInterpreterWaitSeconds);
+            return Interpretation.Degraded(
+                $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s",
+                $"interpreter: task {shortId}, timed out");
+        }
+
+        var line = $"interpreter: task {shortId}, ${settled.CostUsd:0.0000}";
+
+        if (settled.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
+            return Interpretation.Degraded("interpreter unavailable: the interpretation failed", line);
+
+        if (string.IsNullOrWhiteSpace(settled.Result))
+            return Interpretation.Degraded("interpreter unavailable: the interpretation was empty", line);
+
+        return new Interpretation(settled.Result, null, line);
+    }
+
+    /// <summary>
+    /// The interpretation task row, built directly rather than through <c>AgentTaskService.CreateAsync</c>:
+    /// there is no delegate caller to authorise, no allowed-root to resolve, and no fan-out budget
+    /// this should consume.
+    ///
+    /// <para>It is its OWN root (<c>RootTaskId = Id</c>, no parent, depth 0) so its cost sums into
+    /// nobody's tree and the per-root ceiling keeps meaning "what the delegated work cost". Nesting
+    /// it under the checked task was considered and rejected: it would need a role carve-out inside
+    /// the budget query, and a carve-out inside a spending ceiling is the kind of exception that
+    /// rots (§1.6).</para>
+    ///
+    /// <para><c>ReplyTo = None</c> is load-bearing three ways: no completion note is delivered
+    /// anywhere, no check is armed on it, and the check sweep's filter never sees it.</para>
+    /// </summary>
+    private async Task<AgentTask> CreateInterpretationTaskAsync(
+        AgentTask task, Domain.Entities.Agent specialist, DelegateCheckProbe.CheckFacts facts,
+        string digest, CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var id = Guid.NewGuid();
+        var interpretation = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            ParentTaskId = null,
+            ParentSessionId = null,
+            Depth = 0,
+            Title = CheckInterpretation.BuildTitle(task, facts.Task.CheckNumber),
+            Goal = CheckInterpretation.BuildGoal(task, facts.Task.CheckNumber, digest),
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Check,
+            ModelLevel = AgentModelLevel.Low,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = specialist.WorkingDirectory,
+            AgentId = specialist.Id,
+            AgentName = specialist.Name,
+            // Not ephemeral: the ephemeral flag is what deletes an agent row when its task settles,
+            // and deleting the standing specialist after one check would be the opposite of standing.
+            Ephemeral = false,
+            ReplyTo = AgentTaskReplyTo.None,
+            Status = AgentTaskStatus.Queued,
+            CreatedAt = now,
+        };
+        _db.AgentTasks.Add(interpretation);
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = id,
+            Type = AgentTaskEventType.Created,
+            ModelLevel = AgentModelLevel.Low,
+            Detail = $"Interpretation of check #{facts.Task.CheckNumber} on task "
+                + $"{DelegationReportFormatter.Short(task.Id)}.",
+            At = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        return interpretation;
+    }
+
+    /// <summary>
+    /// Poll the interpretation task's row until it settles or the budget runs out. Null means the
+    /// budget ran out (or the row vanished) — the caller degrades.
+    ///
+    /// <para><c>Blocked</c> counts as an answer: it means the settlement path's question-detector
+    /// read a trailing question mark in the specialist's prose, which is a plausible way for a
+    /// perfectly good "AMBIGUOUS — the bundle does not say whether..." to end. The text is there;
+    /// throwing it away over punctuation would be worse than delivering it.</para>
+    /// </summary>
+    private async Task<AgentTask?> WaitForInterpretationAsync(Guid interpretationId, CancellationToken ct)
+    {
+        var deadline = _timeProvider.GetUtcNow()
+            + TimeSpan.FromSeconds(Math.Max(1, _settings.CheckInterpreterWaitSeconds));
+
+        while (true)
+        {
+            // AsNoTracking on purpose: the dispatcher and the settlement path write this row from
+            // OTHER scopes, and a tracked read would keep handing back the snapshot this context
+            // added — the poll would then never see it settle.
+            var row = await _db.AgentTasks.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == interpretationId, ct);
+            if (row is null)
+                return null;
+            if (AgentTaskService.IsSettled(row.Status) || row.Status == AgentTaskStatus.Blocked)
+                return row;
+
+            var remaining = deadline - _timeProvider.GetUtcNow();
+            if (remaining <= TimeSpan.Zero)
+                return null;
+
+            await Task.Delay(remaining < PollInterval ? remaining : PollInterval, _timeProvider, ct);
+        }
+    }
+
+    /// <summary>
+    /// Withdraw an interpretation nobody will read — but only while it is still Queued. A Dispatched
+    /// one has already been typed at the specialist, and cancelling that would stop a session
+    /// mid-turn for a note that has already gone out.
+    /// </summary>
+    private async Task CancelIfStillQueuedAsync(Guid interpretationId, CancellationToken ct)
+    {
+        try
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var rows = await _db.AgentTasks
+                .Where(t => t.Id == interpretationId && t.Status == AgentTaskStatus.Queued)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
+                          .SetProperty(t => t.CompletedAt, now)
+                          .SetProperty(t => t.FailureReason, "The check that asked for it stopped waiting.")
+                          .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()),
+                    ct);
+            if (rows > 0)
+            {
+                _logger.LogDebug(
+                    "Interpretation {ShortId} cancelled — it never left the queue",
+                    DelegationReportFormatter.Short(interpretationId));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Tidying, not correctness: an un-cancelled queued interpretation dispatches, answers
+            // into its own row, and is never delivered. The note has already gone out either way.
+            _logger.LogWarning(
+                ex, "Could not cancel the timed-out interpretation {ShortId}",
+                DelegationReportFormatter.Short(interpretationId));
+        }
+    }
+
     /// <summary>The prefix every check note starts with — nothing else in the system emits it.</summary>
     public const string HeaderPrefix = "[check ";
 
@@ -159,7 +411,21 @@ public sealed class AgentTaskCheckService
     /// <see cref="ScrubTaskMarkers"/>, which matters because the transcript tail legitimately
     /// contains the delegate's own brief, marker and all.</para>
     /// </summary>
-    internal string BuildNote(AgentTask task, DelegateCheckProbe.CheckFacts facts, string digest)
+    /// <param name="interpretation">
+    /// The specialist's reading, which REPLACES the digest in the note when there is one (the digest
+    /// stays on the timeline). Null falls through to the digest, which is the guaranteed floor.
+    /// </param>
+    /// <param name="degradedReason">
+    /// Why there is no interpretation, rendered as a prefix line under the header so the caller can
+    /// tell an unread digest from a read one at a glance. Null when the specialist is not wired in
+    /// at all, which is not a degradation — it is the pre-slice-4 note, unchanged.
+    /// </param>
+    internal string BuildNote(
+        AgentTask task,
+        DelegateCheckProbe.CheckFacts facts,
+        string digest,
+        string? interpretation = null,
+        string? degradedReason = null)
     {
         var header = new StringBuilder();
         header.Append(HeaderPrefix)
@@ -177,7 +443,15 @@ public sealed class AgentTaskCheckService
             bits.Add($"final check — the {_settings.CheckMaxCount}-check budget is spent");
         header.Append(' ').Append(string.Join(" · ", bits));
 
-        var note = $"{header}\n\n{ScrubTaskMarkers(digest)}".ReplaceLineEndings("\n");
+        // The body is the interpretation when there is one, the digest otherwise — and the degraded
+        // prefix rides ABOVE the digest, never above an interpretation.
+        var body = interpretation is { Length: > 0 } read
+            ? read.Trim()
+            : degradedReason is { Length: > 0 } reason
+                ? $"(unverified digest — {reason})\n\n{digest}"
+                : digest;
+
+        var note = $"{header}\n\n{ScrubTaskMarkers(body)}".ReplaceLineEndings("\n");
 
         // A digest is a few KB and the pty it is typed into has a measured ceiling (CARD-0037). Fit
         // it the same way a report is fitted rather than letting every check trip the oversize
@@ -191,7 +465,7 @@ public sealed class AgentTaskCheckService
         // one delivery that most needed to survive.
         var bodyBudget = Math.Max(400, ceiling - header.Length - 2);
         var (fitted, _) = DelegationReportFormatter.FitReport(
-            ScrubTaskMarkers(digest), task, _settings, bodyBudget);
+            ScrubTaskMarkers(body), task, _settings, bodyBudget);
         return $"{header}\n\n{fitted}".ReplaceLineEndings("\n");
     }
 

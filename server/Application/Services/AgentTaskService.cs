@@ -319,12 +319,21 @@ public sealed class AgentTaskService
     /// </summary>
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> RawTokens = new();
 
+    /// <param name="includeChecks">
+    /// Show <see cref="AgentTaskRole.Check"/> rows — the interpretation tasks the check worker
+    /// creates, one per interpreted check-in (CARD-0047 §1.1.1). Off by default, and the default is
+    /// SERVER-side on purpose: none of them is anybody's delegated work, and a busy fleet would
+    /// otherwise bury the board under them. Correlation survives the hiding both ways — the
+    /// interpretation's title names the checked task, and the checked task's <c>Check</c> event
+    /// names the interpretation's short id and cost.
+    /// </param>
     public async Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
-        Guid? rootId, AgentTaskStatus? status, CancellationToken ct)
+        Guid? rootId, AgentTaskStatus? status, bool includeChecks, CancellationToken ct)
     {
         var query = _db.AgentTasks.AsNoTracking();
         if (rootId is { } root) query = query.Where(t => t.RootTaskId == root);
         if (status is { } s) query = query.Where(t => t.Status == s);
+        if (!includeChecks) query = query.Where(t => t.Role != AgentTaskRole.Check);
 
         var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
         return tasks.Select(t => ToSummary(t, tasks)).ToList();
