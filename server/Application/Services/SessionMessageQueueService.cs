@@ -69,6 +69,12 @@ public sealed class SessionMessageQueueService
         _ptyProfile?.Ceilings
         ?? _delegationSettings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
 
+    /// <summary>
+    /// Typing attempts a queued message gets before it parks for a human (CARD-0055). Floored at 1:
+    /// a misconfigured 0 would park every message on creation, i.e. deliver nothing at all.
+    /// </summary>
+    private int MaxAttempts => Math.Max(1, _verification.MaxDeliveryAttempts);
+
     /// <summary>Queue a message ("wait until idle") or deliver it immediately ("send now").</summary>
     public async Task<SessionQueueDto> EnqueueAsync(
         Guid sessionId, string body, MessageSendMode mode, CancellationToken ct,
@@ -208,10 +214,23 @@ public sealed class SessionMessageQueueService
             if (message.Status != QueuedMessageStatus.Pending)
                 throw new ConflictException("Message is no longer pending.");
 
+            // Same late-confirm as the automatic paths: a previously attempted message whose body
+            // is already in the transcript went in, and re-typing it here would put it in twice.
+            if (await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct) > 0)
+            {
+                var confirmed = await GetQueueAsync(sessionId, ct);
+                await PublishQueueChangedAsync(confirmed, ct);
+                return confirmed;
+            }
+
+            var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
             message.Status = QueuedMessageStatus.Sent;
             message.SentAt = UtcNow();
+            message.DeliveryAttempts++;
+            message.LastDeliveryStartedAt = UtcNow();
+            message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             await db.SaveChangesAsync(ct);
-            var verdict = await DeliverAsync(sessionId, message.Body, ct);
+            var verdict = await DeliverAsync(sessionId, message.Body, ct, baseline);
             if (verdict != DeliveryVerdict.Delivered)
             {
                 await HandleDeliveryFailureAsync(sessionId, [message.Id], verdict, ct);
@@ -278,9 +297,16 @@ public sealed class SessionMessageQueueService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Parked messages (CARD-0055: at MaxDeliveryAttempts) are excluded here and in the
+            // delegation query below. This watchdog is the automatic retry path, and parking means
+            // exactly "no automatic retry" — a session whose only pending message is parked must not
+            // even be woken up for it.
+            var maxAttempts = MaxAttempts;
             var pendingSessionIds = await db.SessionQueuedMessages
                 .AsNoTracking()
-                .Where(m => m.Status == QueuedMessageStatus.Pending && m.CreatedAt <= cutoff)
+                .Where(m => m.Status == QueuedMessageStatus.Pending
+                    && m.CreatedAt <= cutoff
+                    && m.DeliveryAttempts < maxAttempts)
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
@@ -304,6 +330,7 @@ public sealed class SessionMessageQueueService
                 .AsNoTracking()
                 .Where(m => m.Status == QueuedMessageStatus.Pending
                     && m.CreatedAt <= cutoff
+                    && m.DeliveryAttempts < maxAttempts
                     && m.Origin == QueuedMessageOrigin.Delegation)
                 .Select(m => m.AgentSessionId)
                 .Distinct()
@@ -341,8 +368,11 @@ public sealed class SessionMessageQueueService
                 flushed++;
                 _logger.LogInformation(
                     "Stranded-queue watchdog delivered a pending message to idle session {SessionId}", sessionId);
-                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
             }
+
+            // A late-confirm is not a delivery — nothing was typed — but the queue still changed.
+            if (result is FlushResult.Delivered or FlushResult.LateConfirmed)
+                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
         }
 
         return flushed;
@@ -422,7 +452,7 @@ public sealed class SessionMessageQueueService
             .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
     }
 
-    private enum FlushResult { Nothing, Delivered, Failed }
+    private enum FlushResult { Nothing, Delivered, Failed, LateConfirmed }
 
     // Claims and delivers the oldest pending message (caller holds the per-session lock). With
     // batching enabled, a CONTIGUOUS head run of Channel-origin messages from the SAME conversation
@@ -438,6 +468,23 @@ public sealed class SessionMessageQueueService
         if (pending.Count == 0)
             return FlushResult.Nothing;
 
+        // THE anti-duplicate keystone (CARD-0055 D3): nothing may re-type a message that has been
+        // typed before without first asking the transcript whether it actually went in. A delivery
+        // fails verification for two very different reasons — the body never reached Claude, or it
+        // did and the matcher was blind (ingestion stall, a fork, a text transform) — and only the
+        // transcript can tell them apart. Automatic retry is safe BECAUSE the retry looks first.
+        var lateConfirmed = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
+        if (lateConfirmed > 0)
+            pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+
+        // Parked messages (at the attempts cap) stay Pending and visible, but no automatic path
+        // types them again — that is what "parks for a human" means. They are still late-confirmed
+        // above, so a park resolves itself if the body turns out to have landed.
+        var deliverable = pending.Where(m => m.DeliveryAttempts < MaxAttempts).ToList();
+        if (deliverable.Count == 0)
+            return lateConfirmed > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        pending = deliverable;
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
 
@@ -473,18 +520,25 @@ public sealed class SessionMessageQueueService
             : ChannelPromptFormat.FormatBatch(
                 run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
 
+        // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
+        // attempt happened, and the baseline is what the next attempt's late-confirm reads. A crash
+        // between here and the write costs one attempt, which is the safe direction to be wrong in.
         var now = UtcNow();
+        var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
         foreach (var m in run)
         {
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = now;
+            m.DeliveryAttempts++;
+            m.LastDeliveryStartedAt = now;
+            m.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
         }
         await db.SaveChangesAsync(ct);
 
         DeliveryVerdict verdict;
         try
         {
-            verdict = await DeliverAsync(sessionId, body, ct);
+            verdict = await DeliverAsync(sessionId, body, ct, baseline);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -515,6 +569,60 @@ public sealed class SessionMessageQueueService
 
         await HandleDeliveryFailureAsync(sessionId, run.Select(m => m.Id).ToList(), verdict, ct);
         return FlushResult.Failed;
+    }
+
+    /// <summary>
+    /// CARD-0055 D3's late-confirm: for every Pending message that has already been typed at least
+    /// once, re-run the prompt matcher over the <c>UserPrompt</c> rows that arrived after that
+    /// attempt's stored baseline. A match means the body DID reach Claude — the first attempt's
+    /// verification was simply blind (ingestion stall, a mid-session fork, a slow tailer) — so the
+    /// message is marked Sent with ZERO writes to the terminal and never typed again.
+    ///
+    /// This is what makes the automatic retry above safe. The re-pressed Enter inside a delivery
+    /// cannot double-submit (empty composer, per-session lock); the place a duplicate to a human
+    /// could originate is a REDELIVERY that re-types, and this runs before every one of them.
+    ///
+    /// Two deliberate restrictions:
+    /// <list type="bullet">
+    /// <item>Text match only. The weak arm — "any UserPrompt past the baseline counts" — is fine
+    /// inside a 30-second confirm window but not here, where the window is however long the message
+    /// has sat Pending: some prompt will always have arrived. A short body that cannot be identified
+    /// by text is therefore redelivered rather than assumed delivered. Duplicating an auto-continue
+    /// is cheap; silently dropping a human's "yes please" is not.</item>
+    /// <item>A message with no stored baseline (the session had no observable transcript at attempt
+    /// time) is never late-confirmed — there is no floor, so a match would prove nothing.</item>
+    /// </list>
+    /// </summary>
+    private async Task<int> LateConfirmAttemptedMessagesAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending, CancellationToken ct)
+    {
+        if (!_verification.TranscriptConfirmEnabled)
+            return 0;
+
+        var confirmed = 0;
+        foreach (var m in pending)
+        {
+            if (m.DeliveryAttempts == 0 || m.LastDeliveryBaselineSequence is not { } floor)
+                continue;
+            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
+                continue;
+            if (!await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct))
+                continue;
+
+            m.Status = QueuedMessageStatus.Sent;
+            m.SentAt = UtcNow();
+            confirmed++;
+            _logger.LogInformation(
+                "Message {MessageId} on session {SessionId} late-confirmed: its body became a UserPrompt "
+                + "record past sequence {Baseline} after attempt {Attempt}, so it is marked Sent and the "
+                + "redelivery is skipped",
+                m.Id, sessionId, floor, m.DeliveryAttempts);
+        }
+
+        if (confirmed > 0)
+            await db.SaveChangesAsync(ct);
+
+        return confirmed;
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
@@ -654,7 +762,12 @@ public sealed class SessionMessageQueueService
     // pushed it in; the next note's own Enter submitted that STALE body, a new UserPrompt record duly
     // appeared with the wrong text, and its own body died with the composer — never in the transcript
     // at all. So a record ARRIVING is not confirmation either: the record's TEXT must be ours.
-    private async Task<DeliveryVerdict> DeliverAsync(Guid sessionId, string body, CancellationToken ct)
+    //
+    // <paramref name="stampedBaseline"/> is the floor the caller already captured and persisted on
+    // the message rows before typing; passing it through keeps the stored baseline and the one this
+    // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
+    private async Task<DeliveryVerdict> DeliverAsync(
+        Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -715,7 +828,7 @@ public sealed class SessionMessageQueueService
         // on sits above it. Also the observability gate — a session with no transcript rows at all
         // has no ground truth to confirm against, so it keeps the legacy screen-only verdict.
         var baseline = verify && _verification.TranscriptConfirmEnabled
-            ? await CaptureTranscriptBaselineAsync(sessionId, ct)
+            ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
         var confirmTranscript = baseline.Observable;
         if (verify && _verification.TranscriptConfirmEnabled && !confirmTranscript)
@@ -914,6 +1027,16 @@ public sealed class SessionMessageQueueService
     // the wedged session — the supervisor's ladder restarts it (resuming the SAME session row, so
     // the reverted message redelivers via the stranded-queue watchdog), and the kill guarantees a
     // fresh composer so redelivery cannot double-type.
+    //
+    // CARD-0055 adds two brakes to that kill. A session that is now WORKING is evidence the submit
+    // may have succeeded with the matcher blind — killing it would abort a live turn to settle a
+    // bookkeeping doubt, so it is left alone and the next turn-end flush late-confirms the message.
+    // The guard covers every verdict, not just NoTranscriptRecord, and costs no wedge recovery: a
+    // session that reads working already blocks every QUEUED delivery, so the only deliveries that
+    // can reach one are human-initiated (Now-mode / send-now), where killing is plainly wrong.
+    // And a message that has hit MaxDeliveryAttempts PARKS: still Pending and visible in the queue
+    // UI, but no automatic path types it again, and the incident escalates to Critical when the
+    // agent is channel-bound, because a parked channel reply is a human waiting on a dead line.
     private async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
     {
@@ -925,7 +1048,9 @@ public sealed class SessionMessageQueueService
             var agent = await db.Agents.FirstOrDefaultAsync(
                 a => a.PersistentSessionId == sessionId.ToString("D"), ct);
 
-            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert).
+            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert). The
+            // attempt metadata deliberately survives the revert — it is the retry brake.
+            var parked = 0;
             if (messageIds is { Count: > 0 })
             {
                 var messages = await db.SessionQueuedMessages
@@ -936,17 +1061,37 @@ public sealed class SessionMessageQueueService
                     message.Status = QueuedMessageStatus.Pending;
                     message.SentAt = null;
                 }
+                parked = messages.Count(m => m.DeliveryAttempts >= MaxAttempts);
             }
+
+            // Asked before the kill decision AND before the incident text is written, so both tell
+            // the same story.
+            var working = await IsWorkingAsync(db, sessionId, ct);
+            var kill = agent is { AlwaysOn: true } && !working;
 
             if (agent is not null)
             {
+                var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
+                var severity = parked > 0 && channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
+                var fate = parked > 0
+                    ? $" It has now failed {MaxAttempts} delivery attempts and is PARKED in the queue"
+                      + " for a human — nothing will retry it automatically."
+                      + (channelBound ? " This agent is channel-bound: someone is waiting on a reply." : string.Empty)
+                    : working
+                        ? " The session is mid-turn, so the submit may have succeeded unseen. The message"
+                          + " stays queued and is re-checked against the transcript before any redelivery."
+                        : " The message has been returned to the queue.";
+                var restart = kill
+                    ? " Restarting the session; a fresh composer is what makes redelivery safe."
+                    : agent.AlwaysOn && working
+                        ? " The session was NOT restarted — killing it would abort a live turn."
+                        : string.Empty;
+                var detail = fate + restart;
+
                 var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
                 await supervisor.RecordIncidentAsync(
-                    agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed, AlertSeverity.Error,
-                    $"Message delivery could not be verified: {Describe(verdict)}; the terminal looks wedged."
-                    + (agent.AlwaysOn
-                        ? " Restarting the session; the message stays queued and redelivers after the restart."
-                        : " The message has been returned to the queue."),
+                    agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed, severity,
+                    $"Message delivery could not be verified: {Describe(verdict)}." + detail,
                     ct: ct);
             }
 
@@ -955,7 +1100,7 @@ public sealed class SessionMessageQueueService
             if (agent is not null)
             {
                 await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
-                if (agent.AlwaysOn)
+                if (kill)
                 {
                     var sessions = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
                     await sessions.KillAsync(sessionId, ct);
@@ -963,8 +1108,9 @@ public sealed class SessionMessageQueueService
             }
 
             _logger.LogWarning(
-                "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, alwaysOn={AlwaysOn}",
-                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false);
+                "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, "
+                + "alwaysOn={AlwaysOn}, working={Working}, killed={Killed}, parked={Parked}",
+                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false, working, kill, parked);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

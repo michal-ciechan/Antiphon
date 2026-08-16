@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -562,6 +563,197 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
             .ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent);
+    }
+
+    // ---- CARD-0055 slice 3: the failure path ---------------------------------------------------
+    //
+    // A failed verification is ambiguous by construction: either the body never reached Claude, or
+    // it did and the matcher was blind. Everything here exists so the ambiguity is resolved by the
+    // transcript rather than by re-typing and hoping.
+
+    // THE anti-duplicate pin. A previously attempted message whose body IS in the transcript past
+    // its stored baseline is marked Sent with ZERO writes to the terminal — the automatic retry is
+    // safe only because it looks before it types.
+    [Test]
+    public async Task Late_confirm_marks_the_message_sent_with_zero_writes_to_the_terminal()
+    {
+        await using var h = await ObservableHarnessAsync();
+        const string body = "the delegation brief that actually went in";
+
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        // It really did land — the first attempt's confirmation was simply blind.
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("late-confirmed: nothing may be typed, not even an Enter");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Sent);
+        message.SentAt.ShouldNotBeNull();
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+    }
+
+    // The same thing end to end, which is the shape that actually happens in production: a delivery
+    // fails verification, the body turns out to have gone in anyway, and the NEXT flush must not
+    // put it in a second time.
+    [Test]
+    public async Task A_failed_delivery_whose_body_landed_anyway_is_never_typed_twice()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "the channel reply a human is waiting for";
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using (var failed = CreateContext())
+        {
+            (await failed.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+                .Status.ShouldBe(QueuedMessageStatus.Pending, "precondition: the delivery failed");
+        }
+
+        // The truth arrives late: the body was submitted after all (a stalled tailer catches up,
+        // or a later Enter pushed the held composer in).
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        var writesBefore = h.Adapter.Inputs.Count;
+        h.Adapter.SwallowSubmits = 0; // a re-type would now succeed — the point is that none happens
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.Count.ShouldBe(writesBefore, "the redelivery looked first and found the body already in");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task Attempt_metadata_survives_the_revert_a_failed_delivery_does()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "a body that will not be confirmed", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(1, "the attempt happened; the revert must not pretend otherwise");
+        message.LastDeliveryStartedAt.ShouldNotBeNull();
+        message.LastDeliveryBaselineSequence.ShouldBe(floor, "the floor the next late-confirm will read");
+    }
+
+    // The loop has to stop somewhere. At the cap the message parks: still Pending, still visible in
+    // the queue UI (where cancel and re-enqueue exist), but no automatic path types it again.
+    [Test]
+    public async Task A_message_at_the_attempts_cap_parks_and_the_watchdog_leaves_it_alone()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await h.SeedPendingMessageAsync(
+            "a body that has failed three times", deliveryAttempts: 3, baselineSequence: 999_999);
+
+        (await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None))
+            .ShouldBe(0, "a parked message must not even wake the watchdog");
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("no automatic path re-types a parked message");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending, "parked, not lost — a human can still see and resend it");
+    }
+
+    // Parking a CHANNEL-bound agent's message is a human waiting on a dead line, so the incident is
+    // Critical (the mirror of TranscriptBindFailed's severity rule). MaxDeliveryAttempts=1 parks on
+    // the first failure so the whole path runs in one delivery.
+    [Test]
+    public async Task Parking_a_channel_bound_agents_message_raises_a_critical_incident()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Supervision = new SupervisionSettings
+            {
+                DeliveryVerification = new DeliveryVerificationSettings
+                {
+                    Enabled = true,
+                    EvidenceTimeoutSeconds = 1,
+                    PollIntervalMs = 50,
+                    PostSubmitAdvanceTimeoutSeconds = 1,
+                    StrandedAgeSeconds = 0,
+                    TranscriptConfirmTimeoutSeconds = 2,
+                    ReEnterIntervalSeconds = 1,
+                    MaxDeliveryAttempts = 1,
+                },
+            },
+        });
+
+        await h.InsertTurnAsync("an earlier prompt", "an earlier answer");
+        await h.BindChannelAsync();
+        h.Adapter.SwallowSubmits = 99;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the reply that never reached the agent", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        incident.Message.ShouldContain("PARKED");
+        incident.Message.ShouldContain("channel-bound");
+
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    // The working-kill guard: a session that is NOW working is evidence the submit may have
+    // succeeded with the matcher blind. Killing it would abort a live turn to settle a bookkeeping
+    // doubt. Modelled exactly that way — the submit lands and the agent starts working, but no
+    // UserPrompt row is ever ingested.
+    [Test]
+    public async Task A_working_session_is_not_killed_when_the_record_never_arrives()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.OnSubmitted = _ =>
+            h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "on it");
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the body whose record never got ingested",
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Killed.ShouldBeFalse("never abort a live turn over a bookkeeping doubt");
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending, "still queued — the next turn-end flush late-confirms it");
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
+        incident.Message.ShouldContain("mid-turn");
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+    }
+
+    // The other side of the guard: an IDLE always-on session with no record is the wedge case the
+    // kill exists for — restart it, get a fresh composer, let the watchdog redeliver.
+    [Test]
+    public async Task An_idle_always_on_session_with_no_record_is_still_killed()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.SwallowSubmits = 99; // nothing submitted, so the session stays idle
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "into a composer that keeps everything", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Killed.ShouldBeTrue();
+        await using var db = CreateContext();
+        (await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .Message.ShouldContain("Restarting the session");
     }
 
     [Test]
