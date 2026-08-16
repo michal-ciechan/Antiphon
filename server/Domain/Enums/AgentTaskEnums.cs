@@ -34,6 +34,20 @@ public enum AgentTaskRole
     Deploy = 9,
     /// <summary>Resolve a merge conflict left behind by a Worktree task.</summary>
     Merge = 10,
+
+    /// <summary>
+    /// Interpret one check-in bundle (CARD-0047 slice 4). Not work anyone delegates by hand: the
+    /// check worker creates these, pinned to the standing check interpreter, and reads the answer
+    /// off <see cref="Antiphon.Server.Domain.Entities.AgentTask.Result"/>.
+    ///
+    /// <para>The role exists so three carve-outs can key on something structural rather than on a
+    /// naming convention: these rows are hidden from the delegations board by default (there is one
+    /// per interpreted check and none of them is anybody's work), they bypass the concurrent-task
+    /// cap (a pinned task delivered into an already-running session spawns no process), and they are
+    /// never armed for or selected by the check sweep — a check that checked a check would
+    /// recurse.</para>
+    /// </summary>
+    Check = 11,
 }
 
 public enum AgentTaskStatus

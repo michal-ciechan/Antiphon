@@ -248,6 +248,38 @@ public class AgentSystemPromptLaunchTests
         h.Messaging.SentReplies.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task The_standing_check_interpreter_gets_no_bootstrap_note()
+    {
+        // The notes gate is "has a SystemPromptAppend", which meant "has a channel preamble" when it
+        // was written. CARD-0047's specialist uses the same field for a standing contract, so it was
+        // handed "Follow your CLAUDE.md session-start ritual" — with no CLAUDE.md in its scratch
+        // directory and a deny-all PreToolUse hook that refuses every read it would need.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var slug = CheckInterpreterProvisioner.Slug(
+            h.Provider.GetRequiredService<IOptions<DelegationSettings>>().Value);
+        await using (var db = CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.Slug, slug));
+        }
+
+        var started = await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        adapter.SubmittedBodies.ShouldBeEmpty("an agent with no tools cannot perform a workspace ritual");
+        // The contract itself must still ride the launch — suppressing the note must not suppress
+        // the thing that makes the specialist a specialist.
+        adapter.StartedArgs.ShouldContain("--append-system-prompt");
+
+        await using var verify = CreateContext();
+        var newSessionId = Guid.Parse(started.PersistentSessionId!);
+        (await verify.SessionQueuedMessages.Where(m => m.AgentSessionId == newSessionId).ToListAsync())
+            .ShouldBeEmpty("nothing queued either — the note is not deferred, it is not sent at all");
+    }
+
     // ---------- harness ----------
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();

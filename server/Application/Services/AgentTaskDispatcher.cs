@@ -118,8 +118,15 @@ public sealed class AgentTaskDispatcher
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
         sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
 
+        // The cap bounds concurrent Claude PROCESSES, so interpretation tasks are outside it both
+        // ways — they neither consume a slot nor wait for one. A Check task is pinned to the
+        // standing interpreter and delivered into a session that is already running, so it spawns
+        // nothing; counting it would let a system at the cap starve every interpretation and
+        // silently degrade all checks exactly when the operator most wants eyes on the fleet.
+        // Their own backlog is bounded separately, on the interpreter (CARD-0047 §1.3).
         var active = await _db.AgentTasks.CountAsync(
-            t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working, ct);
+            t => t.Role != AgentTaskRole.Check
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
 
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
@@ -141,6 +148,8 @@ public sealed class AgentTaskDispatcher
             .ToList();
 
         var dispatched = 0;
+        // Only process-spawning dispatches count against the cap — see the `active` query above.
+        var dispatchedAgainstCap = 0;
         var skippedConcurrency = 0;
         var skippedScope = 0;
         var failures = 0;
@@ -149,7 +158,8 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
 
-            if (active + dispatched >= _settings.MaxConcurrentTasks)
+            if (task.Role != AgentTaskRole.Check
+                && active + dispatchedAgainstCap >= _settings.MaxConcurrentTasks)
             {
                 skippedConcurrency++;
                 continue;
@@ -174,6 +184,8 @@ public sealed class AgentTaskDispatcher
                 if (await DispatchOneAsync(task, ct))
                 {
                     dispatched++;
+                    if (task.Role != AgentTaskRole.Check)
+                        dispatchedAgainstCap++;
                     if (task.ScopeGlob is { } held)
                         heldScopes.Add((task.WorkingDirectory, held));
                 }
@@ -546,7 +558,11 @@ public sealed class AgentTaskDispatcher
                 && t.NextCheckAt != null
                 && t.NextCheckAt <= now
                 && t.ReplyTo == AgentTaskReplyTo.Session
-                && t.ParentSessionId != null)
+                && t.ParentSessionId != null
+                // RECURSION GUARD, the other half of the one in ArmFirstCheck: nothing arms
+                // NextCheckAt on an interpretation task, and nothing selects one either. Checks
+                // that checked checks would create an interpretation per interpretation.
+                && t.Role != AgentTaskRole.Check)
             .OrderBy(t => t.NextCheckAt)
             .ToListAsync(ct);
 
@@ -777,6 +793,13 @@ public sealed class AgentTaskDispatcher
         if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)
             return;
 
+        // RECURSION GUARD. An interpretation task is created with ReplyTo=None, so the line above
+        // already declines it — this one is structural rather than incidental, because a future
+        // change that gave interpretations a reply route would otherwise silently arm checks ON
+        // checks, and each of those would create another interpretation task, forever.
+        if (claimed.Role == AgentTaskRole.Check)
+            return;
+
         var expected = Math.Clamp(claimed.ExpectedDurationMinutes, 1, 1440);
         claimed.NextCheckAt = dispatchedAt.AddMinutes(expected);
         claimed.CheckCount = 0;
@@ -1003,10 +1026,14 @@ public sealed class AgentTaskDispatcher
         if (claimed.AgentId is Guid pinnedId)
         {
             var pinned = await _db.Agents.FirstOrDefaultAsync(a => a.Id == pinnedId, ct);
-            // Retired between create and dispatch, or a user's standing agent — the spawn path
-            // owns both cases (it falls back to a fresh delegate / a fresh session respectively).
-            if (pinned is null || !pinned.IsPoolDelegate)
+            // Retired between create and dispatch — the spawn path falls back to a fresh delegate.
+            if (pinned is null)
                 return ReuseOutcome.SpawnFresh;
+
+            // A STANDING agent (a user's own, or a supervised specialist) is not pool furniture and
+            // has its own rules — see PlaceOnStandingAgentAsync.
+            if (!pinned.IsPoolDelegate)
+                return await PlaceOnStandingAgentAsync(claimed, pinned, now, ct);
 
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
@@ -1093,6 +1120,73 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
+    /// Place a task pinned to a STANDING agent — a user's own agent, or a supervised specialist like
+    /// the check interpreter (CARD-0047 slice 4A). The general capability behind "run this on my
+    /// standing agent".
+    ///
+    /// <para>Until this existed, every pinned non-pool agent fell through to <c>SpawnFresh</c>, which
+    /// creates a SECOND session and overwrites <see cref="Agent.PersistentSessionId"/>. For an
+    /// AlwaysOn agent that is not merely wasteful — it points the row at a session the supervisor
+    /// never started while the one it did start keeps running, so the two fight over the row for as
+    /// long as both live.</para>
+    ///
+    /// <para>So: a live session takes the work, and NOTHING on the agent row is written.
+    /// <c>PersistentSessionId</c> belongs to whoever launched the session, and
+    /// <c>Status</c>/<c>PoolIdleSince</c>/<c>PoolReservedForRootTaskId</c> belong to the pool — a
+    /// standing agent is in neither's gift.</para>
+    ///
+    /// <para>No live session and <see cref="Agent.AlwaysOn"/> means the supervisor is already on it
+    /// (its sweep ensures every AlwaysOn agent that is not user-suspended has a session), so the task
+    /// waits rather than racing it. A standing agent that nothing supervises keeps today's
+    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up.</para>
+    /// </summary>
+    private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
+        AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
+    {
+        if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
+            return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
+
+        // One task at a time on one agent. A brief delivered while the agent is mid-task lands
+        // BETWEEN the running task's turns and corrupts both correlations — the same invariant the
+        // warm pool holds, enforced here against the agent's own tasks rather than a pool flag.
+        var busy = await _db.AgentTasks.AnyAsync(
+            t => t.AgentId == standing.Id
+                && t.Id != claimed.Id
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            ct);
+        if (busy)
+            return ReuseOutcome.WaitForAgent;
+
+        claimed.AgentName = standing.Name;
+        claimed.AgentSessionId = session;
+        claimed.Status = AgentTaskStatus.Dispatched;
+        claimed.DispatchedAt = now;
+        claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
+
+        // The task's own bearer token is discarded rather than rebound: a standing agent's session
+        // was not launched by the dispatcher, so its environment carries no ANTIPHON_TASK_TOKEN and
+        // never can (a live process's env cannot change). Correlation therefore rides the brief's
+        // marker alone — which is all settlement needs, and all a specialist reading a bundle uses.
+        AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
+
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = claimed.Id,
+            Type = AgentTaskEventType.Dispatched,
+            ModelLevel = claimed.ModelLevel,
+            Detail = $"Delivered into standing agent '{standing.Name}'s live session",
+            At = now,
+        });
+
+        _logger.LogInformation(
+            "Task {ShortId} delivered into standing agent '{Agent}'s live session {SessionId}",
+            DelegationReportFormatter.Short(claimed.Id), standing.Name, session);
+        return ReuseOutcome.Reused;
+    }
+
+    /// <summary>
     /// The brief for a reused session — preceded, when the new work is UNRELATED to what the
     /// session last did, by a focused /compact: shrink the old context down to whatever could help
     /// the new task before the task arrives. Same-run follow-ups skip it — their old context is
@@ -1114,7 +1208,12 @@ public sealed class AgentTaskDispatcher
                 .Select(t => (Guid?)t.RootTaskId)
                 .FirstOrDefaultAsync(ct);
 
-            if (previousRoot is not null && previousRoot != task.RootTaskId)
+            // A Check task NEVER compacts its session. Every interpretation is its own root, so the
+            // "unrelated work" test is true of every single one — and it is exactly wrong here: the
+            // specialist's work is homogeneous, and the accumulated experience of reading bundles is
+            // the whole reason it is a standing agent rather than a fresh Claude per check.
+            if (task.Role != AgentTaskRole.Check
+                && previousRoot is not null && previousRoot != task.RootTaskId)
             {
                 // One line: a slash command is parsed from the submitted composer text, and the
                 // focus argument tells the summariser what the surviving context must serve.

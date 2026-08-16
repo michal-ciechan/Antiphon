@@ -304,14 +304,15 @@ public sealed class DelegationSettings
     public int DefaultExpectedMinutes { get; set; } = 10;
 
     /// <summary>
-    /// Floor on the gap between checks. The backoff starts at
-    /// <c>max(this, ExpectedDurationMinutes / 2)</c>, so a task declared at 2 minutes still cannot
-    /// generate a check a minute.
+    /// The base of the Fibonacci ramp (CARD-0061): interval(1) is this, interval(2) is twice this,
+    /// and each interval after that is the sum of the previous two. No longer scaled by
+    /// <see cref="AgentTask.ExpectedDurationMinutes"/> — the declared duration only schedules the
+    /// FIRST check, not the ramp that follows it.
     /// </summary>
     public int CheckMinIntervalMinutes { get; set; } = 5;
 
-    /// <summary>Ceiling on the doubling — a long task settles into a half-hourly heartbeat.</summary>
-    public int CheckMaxIntervalMinutes { get; set; } = 30;
+    /// <summary>Ceiling on the Fibonacci ramp — a long task settles into an hourly heartbeat.</summary>
+    public int CheckMaxIntervalMinutes { get; set; } = 60;
 
     /// <summary>
     /// After this many checks the task stops being checked and the last note says so. At ~$0.01 a
@@ -319,6 +320,52 @@ public sealed class DelegationSettings
     /// forever.
     /// </summary>
     public int CheckMaxCount { get; set; } = 10;
+
+    // ── The check interpreter: a standing specialist agent (CARD-0047 slice 4 amendment) ────────
+    //
+    // A check delivers a deterministic digest today and always will. These five knobs govern the
+    // OPTIONAL layer on top of it: a long-running, supervised haiku agent that reads the bundle and
+    // says what it looks like. Every failure mode of that agent degrades to the digest, so none of
+    // these knobs can break a check — the first one turns the whole layer off, back to slice 3.
+
+    /// <summary>
+    /// Off and a check is exactly what slice 3 shipped: the digest, no prefix, no specialist, no
+    /// interpretation task. This is the switch to reach for if the specialist ever misbehaves.
+    /// </summary>
+    public bool CheckInterpreterEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Slug AND name of the standing specialist. The provisioner finds it by this exact slug, so
+    /// changing it provisions a SECOND agent rather than renaming the first — delete the old row.
+    /// </summary>
+    public string CheckInterpreterAgentSlug { get; set; } = "antiphon-check-interpreter";
+
+    /// <summary>
+    /// The specialist's own scratch working directory. Null derives it: the first
+    /// <see cref="AllowedRoots"/> entry plus <c>\.antiphon\check-interpreter</c>, or — when no roots
+    /// are configured — a directory under the system temp path.
+    ///
+    /// <para>A DISTINCT cwd is not tidiness, it is the CARD-0006 mitigation by construction. Claude's
+    /// transcript root is per-cwd, so an agent sharing <c>C:/src/Antiphon</c> with the operator and
+    /// several other agents is one failed discovery away from binding a stranger's conversation. Its
+    /// own directory gives it its own transcript root, and the question never arises.</para>
+    /// </summary>
+    public string? CheckInterpreterWorkingDirectory { get; set; }
+
+    /// <summary>
+    /// How long a check waits for its interpretation before delivering the digest degraded. Well
+    /// under <see cref="CheckMinIntervalMinutes"/> on purpose: a check must never still be waiting
+    /// when its successor comes due. The check worker is a single serial drainer, so this is also
+    /// its worst-case stall per check.
+    /// </summary>
+    public int CheckInterpreterWaitSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// At or above this many unfinished interpretation tasks on the specialist, a check skips
+    /// creating one and degrades immediately. There is ONE specialist and many delegates can come
+    /// due together; without this the queue grows and every check pays the full wait behind a pile.
+    /// </summary>
+    public int CheckInterpreterMaxBacklog { get; set; } = 2;
 
     /// <summary>A sub-orchestrator decomposes, which is expensive thinking — never below this.</summary>
     public AgentModelLevel MinOrchestratorLevel { get; set; } = AgentModelLevel.High;

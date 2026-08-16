@@ -393,6 +393,35 @@ public sealed class AgentSessionRuntime
     }
 
     /// <summary>
+    /// The fetch-and-persist half of <see cref="SyncTranscriptAsync"/>, with NO queue side effects —
+    /// safe to call while holding the per-session queue lock, which <see cref="SyncTranscriptAsync"/>
+    /// is not (its turn-boundary flush re-enters the queue and would deadlock).
+    ///
+    /// <para>This exists because the live event stream is not a reliable clock. On session
+    /// <c>e809ce65</c> (2026-08-16) Claude wrote the confirming <c>UserPrompt</c> 0.9s after the
+    /// submit and the server did not store it for 45 seconds — the records only landed when the
+    /// session ENDED and this same snapshot fetch ran. A caller about to make an irreversible
+    /// decision on "the transcript does not contain X" must PULL the runner's view first; waiting
+    /// for the stream to catch up was measured at 90 seconds and still lost the race.</para>
+    /// </summary>
+    /// <returns>True when the pull stored at least one entry that was not already known.</returns>
+    public async Task<bool> CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+            return (await PersistTranscriptAsync(sessionId, snapshot.Entries)).LastStoredSeq is not null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Not live in the runner, or the runner is unreachable: the caller falls back to
+            // whatever the stream has already stored, which is exactly today's behaviour.
+            _logger.LogDebug(ex, "Transcript catch-up skipped for session {SessionId}", sessionId);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Best-effort catch-up: pull the full transcript snapshot from the live runner and upsert it, so the
     /// persisted history stays complete even if some live SessionTranscript events were missed during a
     /// stream disconnect. No-op (swallowed) when the session is not live in the runner.

@@ -35,7 +35,7 @@ function withContractData(Story: () => React.ReactElement) {
       queries: { retry: false, staleTime: Infinity, gcTime: Infinity, refetchInterval: false },
     },
   })
-  client.setQueryData(agentTaskKeys.list, tasks)
+  client.setQueryData(agentTaskKeys.list(), tasks)
   client.setQueryData(agentTaskKeys.detail(detail.summary.id), detail)
   return (
     <QueryClientProvider client={client}>

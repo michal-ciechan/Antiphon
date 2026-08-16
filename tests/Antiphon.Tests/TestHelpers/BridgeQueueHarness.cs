@@ -85,6 +85,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     // so a swallowed Enter recovers and a never-recorded body still fails fast.
                     TranscriptConfirmTimeoutSeconds = 3,
                     ReEnterIntervalSeconds = 1,
+                    // Compressed too: long enough for a record that lands just past the deadline,
+                    // short enough that the genuine-failure suites do not pay for it.
+                    PostFailureConfirmGraceSeconds = 3,
                 },
             }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));

@@ -738,6 +738,42 @@ public class SessionMessageQueueDeliveryVerificationTests
         incident.Severity.ShouldBe(AlertSeverity.Error);
     }
 
+    // The post-failure grace window (live miss 2026-08-16, CARD-0047's check interpreter). The
+    // confirm deadline expiring says OUR INGESTION had not caught up, which is not the same claim
+    // as "the submit failed" — on session 22e0df09 the record landed 0.8s after the verdict, by
+    // which time the always-on kill had already destroyed a session that had taken the message
+    // correctly, and the existing late-confirm ran on the corpse. A brand-new session is where this
+    // bites: its transcript file does not exist until the first submit creates it, so discovery,
+    // binding and first ingestion all land inside the confirm window.
+    [Test]
+    public async Task A_record_that_lands_just_after_the_deadline_confirms_instead_of_killing()
+    {
+        await using var h = await ObservableHarnessAsync();
+        // Submitted for real, but the row shows up after the confirm deadline (3s) and inside the
+        // grace (3s) — modelling ingestion lag, not a failed submit.
+        h.Adapter.OnSubmitted = body =>
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
+            });
+            return Task.CompletedTask;
+        };
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the body whose record was merely slow", MessageSendMode.WhenIdle,
+            CancellationToken.None);
+
+        h.Adapter.Killed.ShouldBeFalse("the session took the message; killing it destroys working state");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent, "the body IS in the transcript — it delivered");
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeFalse("nothing failed, so nothing is worth alerting a human about");
+    }
+
     // The other side of the guard: an IDLE always-on session with no record is the wedge case the
     // kill exists for — restart it, get a fresh composer, let the watchdog redeliver.
     [Test]

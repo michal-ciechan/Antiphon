@@ -77,6 +77,21 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public bool Killed { get; private set; }
     public bool Disposed { get; private set; }
     public bool KillResult { get; set; } = true;
+
+    // ---- CARD-0056: teardown ORDER, not just teardown ------------------------------------------
+    //
+    // A failed launch must KILL the process before disposing: DisposeAsync on the production
+    // RunnerClaudeAdapter is `=> ValueTask.CompletedTask` (the agent lives in a detached pty-host),
+    // so a catch that only disposed left a live agent behind a Failed row. "Kill"/"Dispose" in call
+    // order; KillCount also counts the harmless second kill of an already-dead process.
+    private readonly List<string> _lifecycle = [];
+    public IReadOnlyList<string> Lifecycle => _lifecycle;
+    public int KillCount { get; private set; }
+
+    // Returns the exception a given prompt should fail with (null = it lands normally). Models
+    // VerifiedPromptSubmitter throwing PromptDeliveryException when no composer evidence ever
+    // appears for the body it typed.
+    public Func<string, Exception?>? PromptFailure { get; set; }
     // When set, StartAsync throws this — simulates a spawn failure (missing exe, runner 500) so
     // tests can assert the launch-failure paths (session Failed + agent rolled back from Working).
     public Exception? ThrowOnStart { get; set; }
@@ -102,6 +117,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct)
     {
         Killed = true;
+        KillCount++;
+        _lifecycle.Add("Kill");
         if (KillResult)
             _exit.TrySetResult(ExitCode);
 
@@ -110,6 +127,16 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public Task SendPromptAsync(string prompt, CancellationToken ct)
     {
+        // Injected delivery failure. Recorded in Prompts BEFORE throwing, because that is what
+        // really happens: VerifiedPromptSubmitter types the body and only then fails to find
+        // composer evidence for it (CARD-0056: a 15-char "/remote-control" that never surfaced).
+        if (PromptFailure?.Invoke(prompt) is { } failure)
+        {
+            SentPrompt = prompt;
+            _prompts.Add(prompt);
+            throw failure;
+        }
+
         _firstPromptOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Emit(NoiseDuringSendPrompt);
         SentPrompt = prompt;
@@ -246,6 +273,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public ValueTask DisposeAsync()
     {
         Disposed = true;
+        _lifecycle.Add("Dispose");
         return ValueTask.CompletedTask;
     }
 }

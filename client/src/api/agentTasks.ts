@@ -22,6 +22,13 @@ export type AgentTaskRole =
   | 'Test'
   | 'Deploy'
   | 'Merge'
+  /**
+   * Interpret one check-in bundle (CARD-0047). Machinery, not delegated work: the check worker
+   * creates these pinned to the standing check interpreter, and the list endpoint hides them
+   * unless `includeChecks` is asked for. Deliberately absent from AGENT_TASK_ROLES — it is not a
+   * role a human picks.
+   */
+  | 'Check'
 
 export type AgentTaskStatus =
   | 'Queued'
@@ -174,14 +181,22 @@ export const AGENT_TASK_ROLES: Array<{
 ]
 
 export const agentTaskKeys = {
-  list: ['agentTasks', 'list'] as const,
+  list: (includeChecks = false) => ['agentTasks', 'list', includeChecks] as const,
   detail: (id: string) => ['agentTasks', 'detail', id] as const,
 }
 
-export function useAgentTasks() {
+/**
+ * The delegations board. `includeChecks` surfaces the per-check interpretation tasks (CARD-0047),
+ * which the server hides by default — one exists per interpreted check-in and none of them is
+ * anybody's delegated work, so the board would otherwise drown in them on a busy fleet.
+ */
+export function useAgentTasks(includeChecks = false) {
   return useQuery({
-    queryKey: agentTaskKeys.list,
-    queryFn: () => apiGet<AgentTaskSummaryDto[]>('/agent-tasks'),
+    queryKey: agentTaskKeys.list(includeChecks),
+    queryFn: () =>
+      apiGet<AgentTaskSummaryDto[]>(
+        includeChecks ? '/agent-tasks?includeChecks=true' : '/agent-tasks',
+      ),
     // SignalR invalidates on every task change; this only covers a dropped connection.
     refetchInterval: 15_000,
   })
@@ -203,7 +218,9 @@ function useTaskMutation<TVariables, TResult>(
   return useMutation({
     mutationFn,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: agentTaskKeys.list })
+      // The PREFIX, not agentTaskKeys.list() — that would invalidate only the default board and
+      // leave an open includeChecks view stale.
+      queryClient.invalidateQueries({ queryKey: ['agentTasks', 'list'] })
       queryClient.invalidateQueries({ queryKey: ['agentTasks', 'detail'] })
     },
   })

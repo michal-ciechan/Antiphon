@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
@@ -19,16 +20,19 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     private readonly AgentRegistrySettings _settings;
     private readonly ClaudeReadyDetector _readyDetector;
     private readonly ClaudeCrunchedDetector _crunchedDetector;
+    private readonly ILogger? _logger;
     private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
 
-    public ClaudeAdapter(IOptions<AgentRegistrySettings> options)
+    public ClaudeAdapter(IOptions<AgentRegistrySettings> options, ILogger? logger = null)
     {
         _settings = options.Value;
+        _logger = logger;
         _readyDetector = new ClaudeReadyDetector
         {
             QuietPeriod = TimeSpan.FromMilliseconds(_settings.ClaudeReadyQuietPeriodMs),
             MaxWait = TimeSpan.FromMilliseconds(_settings.ClaudeReadyMaxWaitMs),
+            MinTotalWait = TimeSpan.FromMilliseconds(_settings.ClaudeReadyMinTotalWaitMs),
         };
         _crunchedDetector = new ClaudeCrunchedDetector
         {
@@ -101,10 +105,29 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         return Task.CompletedTask;
     }
 
-    public Task<bool> WaitForReadyAsync(CancellationToken ct)
+    public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        return _readyDetector.WaitAsync(_runner, ct);
+        if (!await _readyDetector.WaitAsync(_runner, ct))
+            return false;
+
+        // Same gate as RunnerClaudeAdapter: a TUI parked on the trust dialog for an unseen working
+        // directory is silent, so the quiet-period detector calls it ready and every later write is
+        // swallowed. Kept in lockstep deliberately — the two adapters are the same contract.
+        var resolution = await ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync(
+            _ => Task.FromResult(_runner.SnapshotScreen()),
+            (input, token) => _runner.WriteAsync(input, token),
+            TimeSpan.FromMilliseconds(_settings.ClaudeTrustPromptSettleMs),
+            ct);
+
+        if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustCleared)
+            _logger?.LogInformation("Answered Claude's trust dialog: {Title}", resolution.Prompt?.Title);
+        else if (resolution.Outcome is ClaudeStartupBlockOutcome.NotAnswerable)
+            _logger?.LogWarning(
+                "Blocked on a modal that will not be auto-answered ({Kind}): {Title}",
+                resolution.Prompt?.Kind, resolution.Prompt?.Title);
+
+        return resolution.Outcome is not ClaudeStartupBlockOutcome.TrustNotCleared;
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)

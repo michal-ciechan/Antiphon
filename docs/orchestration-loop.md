@@ -123,17 +123,29 @@ Rules earned the hard way. Each one maps to a real failure.
 (1-1440, defaults to 10) and the server arms a schedule: a deterministic, read-only probe of the
 task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
 worktree task — lands in your session as a `[check <id> #n] ...` note, first around the minute mark
-you declared, then backing off (starting at `max(5, expected/2)` minutes, doubling to a 30-minute
-ceiling) for up to 10 checks. It costs no model call today and cannot write to the delegate at all.
+you declared, then backing off along a Fibonacci ramp fixed from a 5-minute base (5, 10, 15, 25, 40,
+60, 60 …, capped at 60 minutes — CARD-0061) for up to 10 checks. Every gap is rounded to a
+human-readable number on the way out — nearest 5 below 30 minutes, nearest 10 from 30 to 60 — a
+separate step from the ramp itself, so it keeps the schedule legible even if the base or the ramp
+change later; the shipped sequence above is already round, so this doesn't move it. The declared
+duration schedules only the first check; it no longer scales the ramp. It costs no model call today
+and cannot write to the delegate at all.
 **A check note is a progress report, never a completion** — the delegate's own `[task <id> done]`
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).
 
-**Do not infer from silence** still holds — completion notifications have arrived 90 minutes late
-and have failed to arrive at all within a working session, and the schedule above is a safety net
-on top of that, not a fix for it. The manual probes below are now the fallback: reach for them when
-you want to look *before* the first automatic check fires, when `DelegationSettings.CheckEnabled`
-is off, or when you just want a fresher answer than the schedule will give you.
+**Do not infer from silence** as general practice still holds, but the specific cause behind the
+worst observed lags is now found and fixed, not just worked around. It was never a slow pipeline —
+task `817682e9` traced the 90-minutes-late and never-arrived notifications to CARD-0055's root
+cause: a queued completion note was marked Sent as soon as the screen merely redrew after Enter, so
+a swallowed Enter left the note sitting unsubmitted in the composer (one sat there 104 minutes,
+only reaching the transcript when a LATER delivery's Enter pushed it in), and a second note was
+lost outright when its own Enter resubmitted the first note's stale body instead. CARD-0055
+(shipped `4bb65fb`..`165da34`) fixes it at the source: a delivery is now Delivered only when a
+matching `UserPrompt` transcript record appears, with Enter re-presses and a late-confirm brake
+against double-submission — see the CLAUDE.md gotcha for the mechanism. The schedule above and the
+manual probes below still earn their keep as a safety net and for a faster look, but they are no
+longer standing in for this specific defect.
 
 Cheapest first:
 
@@ -193,7 +205,15 @@ Verify: `/health` on 17202/17203/17204/17205, `GET :17204/capabilities` for the 
 
 ---
 
-## 7. Close the card
+## 7. Close the card — orchestrator writes the verdict, haiku executes it
+
+Split by what each part actually is:
+
+- **The verdict is judgement and stays with the orchestrator.** It is synthesis across the whole run
+  — what shipped, what was corrected, what was disproved, what is still open, which other cards it
+  touches. A haiku agent cannot see that from the repo.
+- **The `PATCH` and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict
+  text and the card identifier; it makes the call and reports the result.
 
 - **A terminal move preserves its `reason`; use it as the verdict** — what shipped, what was
   corrected, what is still open, with commit hashes.

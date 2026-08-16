@@ -26,11 +26,15 @@ public static class AgentTaskEndpoints
             return Results.Created($"/api/agent-tasks/{created.Id}", created);
         });
 
+        // includeChecks defaults false: the interpretation tasks behind check-ins (CARD-0047) are
+        // machinery, one per interpreted check, and the board is for delegated work.
         tasks.MapGet("/", async (
             Guid? rootId,
             AgentTaskStatus? status,
+            bool? includeChecks,
             AgentTaskService service,
-            CancellationToken ct) => Results.Ok(await service.ListAsync(rootId, status, ct)));
+            CancellationToken ct) =>
+            Results.Ok(await service.ListAsync(rootId, status, includeChecks ?? false, ct)));
 
         // {id} is a string, not :guid — a delegate only ever SEES 8-char short ids (the completion
         // note, the board chip), so -Status and -Reply must accept them or they are unusable.

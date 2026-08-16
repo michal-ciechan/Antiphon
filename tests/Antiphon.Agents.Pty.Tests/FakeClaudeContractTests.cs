@@ -45,14 +45,23 @@ public class FakeClaudeContractTests
     /// redistributable, so it stays pinned here; the modern half lives in
     /// <see cref="LaunchClippingFakeOnModernPtyAsync"/>.
     /// </summary>
+    /// <param name="alsoAwaitBanner">
+    /// An armed model's startup announcement (e.g. <c>SWALLOWENTER:</c>). Every model announces
+    /// itself, and the buffer is cleared right after readiness — so a test that wants to prove its
+    /// model really armed has to wait for that line HERE, not read it back afterwards.
+    /// </param>
     private static async Task<PtyAgentRunner> LaunchReadyFakeAsync(
-        IDictionary<string, string>? env = null)
+        IDictionary<string, string>? env = null, string? alsoAwaitBanner = null)
     {
         var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
         ShouldBeInbox(runner);
-        var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15));
-        ready.ShouldBeTrue("fake Claude should print its readiness banner");
+        var ready = await runner.WaitForOutputAsync(
+            s => s.Contains("Fake Claude ready") && (alsoAwaitBanner is null || s.Contains(alsoAwaitBanner)),
+            TimeSpan.FromSeconds(15));
+        ready.ShouldBeTrue(
+            "fake Claude should print its readiness banner"
+            + (alsoAwaitBanner is null ? "" : $" and announce {alsoAwaitBanner}: " + runner.SnapshotText()));
         runner.ClearLiveBuffer();
         return runner;
     }
@@ -603,6 +612,112 @@ public class FakeClaudeContractTests
         }
     }
 
+    /// <summary>
+    /// CARD-0055's load-bearing assumption (a), in CI: <b>an Enter on an already-empty composer is a
+    /// no-op</b> — no submit, no transcript record, no turn. The confirm loop re-presses Enter up to
+    /// <c>SubmitAttempts</c> times and NEVER re-types, so if a stray Enter did anything at all the
+    /// retry could double-submit — for a channel reply, a duplicate message to a human.
+    ///
+    /// <para>This is the fake's half. Against real Claude it is
+    /// <c>ClaudeSubmitConfirmCanaryTests.Enter_on_an_empty_composer_is_a_no_op</c> (headed,
+    /// <c>[Explicit]</c>) — the fake models the contract, only the canary can measure it.</para>
+    /// </summary>
+    [Test]
+    public async Task Enter_on_an_empty_composer_submits_nothing()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-emptyenter-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
+
+            // One real submit first, so the composer is empty the way it is after a SUCCESSFUL
+            // delivery — which is the state the retry Enters actually land in.
+            await runner.SendLineAsync("the body that did submit");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:the body that did submit"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            (await WaitForTranscriptLinesAsync(path, 2)).Length.ShouldBe(2);
+
+            // The re-presses the confirm loop would send: SubmitAttempts is 3, so two more.
+            await runner.WriteAsync("\r");
+            await Task.Delay(300);
+            await runner.WriteAsync("\r");
+            await Task.Delay(1000);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            var lines = (await File.ReadAllLinesAsync(path)).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+            lines.Length.ShouldBe(2,
+                "an Enter on an empty composer must record nothing — two Enters produced "
+                + $"{lines.Length - 2} extra record(s): {string.Join(" | ", lines.Skip(2))}");
+            runner.SnapshotText().Split("SUBMITTED:").Length.ShouldBe(2,
+                "exactly one submit marker; a second means an empty Enter re-submitted something");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The modelled failure state itself (CARD-0055, <c>ANTIPHON_FAKE_SWALLOW_ENTER</c>): the CR is
+    /// eaten, the screen advances anyway — the signal the old rule called Delivered — and the body
+    /// stays in the composer, so the NEXT Enter submits it. That last clause is what makes an
+    /// Enter-only retry safe, and what the end-to-end pin
+    /// (<c>SessionMessageQueuePtyIntegrationTests</c>) rides on.
+    /// </summary>
+    [Test]
+    public async Task A_swallowed_enter_redraws_holds_the_body_and_the_next_enter_submits_it_once()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-swallow-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            // The banner is awaited inside the launch (and asserted there): a test that believed it
+            // armed this model and did not would otherwise pass for the wrong reason.
+            await using var runner = await LaunchReadyFakeAsync(
+                new Dictionary<string, string>
+                {
+                    ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                    [SwallowEnterVar] = "1",
+                },
+                alsoAwaitBanner: "SWALLOWENTER:count=1");
+
+            await runner.WriteAsync("the body whose Enter is eaten");
+            await Task.Delay(50);
+            await runner.WriteAsync("\r");
+
+            // Eaten: the screen advanced (this is the false "output advanced" signal) but nothing
+            // was submitted and nothing was recorded.
+            (await runner.WaitForOutputAsync(s => s.Contains("SWALLOWED-ENTER:"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the swallowed Enter must still redraw — a dead terminal is not the bug");
+            await Task.Delay(500);
+            runner.SnapshotText().ShouldNotContain("SUBMITTED:");
+            File.Exists(path).ShouldBeFalse("a swallowed Enter must write no transcript record");
+
+            // The composer kept the body, so an Enter-only retry — no re-type — submits it.
+            await runner.WriteAsync("\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:the body whose Enter is eaten"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the re-pressed Enter must submit the body the composer still holds");
+
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            // ONE prompt: not zero (stranded), not two (the re-press double-submitting).
+            lines.Count(l => l.Contains("\"type\":\"user\"")).ShouldBe(1);
+            ContentOf(lines[0]).ShouldBe("the body whose Enter is eaten");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    /// <summary>The env var, named once — the pty integration suite arms the same model.</summary>
+    private const string SwallowEnterVar = "ANTIPHON_FAKE_SWALLOW_ENTER";
+
     // The 2026-08-08 live miss: SendLineAsync used to write its body RAW, so a CRLF prompt (a C#
     // raw-string literal in a CRLF source file — the card work prompt) either fragmented at each
     // mid-body \r or stranded whole in the composer when the CRs fell inside the paste window.
@@ -1085,6 +1200,53 @@ public class FakeClaudeContractTests
             + "kills always-on sessions as wedged on every large delivery. Screen:\n" + after);
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// The other half of the collapse, and CARD-0055's D1 premise in CI: the placeholder is a
+    /// COMPOSER rendering, and the JSONL record still carries the whole body. Delivery confirmation
+    /// matches the body's head window against that record text — a fake whose collapsed paste
+    /// recorded only <c>[Pasted text #N +M lines]</c> would model a world in which every large
+    /// delivery fails to confirm, retries three times and parks.
+    ///
+    /// <para>Measured against real Claude by
+    /// <c>ClaudeSubmitConfirmCanaryTests.A_collapsed_pastes_jsonl_record_carries_the_full_body_not_the_placeholder</c>
+    /// (2026-08-16: 4 804 chars pasted, composer showed the placeholder, the record carried all
+    /// 4 804 with every marked line present).</para>
+    /// </summary>
+    [Test]
+    public async Task A_collapsed_pastes_transcript_record_carries_the_full_body()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-collapsed-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchClippingFakeOnModernPtyAsync(
+                (PastePlaceholderVar, "1"), ("ANTIPHON_FAKE_TRANSCRIPT_PATH", path));
+
+            var body = MarkedBody(200);
+            await runner.WriteAsync(PtyInputEncoding.EncodeBody(body));
+            (await runner.WaitForScreenAsync(s => s.Contains("Pasted text #"), TimeSpan.FromSeconds(15)))
+                .ShouldBeTrue("the composer must collapse the paste: " + runner.SnapshotText());
+
+            await Task.Delay(100);
+            await runner.WriteAsync("\r");
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            lines.Length.ShouldBeGreaterThanOrEqualTo(1, "the collapsed paste must submit");
+            var recorded = ContentOf(lines[0]);
+            recorded.ShouldNotContain("Pasted text #",
+                customMessage: "the placeholder is what the SCREEN shows; the record carries what the API receives");
+            MarkersIn(recorded).Count.ShouldBe(200,
+                $"all 200 marked lines must be in the record — got {MarkersIn(recorded).Count}");
+            PromptSubmissionMatch.IsConfirmedBy(body, recorded).ShouldBeTrue(
+                "and the production matcher must confirm the delivery from it");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
     }
 
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,

@@ -935,10 +935,10 @@ public class SubagentNotificationTests
 }
 
 /// <summary>
-/// The check-in backoff (CARD-0047 §1.5), as arithmetic. A gap that is wrong by a factor of two is
-/// invisible in an integration test that only asserts "a later check was scheduled", so the curve
-/// gets pinned directly: it starts at half the declared duration (floored), doubles, and stops at
-/// the ceiling.
+/// The check-in backoff (CARD-0047 §1.5, re-decided CARD-0061), as arithmetic. A gap that is wrong
+/// by a step or two is invisible in an integration test that only asserts "a later check was
+/// scheduled", so the curve gets pinned directly, as a table rather than a re-derived formula — a
+/// table beats a formula nobody re-checks.
 /// </summary>
 [Category("Unit")]
 public class CheckScheduleBackoffTests
@@ -946,43 +946,44 @@ public class CheckScheduleBackoffTests
     private static readonly DelegationSettings Shipped = new();
 
     [Test]
-    public void the_first_gap_is_half_the_declared_duration()
+    public void the_ramp_is_a_fibonacci_sequence_from_the_base_capped_at_the_ceiling()
     {
-        // A 60-minute task has already had its first look at 60m; the next is 30m later, not an hour.
-        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 60, checkNumber: 1)
-            .ShouldBe(TimeSpan.FromMinutes(30));
+        // CARD-0061 DECIDED: 5, 10, 15, 25, 40, 60, 60 … — each interval is the sum of the previous
+        // two until it reaches the 60-minute ceiling, then flat.
+        var expected = new[] { 5, 10, 15, 25, 40, 60, 60 };
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var checkNumber = i + 1;
+            CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 10, checkNumber)
+                .ShouldBe(TimeSpan.FromMinutes(expected[i]), $"checkNumber {checkNumber}");
+        }
     }
 
     [Test]
-    public void a_short_task_cannot_generate_a_check_a_minute()
+    public void the_ramp_does_not_scale_with_the_declared_duration()
     {
-        // half of 4 is 2, which the floor (5) outranks — the declared duration cannot buy a cadence
-        // finer than the configured minimum.
-        CheckSchedule.NextInterval(Shipped, expectedDurationMinutes: 4, checkNumber: 1)
-            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMinIntervalMinutes));
+        // CARD-0061: ExpectedDurationMinutes schedules only the FIRST check (elsewhere, via
+        // DispatchedAt + expected); it no longer feeds the ramp itself. A 4-minute task and a
+        // 1440-minute task see the identical curve.
+        foreach (var expectedDurationMinutes in new[] { 4, 10, 60, 1440 })
+        {
+            CheckSchedule.NextInterval(Shipped, expectedDurationMinutes, checkNumber: 1)
+                .ShouldBe(TimeSpan.FromMinutes(5));
+            CheckSchedule.NextInterval(Shipped, expectedDurationMinutes, checkNumber: 2)
+                .ShouldBe(TimeSpan.FromMinutes(10));
+        }
     }
 
     [Test]
-    public void the_gap_doubles_with_each_check()
+    public void the_ramp_stops_climbing_at_the_ceiling()
     {
-        // The declared-10-minute curve from the spec: checked at ~10m, then +5, +10, +20 …
-        CheckSchedule.NextInterval(Shipped, 10, 1).ShouldBe(TimeSpan.FromMinutes(5));
-        CheckSchedule.NextInterval(Shipped, 10, 2).ShouldBe(TimeSpan.FromMinutes(10));
-        CheckSchedule.NextInterval(Shipped, 10, 3).ShouldBe(TimeSpan.FromMinutes(20));
-    }
-
-    [Test]
-    public void the_doubling_stops_at_the_ceiling()
-    {
-        // Otherwise a long-lived task's fourth check lands 40 minutes out and its tenth next week.
-        CheckSchedule.NextInterval(Shipped, 10, 4)
-            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes));
-        CheckSchedule.NextInterval(Shipped, 10, 40)
+        // Otherwise a long-lived task's check-count budget runs out at ever-widening gaps instead of
+        // settling into a heartbeat.
+        CheckSchedule.NextInterval(Shipped, 10, 6).ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes));
+        CheckSchedule.NextInterval(Shipped, 10, 200)
             .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
                 "a huge check number must clamp, not overflow into a negative TimeSpan");
-        CheckSchedule.NextInterval(Shipped, 1440, 1)
-            .ShouldBe(TimeSpan.FromMinutes(Shipped.CheckMaxIntervalMinutes),
-                "the ceiling outranks half of a day-long declaration too");
     }
 
     [Test]
@@ -995,5 +996,93 @@ public class CheckScheduleBackoffTests
         CheckSchedule.NextInterval(upsideDown, 10, 1).ShouldBe(TimeSpan.FromMinutes(20));
         CheckSchedule.NextInterval(new DelegationSettings { CheckMinIntervalMinutes = 0 }, 1, 1)
             .ShouldBeGreaterThan(TimeSpan.Zero);
+    }
+}
+
+/// <summary>
+/// The rounding step CARD-0061's follow-up bolted onto the ramp: below 30 minutes to the nearest 5,
+/// from 30 to 60 to the nearest 10, above 60 hard-capped at 60. Kept as its own table so the ramp
+/// arithmetic and the rounding can be reasoned about — and broken — independently.
+/// </summary>
+[Category("Unit")]
+public class CheckScheduleRoundingTests
+{
+    [Test]
+    [Arguments(7, 5)]
+    [Arguments(12, 10)]
+    [Arguments(33, 30)]
+    [Arguments(37, 40)]
+    [Arguments(65, 60)]
+    public void a_raw_value_rounds_to_the_decided_case(int raw, int rounded)
+    {
+        CheckSchedule.RoundInterval(raw).ShouldBe(rounded);
+    }
+
+    [Test]
+    public void an_already_round_value_passes_through_unchanged()
+    {
+        CheckSchedule.RoundInterval(40).ShouldBe(40);
+        CheckSchedule.RoundInterval(25).ShouldBe(25);
+    }
+
+    [Test]
+    public void the_shipped_ramp_sequence_is_unchanged_by_rounding()
+    {
+        // CARD-0061 DECIDED (follow-up): rounding must not move a single value of the sequence
+        // already pinned by CheckScheduleBackoffTests — every raw ramp value is already a case the
+        // rounding rule leaves alone.
+        var expected = new[] { 5, 10, 15, 25, 40, 60, 60 };
+        var shipped = new DelegationSettings();
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var checkNumber = i + 1;
+            CheckSchedule.NextInterval(shipped, expectedDurationMinutes: 10, checkNumber)
+                .ShouldBe(TimeSpan.FromMinutes(expected[i]), $"checkNumber {checkNumber}");
+        }
+    }
+}
+
+/// <summary>
+/// The caller-visible consequence of <see cref="CheckScheduleBackoffTests"/>: not the interval
+/// function in isolation, but the elapsed clock time each check actually lands at, given the first
+/// check is <c>DispatchedAt + ExpectedDurationMinutes</c> and every check after it adds
+/// <see cref="CheckSchedule.NextInterval"/> for the next check number.
+/// </summary>
+[Category("Unit")]
+public class CheckScheduleElapsedTimesTests
+{
+    [Test]
+    public void a_ten_minute_task_checks_at_the_decided_elapsed_times()
+    {
+        // CARD-0061 DECIDED table, expected = 10m (the default): 10, 15, 25, 40, 65, 105 …
+        AssertElapsedSequence(expectedDurationMinutes: 10, new[] { 10, 15, 25, 40, 65, 105 });
+    }
+
+    [Test]
+    public void a_twenty_five_minute_task_checks_at_the_decided_elapsed_times()
+    {
+        // CARD-0061 DECIDED table, expected = 25m: 25, 30, 40, 55, 80, 120 …
+        AssertElapsedSequence(expectedDurationMinutes: 25, new[] { 25, 30, 40, 55, 80, 120 });
+    }
+
+    [Test]
+    public void a_sixty_minute_task_checks_at_the_decided_elapsed_times()
+    {
+        // CARD-0061 DECIDED table, expected = 60m: 60, 65, 75, 90, 115, 155 …
+        AssertElapsedSequence(expectedDurationMinutes: 60, new[] { 60, 65, 75, 90, 115, 155 });
+    }
+
+    private static void AssertElapsedSequence(int expectedDurationMinutes, int[] elapsedMinutesAtEachCheck)
+    {
+        var settings = new DelegationSettings();
+        var elapsed = expectedDurationMinutes; // the first check: DispatchedAt + expected
+
+        for (var i = 0; i < elapsedMinutesAtEachCheck.Length; i++)
+        {
+            elapsed.ShouldBe(elapsedMinutesAtEachCheck[i], $"check #{i + 1}");
+            var checkNumber = i + 1;
+            elapsed += (int)CheckSchedule.NextInterval(settings, expectedDurationMinutes, checkNumber).TotalMinutes;
+        }
     }
 }
