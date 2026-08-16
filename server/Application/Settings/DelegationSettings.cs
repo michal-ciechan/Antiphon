@@ -304,14 +304,15 @@ public sealed class DelegationSettings
     public int DefaultExpectedMinutes { get; set; } = 10;
 
     /// <summary>
-    /// Floor on the gap between checks. The backoff starts at
-    /// <c>max(this, ExpectedDurationMinutes / 2)</c>, so a task declared at 2 minutes still cannot
-    /// generate a check a minute.
+    /// The base of the Fibonacci ramp (CARD-0061): interval(1) is this, interval(2) is twice this,
+    /// and each interval after that is the sum of the previous two. No longer scaled by
+    /// <see cref="AgentTask.ExpectedDurationMinutes"/> — the declared duration only schedules the
+    /// FIRST check, not the ramp that follows it.
     /// </summary>
     public int CheckMinIntervalMinutes { get; set; } = 5;
 
-    /// <summary>Ceiling on the doubling — a long task settles into a half-hourly heartbeat.</summary>
-    public int CheckMaxIntervalMinutes { get; set; } = 30;
+    /// <summary>Ceiling on the Fibonacci ramp — a long task settles into an hourly heartbeat.</summary>
+    public int CheckMaxIntervalMinutes { get; set; } = 60;
 
     /// <summary>
     /// After this many checks the task stops being checked and the last note says so. At ~$0.01 a

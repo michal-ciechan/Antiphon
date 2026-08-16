@@ -123,8 +123,10 @@ Rules earned the hard way. Each one maps to a real failure.
 (1-1440, defaults to 10) and the server arms a schedule: a deterministic, read-only probe of the
 task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
 worktree task — lands in your session as a `[check <id> #n] ...` note, first around the minute mark
-you declared, then backing off (starting at `max(5, expected/2)` minutes, doubling to a 30-minute
-ceiling) for up to 10 checks. It costs no model call today and cannot write to the delegate at all.
+you declared, then backing off along a Fibonacci ramp fixed from a 5-minute base (5, 10, 15, 25, 40,
+60, 60 …, capped at 60 minutes — CARD-0061) for up to 10 checks. The declared duration schedules only
+the first check; it no longer scales the ramp. It costs no model call today and cannot write to the
+delegate at all.
 **A check note is a progress report, never a completion** — the delegate's own `[task <id> done]`
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).

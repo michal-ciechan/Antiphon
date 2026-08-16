@@ -86,7 +86,7 @@ public class AgentTaskCheckSweepTests
     // ---- backoff, cap, dead parent -------------------------------------------------------------
 
     [Test]
-    public async Task the_next_check_backs_off_from_the_declared_duration()
+    public async Task the_next_check_backs_off_to_the_fixed_fibonacci_base()
     {
         var harness = new Harness();
         var seed = await harness.SeedDelegateAsync(
@@ -98,12 +98,12 @@ public class AgentTaskCheckSweepTests
         var after = await harness.ReloadAsync(seed.Task.Id);
         after.CheckCount.ShouldBe(1);
         after.NextCheckAt.ShouldNotBeNull();
-        // interval(1) for a 20-minute task is max(5, 10) = 10 minutes.
-        after.NextCheckAt!.Value.ShouldBe(before.AddMinutes(10), TimeSpan.FromMinutes(1));
+        // CARD-0061: interval(1) is the fixed 5-minute base, regardless of the declared duration.
+        after.NextCheckAt!.Value.ShouldBe(before.AddMinutes(5), TimeSpan.FromMinutes(1));
     }
 
     [Test]
-    public async Task the_gap_doubles_on_the_next_claim()
+    public async Task the_gap_widens_along_the_fibonacci_ramp_on_the_next_claim()
     {
         var harness = new Harness();
         var seed = await harness.SeedDelegateAsync(
@@ -114,7 +114,8 @@ public class AgentTaskCheckSweepTests
 
         var after = await harness.ReloadAsync(seed.Task.Id);
         after.CheckCount.ShouldBe(2);
-        after.NextCheckAt!.Value.ShouldBe(before.AddMinutes(20), TimeSpan.FromMinutes(1));
+        // CARD-0061: interval(2) is twice the base — 10 minutes, not the old doubled 20.
+        after.NextCheckAt!.Value.ShouldBe(before.AddMinutes(10), TimeSpan.FromMinutes(1));
     }
 
     [Test]
