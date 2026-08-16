@@ -44,6 +44,31 @@ public static class CheckSchedule
             current = next;
         }
 
-        return TimeSpan.FromMinutes(n == 1 ? previous : current);
+        var raw = n == 1 ? previous : current;
+        return TimeSpan.FromMinutes(RoundInterval((int)raw));
+    }
+
+    /// <summary>
+    /// Rounds a raw ramp value to a human-readable interval (CARD-0061 follow-up): below 30 minutes
+    /// to the nearest 5, from 30 to 60 to the nearest 10, above 60 hard-capped at 60. Kept separate
+    /// from the Fibonacci arithmetic above so the ramp and the rounding can be reasoned about and
+    /// tested independently — this keeps intervals readable even if the base, the ramp or
+    /// <see cref="DelegationSettings.CheckMinIntervalMinutes"/>/<see cref="DelegationSettings.CheckMaxIntervalMinutes"/>
+    /// ever change.
+    /// </summary>
+    public static int RoundInterval(int minutes)
+    {
+        if (minutes > 60)
+        {
+            return 60;
+        }
+
+        var step = minutes >= 30 ? 10 : 5;
+        var rounded = (int)(Math.Round(minutes / (double)step, MidpointRounding.AwayFromZero) * step);
+
+        // A raw value under half the step (e.g. 1 or 2 minutes, only reachable via a degenerate
+        // CheckMinIntervalMinutes config) would otherwise round down to zero, which is not a
+        // rounding of "5 minutes" — it is a scheduling bug (re-arming into the past forever).
+        return Math.Max(1, rounded);
     }
 }

@@ -120,7 +120,9 @@ spawned only when none fits.
 A dispatched task with `-ExpectAbout` (or the 10-minute default) is checked on automatically. The
 first check lands around the minute mark you declared; later ones back off along a Fibonacci ramp
 fixed from a 5-minute base — 5, 10, 15, 25, 40, 60, 60 … minutes, capped at 60 — for up to 10 checks,
-then it stops with a note saying so. The declared duration only schedules the first check; it does
+then it stops with a note saying so. Gaps are rounded to a human-readable number (nearest 5 below 30
+minutes, nearest 10 from 30 to 60) as a separate step from the ramp itself; the shipped sequence
+above is already round. The declared duration only schedules the first check; it does
 not change the ramp. Each check is a deterministic, read-only probe (task row, the
 delegate's session and transcript tail, its pending queue, its incidents, and — for a worktree
 task — its git log): it costs no model call, and it cannot type into, kill or commit for the

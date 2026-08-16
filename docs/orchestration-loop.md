@@ -124,9 +124,12 @@ Rules earned the hard way. Each one maps to a real failure.
 task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
 worktree task — lands in your session as a `[check <id> #n] ...` note, first around the minute mark
 you declared, then backing off along a Fibonacci ramp fixed from a 5-minute base (5, 10, 15, 25, 40,
-60, 60 …, capped at 60 minutes — CARD-0061) for up to 10 checks. The declared duration schedules only
-the first check; it no longer scales the ramp. It costs no model call today and cannot write to the
-delegate at all.
+60, 60 …, capped at 60 minutes — CARD-0061) for up to 10 checks. Every gap is rounded to a
+human-readable number on the way out — nearest 5 below 30 minutes, nearest 10 from 30 to 60 — a
+separate step from the ramp itself, so it keeps the schedule legible even if the base or the ramp
+change later; the shipped sequence above is already round, so this doesn't move it. The declared
+duration schedules only the first check; it no longer scales the ramp. It costs no model call today
+and cannot write to the delegate at all.
 **A check note is a progress report, never a completion** — the delegate's own `[task <id> done]`
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).

@@ -1000,6 +1000,50 @@ public class CheckScheduleBackoffTests
 }
 
 /// <summary>
+/// The rounding step CARD-0061's follow-up bolted onto the ramp: below 30 minutes to the nearest 5,
+/// from 30 to 60 to the nearest 10, above 60 hard-capped at 60. Kept as its own table so the ramp
+/// arithmetic and the rounding can be reasoned about — and broken — independently.
+/// </summary>
+[Category("Unit")]
+public class CheckScheduleRoundingTests
+{
+    [Test]
+    [Arguments(7, 5)]
+    [Arguments(12, 10)]
+    [Arguments(33, 30)]
+    [Arguments(37, 40)]
+    [Arguments(65, 60)]
+    public void a_raw_value_rounds_to_the_decided_case(int raw, int rounded)
+    {
+        CheckSchedule.RoundInterval(raw).ShouldBe(rounded);
+    }
+
+    [Test]
+    public void an_already_round_value_passes_through_unchanged()
+    {
+        CheckSchedule.RoundInterval(40).ShouldBe(40);
+        CheckSchedule.RoundInterval(25).ShouldBe(25);
+    }
+
+    [Test]
+    public void the_shipped_ramp_sequence_is_unchanged_by_rounding()
+    {
+        // CARD-0061 DECIDED (follow-up): rounding must not move a single value of the sequence
+        // already pinned by CheckScheduleBackoffTests — every raw ramp value is already a case the
+        // rounding rule leaves alone.
+        var expected = new[] { 5, 10, 15, 25, 40, 60, 60 };
+        var shipped = new DelegationSettings();
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var checkNumber = i + 1;
+            CheckSchedule.NextInterval(shipped, expectedDurationMinutes: 10, checkNumber)
+                .ShouldBe(TimeSpan.FromMinutes(expected[i]), $"checkNumber {checkNumber}");
+        }
+    }
+}
+
+/// <summary>
 /// The caller-visible consequence of <see cref="CheckScheduleBackoffTests"/>: not the interval
 /// function in isolation, but the elapsed clock time each check actually lands at, given the first
 /// check is <c>DispatchedAt + ExpectedDurationMinutes</c> and every check after it adds
