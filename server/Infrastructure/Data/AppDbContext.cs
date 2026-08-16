@@ -853,6 +853,7 @@ public class AppDbContext : DbContext
             entity.Property(m => m.Status).IsRequired();
             entity.Property(m => m.Sequence).IsRequired();
             entity.Property(m => m.CreatedAt).IsRequired();
+            entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
 
             // Pending messages for a session are flushed in FIFO order.
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })

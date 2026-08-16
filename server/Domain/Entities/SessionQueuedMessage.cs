@@ -34,5 +34,24 @@ public class SessionQueuedMessage
     public DateTime? SentAt { get; set; }
     public DateTime? CanceledAt { get; set; }
 
+    /// <summary>
+    /// How many times this message has been typed into a terminal (CARD-0055). Survives the revert
+    /// a failed verification does — that is the point: it is what stops an automatic retry looping
+    /// forever, and at <c>MaxDeliveryAttempts</c> the message parks for a human instead.
+    /// </summary>
+    public int DeliveryAttempts { get; set; }
+
+    /// <summary>When the most recent attempt started typing.</summary>
+    public DateTime? LastDeliveryStartedAt { get; set; }
+
+    /// <summary>
+    /// The transcript <c>Sequence</c> floor captured just before the most recent attempt typed —
+    /// null when the session had no transcript to observe. The anti-duplicate keystone: before any
+    /// path re-types a previously attempted message it re-runs the prompt matcher over
+    /// <c>UserPrompt</c> rows past this sequence, and a match marks the message Sent with zero
+    /// writes to the terminal. Automatic retry is safe only because the retry looks before it types.
+    /// </summary>
+    public long? LastDeliveryBaselineSequence { get; set; }
+
     public AgentSession AgentSession { get; set; } = null!;
 }

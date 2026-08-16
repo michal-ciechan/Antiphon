@@ -118,4 +118,14 @@ public sealed class DeliveryVerificationSettings
     /// might already have gone in.
     /// </summary>
     public int SubmitAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// How many times a queued message may be typed into a terminal before it PARKS for a human
+    /// (CARD-0055). A parked message stays Pending and visible in the queue UI, where cancel and
+    /// re-enqueue already exist, but no automatic path picks it up again — an unbounded retry loop
+    /// against a terminal that keeps eating Enters is how the same body reaches an agent five times.
+    /// Parking raises an incident, Critical when the agent is channel-bound: a parked channel reply
+    /// is a human waiting on a dead line.
+    /// </summary>
+    public int MaxDeliveryAttempts { get; set; } = 3;
 }

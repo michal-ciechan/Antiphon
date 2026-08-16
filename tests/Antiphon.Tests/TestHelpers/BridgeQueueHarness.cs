@@ -255,7 +255,17 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public Task MarkWorkingAsync(Guid? sessionId = null) =>
         InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "working on it", sessionId: sessionId);
 
-    public async Task SeedPendingMessageAsync(string body, Guid? sessionId = null)
+    /// <summary>
+    /// A Pending message already in the queue. <paramref name="deliveryAttempts"/> and
+    /// <paramref name="baselineSequence"/> reproduce a message that has ALREADY been typed once
+    /// (CARD-0055): attempts is the retry brake, and the baseline is the transcript floor the
+    /// late-confirm re-runs the matcher over before anything re-types it.
+    /// </summary>
+    public async Task<Guid> SeedPendingMessageAsync(
+        string body,
+        Guid? sessionId = null,
+        int deliveryAttempts = 0,
+        long? baselineSequence = null)
     {
         var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
@@ -263,14 +273,48 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var seq = ((await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sid)
             .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
+        var id = Guid.NewGuid();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
-            Id = Guid.NewGuid(),
+            Id = id,
             AgentSessionId = sid,
             Body = body,
             Status = QueuedMessageStatus.Pending,
             Sequence = seq,
             CreatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(5),
+            DeliveryAttempts = deliveryAttempts,
+            LastDeliveryStartedAt = deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null,
+            LastDeliveryBaselineSequence = baselineSequence,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    /// <summary>The transcript sequence a delivery starting now would use as its confirmation floor.</summary>
+    public async Task<long> CurrentTranscriptMaxSequenceAsync(Guid? sessionId = null)
+    {
+        var sid = sessionId ?? SessionId;
+        await using var db = CreateContext();
+        return (await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sid)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+    }
+
+    /// <summary>Binds a chat channel to the harness agent — the Critical-escalation condition.</summary>
+    public async Task BindChannelAsync()
+    {
+        await using var db = CreateContext();
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = Guid.NewGuid(),
+            Provider = "telegram",
+            ExternalId = $"bridge-queue-{Guid.NewGuid():N}",
+            Kind = ChatChannelKind.Direct,
+            Title = "Bound channel (test)",
+            AgentId = AgentId,
+            Enabled = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
