@@ -120,6 +120,35 @@ public sealed class DeliveryVerificationSettings
     public int SubmitAttempts { get; set; } = 3;
 
     /// <summary>
+    /// Grace window applied AFTER a <c>NoTranscriptRecord</c> verdict and BEFORE anything
+    /// destructive happens, during which the same text matcher keeps looking for the record.
+    ///
+    /// <para>The confirm window expiring proves our own ingestion had not caught up, not that the
+    /// submit failed. On session <c>22e0df09</c> (2026-08-16) the record landed 0.8s after the
+    /// verdict: the always-on kill had already destroyed a session that had taken the message
+    /// correctly, and the existing late-confirm ran on the corpse and marked it Sent. A brand-new
+    /// session is where this bites hardest — its transcript file does not exist until the first
+    /// submit creates it, and discovery + binding + first ingestion all land inside the window.</para>
+    ///
+    /// <para>Text match only, same as <c>LateConfirmAttemptedMessagesAsync</c>: this can only turn
+    /// a failure into a success on positive evidence that our exact body is in the transcript.</para>
+    ///
+    /// <para>The window is short because it is NOT a waiting game: each iteration PULLS the
+    /// runner's transcript (<c>AgentSessionRuntime.CatchUpTranscriptAsync</c>) rather than hoping
+    /// the live stream catches up. That distinction is measured, not assumed. On session
+    /// <c>e809ce65</c> the interpretation brief's <c>UserPrompt</c> was written by Claude 0.9s
+    /// after the submit and stored by us <b>45 seconds later</b>, in one burst with five other
+    /// records, at the exact moment the session was killed — the kill is what produced the
+    /// evidence that the kill was wrong. A pure wait cannot win that race: a 90s window was tried
+    /// on session <c>5536ae88</c> and still lost by the same 1.2s, because the flush is triggered
+    /// by the session ENDING. The same stall blinds <c>IsWorkingAsync</c> (it reads the same rows),
+    /// which is why the working-kill guard reported <c>working=false</c> about a session that was
+    /// visibly mid-turn on screen — both brakes share one dependency, and the pull fixes both,
+    /// since <c>working</c> is recomputed after this window.</para>
+    /// </summary>
+    public int PostFailureConfirmGraceSeconds { get; set; } = 20;
+
+    /// <summary>
     /// How many times a queued message may be typed into a terminal before it PARKS for a human
     /// (CARD-0055). A parked message stays Pending and visible in the queue UI, where cancel and
     /// re-enqueue already exist, but no automatic path picks it up again — an unbounded retry loop

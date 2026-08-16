@@ -20,6 +20,37 @@ public enum ClaudeBlockingPromptKind
 }
 
 /// <summary>
+/// What happened when a launch tried to get past whatever the TUI was sitting on.
+/// </summary>
+public enum ClaudeStartupBlockOutcome
+{
+    /// <summary>Nothing was blocking — the usual case.</summary>
+    None = 0,
+
+    /// <summary>A trust dialog was up, was answered, and the screen verifiably cleared.</summary>
+    TrustCleared = 1,
+
+    /// <summary>A trust dialog was up, was answered, and is STILL up. The session is unusable.</summary>
+    TrustNotCleared = 2,
+
+    /// <summary>
+    /// Blocked on a modal we deliberately do not auto-answer (a tool-permission request, or any
+    /// other numbered choice). Reported, never keyed into.
+    /// </summary>
+    NotAnswerable = 3,
+}
+
+/// <summary>The outcome plus the modal it was about, for logging and incidents.</summary>
+public readonly record struct ClaudeStartupBlockResolution(
+    ClaudeStartupBlockOutcome Outcome,
+    ClaudeBlockingPrompt? Prompt)
+{
+    /// <summary>True when a keystroke was actually sent — i.e. the launch changed the TUI's state.</summary>
+    public bool Answered => Outcome is ClaudeStartupBlockOutcome.TrustCleared
+        or ClaudeStartupBlockOutcome.TrustNotCleared;
+}
+
+/// <summary>
 /// A modal the TUI is blocked on, plus how to answer it.
 /// </summary>
 /// <param name="Kind">What is being asked.</param>
@@ -120,15 +151,92 @@ public static partial class ClaudeBlockingPromptDetector
     /// verifies. Returns false if the modal is still up, so a caller can escalate instead of
     /// carrying on into a session that is silently swallowing input.
     /// </summary>
-    public static async Task<bool> TryAnswerAsync(
+    public static Task<bool> TryAnswerAsync(
         PtyAgentRunner runner,
         ClaudeBlockingPrompt prompt,
         TimeSpan? settleTimeout = null,
         CancellationToken ct = default)
+        => TryAnswerAsync(
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            (input, token) => runner.WriteAsync(input, token),
+            prompt,
+            settleTimeout,
+            ct);
+
+    /// <inheritdoc cref="TryAnswerAsync(PtyAgentRunner, ClaudeBlockingPrompt, TimeSpan?, CancellationToken)"/>
+    /// <remarks>
+    /// Delegate form so the SERVER adapters can use it. The in-process pty and the session-runner
+    /// client reach the same two primitives by different routes (a local <see cref="PtyAgentRunner"/>
+    /// vs an HTTP snapshot/send-input pair), and the answering logic must not fork between them —
+    /// only one of those two paths is what production actually runs.
+    /// </remarks>
+    public static async Task<bool> TryAnswerAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write,
+        ClaudeBlockingPrompt prompt,
+        TimeSpan? settleTimeout = null,
+        CancellationToken ct = default)
     {
-        await runner.WriteAsync(prompt.AffirmativeKey, ct);
-        return await runner.WaitForScreenAsync(
-            screen => !IsBlocked(screen), settleTimeout ?? TimeSpan.FromSeconds(10), ct);
+        await write(prompt.AffirmativeKey, ct);
+        return await PollScreenAsync(
+            snapshotScreen, screen => !IsBlocked(screen), settleTimeout ?? TimeSpan.FromSeconds(10), ct);
+    }
+
+    /// <summary>
+    /// The launch-time gate: get past a trust dialog, and ONLY a trust dialog.
+    ///
+    /// <para>A brand-new working directory makes Claude open on "Is this a project you created or one
+    /// you trust?" and wait. Nothing downstream can see that: the TUI is perfectly quiet, so the
+    /// quiet-period ready detector calls it READY, the composer never receives anything, delivery
+    /// verification correctly reports no composer evidence, and the always-on kill restarts the
+    /// session — into the same directory, onto the same dialog. That loop cost CARD-0047's standing
+    /// check interpreter every session it ever had (2026-08-16).</para>
+    ///
+    /// <para><b>Only the trust prompt is answered.</b> Choosing the working directory IS the trust
+    /// decision, and the operator already made it when they configured the agent; there is no other
+    /// way for a headless session to get past it. A tool-permission modal is the opposite — keying
+    /// "1" into one would grant a tool call nobody authorised — so those are reported and left
+    /// standing, and the caller decides. For the same reason the generic
+    /// <see cref="ClaudeBlockingPromptKind.Choice"/> arm is never answered here: it matches on the
+    /// shape of a numbered menu, which is too weak a signal to type into a live session on.</para>
+    /// </summary>
+    public static async Task<ClaudeStartupBlockResolution> ClearStartupTrustPromptAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, CancellationToken, Task> write,
+        TimeSpan? settleTimeout = null,
+        CancellationToken ct = default)
+    {
+        // One snapshot, no waiting: a modal renders in one frame and the caller has already waited
+        // for the TUI to go quiet, so if a dialog is coming it is on screen now. Polling here would
+        // add its timeout to every healthy launch.
+        var prompt = Detect(await snapshotScreen(ct));
+        if (prompt is null)
+            return new ClaudeStartupBlockResolution(ClaudeStartupBlockOutcome.None, null);
+
+        if (prompt.Kind != ClaudeBlockingPromptKind.TrustFolder)
+            return new ClaudeStartupBlockResolution(ClaudeStartupBlockOutcome.NotAnswerable, prompt);
+
+        var cleared = await TryAnswerAsync(snapshotScreen, write, prompt, settleTimeout, ct);
+        return new ClaudeStartupBlockResolution(
+            cleared ? ClaudeStartupBlockOutcome.TrustCleared : ClaudeStartupBlockOutcome.TrustNotCleared,
+            prompt);
+    }
+
+    private static async Task<bool> PollScreenAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<string, bool> predicate,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (predicate(await snapshotScreen(ct)))
+                return true;
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+        return false;
     }
 
     private static string Compact(string screen)

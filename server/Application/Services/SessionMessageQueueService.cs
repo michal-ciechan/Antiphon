@@ -954,6 +954,71 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    /// <summary>
+    /// Keep looking for the confirming record for a short window after the verdict, and return the
+    /// ids that turned out to have landed.
+    ///
+    /// <para>This is the SAME evidence <see cref="LateConfirmAttemptedMessagesAsync"/> requires —
+    /// a text match against a real stored baseline — just consulted before the kill instead of on
+    /// the next flush. It can only ever turn a failure into a success, never the reverse, and the
+    /// text-match restriction means a body too short to identify (an auto-continue) is never
+    /// grace-confirmed: those take the ordinary failure path exactly as before.</para>
+    /// </summary>
+    private async Task<HashSet<Guid>> GraceConfirmAsync(
+        Guid sessionId, IReadOnlyList<Guid> messageIds, CancellationToken ct)
+    {
+        var confirmed = new HashSet<Guid>();
+        var grace = TimeSpan.FromSeconds(Math.Max(0, _verification.PostFailureConfirmGraceSeconds));
+        if (!_verification.TranscriptConfirmEnabled || grace <= TimeSpan.Zero)
+            return confirmed;
+
+        var deadline = UtcNow() + grace;
+        while (true)
+        {
+            // PULL the runner's own transcript before every check. This is the whole point: the
+            // live event stream is not a reliable clock, and on the measured failure the records
+            // sat unstored for 45s and only appeared when the session ended — i.e. the kill was
+            // what produced the evidence that the kill was wrong. Waiting longer does not fix that
+            // (90s was tried and still lost by 1.2s); asking the runner does.
+            await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+
+            await using (var scope = _scopeFactory.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var outstanding = (await db.SessionQueuedMessages
+                        .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
+                        .ToListAsync(ct))
+                    .Where(m => !confirmed.Contains(m.Id))
+                    .ToList();
+
+                foreach (var message in outstanding)
+                {
+                    if (await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct) > 0)
+                        confirmed.Add(message.Id);
+                }
+            }
+
+            if (confirmed.Count == messageIds.Count)
+                return confirmed;
+
+            if (UtcNow() >= deadline)
+            {
+                // Said out loud: the next thing that happens may be a kill, and if the record turns
+                // up seconds later then the window — not the delivery — is what was wrong.
+                _logger.LogWarning(
+                    "Post-failure grace of {Grace}s expired for session {SessionId} with {Confirmed} of "
+                    + "{Total} message(s) confirmed; proceeding to the failure path",
+                    grace.TotalSeconds, sessionId, confirmed.Count, messageIds.Count);
+                return confirmed;
+            }
+
+            // Deliberately slower than PollIntervalMs: each iteration fetches a whole transcript
+            // over HTTP, and the thing being waited on is a runner round trip, not a DB commit.
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs)), _timeProvider, ct);
+        }
+    }
+
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
     private async Task<bool> TryFindConfirmingRecordAsync(
@@ -1042,20 +1107,40 @@ public sealed class SessionMessageQueueService
     {
         try
         {
+            // Last look for the evidence before anything destructive happens. A NoTranscriptRecord
+            // verdict says our ingestion had not caught up inside the confirm window, which is NOT
+            // the same claim as "the submit failed" — and the difference is a session's life. See
+            // DeliveryVerificationSettings.PostFailureConfirmGraceSeconds for the measured miss.
+            var lateConfirmed = verdict == DeliveryVerdict.NoTranscriptRecord && messageIds is { Count: > 0 }
+                ? await GraceConfirmAsync(sessionId, messageIds, ct)
+                : [];
+            if (messageIds is { Count: > 0 } && lateConfirmed.Count == messageIds.Count)
+            {
+                _logger.LogInformation(
+                    "Delivery to session {SessionId} verified late: all {Count} message(s) reached the "
+                    + "transcript within the post-failure grace window. No incident, and the session is "
+                    + "NOT restarted — it took the message correctly, our ingestion was just behind",
+                    sessionId, messageIds.Count);
+                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+                return;
+            }
+
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             var agent = await db.Agents.FirstOrDefaultAsync(
                 a => a.PersistentSessionId == sessionId.ToString("D"), ct);
 
-            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert). The
-            // attempt metadata deliberately survives the revert — it is the retry brake.
+            // Revert the whole failed batch (null = Now-mode, nothing persisted to revert), minus
+            // anything the grace window just proved landed. The attempt metadata deliberately
+            // survives the revert — it is the retry brake.
             var parked = 0;
             if (messageIds is { Count: > 0 })
             {
                 var messages = await db.SessionQueuedMessages
                     .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
                     .ToListAsync(ct);
+                messages = messages.Where(m => !lateConfirmed.Contains(m.Id)).ToList();
                 foreach (var message in messages.Where(m => m.Status == QueuedMessageStatus.Sent))
                 {
                     message.Status = QueuedMessageStatus.Pending;
