@@ -129,11 +129,18 @@ ceiling) for up to 10 checks. It costs no model call today and cannot write to t
 note still arrives separately, and a check note can never be mistaken for it or settle anything
 (see `.claude/skills/antiphon-delegate/SKILL.md`).
 
-**Do not infer from silence** still holds — completion notifications have arrived 90 minutes late
-and have failed to arrive at all within a working session, and the schedule above is a safety net
-on top of that, not a fix for it. The manual probes below are now the fallback: reach for them when
-you want to look *before* the first automatic check fires, when `DelegationSettings.CheckEnabled`
-is off, or when you just want a fresher answer than the schedule will give you.
+**Do not infer from silence** as general practice still holds, but the specific cause behind the
+worst observed lags is now found and fixed, not just worked around. It was never a slow pipeline —
+task `817682e9` traced the 90-minutes-late and never-arrived notifications to CARD-0055's root
+cause: a queued completion note was marked Sent as soon as the screen merely redrew after Enter, so
+a swallowed Enter left the note sitting unsubmitted in the composer (one sat there 104 minutes,
+only reaching the transcript when a LATER delivery's Enter pushed it in), and a second note was
+lost outright when its own Enter resubmitted the first note's stale body instead. CARD-0055
+(shipped `4bb65fb`..`165da34`) fixes it at the source: a delivery is now Delivered only when a
+matching `UserPrompt` transcript record appears, with Enter re-presses and a late-confirm brake
+against double-submission — see the CLAUDE.md gotcha for the mechanism. The schedule above and the
+manual probes below still earn their keep as a safety net and for a faster look, but they are no
+longer standing in for this specific defect.
 
 Cheapest first:
 

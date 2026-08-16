@@ -41,12 +41,15 @@ the prompt actually landing as a transcript record — so a delivery can be mark
 have happened at all.
 
 **What changed:** filed as its own card, CARD-0055, deliberately separate from CARD-0047 — the
-scheduled checks that card added are a safety net on top of this, not a fix for it. Still open:
-delivery verification should confirm a transcript record appears within a window, retry the Enter
-on failure, and raise an incident rather than silently marking the delivery Sent. Lesson for
-future briefs: when a workaround is being written into a process document, ask what makes the
-workaround necessary — §4 of the loop doc stayed useful advice, but stopping there would have left
-the actual bug unfiled.
+scheduled checks that card added are a safety net on top of this, not a fix for it. **Update
+2026-08-16: shipped and closed.** `4bb65fb`/`0134964`/`8410d9a`/`165da34` land the fix this entry
+called "still open" — delivery verification now confirms a matching `UserPrompt` transcript record
+within a window, re-presses Enter (never re-types), late-confirms before any redelivery, and parks
+after `MaxDeliveryAttempts` with an incident instead of silently marking the delivery Sent. See the
+CLAUDE.md gotcha for the mechanism, and `docs/orchestration-loop.md` §4 for the updated advice.
+Lesson for future briefs, still true: when a workaround is being written into a process document,
+ask what makes the workaround necessary — §4 of the loop doc stayed useful advice, but stopping
+there would have left the actual bug unfiled.
 
 ---
 
@@ -178,3 +181,33 @@ remaining sweeps *and* the dispatch loop, permanently. That is luck, not method:
 that happens to land near a real bug is not a technique. The orchestrator had also *seen* the
 off-by-one in a live check note (`#2` on a first check) and rationalised it away as an artefact of
 the agent's own probe.
+
+---
+
+## 2026-08-16 — Measuring an assumption can remove planned work, not just validate it
+
+**What we learned.** The default expectation for a headed canary is that it either confirms an
+assumption (nothing changes) or falsifies it (something in the design has to change). CARD-0055
+slice 4 surfaced a third outcome that the loop hadn't named: the assumption holds, and BECAUSE it
+holds, a piece of work the spec had already planned for the falsified case turns out to be
+unnecessary and should not be built at all.
+
+**The evidence.** CARD-0055's shipped design (slices 2-3) rested its full weight on two things
+nobody had measured against real Claude: that pressing Enter on an already-empty composer is a
+no-op (so the confirm loop's re-press can never double-submit), and that a COLLAPSED paste's JSONL
+`UserPrompt` record carries the full body rather than the `[Pasted text #N +M lines]` placeholder
+the composer shows (CARD-0037) — the delivery matcher reads that record, so a placeholder-only
+record would fail every large delivery's confirmation. The spec named an explicit contingency for
+the second assumption failing: "for bodies above the collapse threshold, fall back to the weak-match
+arm." Slice 4's two headed canaries (`ClaudeSubmitConfirmCanaryTests`) measured both directly
+against real Claude on the modern pseudoconsole and BOTH held — three empty Enters produced zero
+new JSONL records, and a 4 804-char/62-line collapsed paste's record carried all 4 804 chars intact.
+The commit message states the consequence plainly: "The spec's contingency … is NOT needed and is
+not implemented." No fallback code was written and then deleted — the measurement itself is what
+kept it off the branch.
+
+**What changed.** No process rule existed to say this could happen, so briefs asking for an
+assumption to be pinned implicitly framed the canary as a validation-or-bug-report step. Worth
+carrying forward: when a spec names a contingency for an assumption's failure, treat the canary
+that measures the assumption as also deciding whether the contingency gets built — a held
+assumption is itself a reason to cut planned scope, not just a green checkmark.
