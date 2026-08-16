@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -86,9 +88,37 @@ public class PtyHostAdoptionTests
     }
 
     [Test]
-    public async Task Exit_while_runner_down_is_collected_on_adoption_with_the_real_exit_code()
+    public Task Exit_while_runner_down_is_collected_on_adoption_with_the_real_exit_code() =>
+        ExitWhileRunnerDownIsCollectedOnAdoptionAsync(BuildSettings());
+
+    /// <summary>
+    /// The same acceptance test on the MODERN pseudoconsole, which is what this deployment runs
+    /// (<c>src/Antiphon.SessionRunner/appsettings.json</c> asks for it) — and which is where it used
+    /// to fail. CARD-0049 was filed as an adoption defect; it was CARD-0048's DA1 stall all along:
+    /// the child's ~2 s <c>ping</c> plus a 3 s frozen start pushed its exit past the 4 s adoption
+    /// point, so the runner adopted a child that was still alive and saw no collected exit.
+    /// Answering DA1 puts the exit back at ~2 s and this passes; so this is CARD-0049's regression
+    /// lock as well as CARD-0048's.
+    ///
+    /// <para>It also pins the fix where nothing else does: through the DETACHED pty-host and the
+    /// shadow-copy path. <c>SessionRunnerSettings.PtyBackend</c> reaches the host as
+    /// <c>--pty-backend</c> (CARD-0045 slice 3), and the responder ships inside
+    /// <c>Antiphon.Agents.Pty.dll</c> — an ordinary deps.json assembly, so <c>ShadowCopyStore</c>
+    /// carries it with no change (the CARD-0037 Content-item trap applies only to the conpty pair).
+    /// If either of those ever stopped being true, the daemon would keep stalling in production
+    /// while the in-process tests stayed green.</para>
+    /// </summary>
+    [Test]
+    public Task Exit_while_runner_down_is_collected_on_adoption_on_the_modern_backend()
     {
-        var settings = BuildSettings();
+        if (!ConPtyRedistributable.TryLocate(out _, out var why))
+            throw new SkipTestException("no shipped conpty.dll: " + why);
+
+        return ExitWhileRunnerDownIsCollectedOnAdoptionAsync(BuildSettings(ptyBackend: "modern"));
+    }
+
+    private static async Task ExitWhileRunnerDownIsCollectedOnAdoptionAsync(SessionRunnerSettings settings)
+    {
         var sessionId = Guid.NewGuid();
         var manifestPath = PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId);
 
@@ -203,10 +233,16 @@ public class PtyHostAdoptionTests
 
     // ---------- helpers ----------
 
-    private static SessionRunnerSettings BuildSettings() => new()
+    /// <param name="ptyBackend">
+    /// Declared on the host's command line (CARD-0045 slice 3) rather than left to whatever the
+    /// launching shell exported — the assembly guard clears the environment, so a host-mediated test
+    /// that does not say this gets the code default.
+    /// </param>
+    private static SessionRunnerSettings BuildSettings(string? ptyBackend = null) => new()
     {
         SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-adoption-tests-{Guid.NewGuid():N}"),
         PtyHostLingerHours = 0.02,
+        PtyBackend = ptyBackend,
     };
 
     private static async Task<RunnerSessionDto> StartInteractiveSessionAsync(

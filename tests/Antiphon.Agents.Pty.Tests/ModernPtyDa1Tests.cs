@@ -184,6 +184,46 @@ public class ModernPtyDa1Tests
         await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(2)));
     }
 
+    /// <summary>
+    /// The original casualty (<c>PtyAgentRunnerTests.WaitForQuiet_returns_false_under_continuous_output</c>)
+    /// re-stated with a declared backend. A <c>cmd</c> loop echoing forever is never quiet, so a
+    /// 2 s-quiet / 3 s-max wait must come back false — and on the unfixed modern backend it came
+    /// back TRUE, because 2 s of the 3 s stall counted as quiet before the child had run at all.
+    ///
+    /// <para>That is the whole class of failure the stall caused (investigation section 8): every
+    /// readiness and turn-completion rule in the stack infers state from a quiet period shorter than
+    /// 3 s, so they all read the frozen child as a finished one — <c>RawPtyAdapter</c> declaring
+    /// ready at 500 ms, <c>WaitForTurnCompleteAsync</c> reporting a completed turn with an empty
+    /// snapshot, Codex done-detection on a 3 000 ms window against a 3 000 ms stall.</para>
+    ///
+    /// <para>The wait starts IMMEDIATELY after <c>StartAsync</c> and that is load-bearing: the stall
+    /// is the first three seconds of the session, so a window opened after the child is already
+    /// talking cannot see it, and the test would pass on the defect.</para>
+    /// </summary>
+    [Test]
+    public async Task WaitForQuiet_on_modern_returns_false_from_launch_under_continuous_output()
+    {
+        RequireShippedDll();
+
+        await using var runner = new PtyAgentRunner("modern");
+        using var bat = new TempBatch(
+            "@echo off\r\n:loop\r\necho noisy-%random%\r\nping -n 1 127.0.0.1 > nul\r\ngoto loop\r\n");
+        await runner.StartAsync(Cmd, ["/d", "/c", bat.Path]);
+
+        var quiet = await runner.WaitForQuietAsync(
+            quietPeriod: TimeSpan.FromSeconds(2),
+            maxWait: TimeSpan.FromSeconds(3));
+
+        runner.Backend!.Backend.ShouldBe(
+            PtyBackend.ModernConPty, "a silent fallback would make this test prove nothing");
+        quiet.ShouldBeFalse(
+            "a child echoing continuously is never quiet. Reading it as quiet means the pty had not "
+            + "started it yet — the DA1 stall, which every sub-3 s readiness window mistakes for a "
+            + "settled session. Output was: " + runner.SnapshotText());
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static int Occurrences(string haystack, string needle)
     {
         var count = 0;
