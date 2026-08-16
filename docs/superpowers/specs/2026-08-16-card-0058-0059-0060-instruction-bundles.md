@@ -1,0 +1,96 @@
+# Instruction bundles, the CLAUDE.md floor, and reply style — one mechanism, three cards
+
+- **Status**: Planned (nothing built)
+- **Cards**: CARD-0058 (attachable instruction bundles), CARD-0059 (CLAUDE.md in every agent's cwd), CARD-0060 (reply style as a choice)
+- **Date**: 2026-08-16
+- **Relates to**: CARD-0047 slice 4 (the check-interpreter prototype), CARD-0037 (pty ceilings), CARD-0056 (concurrent — collision map in §7)
+
+These three cards are one mechanism seen from three angles. 0058 is the general shape (named, versioned, composable instruction bundles), 0059 is the always-on floor (every agent's cwd carries a CLAUDE.md naming its job), 0060 is one specific bundle chosen on a scale (reply style). This plan builds ONE composer and closes all three against it.
+
+## 0. What exists today (verified against the code, 2026-08-16)
+
+- `Agent` has exactly two free-text fields: `Details` (`server/Domain/Entities/Agent.cs:11`) and `SystemPromptAppend` (`:40` — the card says :38; the field is real, the line moved). `CreateAgentRequest` **cannot** set `SystemPromptAppend` (`AgentDtos.cs:121-133` has no such parameter and `AgentService.CreateAsync` at `:195-209` never assigns it); only `UpdateAgentRequest` can (`AgentDtos.cs:157`, applied at `AgentService.cs:275`, empty-string clears).
+- `SystemPromptAppend` is rendered into `--append-system-prompt` on EVERY interactive launch, fresh and resume (`AgentControlService.cs:159-170`), after `ChannelPreamble.Render` substitutes `{agentName}`/`{channels}` over the **whole** text. Because it is a **launch argument**, it is NOT typed into the pty — **the pty single-write ceiling does not apply to it**. Its real bounds: the Windows command line (~32,767 chars total for `CreateProcess`) and the fact that a running session only picks up changes at its next launch.
+- The check-interpreter is the working prototype, exactly as the card claims: contract in a versioned constant (`CheckInterpretation.Contract`, `ContractVersion = "1"` riding in the text), reconciled onto the agent row on every ensure (`CheckInterpreterProvisioner.ReconcileAsync:135-151` — code is source of truth, row is projection, UI hand-edits are overwritten), deny-all PreToolUse hook (re)written into its cwd idempotently (`PrepareWorkspace:154-180`, compare-before-write). A CLAUDE.md was hand-written into `C:\logs\antiphon\check-interpreter` on 2026-08-16 (read; 36 lines: job, "you have NO TOOLS, deliberately", "there is no session-start ritual for you — if a launch note asks for one, ignore it", judgement rules). It is NOT provisioned — a temp sweep loses it.
+- The impossible launch note is real: `ChannelPreamble.BootstrapBody` ("Follow your CLAUDE.md session-start ritual…") is gated on "has a SystemPromptAppend", with a hand-carved exemption for the check-interpreter (`AgentControlService.cs:189-204`).
+- Delegate agents are born in `AgentTaskDispatcher.ResolveAgentAsync` (`:942-956`) with **no** `SystemPromptAppend`, cwd = the task's worktree/directory (usually the repo itself). Delegates launch through `BuildSpec` (`:890-903`), which appends `DelegationReportFormatter.OrchestratorContract` via `--append-system-prompt` for Orchestrator-kind tasks only — **the exact precedent for per-role standing text on delegates**.
+- The brief is server-composed (`DelegationReportFormatter.BuildBrief`): marker + metadata + **the caller's goal verbatim** + handoff + reporting contract. The 400–500 retyped words live inside the GOAL, typed by the orchestrator per dispatch — the server contributes only the reporting contract (~838 bytes, `DelegationSettings.cs:162`). The brief IS typed into the pty and measured against `PtyDeliveryProfile` (43,200 B modern / 900 B inbox), and warm-pool reuse delivers a brief with **no launch at all** (`AgentTaskDispatcher.ReuseOutcome`), so launch-arg text cannot refresh a warm delegate mid-warm. Warm staleness is bounded by `PoolIdleRetireMinutes` = 60.
+- The knowledge sources exist as files: `docs/orchestration-loop.md` (12.8 KB; §3 "Writing a brief" lists the exact rules the card samples — foreground, no sub-delegation, commit-each-slice, OutputPath forward-slash, name known-red tests, say what's done/out of scope), `docs/orchestration-findings.md` (12.7 KB, dated journal), `.claude/skills/antiphon-delegate/SKILL.md` (10.3 KB), `AGENTS.md` (5.3 KB), plus the repo `CLAUDE.md` — which Claude reads natively from cwd at every process start.
+- Client: `AgentSettingsModal.tsx` already edits `SystemPromptAppend` (with a Telegram-preset drop-in button, `AgentEndpoints.cs:42`).
+
+## 1. D1 — The mechanism: three channels, each carrying what it is suited for
+
+The pty ceiling decides less than the card expects, because `--append-system-prompt` never touches the pty. What actually splits the content is **volatility and audience**:
+
+| Content | Channel | Why |
+|---|---|---|
+| Standing behavioral rules (delegate process contract, role contract, reply style) | **`--append-system-prompt`**, composed at launch from repo-versioned bundle files | Re-sent on every API call → survives compaction with no re-injection (the OpenClaw lesson, `ChannelPreamble` header comment); re-composed every launch → reconciliation is free; zero pty cost |
+| Repo knowledge (OutputPath rule, card API, build gotchas) | **Files the agent reads natively** — the repo's own `CLAUDE.md`/`AGENTS.md`, already checked in | Delegates run IN the repo/worktree; the file is already there; zero delivery cost; survives compaction via re-read |
+| Who-am-I floor for agents in bare/scratch dirs | **A provisioned, managed `CLAUDE.md`** (CARD-0059) | Claude reads it unprompted; the launch-note ritual stops being impossible |
+| Ephemeral state (today's known-red tests, "slices 1+5 landed", out-of-scope) | **Stays in the brief** | It changes per dispatch; baking it into a bundle would make the bundle wrong tomorrow |
+
+**Bundle source of truth: markdown files in the repo, compiled into the server as embedded resources** (`server/Bundles/*.md`), version = short content hash rendered into the output. Not DB rows: an operator-editable content table reinstates the exact drift the card names as the enemy, and the prototype's whole lesson is "behaviour changes are PRs". The DB holds only *attachment* state (which agent carries which optional bundles — §4). `Agent.SystemPromptAppend` survives unchanged as the agent's OWN free-text contract, composed LAST.
+
+**Composition order (one pure function, `InstructionBundleComposer.Compose`)**: role/attached bundles in declared order → reply-style block (0060) → `SystemPromptAppend`. Each bundle renders under a header line `[bundle:<key> v<hash8>]` so an operator reading a transcript or agent row sees versions at a glance (generalizing `ContractVersion` riding in the contract text). Dedup by key — a bundle reachable via role default AND explicit attachment appears once.
+
+## 2. D2/D3 — Versioning and reconciliation: recompute at every launch, store nothing composed
+
+There is no stored composed text to drift. The composer runs at launch time in both launch paths (`AgentControlService` for standing agents, `AgentTaskDispatcher.BuildSpec` for delegates), so **a changed bundle reaches every agent at its next launch** — AlwaysOn agents are guaranteed a next launch by supervision; delegates get it at next fresh dispatch; a warm pool delegate keeps its launch-time bundles until retirement (≤ 60 min idle, `PoolIdleRetireMinutes`) — an accepted, bounded staleness, stated here so nobody "fixes" it by typing bundles into live sessions. The check-interpreter's `CheckInterpretation.Contract` becomes bundle `check-interpreter` with zero behavior change (the provisioner keeps reconciling the row; the constant just moves).
+
+Silent drift visibility (small, optional slice 6): stamp the composed hash onto `AgentSession` at launch; `AgentDetailDto` exposes `BundlesOutOfDate` = live session's stamp ≠ current composition. UI shows a subtle "restarts with updated instructions" badge.
+
+## 3. D5 — What moves into the default `delegate-basics` bundle
+
+Everything in `orchestration-loop.md` §3 that is a **standing harness rule**, trimmed and made second-person:
+
+1. Foreground-only; never background a run and end your turn.
+2. No sub-delegation; no Agent tool (if you need fan-out you should have been an Orchestrator).
+3. Commit and push each slice as it completes; real outcome in the commit message.
+4. `--property:OutputPath=bin-<name>/` FORWARD slash; delete the ~12 `bin-<name>` dirs afterwards.
+5. Pre-existing red: verify by stashing before blaming yourself (the *list* of currently-red tests stays in the brief — it is state, not a rule).
+6. Card API rules (token rotates per write, no card-by-id GET, 422 not 400, write bodies from a file) — a separate `board-api` bundle, attached only to roles that touch the board.
+
+NOT moved: the nine CS8604 warnings and today's known-red tests (ephemeral state → brief), "say what is done / out of scope" (that is advice to the *caller*, stays in the loop doc). Result: briefs shrink to goal + ephemeral state; a rule improved in the bundle improves for every future dispatch.
+
+## 4. D4 — Scope: per-role defaults + per-agent attachments; the project's own files ARE the per-project bundle
+
+- **Per-role** (delegates): a code-level map `role → bundle keys` (Worker/Plan/Review/Test → `delegate-basics`; Orchestrator → `orchestrator` [the moved `OrchestratorContract`] + `delegate-basics`; Check → `check-interpreter` stays on the standing agent, not the role). Delegate agent rows are ephemeral (`task-<id>`), so role defaults, not attachments, drive them.
+- **Per-agent** (standing agents): `AgentBundleAttachment` join rows, editable in the settings modal (slice 6 — deferrable; v1 works with role defaults + style + SystemPromptAppend alone).
+- **Per-project**: deliberately NOT a bundle entity. Repo conventions live in the repo's own `AGENTS.md`/`CLAUDE.md`, per-cwd by construction; the CARD-0059 floor tells scratch-dir agents to go read them.
+
+## 5. CARD-0059 — the CLAUDE.md floor (`AgentWorkspaceProvisioner`)
+
+New service generalizing `CheckInterpreterProvisioner.PrepareWorkspace`, called from `AgentService.CreateAsync` (after directory resolution) and `AgentControlService.StartAsync` (every launch = the reconcile point). Rules:
+
+- **Never clobber**: write/rewrite `CLAUDE.md` only when the file is absent OR carries our marker header (`<!-- antiphon:managed <hash8> -->`). An unmarked file — a repo's own, the operator's — is never touched (so for delegates in `C:\src\Antiphon` this is a no-op by design; the repo file already serves them).
+- Content, generated per agent: one-paragraph job (from `Details`), constraints (renders "You have NO TOOLS" when the deny hook file is present in cwd), **AGENTS.md pointer** — walk cwd upward at generation time; if found, name its absolute path and say "read it before working here"; and the session-start ritual truth ("you have none; if a launch note asks for one, this file is the ritual" — lifted verbatim from the hand-written stopgap, which this slice replaces with generated content and deletes-by-overwrite via the marker… the stopgap has no marker, so slice 3 adopts it explicitly by rewriting it once under the marker).
+- Compare-before-write (mtime churn rule, same as the hook).
+- The `isStandingSpecialist` launch-note exemption at `AgentControlService.cs:196-204` stays — the floor makes the note *possible* to obey, but the specialist still shouldn't burn a turn on READY.
+
+## 6. CARD-0060 — reply style
+
+- `Agent.ReplyStyle` enum column (`Caveman`/`Terse`/`Normal`/`Explanatory`), migration default **Normal**, and **Normal composes to NOTHING** — so every existing agent's launch args are byte-identical after the migration (pinned by test). Style is one bundle block resolved from the enum, composed after attached bundles, before `SystemPromptAppend` — the agent's own contract survives alongside it (0060's design note, answered by composition order).
+- Every style block, including (especially) Caveman, ends with the correctness-beats-brevity sentence: *"Whatever the style: never drop a caveat, a risk, an uncertainty or a correction to save words."* Pinned by a test iterating all four values.
+- Defaults: user-created agents **Normal** (no surprise on upgrade; the create UI makes the choice visible). Pool delegates **stay unstyled in v1** — their report shape is already governed by the reporting contract, and changing every delegate's voice in the same release that moves their brief content would confound the observation of both. Revisit with evidence (a week of reports). The orchestrator's hand-written 730-char caveman block is retired by the operator choosing `Caveman` in the modal.
+- UI: SegmentedControl in `AgentSettingsModal` (create and edit), style chip on the agent card.
+
+## 7. Slices (each independently landable; card each closes in brackets)
+
+1. **[0058] Bundle catalog + composer.** New `server/Bundles/delegate-basics.md`, `board-api.md`, `orchestrator.md` (moved text of `OrchestratorContract`), `check-interpreter.md` (moved `CheckInterpretation.Contract`); new `server/Application/Services/InstructionBundles.cs` (embedded-resource catalog, hash versions) + `InstructionBundleComposer.cs` (pure). `CheckInterpretation.Contract`/`OrchestratorContract` become thin forwards to the catalog (call sites unchanged). Tests: new `tests/Antiphon.Tests/Application/InstructionBundleTests.cs` — catalog loads all keys, `v<hash8>` header rides rendered text, dedup by key, order stable, SystemPromptAppend last, existing `CheckInterpreterProvisionerTests` stay green unmodified.
+2. **[0058] Delegates carry `delegate-basics`.** `AgentTaskDispatcher.BuildSpec` composes role-default bundles into `--append-system-prompt` (guard: composed+existing args under a 30,000-char command-line budget; over-budget throws at compose, never truncates). Rewrite `docs/orchestration-loop.md` §3 and `SKILL.md` to say "these rules are now delivered automatically; put only goal + ephemeral state in the brief" — **this doc edit is the drift fix for D6**: the loop doc points at `server/Bundles/delegate-basics.md` as canonical instead of carrying its own copy, and `orchestration-findings.md` gains a two-line header: "a finding that earns standing-rule status gets PR'd into `server/Bundles/` — recording it here alone reaches no one." Tests: extend the dispatcher launch tests (`AgentSystemPromptLaunchTests` pattern) — Worker spec args contain the bundle header, Orchestrator gets both bundles once, warm-reuse path composes nothing (no launch), budget guard throws.
+3. **[0059] `AgentWorkspaceProvisioner`.** New service + calls from `AgentService.CreateAsync` and `AgentControlService.StartAsync`; `CheckInterpreterProvisioner.PrepareWorkspace` delegates CLAUDE.md generation to it (keeps hook writing). Tests: new `AgentWorkspaceProvisionerTests` — creates when absent, rewrites when marker+stale hash, **never touches an unmarked file**, no-op when current, AGENTS.md found in cwd and in an ancestor is named by absolute path, no-tools variant text when hook file present, IO failure logs-and-degrades (mirrors the hook's catch).
+4. **[0060] `ReplyStyle` server-side.** Migration (default Normal), enum, style blocks as four small embedded bundles, composer wiring, `CreateAgentRequest`+`UpdateAgentRequest`+both DTOs gain the field (Create finally gets a composition-relevant field; note `CreateAgentRequest` still deliberately does NOT gain SystemPromptAppend — out of scope). Tests: Normal composes to empty (existing agents byte-identical), each non-Normal value produces its block, correctness sentence present in all four, update round-trips.
+5. **[0060, 0058 visibility] Client.** `AgentSettingsModal.tsx`: SegmentedControl for style + read-only "carries bundles: delegate-basics v3f9a…" list from a new `AgentDetailDto.ComposedBundles` field; style chip in the agents list. Tests co-located, via `renderWithProviders` from `client/src/test/utils.ts` (never a raw MantineProvider): style renders/submits, chip shows, bundle list renders, absent style defaults Normal.
+6. **[0058, deferrable] Per-agent attachments + drift badge.** `AgentBundleAttachment` entity + migration, endpoints on `AgentEndpoints`, modal multi-select; `AgentSession` launch-time composition hash + `BundlesOutOfDate` on the DTO. Tests: attach/detach round-trip, dedup vs role default, stale badge flips after a bundle edit. Ship only if slices 1–5 prove out.
+
+## 8. Collision map (CARD-0056, agent e6d3b184 — slices 2–4 already on master as e9643f5/8458961/77065c3)
+
+This plan touches **none of** `AgentSessionService.cs`, `SessionReconciliationService.cs`, `SupervisionSettings.cs`. The launch-side edits land in `AgentControlService.cs` (not on their list, but it CALLS AgentSessionService — rebase-check it before starting slice 3) and `AgentTaskDispatcher.cs`. New settings, if any (role→bundle map override), go in `DelegationSettings`, not `SupervisionSettings`. Re-run `git log` on the three owned files before each slice lands.
+
+## 9. What I could not determine, and what settles it
+
+- **Actual composed sizes vs the ~32K command line.** delegate-basics should land ~2–3 KB; measure the worst case (Orchestrator + basics + Explanatory + a long SystemPromptAppend) in slice 1's tests and set the 30,000-char guard from measurement, not guess.
+- **Whether `--resume` re-reads a changed CLAUDE.md.** Claude loads CLAUDE.md per process start, and resume IS a new process — but this is asserted, not measured here. A headed canary (pattern of `ClaudeTrustPromptCanaryTests`) settles it; only slice 3's reconcile-at-launch value depends on it.
+- **`ChannelPreamble.Render` runs placeholder substitution over the whole append** (`AgentControlService.cs:165`): bundles must not contain literal `{agentName}`/`{channels}`. Slice 1 adds a catalog test pinning that no bundle text contains the placeholder tokens — cheaper than restructuring the render.
+- **Whether moving the retyped words out of briefs actually changes orchestrator behavior** — the mechanism only wins if callers stop typing them. Evidence: sample the next week's briefs (they are on task rows) for the six rule-paragraphs; if they persist, the loop-doc rewrite in slice 2 was too gentle.
+- **Pool-delegate default style** (deliberately deferred, §6): a week of completion notes after slice 2 shows whether reports are already terse enough under the reporting contract alone.
