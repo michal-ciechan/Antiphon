@@ -28,6 +28,13 @@ namespace Antiphon.Agents.Pty;
 /// kill-on-close job object, unbuffered <see cref="FileStream"/>s over the pipe handles, teardown
 /// order — so that the ONLY difference between the two backends is which module provides
 /// <c>CreatePseudoConsole</c>. Anything else that differs is a bug in this file.</para>
+///
+/// <para><b>One thing it must do that the inbox path must not (CARD-0048).</b> The
+/// <c>OpenConsole.exe</c> behind this DLL opens with a DA1 query and <b>freezes the console client
+/// for ~3.0 s</b> until it is answered; the inbox conhost never asks. This connection introduced
+/// that query, so this connection answers it — see <see cref="Da1StartupResponder"/> for the
+/// response string and the first-query-only scope. The Porta path has no responder at all, not a
+/// disabled one, so the default backend stays byte-identical.</para>
 /// </summary>
 internal sealed class ModernConPtyConnection : IPtySession
 {
@@ -49,6 +56,8 @@ internal sealed class ModernConPtyConnection : IPtySession
     private readonly IntPtr _hThread;
     private readonly Process _process;
     private readonly object _disposeGate = new();
+    private readonly Da1StartupResponder _da1;
+    private readonly FileStream _da1Reply;
     private bool _disposed;
 
     public event Action<int>? Exited;
@@ -61,6 +70,15 @@ internal sealed class ModernConPtyConnection : IPtySession
 
     /// <summary>The conpty.dll this connection's pseudoconsole came from (for logs and assertions).</summary>
     public string ConPtyDllPath => _module.Path;
+
+    /// <summary>When this session answered OpenConsole's startup DA1 query; null if it never asked.</summary>
+    internal DateTimeOffset? Da1AnsweredAt => _da1.AnsweredAt;
+
+    /// <summary>
+    /// How many DA1 queries came out of this pty. Expected to be exactly 1 — anything more is the
+    /// evidence that reopens <see cref="Da1StartupResponder"/>'s first-query-only scope.
+    /// </summary>
+    internal int Da1QueriesSeen => _da1.QueriesSeen;
 
     private ModernConPtyConnection(
         ConPtyModule module,
@@ -86,12 +104,30 @@ internal sealed class ModernConPtyConnection : IPtySession
         // bufferSize 0 = unbuffered, as Porta does: a write must reach the pipe as ONE WriteFile.
         // The single write is the measured-good shape for a paste (a paced 86 KB delivery read
         // NOTHING once in the CARD-0030 sweep), so nothing may re-chunk it on the way out.
-        ReaderStream = new FileStream(
-            new SafeFileHandle(outRead.DangerousGetHandle(), ownsHandle: false),
-            FileAccess.Read, bufferSize: 0, isAsync: false);
         WriterStream = new FileStream(
             new SafeFileHandle(inWrite.DangerousGetHandle(), ownsHandle: false),
             FileAccess.Write, bufferSize: 0, isAsync: false);
+
+        // The DA1 reply gets its OWN unbuffered stream over the same input handle, deliberately not
+        // WriterStream: it is written from the read thread, and sharing one FileStream instance with
+        // PtyAgentRunner's writes would be a thread-safety question with a data-loss answer. Two
+        // FileStreams over one pipe handle is not — each Write is one WriteFile, so it cannot land
+        // inside a concurrent runner write and the SINGLE-WRITE delivery ceilings are untouched.
+        // (In practice it also cannot race: the reply goes out ~31 ms after spawn, and until it does
+        // the child is frozen, so no adapter has anything to say yet.)
+        _da1Reply = new FileStream(
+            new SafeFileHandle(inWrite.DangerousGetHandle(), ownsHandle: false),
+            FileAccess.Write, bufferSize: 0, isAsync: false);
+        _da1 = new Da1StartupResponder(AnswerDa1);
+
+        // The scan is a TAP on the output pipe, never a filter: the wrapper hands every byte back to
+        // the reader exactly as it came off the pipe, so the snapshot, the screen, the audit and the
+        // visible ESC[c in the output are all identical to what shipped before this card.
+        ReaderStream = new Da1ScanningStream(
+            new FileStream(
+                new SafeFileHandle(outRead.DangerousGetHandle(), ownsHandle: false),
+                FileAccess.Read, bufferSize: 0, isAsync: false),
+            _da1);
 
         _process = Process.GetProcessById(pid);
         _process.Exited += OnProcessExited;
@@ -244,6 +280,7 @@ internal sealed class ModernConPtyConnection : IPtySession
         try { _job.Dispose(); } catch { /* teardown */ }
         try { ReaderStream.Dispose(); } catch { /* teardown */ }
         try { WriterStream.Dispose(); } catch { /* teardown */ }
+        try { _da1Reply.Dispose(); } catch { /* teardown */ }
         try { _process.Dispose(); } catch { /* teardown */ }
     }
 
@@ -251,6 +288,90 @@ internal sealed class ModernConPtyConnection : IPtySession
     {
         if (_disposed) return;
         Exited?.Invoke(_process.ExitCode);
+    }
+
+    /// <summary>
+    /// Writes the DA1 response as ONE write, and swallows the two failures that are not ours to
+    /// report: the child (and with it the pipe) can die between the query and the answer, and
+    /// teardown can dispose the handle underneath us. This runs ON the read thread — anything that
+    /// escaped here would kill <c>PtyAgentRunner.ReadLoopAsync</c> and take the session's whole
+    /// output stream with it, to fix a 3 s stall.
+    /// </summary>
+    private void AnswerDa1()
+    {
+        try
+        {
+            _da1Reply.Write(Da1StartupResponder.ResponseBytes, 0, Da1StartupResponder.ResponseBytes.Length);
+            _da1Reply.Flush();
+        }
+        catch (IOException) { /* child gone */ }
+        catch (ObjectDisposedException) { /* torn down mid-handshake */ }
+    }
+
+    /// <summary>
+    /// A transparent tap on the pty's output pipe: it reads from the real stream, hands the bytes
+    /// straight back to the caller <b>unmodified</b>, and shows the same span to
+    /// <see cref="Da1StartupResponder"/> on the way past. Nothing downstream can tell it is there —
+    /// which is the requirement, because everything downstream (snapshot, <see cref="TerminalScreen"/>,
+    /// <see cref="PtySessionAudit"/>) is evidence about what the child actually emitted.
+    ///
+    /// <para>Every read overload is overridden, not just the async one the runner happens to use: an
+    /// unoverridden <c>Read</c> would pass bytes through without ever scanning them, and the only
+    /// symptom would be the 3 s stall coming back on some future caller.</para>
+    /// </summary>
+    private sealed class Da1ScanningStream(Stream inner, Da1StartupResponder responder) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = inner.Read(buffer, offset, count);
+            if (read > 0) responder.Scan(buffer.AsSpan(offset, read));
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = inner.Read(buffer);
+            if (read > 0) responder.Scan(buffer[..read]);
+            return read;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var read = await inner.ReadAsync(buffer, ct).ConfigureAwait(false);
+            if (read > 0) responder.Scan(buffer.Span[..read]);
+            return read;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override void Flush() => inner.Flush();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     // ---- spawn helpers (ports of Porta.Pty.Windows, kept faithful on purpose) ----------------
