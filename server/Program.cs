@@ -189,6 +189,9 @@ try
     builder.Services.AddScoped<DelegateCheckProbe>();
     builder.Services.AddSingleton<AgentTaskCheckQueue>();
     builder.Services.AddScoped<AgentTaskCheckService>();
+    // The standing specialist that interprets a check's bundle (CARD-0047 slice 4). Provisioning is
+    // idempotent and self-healing, so it is safe to call at startup and again from any check.
+    builder.Services.AddScoped<CheckInterpreterProvisioner>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
