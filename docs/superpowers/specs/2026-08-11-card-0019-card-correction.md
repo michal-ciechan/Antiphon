@@ -346,3 +346,25 @@ claims on it, rather than building it twice.
 `DELETE /api/cards/{id}` with a request body (token + reason) is hostile to proxies and some
 clients. Ship archive as `POST /api/cards/{id}/archive` (mirroring the already-planned
 `POST /unarchive`); a bodyless `DELETE` alias is optional and not load-bearing.
+
+---
+
+## Two amendments exist, and they agree
+
+`2026-08-13-card-0019-amendment-1.md` (task 1857c5d9) and the "Addendum 2026-08-13 (re-plan, task
+74f4de94)" above were written independently on the same day and reached the **same** central
+conclusion: `CardRevision` needs a `Kind` discriminator so that MOVES are recorded, not only content
+edits. That agreement is the strongest evidence the design is right, and it is what slice 1 shipped
+(commits `1d99c60`..`b2499dd`).
+
+Amendment 1 carries two things the addendum does not, both still OPEN after slice 1:
+
+- **A reopen endpoint.** `CardStateMachine` still maps `Done`/`Canceled` to `[]`, so a closed card
+  cannot be reopened. Slice 2's planner confirmed this independently and left the client's
+  `canMoveTo` lockstep untouched because of it.
+- **CARD-0040 folded into slice 3**, alongside folding the parked entries of
+  `docs/product/card-workflow-decisions.md` back into their cards.
+
+Amendment 1 was stranded on `feat/card-task-1857c5d9` and never merged; it is recovered here
+verbatim alongside `2026-08-13-card-0005-identifier-allocation.md`, a 187-line plan for CARD-0005,
+which is still open.
