@@ -45,6 +45,12 @@ public sealed class AgentTaskCheckHostedService : BackgroundService
             return;
         }
 
+        // Provision the standing specialist before draining anything (CARD-0047 slice 4B). Doing it
+        // here rather than in Program's startup block keeps it beside the only feature that uses it
+        // and off the critical path of booting the server: it is idempotent, so a failure now costs
+        // at most one degraded check — the next check that finds the agent missing ensures it again.
+        await EnsureInterpreterAsync(stoppingToken);
+
         try
         {
             await foreach (var taskId in _queue.ReadAllAsync(stoppingToken))
@@ -70,6 +76,29 @@ public sealed class AgentTaskCheckHostedService : BackgroundService
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // Shutdown.
+        }
+    }
+
+    private async Task EnsureInterpreterAsync(CancellationToken ct)
+    {
+        if (!_settings.CheckInterpreterEnabled)
+            return;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var provisioner = scope.ServiceProvider.GetRequiredService<CheckInterpreterProvisioner>();
+            await provisioner.EnsureAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex, "Could not provision the check interpreter at startup; checks will deliver "
+                + "digests until it exists");
         }
     }
 }
