@@ -352,6 +352,218 @@ public class SessionMessageQueueDeliveryVerificationTests
         Guid.NewGuid().ToString(), null, DateTimeOffset.UtcNow, null,
         "Context compacted (manual)", null, null, null, null, null);
 
+    // ---- CARD-0055: a delivery is Sent only when its UserPrompt record exists ------------------
+    //
+    // The old verdict was "the output sequence advanced after Enter", which any redraw satisfies.
+    // Measured on session cefed08a: ea2feb92's note was marked Sent at 15:16:20Z and did not reach
+    // Claude until 17:00:09Z (104 minutes), when the NEXT delivery's Enter pushed it in; 15c9150e's
+    // note was marked Sent because that same Enter produced a new UserPrompt record — carrying the
+    // STALE body — while its own body died in the composer, never in the transcript at all.
+    //
+    // The harness's fake now models the whole round trip: a submitted body becomes a UserPrompt row
+    // (BridgeQueueHarness wires FakeAgentProtocolAdapter.OnSubmitted), and the two measured composer
+    // states are reproducible — SwallowSubmits (redraw, no submit, composer keeps the body) and
+    // StaleSubmitBody (someone else's body goes in, ours stays behind).
+
+    private static async Task<BridgeQueueHarness> ObservableHarnessAsync(bool alwaysOn = true)
+    {
+        var h = await CreateHarnessAsync(alwaysOn);
+        // The observability gate wants a bound, ingesting transcript. One completed turn is the
+        // cheapest honest way to say "this session's transcript is live" — and it leaves the
+        // session idle, so a WhenIdle enqueue delivers straight away.
+        await h.InsertTurnAsync("an earlier prompt", "an earlier answer");
+        return h;
+    }
+
+    [Test]
+    public async Task A_swallowed_first_enter_is_re_pressed_and_the_delivery_confirms()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.SwallowSubmits = 1; // ea2feb92: the screen redraws, the composer keeps the body
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the note that was swallowed", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["the note that was swallowed", "\r", "\r"],
+            "the retry is a second Enter and nothing else — the body is NEVER re-typed");
+        h.Adapter.SubmittedBodies.ShouldBe(["the note that was swallowed"],
+            "one body in, exactly once");
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // THE pin, and the reason this design exists: in the measured 15c9150e failure a new UserPrompt
+    // record DID appear — carrying the previous delivery's body — and the old code called that Sent.
+    // Record arrival is not confirmation; the record's TEXT must be ours.
+    [Test]
+    public async Task A_record_carrying_a_stale_body_is_rejected_and_the_enter_is_re_pressed()
+    {
+        await using var h = await ObservableHarnessAsync();
+        const string stale = "the previous note, still sitting in the composer";
+        const string ours = "the note this delivery is actually about";
+        h.Adapter.StaleSubmitBody = stale;
+
+        await h.Queue.EnqueueAsync(h.SessionId, ours, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([stale, ours],
+            "the first Enter submitted the stale body; the re-press submitted ours");
+        h.Adapter.Inputs.ShouldBe([ours, "\r", "\r"]);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+
+        var prompts = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync();
+        prompts.ShouldContain(ours,
+            "under the old rule the stale record's arrival ended the delivery and OUR body was lost");
+    }
+
+    // The other half of the same rule: a stale record must not be able to certify a delivery on its
+    // own. All Enters swallowed after the stale one, so ours never lands.
+    [Test]
+    public async Task A_stale_record_alone_never_produces_delivered()
+    {
+        await using var h = await ObservableHarnessAsync();
+        const string stale = "a completely different body that Enter submitted";
+        h.Adapter.StaleSubmitBody = stale;
+        h.Adapter.SwallowSubmits = 99; // every Enter AFTER the stale one is swallowed
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the body that never made it in", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([stale], "ours never got in");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending, "a record with the wrong text is not our delivery");
+        message.SentAt.ShouldBeNull();
+
+        (await db.TranscriptEntries.CountAsync(t =>
+            t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt
+            && t.Text == stale))
+            .ShouldBe(1, "sanity: a genuinely NEW UserPrompt record did arrive during the window");
+
+        var incident = await db.AgentIncidents.SingleOrDefaultAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
+        incident.ShouldNotBeNull();
+        incident.Message.ShouldContain("never became a transcript record");
+    }
+
+    // Sequence advance alone can no longer say Delivered. The fake still emits SubmitAck on every
+    // swallowed Enter, so the screen genuinely redraws — the exact signal that used to be enough.
+    [Test]
+    public async Task Screen_output_advancing_without_a_record_is_no_longer_delivered()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.SwallowSubmits = 99; // every Enter redraws and submits nothing
+        h.Adapter.SubmitAck.ShouldNotBeEmpty("sanity: the screen really does advance on each Enter");
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "into a composer that keeps it", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["into a composer that keeps it", "\r", "\r", "\r"],
+            "SubmitAttempts Enters total, and never a re-typed body");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        var incident = await db.AgentIncidents.SingleOrDefaultAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed);
+        incident.ShouldNotBeNull();
+        incident.Message.ShouldContain("never became a transcript record");
+    }
+
+    // Degrade, never fail, when ground truth is absent (the echo-probe lesson). A session with NO
+    // transcript rows is either not bound yet — a fresh session's launch note is queued before its
+    // JSONL exists (CARD-0006) — or its bind failed. Those keep the legacy screen-only verdict.
+    [Test]
+    public async Task A_session_with_no_transcript_entries_keeps_the_legacy_screen_only_verdict()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.SwallowSubmits = 99; // would fail transcript confirmation outright
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the launch note, before any transcript exists",
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["the launch note, before any transcript exists", "\r"],
+            "no confirm loop, so no re-press");
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent, "screen advanced: today's verdict still stands here");
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // A body too short to identify by text (the auto-continue "Continue.") takes the weak arm: the
+    // record's existence is the confirmation. It must not spuriously re-press.
+    [Test]
+    public async Task A_body_too_short_to_identify_confirms_on_the_weak_arm()
+    {
+        await using var h = await ObservableHarnessAsync();
+        PromptSubmissionMatch.RequiresTextMatch("Continue.")
+            .ShouldBeFalse("sanity: this body is below MinMatchChars, so no text match is available");
+
+        await h.Queue.EnqueueAsync(h.SessionId, "Continue.", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["Continue.", "\r"], "one Enter — the weak arm confirmed immediately");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    // A batched channel delivery runs well past the 200-char match window, so it can only confirm
+    // on its HEAD — which is stable framing ChannelPromptFormat produces and Claude records verbatim.
+    [Test]
+    public async Task A_batch_body_longer_than_the_match_window_confirms_on_its_head()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Bridge = new Antiphon.Server.Application.Settings.ChannelBridgeSettings
+            {
+                Enabled = true,
+                BatchingEnabled = true,
+                DebounceWindowMs = 0,
+            },
+        });
+
+        await h.InsertTurnAsync("an earlier prompt", "an earlier answer");
+        await h.MarkWorkingAsync(); // hold them pending so they coalesce into one delivery
+        foreach (var n in new[] { "one", "two", "three" })
+        {
+            await h.Queue.EnqueueAsync(
+                h.SessionId,
+                $"[Telegram \"Family\" - Mike] message {n}: " + new string('x', 120),
+                MessageSendMode.WhenIdle, CancellationToken.None,
+                origin: QueuedMessageOrigin.Channel, conversationKey: "telegram:-100777");
+        }
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var body = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        body.Length.ShouldBeGreaterThan(
+            PromptSubmissionMatch.MatchWindowChars,
+            "sanity: this only proves anything if the body outruns the window");
+        h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(1, "confirmed on the head — no re-press");
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == h.SessionId).ToListAsync())
+            .ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent);
+    }
+
     [Test]
     public async Task Fresh_start_migrates_pending_messages_to_the_new_session()
     {
