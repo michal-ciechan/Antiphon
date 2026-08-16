@@ -224,3 +224,71 @@ above has a CI-runnable peer that can exhibit it. It stays opt-in: the line coun
 Claude collapses a paste has not been measured, and defaulting it on would model a guess.
 `FakeVsRealClipParityTests` now has an arm for each path — the typed one still has to lose a chunk in
 both peers, the pasted one must lose nothing in both, with clipping armed.
+
+## The modern backend has a startup handshake, and answering it is part of the contract (CARD-0048, 2026-08-16)
+
+This ADR owns "what the modern backend is", and it turned out to be one fact short. `OpenConsole.exe`
+opens by writing **`ESC[c`** (DA1, primary device attributes) into the pty and **holds the console
+client** until either a DA1 response arrives on the input pipe or **~3.0 s** expires. The inbox
+conhost asks nothing and waits for nothing. Nothing in our stack answered, so from the day this
+backend went on in this deployment **every child on it did nothing at all for three seconds** before
+executing its first instruction.
+
+Proven, with the controls that could have falsified it:
+`docs/investigations/2026-08-16-modern-conpty-da1-stall-CARD-0048.md`. The load-bearing rows: the
+child unblocks **16 ms after the reply, whenever it arrives** (538 / 1532 / 2520 ms → 554 / 1548 /
+2536 ms), so the 3.0 s is a timeout on that wait and not an unrelated init timer; an arbitrary
+printable byte and a cursor-position report do **not** unblock it, so it is the DA1 response
+specifically; a bat that touches a file before its first `echo` touches it at 3048 ms, so the
+**client** is held rather than its output buffered; and `CreatePseudoConsole` flags 0/1/2/4/8 all
+stall, so there is no cleaner lever on the create call.
+
+**The decision: `ModernConPtyConnection` answers `ESC[?1;0c` once per session.** The connection that
+introduced the query owns the answer; the Porta path has no responder at all, not a disabled one, so
+the default backend stays byte-identical. `Da1StartupResponder` is a byte state machine on a
+transparent tap over the output pipe — every byte still reaches the snapshot, the screen and the
+audit unmodified — and the reply goes out as one write on a **dedicated** `FileStream` over the input
+handle, never the instance `PtyAgentRunner` writes through, so the single-write ceilings above are
+unaffected.
+
+Three things about that answer are decisions, not defaults:
+
+- **The string is `ESC[?1;0c` ("VT101, no options") because it is the only one measured to work**
+  (43 ms vs 3061 ms) **and because it is true.** The DA1 response describes the *hosting* terminal,
+  and ours is `PtyAgentRunner`'s scraper: no sixel, no soft fonts, no rectangular editing, and it
+  ignores the `ESC[?9001h` win32-input-mode request. The risk is asymmetric — claiming too much
+  invites OpenConsole to emit sequences `TerminalScreen` cannot parse, degrading every snapshot-based
+  detector silently. **Never claim sixel (`4`).** If a future package needs a richer claim, capture
+  what a real Windows Terminal sends or read it out of the `microsoft/terminal` source at the pinned
+  version; do not guess.
+- **Only the FIRST query is answered.** The startup query is guaranteed to be the first `ESC[c` on
+  the pipe *because of the defect* — the child is frozen until it is answered, so nothing else can
+  have written yet — and that one was measured to be consumed by the pty's input state machine and to
+  never reach the child. A later `ESC[c` could be a child's own query forwarded by OpenConsole, and
+  answering that one **would** reach the child and change what the TUI negotiates. Later queries are
+  counted (`Da1QueriesSeen`) and left alone.
+- **Marker passthrough was re-checked against this claim before merging**, because it is the one
+  thing we depend on OpenConsole for and a device-attributes claim is exactly the sort of thing a
+  console host adapts its translation to. With the responder active:
+  `PtyBackendContractTests` 9/9 (including the production write path delivering `ESC[200~`/`ESC[201~`
+  on modern), `PtyBracketedPasteContractTests` 2/2, `FakeClaudeContractTests` 32/32 with its modern
+  paste arm green three times, `PtyDeliveryCeilingsTests` 9/9. **The ceilings in the tables above
+  stand unchanged.**
+
+**The quiet-window constants did not move, deliberately.** `CodexReadyQuietPeriodMs` 1000,
+`CodexDoneQuietPeriodMs` 3000, `ClaudeReadyQuietPeriodMs` 5000, `ReadyGrace` 500 ms and
+`TurnQuietPeriod` 2 s are all correct against a pty that starts its child promptly, and with DA1
+answered there is no configuration left that does not — fixed modern starts in ~40 ms, inbox never
+stalled, and a modern request that falls back runs inbox. Widening them would have hidden the live
+Codex-ready exposure instead of fixing it. The enforcement that replaces a settings validator is
+empirical: `ModernPtyDa1Tests` pins first child output **under 2.5 s against a 3.0 s stall floor**, so
+a future ConPTY bump that introduces a new handshake goes red before any readiness window silently
+becomes a coin flip.
+
+Two consequences worth stating outright. **CARD-0049 was never an adoption defect** — a 3 s frozen
+start pushed the child's exit past the test's 4 s adoption point; it is now regression-locked by
+`PtyHostAdoptionTests.Exit_while_runner_down_is_collected_on_adoption_on_the_modern_backend`, which
+also pins the fix through the detached pty-host and the shadow-copy path. And **any new code path
+that creates a modern pseudoconsole without going through `ModernConPtyConnection` re-inherits the
+3 s frozen client**, with no symptom except slowness and every sub-3 s quiet window reading the stall
+as a settled session.
