@@ -266,6 +266,9 @@ try
     builder.Services.AddScoped<AlertDigestFlusher>();
     builder.Services.AddSingleton<AlertThrottle>();
     builder.Services.AddSingleton<RunnerReachabilityState>();
+    // Singleton because SessionReconciliationService is scoped — a per-sweep flap counter would
+    // reset every 15s and bound nothing (CARD-0056).
+    builder.Services.AddSingleton<SessionReAdoptionState>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();

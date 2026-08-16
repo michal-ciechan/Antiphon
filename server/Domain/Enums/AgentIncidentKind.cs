@@ -130,4 +130,17 @@ public enum AgentIncidentKind
     /// waiting does not produce them, because a background subagent can die without ever notifying.
     /// </summary>
     DelegateSubagentsNeverReported = 19,
+
+    /// <summary>
+    /// Reconciliation found a session the DB had written off as Failed while the session runner was
+    /// still serving it, proved the process was alive, and wrote the row back to Running.
+    ///
+    /// Live miss 2026-08-16 (CARD-0056): a launch-verification false positive marked a healthy,
+    /// working orchestrator session Failed, and the reconciler only ever looked the other way
+    /// (DB-live vs runner-dead), so the mismatch was invisible forever — the process ran on,
+    /// billable and unclaimed, while the supervisor started a replacement against the false signal.
+    /// Warning rather than Info: something upstream declared a live session dead, and the incident
+    /// carries the FailureReason that was wrong so the cause is on the record.
+    /// </summary>
+    SessionReAdopted = 20,
 }
