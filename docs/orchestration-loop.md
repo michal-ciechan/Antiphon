@@ -205,7 +205,15 @@ Verify: `/health` on 17202/17203/17204/17205, `GET :17204/capabilities` for the 
 
 ---
 
-## 7. Close the card
+## 7. Close the card — orchestrator writes the verdict, haiku executes it
+
+Split by what each part actually is:
+
+- **The verdict is judgement and stays with the orchestrator.** It is synthesis across the whole run
+  — what shipped, what was corrected, what was disproved, what is still open, which other cards it
+  touches. A haiku agent cannot see that from the repo.
+- **The `PATCH` and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict
+  text and the card identifier; it makes the call and reports the result.
 
 - **A terminal move preserves its `reason`; use it as the verdict** — what shipped, what was
   corrected, what is still open, with commit hashes.
