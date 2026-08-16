@@ -148,3 +148,33 @@ the time it was needed) had no other way to be corrected.
 **What changed:** `PATCH /api/cards/{id}/content` (CARD-0019) now records a revision with a reason
 directly on the card. Corrections go on the wrong card itself, in place, instead of spawning a new
 one — `docs/orchestration-loop.md` §7 documents this as the current process.
+
+---
+
+## 2026-08-16 — The orchestrator read a UTC timestamp as local and invented a bug
+
+**What we learned.** Every timestamp the API and the DB return is **UTC**; this machine's wall clock
+is **BST (UTC+1)**. Comparing an API `nextCheckAt` against a local `ls` mtime silently shifts the
+answer by an hour — enough to turn "due in 40 minutes" into "overdue by 20".
+
+**The evidence.** Task `6011f623` had `NextCheckAt = 16:05:49Z`. The orchestrator compared it to a
+file mtime of `16:26` — local time, i.e. `15:26Z` — concluded check-ins were 20+ minutes overdue and
+never firing, and dispatched an opus `Debug` agent (`8ae80695`, $7.05) on that premise. The premise
+was false: nothing had come due yet, because the server carrying the feature had only started at
+`15:04:04Z` and every task dispatched since had settled before its first check.
+
+**What changed.** Two rules:
+
+1. **Compare UTC to UTC, and say which you have.** When reading a timestamp from the API or Postgres
+   (`timestamptz`), convert explicitly or print both. Never compare an API timestamp to a filesystem
+   mtime or a mental clock.
+2. **Before dispatching an investigation, state the premise as a falsifiable claim and check it.**
+   "X should have happened by now" is a claim about a clock. One query — `SELECT now(), NextCheckAt`
+   in the same statement — would have cost nothing and saved the run.
+
+**The honest postscript.** The investigation still found two real defects — an off-by-one in check
+numbering, and (seriously) five bare `await`s in `TickAsync` where one throwing sweep aborted the
+remaining sweeps *and* the dispatch loop, permanently. That is luck, not method: a false premise
+that happens to land near a real bug is not a technique. The orchestrator had also *seen* the
+off-by-one in a live check note (`#2` on a first check) and rationalised it away as an artefact of
+the agent's own probe.
