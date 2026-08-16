@@ -69,8 +69,26 @@ The role sets the model. Do not override without a reason stated in the goal.
 | `Commit` | git plumbing, branches, PRs | sonnet |
 | `Test` / `Deploy` | RUN a thing and report what happened | haiku |
 
-Interpreting a failure is `Debug`, never `Test`. The best single result of this period came from a
-`Debug` agent; the cheapest useful one was a haiku check at **$0.12**.
+**A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
+of taste:
+
+| Allowed at `Test` (haiku) | Escalate to `Debug` (opus) |
+|---|---|
+| Run a suite, report pass/fail counts and the failing names | Explain *why* something failed |
+| Re-run a failure **in isolation** to establish flaky-vs-real | Change any production or test code |
+| Re-run at a known-good commit (stash / worktree) to establish pre-existing-vs-caused | Widen a timeout, loosen an assertion, add a retry |
+| Bisect by re-running | Decide a failure is "expected" and move on |
+
+Isolating an error is narrowing *where* it lives; fixing it is deciding *what is wrong*. The first
+is cheap and mechanical, the second is the expensive judgement this tiering exists to buy. A haiku
+agent that starts editing a test to make it pass is the worst possible outcome — it is the exact
+instinct that left a live 64 KB-truncation reproduction red for weeks by treating a real defect as a
+flaky test.
+
+Say this in the brief explicitly; do not assume the role name carries it.
+
+The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
+check at **$0.12**.
 
 ---
 
