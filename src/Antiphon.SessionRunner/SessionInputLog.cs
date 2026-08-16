@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
 
@@ -13,6 +14,11 @@ namespace Antiphon.SessionRunner;
 /// Text is stored normalized (see <see cref="Normalize"/>) so a match survives the escape wrapping
 /// the delivery path adds and any re-wrapping Claude does before persisting the prompt.
 ///
+/// The normalization and the two thresholds live in <see cref="PromptSubmissionMatch"/> (Contracts),
+/// shared with the server's delivery confirmation (CARD-0055) — the same question asked in the
+/// other direction. This class is the C4 half and owns only the bounded buffer; keeping the rules
+/// in one place is what keeps the two in lockstep.
+///
 /// Deliberately NOT persisted: after a runner restart the log is empty, which is fine because a
 /// restarted session re-tails from its sidecar rather than re-running discovery.
 /// </summary>
@@ -25,12 +31,10 @@ public sealed class SessionInputLog
     /// Shortest candidate prompt that may satisfy C4. Short strings ("y", "ok", "continue") occur
     /// in unrelated conversations often enough to be worthless as identification.
     /// </summary>
-    public const int MinMatchChars = 12;
+    public const int MinMatchChars = PromptSubmissionMatch.MinMatchChars;
 
     /// <summary>How much of a long prompt is compared — the log is bounded, so a whole 40 KB brief cannot be.</summary>
-    public const int MatchWindowChars = 200;
-
-    private const char Esc = '\u001b';
+    public const int MatchWindowChars = PromptSubmissionMatch.MatchWindowChars;
 
     private readonly object _gate = new();
     private readonly StringBuilder _buffer = new();
@@ -71,14 +75,8 @@ public sealed class SessionInputLog
     /// </summary>
     public bool MatchesRecordedInput(string? candidateText)
     {
-        if (string.IsNullOrEmpty(candidateText))
+        if (!PromptSubmissionMatch.TryBuildNeedle(candidateText, out var needle))
             return false;
-
-        var needle = Normalize(candidateText);
-        if (needle.Length < MinMatchChars)
-            return false;
-        if (needle.Length > MatchWindowChars)
-            needle = needle[..MatchWindowChars];
 
         lock (_gate)
             return _buffer.Length > 0 && _buffer.ToString().Contains(needle, StringComparison.Ordinal);
@@ -91,72 +89,5 @@ public sealed class SessionInputLog
     /// (<c>ReplaceLineEndings("\n")</c> + a separate submit <c>\r</c>) and the TUI may re-wrap the
     /// body again before Claude persists it.
     /// </summary>
-    public static string Normalize(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-        var pendingSpace = false;
-
-        for (var i = 0; i < text.Length; i++)
-        {
-            var c = text[i];
-
-            if (c == Esc)
-            {
-                i = SkipEscapeSequence(text, i);
-                continue;
-            }
-
-            if (char.IsWhiteSpace(c) || char.IsControl(c))
-            {
-                pendingSpace = sb.Length > 0;
-                continue;
-            }
-
-            if (pendingSpace)
-            {
-                sb.Append(' ');
-                pendingSpace = false;
-            }
-
-            sb.Append(c);
-        }
-
-        return sb.ToString();
-    }
-
-    // Returns the index of the LAST char of the escape sequence starting at `start` (the caller's
-    // for-loop increments past it). Handles CSI (ESC [ ... final @-~), OSC (ESC ] ... BEL or ESC \)
-    // and the two-character forms; an unterminated sequence swallows the rest of the string, which
-    // is the right call for a truncated write.
-    private static int SkipEscapeSequence(string text, int start)
-    {
-        var i = start + 1;
-        if (i >= text.Length)
-            return i;
-
-        var kind = text[i];
-        if (kind == '[')
-        {
-            for (i++; i < text.Length; i++)
-            {
-                if (text[i] >= '@' && text[i] <= '~')
-                    return i;
-            }
-            return text.Length;
-        }
-
-        if (kind == ']')
-        {
-            for (i++; i < text.Length; i++)
-            {
-                if (text[i] == '\a')
-                    return i;
-                if (text[i] == Esc && i + 1 < text.Length && text[i + 1] == '\\')
-                    return i + 1;
-            }
-            return text.Length;
-        }
-
-        return i; // ESC + one char (e.g. ESC 7, ESC =)
-    }
+    public static string Normalize(string text) => PromptSubmissionMatch.Normalize(text);
 }
