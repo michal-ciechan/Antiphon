@@ -183,6 +183,8 @@ try
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
+    // The scheduled check-in probe (CARD-0047). Read-only by construction — see its constructor.
+    builder.Services.AddScoped<DelegateCheckProbe>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();

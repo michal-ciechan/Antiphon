@@ -233,6 +233,85 @@ public sealed class GitWorkspaceService
     }
 
     /// <summary>
+    /// Commit subjects, newest first, as <c>git log --oneline</c> writes them. Null — never an
+    /// empty list — when git could not answer at all, so a caller can tell "nothing committed yet"
+    /// apart from "the question could not be asked".
+    ///
+    /// <para><paramref name="from"/> null logs <paramref name="to"/>'s own history; otherwise the
+    /// range <c>from..to</c>, which is the "what has this branch added" reading. <paramref
+    /// name="since"/> bounds it by committer date for the branch-less case (a Shared task commits
+    /// straight onto HEAD, so its dispatch time is the only boundary there is).</para>
+    ///
+    /// <para>Read-only by construction — see <see cref="RunReadOnlyAsync"/>.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<string>?> LogOnelineAsync(
+        string workingDirectory, string? from, string to, int limit, DateTime? since, CancellationToken ct)
+    {
+        var args = new List<string> { "log", "--oneline", "--no-decorate", $"-{Math.Max(1, limit)}" };
+        if (since is { } cutoff)
+            args.Add($"--since={cutoff:yyyy-MM-ddTHH:mm:ssZ}");
+        args.Add(string.IsNullOrWhiteSpace(from) ? to : $"{from}..{to}");
+
+        var (code, stdout, stderr) = await RunReadOnlyAsync(workingDirectory, ct, [.. args]);
+        if (code != 0)
+        {
+            _logger.LogDebug("git log failed in {Dir}: {Err}", workingDirectory, stderr);
+            return null;
+        }
+        return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>How much uncommitted work is sitting in a workspace. Null when git could not answer.</summary>
+    public sealed record WorkingTreeCounts(int Changed, int Untracked);
+
+    /// <summary>
+    /// <c>git status --porcelain</c> reduced to two counts — the "has it written anything" signal,
+    /// without dragging every path into a model prompt.
+    ///
+    /// <para>Deliberately its own method rather than a reuse of <see cref="GetChangesAsync"/>: this
+    /// one goes through <see cref="RunReadOnlyAsync"/>, and that flag is the whole reason a probe
+    /// built on it can honestly call itself read-only.</para>
+    /// </summary>
+    public async Task<WorkingTreeCounts?> GetWorkingTreeCountsAsync(
+        string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, stderr) = await RunReadOnlyAsync(
+            workingDirectory, ct, "status", "--porcelain", "-z", "--untracked-files=all");
+        if (code != 0)
+        {
+            _logger.LogDebug("git status failed in {Dir}: {Err}", workingDirectory, stderr);
+            return null;
+        }
+
+        var changed = 0;
+        var untracked = 0;
+        var records = stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < records.Length; i++)
+        {
+            var record = records[i];
+            if (record.Length < 4)
+                continue;
+            if (record[0] == '?' || record[1] == '?') untracked++;
+            else changed++;
+            // A rename/copy emits its ORIGINAL path as the next record; counting it would
+            // double-count one file.
+            if (record[0] is 'R' or 'C')
+                i++;
+        }
+        return new WorkingTreeCounts(changed, untracked);
+    }
+
+    /// <summary>
+    /// A git read that takes NO optional locks. A bare <c>git status</c> refreshes — and therefore
+    /// WRITES — the index; <c>--no-optional-locks</c> is what turns the call into an honest read,
+    /// which matters when the caller has promised not to touch the workspace it is inspecting
+    /// (CARD-0047 §1.6). It is a git-level option, so it goes BEFORE the subcommand.
+    /// </summary>
+    private Task<(int Code, string Stdout, string Stderr)> RunReadOnlyAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunAsync(workingDirectory, ct, ["--no-optional-locks", .. args]);
+
+    /// <summary>
     /// Every file git knows about or would add (tracked + untracked-but-not-ignored), workspace
     /// relative. The "show all files" listing — .gitignore keeps node_modules/bin out for free.
     /// </summary>
