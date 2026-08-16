@@ -46,6 +46,10 @@ namespace Antiphon.FakeClaude;
 ///    any size collapses in the composer to <c>[Pasted text #N +M lines]</c> and the body is not
 ///    rendered at all, which is what delivery verification has to survive
 ///    (<c>ComposerDeliveryEvidence</c>).
+///  * <b>Swallowed Enter</b> (OPT-IN, <c>ANTIPHON_FAKE_SWALLOW_ENTER=n</c>) — the first <em>n</em>
+///    submitting CRs are eaten while the screen still redraws and the composer KEEPS the body: the
+///    measured state that marked a delivery Sent on a redraw and left it unsubmitted for 104 minutes
+///    (CARD-0055). Default OFF. See <see cref="SwallowEnterModel"/>.
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
 ///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>, +<c>message.id</c>) line on turn end,
 ///    in the shapes <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
@@ -100,6 +104,10 @@ internal static class Program
         // guess), and every existing test that reads the fake's composer echo for the body it sent
         // is a pin worth keeping. Tests that need the paste-path rendering ask for it.
         var placeholder = PastePlaceholderModel.FromEnvironment();
+        // OPT-IN (CARD-0055): eat the first n SUBMITTING Enters while still redrawing — the measured
+        // state in which a delivery was marked Sent on a redraw and the body sat in the composer for
+        // 104 minutes. Default OFF: our Enters are not eaten, and every other test submits on the first.
+        var swallow = SwallowEnterModel.FromEnvironment();
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -116,6 +124,7 @@ internal static class Program
         // only useful if it can be replayed.
         if (clip is not null) Write(clip.Describe() + "\r\n");
         if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
+        if (swallow is not null) Write(swallow.Describe() + "\r\n");
         if (debugInput)
         {
             var h = GetStdHandle(STD_INPUT_HANDLE);
@@ -286,8 +295,25 @@ internal static class Program
             if (isLoneEnter)
             {
                 var text = composer.ToString().Trim();
+                if (text.Length == 0)
+                {
+                    // Bare Enter on an empty composer — nothing to submit, nothing recorded, no turn.
+                    // This is the contract the delivery retry leans its whole weight on (CARD-0055):
+                    // if the first Enter DID submit, every re-press lands here.
+                    composer.Clear();
+                    return true;
+                }
+
+                // CARD-0055's modelled failure: the CR is eaten, the screen still advances, and the
+                // body STAYS in the composer — so the next Enter submits THIS body, which is what
+                // makes an Enter-only retry (never a re-type) the safe fix. See SwallowEnterModel.
+                if (swallow is not null && swallow.ShouldSwallow())
+                {
+                    Write($"SWALLOWED-ENTER:remaining={swallow.Remaining} held={text.Length}\r\n");
+                    return true;
+                }
+
                 composer.Clear();
-                if (text.Length == 0) return true; // bare Enter on an empty composer — nothing to submit.
 
                 if (IsCompactCommand(text))
                 {
