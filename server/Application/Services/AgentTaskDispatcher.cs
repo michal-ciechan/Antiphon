@@ -1003,10 +1003,14 @@ public sealed class AgentTaskDispatcher
         if (claimed.AgentId is Guid pinnedId)
         {
             var pinned = await _db.Agents.FirstOrDefaultAsync(a => a.Id == pinnedId, ct);
-            // Retired between create and dispatch, or a user's standing agent — the spawn path
-            // owns both cases (it falls back to a fresh delegate / a fresh session respectively).
-            if (pinned is null || !pinned.IsPoolDelegate)
+            // Retired between create and dispatch — the spawn path falls back to a fresh delegate.
+            if (pinned is null)
                 return ReuseOutcome.SpawnFresh;
+
+            // A STANDING agent (a user's own, or a supervised specialist) is not pool furniture and
+            // has its own rules — see PlaceOnStandingAgentAsync.
+            if (!pinned.IsPoolDelegate)
+                return await PlaceOnStandingAgentAsync(claimed, pinned, now, ct);
 
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
@@ -1089,6 +1093,73 @@ public sealed class AgentTaskDispatcher
         _logger.LogInformation(
             "Task {ShortId} reusing warm delegate '{Agent}' (session {SessionId})",
             DelegationReportFormatter.Short(claimed.Id), agent.Name, session);
+        return ReuseOutcome.Reused;
+    }
+
+    /// <summary>
+    /// Place a task pinned to a STANDING agent — a user's own agent, or a supervised specialist like
+    /// the check interpreter (CARD-0047 slice 4A). The general capability behind "run this on my
+    /// standing agent".
+    ///
+    /// <para>Until this existed, every pinned non-pool agent fell through to <c>SpawnFresh</c>, which
+    /// creates a SECOND session and overwrites <see cref="Agent.PersistentSessionId"/>. For an
+    /// AlwaysOn agent that is not merely wasteful — it points the row at a session the supervisor
+    /// never started while the one it did start keeps running, so the two fight over the row for as
+    /// long as both live.</para>
+    ///
+    /// <para>So: a live session takes the work, and NOTHING on the agent row is written.
+    /// <c>PersistentSessionId</c> belongs to whoever launched the session, and
+    /// <c>Status</c>/<c>PoolIdleSince</c>/<c>PoolReservedForRootTaskId</c> belong to the pool — a
+    /// standing agent is in neither's gift.</para>
+    ///
+    /// <para>No live session and <see cref="Agent.AlwaysOn"/> means the supervisor is already on it
+    /// (its sweep ensures every AlwaysOn agent that is not user-suspended has a session), so the task
+    /// waits rather than racing it. A standing agent that nothing supervises keeps today's
+    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up.</para>
+    /// </summary>
+    private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
+        AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
+    {
+        if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
+            return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
+
+        // One task at a time on one agent. A brief delivered while the agent is mid-task lands
+        // BETWEEN the running task's turns and corrupts both correlations — the same invariant the
+        // warm pool holds, enforced here against the agent's own tasks rather than a pool flag.
+        var busy = await _db.AgentTasks.AnyAsync(
+            t => t.AgentId == standing.Id
+                && t.Id != claimed.Id
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            ct);
+        if (busy)
+            return ReuseOutcome.WaitForAgent;
+
+        claimed.AgentName = standing.Name;
+        claimed.AgentSessionId = session;
+        claimed.Status = AgentTaskStatus.Dispatched;
+        claimed.DispatchedAt = now;
+        claimed.ConcurrencyToken = Guid.NewGuid();
+        ArmFirstCheck(claimed, now);
+
+        // The task's own bearer token is discarded rather than rebound: a standing agent's session
+        // was not launched by the dispatcher, so its environment carries no ANTIPHON_TASK_TOKEN and
+        // never can (a live process's env cannot change). Correlation therefore rides the brief's
+        // marker alone — which is all settlement needs, and all a specialist reading a bundle uses.
+        AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
+
+        _db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = claimed.Id,
+            Type = AgentTaskEventType.Dispatched,
+            ModelLevel = claimed.ModelLevel,
+            Detail = $"Delivered into standing agent '{standing.Name}'s live session",
+            At = now,
+        });
+
+        _logger.LogInformation(
+            "Task {ShortId} delivered into standing agent '{Agent}'s live session {SessionId}",
+            DelegationReportFormatter.Short(claimed.Id), standing.Name, session);
         return ReuseOutcome.Reused;
     }
 
