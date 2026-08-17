@@ -19,43 +19,34 @@ namespace Antiphon.Server.Application.Services;
 public static class CheckInterpretation
 {
     /// <summary>
-    /// Bumped whenever <see cref="Contract"/> changes meaningfully. It rides IN the contract text so
-    /// an operator reading the agent row can see which version that agent is running without
-    /// diffing prose, and so a stale row is obvious at a glance.
+    /// Bumped whenever the contract changes meaningfully. It rides IN the contract text so an
+    /// operator reading the agent row can see which version that agent is running without diffing
+    /// prose, and so a stale row is obvious at a glance.
     /// </summary>
-    /// <remarks>A string, not an int, so <see cref="Contract"/> can stay a compile-time constant.</remarks>
+    /// <remarks>
+    /// It is now a legacy label beside the bundle's content hash (CARD-0058), which needs no bumping
+    /// at all. The number below and the literal <c>contract v1</c> in
+    /// <c>server/Bundles/check-interpreter.md</c> are two copies of one fact, held together by
+    /// <c>CheckInterpreterProvisionerTests</c>: bump this without editing the bundle and that test
+    /// goes red.
+    /// </remarks>
     public const string ContractVersion = "1";
 
     /// <summary>
     /// The standing contract. Triage, not diagnosis: the specialist reads a bundle of facts about
     /// SOMEONE ELSE'S running delegate and says which of five shapes it is. Everything it must not
-    /// do is here because each one has a failure attached — claiming completion would let a caller
+    /// do is there because each one has a failure attached — claiming completion would let a caller
     /// move on from work still in flight, and investigating beyond the bundle would turn a cheap
     /// read into a second agent doing the delegate's job over its shoulder.
+    ///
+    /// <para>A FORWARD to bundle <c>check-interpreter</c> since CARD-0058: the text moved to
+    /// <c>server/Bundles/check-interpreter.md</c> and is composed like any other bundle, while every
+    /// call site here keeps reading one constant. The forward is deliberately the bundle's TEXT and
+    /// not its rendered form — no <c>[bundle:…]</c> header — so the reconciled agent row is what it
+    /// has always been. Line endings are LF (the bundle is normalised on load, the old constant took
+    /// whatever the checkout had), so the first reconcile after this ships rewrites the row once.</para>
     /// </summary>
-    public const string Contract = $"""
-        You are the Antiphon CHECK INTERPRETER (contract v{ContractVersion}).
-
-        Every message you receive is a fact bundle about a delegated task that is STILL RUNNING,
-        gathered by a read-only probe. The task belongs to someone else. Your one job is to read the
-        bundle and tell that task's caller, in 3-5 lines, which of these it looks like:
-
-        - DOING — it is working: recent turns, tool calls, output that is going somewhere.
-        - PRODUCED — it has made something concrete: commits, files written, tests run.
-        - LOOKS STUCK — repetition, an error it keeps hitting, a long quiet stretch, a full queue.
-        - SETTLED — the bundle already shows the work finished or the task closed.
-        - AMBIGUOUS — the bundle does not support any of the above.
-
-        Say WHICH and WHY, citing the facts you used. Lead with the verdict word.
-
-        Hard rules:
-        - NEVER say the task is complete, done, or successful. You are looking at work in flight;
-          completion is decided elsewhere, by the delegate's own report.
-        - NEVER investigate beyond the bundle. Do not read files, run commands, or search. If the
-          bundle does not say, the answer is AMBIGUOUS and you say what is missing.
-        - USE NO TOOLS. You have none, and a tool call is refused before it runs.
-        - No preamble, no sign-off, no restating the bundle. 3-5 lines of prose, nothing else.
-        """;
+    public static string Contract => InstructionBundles.TextOf(InstructionBundles.CheckInterpreter);
 
     /// <summary>The one-line format reminder that rides every brief, so the shape survives compaction.</summary>
     public const string OutputFormatReminder =

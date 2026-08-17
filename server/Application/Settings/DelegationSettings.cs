@@ -208,6 +208,32 @@ public sealed class DelegationSettings
     };
 
     /// <summary>
+    /// A DIFFERENT TRANSPORT ENTIRELY, so none of the ceilings above apply: instruction bundles
+    /// (CARD-0058) ride <c>--append-system-prompt</c>, which is a launch ARGUMENT and never typed into
+    /// a pty. What bounds it is <c>CreateProcessW</c>, whose command line may hold ~32 767 UTF-16
+    /// characters including the terminator — so this budget is counted in CHARS, not in the UTF-8
+    /// bytes every pty ceiling here is measured in.
+    ///
+    /// <para>30 000 leaves ~2 700 characters for the parts a composing caller cannot see: the
+    /// resolved executable path, the definition's own base args, the <c>--session-id</c> or
+    /// <c>--resume</c> the launch adds, and the quoting each argument costs on the way to the OS.</para>
+    ///
+    /// <para>It is a runaway stop, not a working constraint, and the measurement says so:
+    /// <c>InstructionBundleTests</c> composes the worst case anyone can currently construct — every
+    /// bundle in the catalog at once, plus the longest system-prompt append that ships (the Telegram
+    /// preset) — and pins that it sits far under this number, with the actual measured size in the
+    /// assertion message. That worst case measured <b>9 198 chars on 2026-08-17</b> (board-api 2 607,
+    /// delegate-basics 2 216, check-interpreter 1 276, orchestrator 1 156, preset 1 802): 31% of this
+    /// budget, while no real launch composes more than two bundles. Something that trips this guard is
+    /// therefore a bundle that grew by an order of
+    /// magnitude or a pasted document in an agent's append, and both want a human, not a truncation:
+    /// <c>InstructionBundleComposer.EnsureWithinCommandLineBudget</c> THROWS. An agent silently
+    /// running under half a contract, with nothing on screen to say so, is the failure mode that is
+    /// worth failing a launch to avoid.</para>
+    /// </summary>
+    public int CommandLineBudgetChars { get; set; } = 30_000;
+
+    /// <summary>
     /// Directory prefixes a task may run in. A SECURITY BOUNDARY: without it an agent that can
     /// delegate could point a task at any path the server user can read. Empty = only the parent's
     /// own working directory tree is allowed.

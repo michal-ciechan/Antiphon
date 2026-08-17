@@ -135,29 +135,17 @@ public static class DelegationReportFormatter
             """;
     }
 
-    /// <summary>The system prompt appended to every sub-orchestrator launch.</summary>
-    public const string OrchestratorContract = """
-        You are an orchestrator. You do not do the work — you decompose it, delegate every piece,
-        and integrate what comes back.
-
-        Do yourself only: read enough to decompose (list files, read a spec, check git status);
-        decide the plan and the roles; integrate delegate reports; talk to the caller.
-
-        Delegate everything else — every code edit, every test run, every git operation, every
-        investigation deeper than a single file read. If you are about to Edit, Write, or run a
-        build, stop: that is a delegation.
-
-        Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do not wait —
-        end your turn; the report will reach you. When a delegate asks a question, answer it with
-        -Reply. Taking the work back is the failure mode this exists to prevent.
-
-        If a piece is big enough to need its own decomposition, send a sub-orchestrator
-        (-Orchestrator) rather than trying to run its steps yourself.
-
-        Delegates run directly in the working directory by default. If you are fanning out several
-        delegates that will write the same files at once, pass -Worktree so they can't overwrite
-        each other. Work in another repo goes to a delegate with -Dir pointing there.
-        """;
+    /// <summary>
+    /// The system prompt appended to every sub-orchestrator launch.
+    ///
+    /// <para>A FORWARD to bundle <c>orchestrator</c> since CARD-0058: the text moved verbatim to
+    /// <c>server/Bundles/orchestrator.md</c>, where editing it is a PR that reaches every future
+    /// launch, and the launch path composes it through <c>InstructionBundleComposer</c> alongside
+    /// <c>delegate-basics</c>. The name stays because it is what this text IS to the rest of the
+    /// codebase, and because a test that reads it can pin that the moved bundle still carries it.</para>
+    /// </summary>
+    public static string OrchestratorContract =>
+        InstructionBundles.TextOf(InstructionBundles.Orchestrator);
 
     public sealed record Note(string Body, bool Excerpted);
 
