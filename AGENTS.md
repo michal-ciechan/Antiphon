@@ -11,6 +11,31 @@ All AI coding agents working on this project MUST read and follow:
 This file contains naming conventions, layer boundaries, enforcement rules,
 and architectural decisions that all code must comply with.
 
+## Working cards from a shell
+
+`scripts/card.ps1` talks to the board API so nothing has to hand-compose HTTP or hand-quote card
+text. Its header comment is the full reference; this is the synopsis.
+
+- **A card is addressed the way it's *named*.** `CARD-0051`, `card-51`, `#51`, `51`, or its guid —
+  every verb takes any of those. There is no separate "look up the id first" step.
+- **Verbs:** `get`, `history`, `new`, `edit`, `move`, `close`, `archive`, `unarchive`, and `-Limits`
+  (prints the current title/description/reason/actor length ceilings).
+- **All long text comes from a file** — `-DescriptionFile` / `-ReasonFile` (`Get-Content -Raw`), not
+  `-Description` / `-Reason` typed inline. This is not a nicety: hand-quoting a multi-line
+  description through PowerShell's own escaping is what produced roughly fifteen throwaway scripts
+  in a single session.
+- **The concurrency-token tradeoff, stated plainly:** every write needs the card's current
+  `concurrencyToken`, and the server rotates it on every write. By default the script re-reads the
+  card immediately before writing and uses that token, so the window in which someone else's write
+  could be clobbered is milliseconds rather than the minutes of a manual read-then-write. That
+  window is not zero — it is accepted because two truly concurrent writers still collide on the
+  database's unique `(CardId, RevisionNumber)` index, and every content write has been
+  revision-logged since CARD-0019, so a clobber is readable and reversible from the card's history.
+  Pass `-Token <guid>` for true compare-and-swap against a token you read earlier.
+- **A move into an active column no longer starts an agent unless you pass `-Spawn`.** Before
+  CARD-0051 it always did, silently — that cost two dead sessions and a stray worktree from one
+  bookkeeping PATCH. If you have muscle memory from before, assume nothing starts unless you ask.
+
 ## Running Locally
 
 ### Prerequisites

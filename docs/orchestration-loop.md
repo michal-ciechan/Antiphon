@@ -221,20 +221,25 @@ Split by what each part actually is:
 - **The verdict is judgement and stays with the orchestrator.** It is synthesis across the whole run
   — what shipped, what was corrected, what was disproved, what is still open, which other cards it
   touches. A haiku agent cannot see that from the repo.
-- **The `PATCH` and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict
-  text and the card identifier; it makes the call and reports the result.
+- **The move and the cleanup in §8 are mechanical — delegate them.** Hand the agent the verdict text
+  and the card identifier; it runs `pwsh -File scripts/card.ps1 close CARD-nnnn -ReasonFile <path>`
+  (or `-Reason` for something short) and reports the result.
 
 - **A terminal move preserves its `reason`; use it as the verdict** — what shipped, what was
   corrected, what is still open, with commit hashes.
-- **Never move a card into an ACTIVE column for bookkeeping — it SPAWNS AN AGENT.** Two dead
-  sessions and a stray worktree came from one such PATCH.
-- Corrections to a card's text go through `PATCH /api/cards/{id}/content` (CARD-0019), which records
-  a revision with a reason. Before that shipped, a wrong card could only be corrected by filing
-  another card.
-- **The card API's own traps are canonical in `server/Bundles/board-api.md`** — no card-by-id GET,
-  the concurrency token rotating on every write, 422 rather than 400, write bodies from a file. That
-  bundle is what gets attached to an agent that works the board, so fix a wrong rule there rather
-  than here.
+- **A move into an active column used to spawn an agent silently — CARD-0051 made that opt-in.**
+  Two dead sessions and a stray worktree came from one such PATCH before the fix. `card.ps1 move`
+  (and the API underneath it) now only starts a session when `-Spawn` / `spawn: true` is passed, and
+  says so when it suppressed one. Muscle memory from before the fix should assume nothing starts
+  unless asked.
+- Corrections to a card's text go through `card.ps1 edit` (`PATCH /api/cards/{id}/content`,
+  CARD-0019), which records a revision with a reason. Before that shipped, a wrong card could only
+  be corrected by filing another card.
+- **`scripts/card.ps1` is the preferred way to touch a card from a shell now** — identifier
+  addressing, the limits endpoint, and file-backed text are documented in its own header comment,
+  which is canonical; see also the AGENTS.md synopsis. `server/Bundles/board-api.md` (attached to an
+  agent that works the board directly) still documents the raw API for callers that can't shell out
+  to the CLI — fix a wrong rule there, not here.
 - Findings that outlive the card go in `docs/investigations/`. Agent scratch output lands in
   `.antiphon/`, which is **gitignored** — an 11 KB proven root-cause writeup was nearly lost that way.
 
@@ -258,10 +263,8 @@ cannot open it.
 
 ## 9. What to automate first
 
-**The check-in timer (CARD-0047) shipped** — §4 now describes it running, not proposed. In rough
-order of payback for what's left:
+**The check-in timer (CARD-0047) and the card CLI (CARD-0051, `scripts/card.ps1`) have shipped** —
+§4 and §7 now describe them running, not proposed. In rough order of payback for what's left:
 
-1. **`scripts/card.ps1`** (CARD-0051) — every card operation here is currently a hand-written script,
-   because there is no card CLI and shell quoting mangles card text.
-2. **The unmerged-branch sweep** from §1 — a scheduled job that reports genuinely unapplied work.
-3. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
+1. **The unmerged-branch sweep** from §1 — a scheduled job that reports genuinely unapplied work.
+2. **A post-merge deploy script** that reads the diff and decides which restarts §6 requires.
