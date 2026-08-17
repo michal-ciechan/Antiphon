@@ -3,10 +3,13 @@ import {
   Alert,
   Badge,
   Box,
+  Button,
   Center,
+  Code,
   Collapse,
   Group,
   Loader,
+  Modal,
   Paper,
   Stack,
   Text,
@@ -14,11 +17,26 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { TbAlertCircle, TbChecks, TbChevronDown, TbChevronRight, TbRefresh } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
-import { useAttention, type AttentionItemDto } from '../../api/attention'
+import {
+  useCancelAgentTask,
+  useEscalateAgentTask,
+  useRetryAgentTask,
+} from '../../api/agentTasks'
+import {
+  attentionKeys,
+  useAttention,
+  type AttentionAction,
+  type AttentionItemDto,
+} from '../../api/attention'
+import { getApiErrorMessage } from '../../api/client'
+import { cancelQueuedMessage, sendQueuedMessageNow, stopSession } from '../../api/sessions'
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
+import { BlockedReplyRow } from './BlockedReplyRow'
 import {
   ATTENTION_GROUPS,
   ATTENTION_VISUALS,
@@ -40,6 +58,13 @@ import {
  *
  * <p>Every row's click goes to the thing that explains it — the task drawer on the sibling tab, or
  * the agent's incident drawer. That is the whole reason this lives on the Orchestrator page.</p>
+ *
+ * <p><b>The actions (slice 4) are what make it diagnostic rather than a list</b> — and they are also
+ * the standing temptation to widen it. A page with verbs on it wants to feel useful, and the way to
+ * make a page feel useful is to put more rows on it; that is exactly how a diagnostic view becomes
+ * something a human learns to skim, at which point the one real row arrives among nine false ones and
+ * the view is worse than nothing. Nothing here decides what is listed. The verbs are the ones the
+ * server named per row, all of which already existed as endpoints.</p>
  */
 export function AttentionPanel() {
   const attention = useAttention()
@@ -219,7 +244,9 @@ function AttentionRow({
           </Text>
         </Group>
         <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
-          {item.subtreeCostUsd != null && item.subtreeCostUsd > 0 && (
+          {/* Shown even at $0, which is not noise here: a NeverStarted row that has spent nothing is
+              confirming it never ran, and hiding the zero would hide that. */}
+          {item.subtreeCostUsd != null && (
             <Tooltip label="Spend on this task and everything under it">
               <Badge size="xs" variant="default" style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {formatCost(item.subtreeCostUsd)}
@@ -239,33 +266,217 @@ function AttentionRow({
       <Text size="sm">{item.headline}</Text>
 
       {item.evidence && (
-        // Pre-wrapped, not reflowed: the evidence is often the tail of a check digest, and its line
-        // breaks are the structure a human reads it by.
-        <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }} lineClamp={4}>
+        // Pre-wrapped, not reflowed: the evidence is the check interpreter's own reading when one is
+        // stored (slice 5) and the tail of the deterministic digest otherwise, and in both cases its
+        // line breaks are the structure a human reads it by.
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }} lineClamp={6}>
           {item.evidence}
         </Text>
       )}
     </Stack>
   )
 
-  if (!target) {
-    return (
-      <Paper withBorder p="xs" data-testid={`attention-row-${item.kind}`}>
-        {body}
-      </Paper>
-    )
+  return (
+    <Paper withBorder p="xs" data-testid={`attention-row-${item.kind}`}>
+      <Stack gap={8}>
+        {/* The click target is the body ONLY. Buttons inside a button is invalid markup and swallows
+            the inner click, so the verbs sit beside the region that navigates, never inside it. */}
+        {target ? (
+          <UnstyledButton onClick={() => onOpen(target)} w="100%" aria-label={`Open ${item.title}`}>
+            <Box>{body}</Box>
+          </UnstyledButton>
+        ) : (
+          body
+        )}
+        {item.actions.length > 0 && <AttentionRowActions item={item} onOpen={onOpen} />}
+      </Stack>
+    </Paper>
+  )
+}
+
+/** Two or three words per verb — the row's prose already said what happened. */
+const ACTION_LABEL: Record<AttentionAction, string> = {
+  Reply: 'Answer it',
+  Retry: 'Retry',
+  Cancel: 'Cancel task',
+  Escalate: 'Escalate',
+  SendNow: 'Send now',
+  CancelMessage: 'Drop message',
+  OpenDrawer: 'Read it first',
+  KillSession: 'Kill session',
+  OpenAgent: 'Open agent',
+}
+
+/** Verbs that destroy work. Colour is the only warning a one-click button gets. */
+const DESTRUCTIVE: ReadonlySet<AttentionAction> = new Set<AttentionAction>([
+  'Cancel',
+  'CancelMessage',
+  'KillSession',
+])
+
+/**
+ * The verbs for one row, in the order the SERVER named them — first is primary.
+ *
+ * <p>That order is a judgement the projection makes per condition and it is load-bearing in one
+ * place especially: <c>PastExpectedIdle</c> and <c>ChecksSpent</c> lead with "read it first", because
+ * for those two the correct answer is very often to leave the task alone, and a Retry sitting in the
+ * primary slot would invite a second agent onto work that is merely finishing quietly.</p>
+ *
+ * <p>Every mutation invalidates the attention list. A row that survived its own fix would teach the
+ * operator that the view lags reality, and a view nobody believes is worse than no view.</p>
+ */
+function AttentionRowActions({
+  item,
+  onOpen,
+}: {
+  item: AttentionItemDto
+  onOpen: (target: string) => void
+}) {
+  const [replying, setReplying] = useState(false)
+  const [killAsked, setKillAsked] = useState(false)
+  const queryClient = useQueryClient()
+
+  const settle = (success: string, failure: string) => ({
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: attentionKeys.all })
+      notifications.show({ color: 'green', message: success })
+    },
+    onError: (error: unknown) =>
+      notifications.show({ color: 'red', message: getApiErrorMessage(error, failure) }),
+  })
+
+  const retry = useRetryAgentTask()
+  const cancel = useCancelAgentTask()
+  const escalate = useEscalateAgentTask()
+  const sendNow = useMutation({
+    mutationFn: () => sendQueuedMessageNow(item.sessionId!, item.messageId!),
+  })
+  const dropMessage = useMutation({
+    mutationFn: () => cancelQueuedMessage(item.sessionId!, item.messageId!),
+  })
+  const kill = useMutation({ mutationFn: () => stopSession(item.sessionId!) })
+
+  const pending =
+    retry.isPending ||
+    cancel.isPending ||
+    escalate.isPending ||
+    sendNow.isPending ||
+    dropMessage.isPending ||
+    kill.isPending
+
+  const target = targetOf(item)
+  const shortSession = item.sessionId ? item.sessionId.replace(/-/g, '').slice(0, 8) : 'unknown'
+
+  const run = (action: AttentionAction) => {
+    switch (action) {
+      case 'Reply':
+        setReplying((open) => !open)
+        return
+      case 'Retry':
+        retry.mutate(item.taskId!, settle('Task retried', 'Could not retry the task'))
+        return
+      case 'Cancel':
+        cancel.mutate(item.taskId!, settle('Task cancelled', 'Could not cancel the task'))
+        return
+      case 'Escalate':
+        escalate.mutate(
+          { id: item.taskId! },
+          settle('Task escalated a tier', 'Could not escalate the task'),
+        )
+        return
+      case 'SendNow':
+        sendNow.mutate(undefined, settle('Message sent', 'Could not send the message'))
+        return
+      case 'CancelMessage':
+        dropMessage.mutate(undefined, settle('Message dropped', 'Could not drop the message'))
+        return
+      case 'OpenDrawer':
+      case 'OpenAgent':
+        if (target) onOpen(target)
+        return
+      case 'KillSession':
+        // NEVER one click. The 2026-08-16 miss (CARD-0056) was a perfectly healthy session — the
+        // operator's own working conversation — that the database had written off, and a kill there
+        // would have ended somebody mid-sentence. The dialog names the session it would end.
+        setKillAsked(true)
+        return
+    }
   }
 
+  // A verb whose subject the row does not carry cannot be offered — the server names the actions and
+  // the ids separately, so this is the one place they are checked against each other.
+  const usable = item.actions.filter((action) => {
+    if (action === 'Reply' || action === 'Retry' || action === 'Cancel' || action === 'Escalate')
+      return item.taskId !== null
+    if (action === 'SendNow' || action === 'CancelMessage')
+      return item.sessionId !== null && item.messageId !== null
+    if (action === 'KillSession') return item.sessionId !== null
+    return target !== null
+  })
+
+  if (usable.length === 0) return null
+
   return (
-    <Paper withBorder p={0} data-testid={`attention-row-${item.kind}`}>
-      <UnstyledButton
-        onClick={() => onOpen(target)}
-        w="100%"
-        p="xs"
-        aria-label={`Open ${item.title}`}
+    <Stack gap={6}>
+      <Group gap="xs" wrap="wrap">
+        {usable.map((action, index) => (
+          <Button
+            key={action}
+            size="compact-xs"
+            variant={index === 0 ? 'light' : 'subtle'}
+            color={DESTRUCTIVE.has(action) ? 'danger' : index === 0 ? 'active' : 'gray'}
+            disabled={pending}
+            onClick={() => run(action)}
+          >
+            {ACTION_LABEL[action]}
+          </Button>
+        ))}
+      </Group>
+
+      {replying && item.taskId && (
+        <BlockedReplyRow taskId={item.taskId} onDone={() => setReplying(false)} />
+      )}
+
+      <Modal
+        opened={killAsked}
+        onClose={() => setKillAsked(false)}
+        title={`Kill session ${shortSession}?`}
+        centered
       >
-        <Box>{body}</Box>
-      </UnstyledButton>
-    </Paper>
+        <Stack gap="sm">
+          <Text size="sm">
+            <Code>{shortSession}</Code> — {item.title}
+          </Text>
+          {item.evidence && (
+            <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+              {item.evidence}
+            </Text>
+          )}
+          <Alert color="warning" variant="light">
+            The runner is still running this. The live process may be the side that is right — the
+            database row is the other side of the disagreement, and killing ends whatever the session
+            is in the middle of.
+          </Alert>
+          <Group justify="flex-end" gap="xs">
+            <Button size="xs" variant="subtle" onClick={() => setKillAsked(false)}>
+              Leave it running
+            </Button>
+            <Button
+              size="xs"
+              color="danger"
+              loading={kill.isPending}
+              onClick={() =>
+                kill.mutate(undefined, {
+                  ...settle(`Killed session ${shortSession}`, 'Could not kill the session'),
+                  onSettled: () => setKillAsked(false),
+                })
+              }
+            >
+              Kill session {shortSession}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Stack>
   )
 }

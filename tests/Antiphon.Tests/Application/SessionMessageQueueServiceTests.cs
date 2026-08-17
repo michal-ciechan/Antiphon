@@ -396,6 +396,62 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    /// <summary>
+    /// CARD-0035 slice 4. Parking is not a status: a parked message is <c>Pending</c> exactly like
+    /// one that is about to go out, and every AUTOMATIC path silently excludes it. Until the DTO
+    /// carried this flag, CARD-0055 had shipped parking with no way to see it — the queue UI showed
+    /// a message that would never move again as an ordinary queued one, and the only surface that
+    /// could tell the difference was a log line.
+    /// </summary>
+    [Test]
+    public async Task A_message_that_spent_its_delivery_attempts_serialises_as_parked()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            // Three is the default MaxDeliveryAttempts; the DTO must decide against the SETTING, not
+            // against a number of its own, or the queue and the attention view could disagree about
+            // what parked means.
+            await SeedPendingMessageAsync(h.SessionId, "parked body", 1, 3, QueuedMessageOrigin.Channel);
+            await SeedPendingMessageAsync(h.SessionId, "fresh body", 2, 0, QueuedMessageOrigin.Ui);
+
+            var dto = await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None);
+
+            var parked = dto.Messages.Single(m => m.Body == "parked body");
+            parked.Parked.ShouldBeTrue();
+            parked.DeliveryAttempts.ShouldBe(3);
+            parked.Origin.ShouldBe("Channel", "the origin is what makes a parked reply read as urgent");
+            parked.Status.ShouldBe("Pending", "parking is NOT a status — that is the whole problem");
+
+            var fresh = dto.Messages.Single(m => m.Body == "fresh body");
+            fresh.Parked.ShouldBeFalse();
+            fresh.DeliveryAttempts.ShouldBe(0);
+            fresh.Origin.ShouldBe("Ui");
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    private static async Task SeedPendingMessageAsync(
+        Guid sessionId, string body, long sequence, int attempts, QueuedMessageOrigin origin)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Body = body,
+            Status = QueuedMessageStatus.Pending,
+            Sequence = sequence,
+            Origin = origin,
+            DeliveryAttempts = attempts,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static Task InsertEntryAsync(Harness h, string kind, string? text, DateTime? timestamp = null) =>
         InsertEntryForAsync(h.SessionId, kind, text, timestamp);
 
