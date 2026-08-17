@@ -5,6 +5,10 @@ record behind that document. Each entry states what we learned, the evidence for
 changed (a doc edit, a card, a rule) or what should still change. Append new entries at the
 bottom; correct old ones in place rather than superseding them with a new entry.
 
+**A finding that earns standing-rule status gets PR'd into `server/Bundles/` (CARD-0058) — recorded
+here alone it reaches nobody.** This file is the reasoning; the bundle is the delivery. Anything
+that is instead true-today-and-false-next-month stays here and in the brief for that dispatch.
+
 ---
 
 ## 2026-08-16 — A Test agent isolates, it never repairs

@@ -873,8 +873,8 @@ public sealed class AgentTaskDispatcher
 
     /// <summary>
     /// Launch args and environment for a delegate. Three things make delegation work here: the tier
-    /// as <c>--model &lt;alias&gt;</c>, the contracts as <c>--append-system-prompt</c>, and the
-    /// ANTIPHON_* env block that lets the delegate call back without being told who it is.
+    /// as <c>--model &lt;alias&gt;</c>, the standing instructions as <c>--append-system-prompt</c>,
+    /// and the ANTIPHON_* env block that lets the delegate call back without being told who it is.
     /// </summary>
     internal AgentLaunchSpec BuildLaunchSpec(AgentTask task, Agent agent, AgentSession session)
     {
@@ -885,10 +885,35 @@ public sealed class AgentTaskDispatcher
             "--model", ModelLevelAliases.ForClaude(task.ModelLevel),
         };
 
-        // A sub-orchestrator gets the orchestrator contract at LAUNCH (survives compaction, applies
-        // to every turn); the reporting contract rides the brief. A worker needs neither at launch.
-        if (task.Kind == AgentTaskKind.Orchestrator)
-            extraArgs.AddRange(["--append-system-prompt", DelegationReportFormatter.OrchestratorContract]);
+        // The role's standing instructions, composed from the repo's bundle files at LAUNCH
+        // (CARD-0058). Two properties make this the right channel and neither is about size: the
+        // system prompt is re-sent on every API call, so the rules survive compaction with no
+        // conversational re-injection; and it is composed fresh every launch, so a rule edited in a PR
+        // reaches every future delegate with nothing to reconcile. It is an ARGUMENT, never typed, so
+        // no pty ceiling applies — the bound is the command line, guarded below.
+        //
+        // The brief keeps what is EPHEMERAL (the goal, today's known-red tests, what is already
+        // landed); a bundle carrying any of that would be wrong tomorrow, for every agent at once.
+        // That split is also why a warm-pool reuse composes nothing: it delivers a brief with no
+        // launch at all (see ReuseOutcome), so a warm delegate keeps the bundles it started with until
+        // it retires — bounded by PoolIdleRetireMinutes, and deliberately not "fixed" by typing
+        // bundles into a live session.
+        var composed = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(task.Kind, task.Role));
+        var subject = $"Task {DelegationReportFormatter.Short(task.Id)} ({task.Kind}/{task.Role})";
+        // Guarded BEFORE anything is added: over-budget throws at compose time and the launch fails
+        // loudly. Truncating would run the delegate under half a contract with nothing to show it.
+        InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            composed, extraArgs, _settings.CommandLineBudgetChars, subject);
+        if (!composed.IsEmpty)
+        {
+            extraArgs.AddRange(["--append-system-prompt", composed.Text]);
+            // Logged because a composition is otherwise invisible from everywhere else: the args are
+            // not stored, and the agent row of a pool delegate is deleted when its task settles.
+            _logger.LogInformation(
+                "{Subject}: launching with instruction bundles {Bundles}",
+                subject, string.Join(", ", composed.Stamps));
+        }
 
         return _agentRegistry.Resolve(
             _agentRegistry.Settings.DefaultDefinition,
