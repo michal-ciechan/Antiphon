@@ -40,6 +40,8 @@ public sealed class AgentTuiApiTests
         var runnerJson = await ReadJsonAsync(runnerTypes);
         runnerJson.EnumerateArray().Select(item => item.GetProperty("kind").GetString())
             .ShouldContain("OpenCode");
+        runnerJson.EnumerateArray().Select(item => item.GetProperty("kind").GetString())
+            .ShouldContain("Grok");
 
         var displayName = $"Task 5 CRUD {Guid.NewGuid():N}";
         var create = await client.PostAsJsonAsync(

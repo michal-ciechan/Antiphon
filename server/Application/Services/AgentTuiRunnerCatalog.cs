@@ -13,6 +13,7 @@ public sealed class AgentTuiRunnerCatalog
         Get(AgentKind.ClaudeCode),
         Get(AgentKind.Codex),
         Get(AgentKind.OpenCode),
+        Get(AgentKind.Grok),
         Get(AgentKind.Raw)
     ];
 
@@ -41,6 +42,13 @@ public sealed class AgentTuiRunnerCatalog
             ["llmgateway/grok-4-5"],
             OpenCodeCapabilities(profileArguments),
             "Use --auto for explicit permission bypass; structured activity remains degraded until ACP/events are active."),
+        AgentKind.Grok => Runner(
+            kind,
+            "Grok",
+            "xAI Grok Build TUI terminal client.",
+            ["grok-4.6", "grok-4.5"],
+            GrokCapabilities(profileArguments),
+            "Use --always-approve for permission bypass and --no-alt-screen so Antiphon can capture the PTY. Structured activity is quiet-time until Grok's ACP session log is tailed."),
         AgentKind.Raw => new AgentTuiRunnerTypeDto(
             kind,
             "Raw process",
@@ -56,6 +64,7 @@ public sealed class AgentTuiRunnerCatalog
     public string? MapLegacyModel(AgentKind kind, AgentModelLevel level) => kind switch
     {
         AgentKind.ClaudeCode => ModelLevelAliases.ForClaude(level),
+        AgentKind.Grok => ModelLevelAliases.ForGrok(level),
         AgentKind.Codex => level switch
         {
             AgentModelLevel.Frontier => "gpt-5.6-sol",
@@ -131,6 +140,21 @@ public sealed class AgentTuiRunnerCatalog
         ContainsArgument(arguments, "--auto")
             ? Supported("permissionBypass", "The profile explicitly includes --auto.")
             : Unsupported("permissionBypass", "Permission bypass requires --auto in the profile arguments.")
+    ];
+
+    private static IReadOnlyList<AgentTuiCapabilityDto> GrokCapabilities(
+        IReadOnlyList<string>? arguments) =>
+    [
+        Supported("modelArgument", "Grok accepts an exact model through --model."),
+        Supported("modelDiscovery", "Grok exposes the models command."),
+        Degraded("structuredActivity", "PTY quiet-time fallback; Grok ACP session updates are not tailed."),
+        Supported("sessionResume", "Grok sessions can be resumed by conversation identity."),
+        Unsupported("remoteControl", "Claude-style remote control is not available."),
+        Supported("systemPromptAppend", "Grok accepts extra standing instructions through --rules."),
+        ContainsArgument(arguments, "--always-approve")
+            || ContainsArgument(arguments, "bypassPermissions")
+            ? Supported("permissionBypass", "The profile explicitly requests Grok permission bypass.")
+            : Unsupported("permissionBypass", "Permission bypass requires --always-approve or --permission-mode bypassPermissions.")
     ];
 
     private static IReadOnlyList<AgentTuiCapabilityDto> RawCapabilities() =>

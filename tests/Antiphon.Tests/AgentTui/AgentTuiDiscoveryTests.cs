@@ -253,6 +253,37 @@ public sealed class AgentTuiDiscoveryTests
     }
 
     [Test]
+    public async Task Grok_discovery_parses_the_measured_prose_catalogue()
+    {
+        var probe = new RecordingRunnerProcessProbe();
+        probe.Enqueue(Success(
+            """
+            You are logged in with grok.com.
+
+            Default model: grok-4.6
+
+            Available models:
+              * grok-4.6 (default)
+              - grok-4.5
+            """));
+        await using var provider = BuildProvider(probe);
+        var profile = await CreateProfileAsync(provider, AgentKind.Grok);
+
+        var models = await RefreshAsync(provider, profile.Id);
+
+        probe.Requests.ShouldHaveSingleItem();
+        probe.Requests[0].Arguments.ShouldBe(["models"]);
+        models.Select(model => model.Identifier).ShouldContain("grok-4.6");
+        models.Select(model => model.Identifier).ShouldContain("grok-4.5");
+        models.Single(model => model.Identifier == "grok-4.6").Source
+            .ShouldBe(AgentTuiModelSource.Curated);
+        models.Single(model => model.Identifier == "grok-4.6").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
+        models.Single(model => model.Identifier == "grok-4.5").Availability
+            .ShouldBe(AgentTuiModelAvailability.Verified);
+    }
+
+    [Test]
     public async Task Cached_list_get_models_and_capabilities_are_pure_reads()
     {
         var probe = new RecordingRunnerProcessProbe();
@@ -1535,9 +1566,12 @@ public sealed class AgentTuiDiscoveryTests
         Arguments: kind == AgentKind.OpenCode
             ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WrapperPath, "--auto", "--mini"]
             : ["--launch"],
-        DiscoveryArguments: kind == AgentKind.OpenCode
-            ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WrapperPath, "models"]
-            : [],
+        DiscoveryArguments: kind switch
+        {
+            AgentKind.OpenCode => ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WrapperPath, "models"],
+            AgentKind.Grok => ["models"],
+            _ => []
+        },
         VersionArguments: kind == AgentKind.OpenCode
             ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WrapperPath, "--version"]
             : ["--version"],

@@ -692,8 +692,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
 
-        if (session.AgentKind != AgentKind.ClaudeCode)
-            throw new ConflictException("Only Claude Code sessions can be resumed.");
+        if (session.AgentKind is not (AgentKind.ClaudeCode or AgentKind.Grok))
+            throw new ConflictException("Only Claude Code and Grok sessions can be resumed.");
         // Resume rebuilds a card's worktree-bound session; a cardless interactive session has neither.
         if (session.CardId is not Guid cardId)
             throw new ConflictException($"Agent session '{sessionId}' has no card and cannot be resumed.");
@@ -903,8 +903,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         string cwd,
         AgentSessionResumeMode? resumeMode)
     {
-        var args = session.AgentKind == AgentKind.ClaudeCode
-            ? BuildClaudeSessionArgs(launchSpec.Args, session.Id, resumeMode)
+        var args = UsesSessionIdentityArgs(session.AgentKind)
+            ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
 
         return launchSpec with
@@ -918,7 +918,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         };
     }
 
-    private static IReadOnlyList<string> BuildClaudeSessionArgs(
+    private static bool UsesSessionIdentityArgs(AgentKind kind) =>
+        kind is AgentKind.ClaudeCode or AgentKind.Grok;
+
+    private static IReadOnlyList<string> BuildSessionIdentityArgs(
         IReadOnlyList<string> args,
         Guid sessionId,
         AgentSessionResumeMode? resumeMode)
@@ -954,11 +957,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     private static bool ClaudeSessionArgConsumesValue(string arg) =>
         arg == "--session-id"
+        || arg == "-s"
         || arg == "--resume"
         || arg == "-r";
 
     private static bool IsClaudeSessionArg(string arg) =>
         arg == "--session-id"
+        || arg == "-s"
         || arg == "--resume"
         || arg == "-r"
         || arg == "--continue"

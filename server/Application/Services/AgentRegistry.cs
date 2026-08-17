@@ -98,6 +98,14 @@ public sealed class AgentRegistry
                     env[marker] = string.Empty;
         }
 
+        if (kind == AgentKind.Grok)
+        {
+            if (!env.ContainsKey("GROK_TELEMETRY_ENABLED"))
+                env["GROK_TELEMETRY_ENABLED"] = "0";
+            if (!env.ContainsKey("GROK_FEEDBACK_ENABLED"))
+                env["GROK_FEEDBACK_ENABLED"] = "0";
+        }
+
         var cwd = string.IsNullOrWhiteSpace(options.Cwd)
             ? Environment.CurrentDirectory
             : options.Cwd;

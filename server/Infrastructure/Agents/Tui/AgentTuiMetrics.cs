@@ -450,6 +450,7 @@ public sealed class AgentTuiMetrics
         AgentKind.ClaudeCode => "claude_code",
         AgentKind.Codex => "codex",
         AgentKind.OpenCode => "open_code",
+        AgentKind.Grok => "grok",
         AgentKind.Raw => "raw",
         _ => "unknown"
     };

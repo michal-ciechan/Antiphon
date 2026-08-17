@@ -155,21 +155,29 @@ public sealed class AgentControlService
 
         var profileKind = await PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
+        var isGrok = profileKind == AgentKind.Grok;
         var extraArgs = new List<string>();
         // Null until a composition actually happens, and the difference is load-bearing: it is what
         // the session row stores, and a null there means "no evidence" and can never raise a drift
-        // badge. A non-Claude launch composes nothing and must not claim it composed nothing.
+        // badge. A non-Claude/Grok launch composes nothing and must not claim it composed nothing.
         string? composedStamp = null;
-        if (isClaudeCode)
+        if (isClaudeCode || isGrok)
         {
             var sessionName = agent.Name.Trim();
-            if (sessionName.Length > 0)
+            if (isClaudeCode && sessionName.Length > 0)
                 extraArgs.AddRange(["--name", sessionName]);
 
             // Prefer an exact selected model; fall back to the legacy ModelLevel alias only when
             // the agent has no exact ModelId (migration compatibility).
             if (string.IsNullOrWhiteSpace(agent.ModelId))
-                extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
+            {
+                extraArgs.AddRange([
+                    "--model",
+                    isGrok
+                        ? ModelLevelAliases.ForGrok(agent.ModelLevel)
+                        : ModelLevelAliases.ForClaude(agent.ModelLevel)
+                ]);
+            }
 
             // The agent's standing instructions, composed at launch (CARD-0058/0060): the bundles
             // attached to THIS agent, then the reply-style block, then the agent's own
@@ -215,7 +223,10 @@ public sealed class AgentControlService
                     extraArgs,
                     _delegationSettings.CommandLineBudgetChars,
                     $"Agent '{agent.Name}'");
-                extraArgs.AddRange(["--append-system-prompt", rendered]);
+                extraArgs.AddRange([
+                    isGrok ? "--rules" : "--append-system-prompt",
+                    rendered
+                ]);
             }
         }
 
@@ -352,20 +363,21 @@ public sealed class AgentControlService
             : null;
     }
 
-    // The agent's last interactive session is resumable when it is the same Claude-kind definition,
-    // ended (Stopped/Failed), and ran in the same working directory — Claude scopes its transcripts
-    // per directory, so resuming an id from a different cwd would fail. Only Claude Code has a
-    // resumable conversation; Codex/Raw always start fresh.
+    // The agent's last interactive session is resumable when it is the same session-identity kind
+    // (Claude or Grok), ended (Stopped/Failed), and ran in the same working directory — both
+    // runners scope conversations per directory, so resuming an id from a different cwd would fail.
+    // Codex/OpenCode/Raw always start fresh.
     private async Task<AgentSession?> FindResumableSessionAsync(
         Agent agent, AgentKind kind, string cwd, CancellationToken ct)
     {
-        if (kind != AgentKind.ClaudeCode || !Guid.TryParse(agent.PersistentSessionId, out var previousId))
+        if (kind is not (AgentKind.ClaudeCode or AgentKind.Grok)
+            || !Guid.TryParse(agent.PersistentSessionId, out var previousId))
             return null;
 
         var previous = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == previousId, ct);
         if (previous is null
             || previous.CardId is not null
-            || previous.AgentKind != AgentKind.ClaudeCode
+            || previous.AgentKind != kind
             || previous.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
             || !string.Equals(
                 Path.GetFullPath(previous.Cwd), cwd,

@@ -224,8 +224,12 @@ public sealed class AgentTuiProfileImporter
                 RevisionNumber = 1,
                 Executable = plan.Executable,
                 ArgumentsJson = JsonSerializer.Serialize(plan.Arguments),
-                DiscoveryArgumentsJson = "[]",
-                VersionArgumentsJson = "[]",
+                DiscoveryArgumentsJson = plan.Kind == AgentKind.Grok
+                    ? JsonSerializer.Serialize(new[] { "models" })
+                    : "[]",
+                VersionArgumentsJson = plan.Kind == AgentKind.Grok
+                    ? JsonSerializer.Serialize(new[] { "--version" })
+                    : "[]",
                 AuthenticationMode = plan.Secrets.Count == 0
                     ? AgentTuiAuthenticationMode.WrapperManaged
                     : AgentTuiAuthenticationMode.ManagedEnvironment,

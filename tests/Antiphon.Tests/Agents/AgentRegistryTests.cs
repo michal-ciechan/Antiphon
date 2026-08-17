@@ -126,6 +126,30 @@ public class AgentRegistryTests
     }
 
     [Test]
+    public void Resolve_disables_grok_telemetry_by_default()
+    {
+        var registry = BuildRegistry(new AgentRegistrySettings
+        {
+            DefaultDefinition = "grok",
+            Definitions =
+            {
+                ["grok"] = new AgentDefinition
+                {
+                    Kind = "Grok",
+                    Exe = "grok.exe",
+                    ArgsTemplate = ["--always-approve", "--no-alt-screen"]
+                }
+            }
+        });
+
+        var spec = registry.Resolve("grok", new AgentLaunchOptions());
+
+        spec.Kind.ShouldBe(AgentKind.Grok);
+        spec.Env["GROK_TELEMETRY_ENABLED"].ShouldBe("0");
+        spec.Env["GROK_FEEDBACK_ENABLED"].ShouldBe("0");
+    }
+
+    [Test]
     public void Resolve_lets_config_override_the_auto_updater_default()
     {
         var registry = BuildRegistry(WithClaudeAndRaw());

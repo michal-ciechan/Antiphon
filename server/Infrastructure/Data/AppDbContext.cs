@@ -581,7 +581,7 @@ public class AppDbContext : DbContext
             entity.ToTable("AgentTuiProfiles", table =>
                 table.HasCheckConstraint(
                     "CK_AgentTuiProfiles_Kind_Valid",
-                    "\"Kind\" IN (0, 1, 2, 3)"));
+                    "\"Kind\" IN (0, 1, 2, 3, 4)"));
             entity.HasKey(p => p.Id);
             entity.Property(p => p.Id).ValueGeneratedNever();
             entity.Property(p => p.DisplayName).IsRequired().HasMaxLength(200);

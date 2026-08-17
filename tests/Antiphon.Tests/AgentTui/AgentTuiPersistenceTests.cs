@@ -24,6 +24,7 @@ public class AgentTuiPersistenceTests
         AgentKind.ClaudeCode.ShouldBe((AgentKind)1);
         AgentKind.Codex.ShouldBe((AgentKind)2);
         AgentKind.OpenCode.ShouldBe((AgentKind)3);
+        AgentKind.Grok.ShouldBe((AgentKind)4);
 
         AgentTuiAuthenticationMode.WrapperManaged.ShouldBe((AgentTuiAuthenticationMode)0);
         AgentTuiAuthenticationMode.ManagedEnvironment.ShouldBe((AgentTuiAuthenticationMode)1);

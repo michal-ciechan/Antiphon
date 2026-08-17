@@ -20,4 +20,11 @@ public static class ModelLevelAliases
         AgentModelLevel.Low => "haiku",
         _ => "opus",
     };
+
+    public static string ForGrok(AgentModelLevel level) => level switch
+    {
+        AgentModelLevel.Frontier or AgentModelLevel.High => "grok-4.6",
+        AgentModelLevel.Medium or AgentModelLevel.Low => "grok-4.5",
+        _ => "grok-4.6",
+    };
 }

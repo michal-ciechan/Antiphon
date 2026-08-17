@@ -304,6 +304,70 @@ public class AgentSessionServiceIntegrationTests
     }
 
     [Test]
+    public async Task Grok_start_uses_antiphon_session_id_as_grok_session_id()
+    {
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-grok-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var eventBus = new MockEventBus();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "GROK_READY" };
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                eventBus,
+                provider,
+                adapter,
+                worktreePath,
+                new AgentSessionSettings
+                {
+                    FirstDeltaTimeoutMs = 1_000,
+                    KillGraceMs = 100,
+                    SignalRMaxChunkChars = 16 * 1024,
+                    ReplayBufferMaxChars = 128 * 1024,
+                    SessionLogPath = Path.Combine(tempRoot, "session-logs")
+                });
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "fake",
+                AgentKind.Grok,
+                "start grok",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "fake",
+                AgentKind.Grok,
+                "fake",
+                ["--always-approve", "--no-alt-screen"],
+                new Dictionary<string, string>(),
+                repoPath,
+                120,
+                30);
+
+            var result = await service.StartAsync(request, spec, CancellationToken.None);
+
+            adapter.StartedArgs.ShouldContain("--session-id");
+            adapter.StartedArgs.ShouldContain(result.SessionId.ToString("D"));
+            adapter.StartedArgs.ShouldContain("--always-approve");
+            adapter.StartedArgs.ShouldNotContain("--resume");
+
+            await service.KillAsync(result.SessionId, CancellationToken.None);
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Claude_resume_starts_existing_session_with_resume_argument()
     {
         await using var db = CreateContext();

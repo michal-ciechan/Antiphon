@@ -278,6 +278,7 @@ public sealed class AgentTuiLaunchResolver
         }
 
         ApplyClaudeEnvironmentDefaults(profile.Kind, environment);
+        ApplyGrokEnvironmentDefaults(profile.Kind, environment);
 
         var cwd = string.IsNullOrWhiteSpace(options.Cwd)
             ? string.IsNullOrWhiteSpace(revision.WorkingDirectory)
@@ -384,10 +385,22 @@ public sealed class AgentTuiLaunchResolver
         }
     }
 
+    private static void ApplyGrokEnvironmentDefaults(
+        AgentKind kind,
+        IDictionary<string, string> environment)
+    {
+        if (kind != AgentKind.Grok)
+            return;
+        if (!environment.ContainsKey("GROK_TELEMETRY_ENABLED"))
+            environment["GROK_TELEMETRY_ENABLED"] = "0";
+        if (!environment.ContainsKey("GROK_FEEDBACK_ENABLED"))
+            environment["GROK_FEEDBACK_ENABLED"] = "0";
+    }
+
     private static AgentTuiLaunchActivityMode ActivityModeFor(AgentKind kind) => kind switch
     {
         AgentKind.ClaudeCode => AgentTuiLaunchActivityMode.Structured,
-        AgentKind.Codex or AgentKind.OpenCode or AgentKind.Raw => AgentTuiLaunchActivityMode.QuietTime,
+        AgentKind.Codex or AgentKind.OpenCode or AgentKind.Grok or AgentKind.Raw => AgentTuiLaunchActivityMode.QuietTime,
         _ => AgentTuiLaunchActivityMode.Unknown
     };
 

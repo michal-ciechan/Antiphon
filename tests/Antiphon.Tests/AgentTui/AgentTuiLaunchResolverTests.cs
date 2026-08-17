@@ -67,6 +67,33 @@ public sealed class AgentTuiLaunchResolverTests
     }
 
     [Test]
+    public async Task Grok_resolve_appends_model_and_uses_quiet_time_activity()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, revision) = await SeedProfileAsync(
+            provider,
+            AgentKind.Grok,
+            models: ["grok-4.6", "grok-4.5"]);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Grok-Agent",
+            TuiProfileId = profile.Id,
+            ModelId = "grok-4.6"
+        };
+
+        var resolved = await ResolveAsync(provider, agent);
+
+        resolved.Spec.Kind.ShouldBe(AgentKind.Grok);
+        resolved.Spec.Args.TakeLast(2).ShouldBe(new[] { "--model", "grok-4.6" });
+        resolved.EffectiveModelId.ShouldBe("grok-4.6");
+        resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
+        resolved.Spec.Env["GROK_TELEMETRY_ENABLED"].ShouldBe("0");
+        resolved.ProfileRevisionId.ShouldBe(revision.Id);
+    }
+
+    [Test]
     public async Task Resolve_injects_managed_secrets_and_keeps_wrapper_profiles_secret_free()
     {
         var protector = new RecordingLaunchSecretProtector();

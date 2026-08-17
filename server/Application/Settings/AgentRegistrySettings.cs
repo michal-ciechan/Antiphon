@@ -32,6 +32,11 @@ public class AgentRegistrySettings
     public int OpenCodeReadyMaxWaitMs { get; set; } = 60000;
     public int OpenCodeDoneQuietPeriodMs { get; set; } = 3000;
     public int OpenCodeDoneMaxWaitMs { get; set; } = 300000;
+    public int GrokReadyQuietPeriodMs { get; set; } = 1000;
+    public int GrokReadyMaxWaitMs { get; set; } = 60000;
+    public int GrokReadyMinTotalWaitMs { get; set; } = 2000;
+    public int GrokDoneQuietPeriodMs { get; set; } = 3000;
+    public int GrokDoneMaxWaitMs { get; set; } = 300000;
 }
 
 public class AgentDefinition

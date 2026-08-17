@@ -792,6 +792,18 @@ public class AgentTuiProfileServiceTests
         catalog.Get(AgentKind.Codex).CuratedModels.Select(model => model.Identifier)
             .ShouldBe(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
+        var grok = catalog.Get(AgentKind.Grok, ["--always-approve", "--no-alt-screen"]);
+        grok.CuratedModels.Select(model => model.Identifier).ShouldBe(["grok-4.6", "grok-4.5"]);
+        Capability(grok, "modelArgument").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(grok, "modelDiscovery").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(grok, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        Capability(grok, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(grok, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+        Capability(grok, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(grok, "permissionBypass").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(catalog.Get(AgentKind.Grok, ["--no-alt-screen"]), "permissionBypass").State
+            .ShouldBe(AgentTuiCapabilityState.Unsupported);
+
         var openCode = catalog.Get(AgentKind.OpenCode, ["--auto", "--mini"]);
         openCode.CuratedModels.Select(model => model.Identifier).ShouldBe(["llmgateway/grok-4-5"]);
         Capability(openCode, "modelArgument").State.ShouldBe(AgentTuiCapabilityState.Supported);

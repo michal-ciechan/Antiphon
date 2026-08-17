@@ -12,7 +12,7 @@ export type AgentTuiValidationStatus =
   | 'Partial'
   | 'Failed'
   | 'TimedOut'
-export type AgentKind = 'Raw' | 'ClaudeCode' | 'Codex' | 'OpenCode'
+export type AgentKind = 'Raw' | 'ClaudeCode' | 'Codex' | 'OpenCode' | 'Grok'
 
 export interface AgentTuiModelDto {
   identifier: string

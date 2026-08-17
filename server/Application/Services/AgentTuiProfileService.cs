@@ -752,7 +752,7 @@ public sealed partial class AgentTuiProfileService
             "discovery",
             cancellationToken);
         var run = await CreateOperationRunAsync(snapshot, "discovery", cancellationToken);
-        if (snapshot.Kind != AgentKind.OpenCode)
+        if (!SupportsModelDiscovery(snapshot.Kind))
         {
             var cachedModels = MergeModels(snapshot.Kind, snapshot.Models);
             await CompleteOperationRunAsync(
@@ -790,7 +790,7 @@ public sealed partial class AgentTuiProfileService
             BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
             cancellationToken);
 
-        var parsed = ParseDiscoveredModels(result);
+        var parsed = ParseDiscoveredModels(snapshot.Kind, result);
         var runnerVersion = await LatestRunnerVersionAsync(snapshot, cancellationToken);
         if (parsed.IsComplete)
         {
@@ -932,13 +932,13 @@ public sealed partial class AgentTuiProfileService
             }
         }
 
-        if (snapshot.Kind == AgentKind.OpenCode)
+        if (SupportsModelDiscovery(snapshot.Kind))
         {
             var discoveryResult = await probe.RunAsync(
                 BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
                 cancellationToken);
             timedOut |= discoveryResult.TimedOut || discoveryResult.Cancelled;
-            var discovery = ParseDiscoveredModels(discoveryResult);
+            var discovery = ParseDiscoveredModels(snapshot.Kind, discoveryResult);
             stages.Add(Stage(
                 "discovery",
                 discovery.IsComplete
@@ -1275,7 +1275,10 @@ public sealed partial class AgentTuiProfileService
             authentication.SecretValues.ToArray(),
             stopAfter);
 
-    private static DiscoveryParseResult ParseDiscoveredModels(RunnerProcessResult result)
+    private static bool SupportsModelDiscovery(AgentKind kind) =>
+        kind is AgentKind.OpenCode or AgentKind.Grok;
+
+    private static DiscoveryParseResult ParseDiscoveredModels(AgentKind kind, RunnerProcessResult result)
     {
         if (!result.Started
             || result.ExitCode != 0
@@ -1289,6 +1292,20 @@ public sealed partial class AgentTuiProfileService
                 false,
                 [],
                 ProbeFailureMessage(result, "Model discovery failed; the previous catalogue was retained."));
+        }
+
+        if (kind == AgentKind.Grok)
+        {
+            var grokIdentifiers = GrokModelListParser.Parse(result.StandardOutput);
+            return grokIdentifiers.Count == 0
+                ? new DiscoveryParseResult(
+                    false,
+                    [],
+                    "Model discovery returned no usable identifiers; the previous catalogue was retained.")
+                : new DiscoveryParseResult(
+                    true,
+                    grokIdentifiers,
+                    $"Discovered {grokIdentifiers.Count} model identifiers.");
         }
 
         var identifiers = new List<string>();
@@ -1695,6 +1712,7 @@ public sealed partial class AgentTuiProfileService
             AgentKind.ClaudeCode => ("Claude Code", ClaudeRunnerVersionRegex().Match(line)),
             AgentKind.Codex => ("Codex", CodexRunnerVersionRegex().Match(line)),
             AgentKind.OpenCode => ("OpenCode", OpenCodeRunnerVersionRegex().Match(line)),
+            AgentKind.Grok => ("Grok", GrokRunnerVersionRegex().Match(line)),
             _ => (string.Empty, Match.Empty)
         };
         if (!match.Success)
@@ -1826,6 +1844,11 @@ public sealed partial class AgentTuiProfileService
         @"^(?:opencode(?:\s+version)?\s+v?)?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OpenCodeRunnerVersionRegex();
+
+    [GeneratedRegex(
+        @"^grok\s+v?(?<version>[0-9]+(?:\.[0-9]+){1,3})(?:\s|$)",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex GrokRunnerVersionRegex();
 
     private IQueryable<AgentTuiProfile> ProfileReadQuery() => _db.AgentTuiProfiles
         .AsNoTracking()

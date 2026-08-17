@@ -1,0 +1,178 @@
+using System.Text.RegularExpressions;
+using Antiphon.Agents.Pty;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
+
+public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
+{
+    private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);
+    private const string IdleTitleSignal = "\x1b]0;✳";
+
+    private readonly RunnerTerminalSession _terminal;
+    private readonly AgentRegistrySettings _settings;
+    private readonly DeliveryVerificationSettings _verification;
+    private readonly ILogger? _logger;
+    private long _promptStartSequence;
+    private string? _lastPrompt;
+    private bool _started;
+
+    public RunnerGrokAdapter(
+        ISessionRunnerClient client,
+        IOptions<AgentRegistrySettings> options,
+        IOptions<SupervisionSettings>? supervisionSettings = null,
+        ILogger? logger = null)
+    {
+        _terminal = new RunnerTerminalSession(client);
+        _settings = options.Value;
+        _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
+        _logger = logger;
+    }
+
+    public Task<int> Exited => _terminal.Exited;
+    public int? Pid => _terminal.Pid;
+    public AgentExitReason ExitReason => _terminal.ExitReason;
+    public string? AuditDirectory => null;
+    public event Action<string>? OnTextDelta
+    {
+        add { }
+        remove { }
+    }
+
+    public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
+    {
+        if (_started)
+            throw new InvalidOperationException("RunnerGrokAdapter already started.");
+        _started = true;
+        await _terminal.StartAsync(spec, ct);
+    }
+
+    public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>
+        await _terminal.KillAsync(ct);
+
+    public async Task SendPromptAsync(string prompt, CancellationToken ct)
+    {
+        EnsureStarted();
+        await _terminal.ClearLiveBufferAsync(ct);
+        _lastPrompt = prompt;
+        _promptStartSequence = await _terminal.GetLastSequenceAsync(ct);
+
+        if (!_verification.Enabled)
+        {
+            await _terminal.SendLineAsync(prompt, ct);
+            return;
+        }
+
+        try
+        {
+            await VerifiedPromptSubmitter.SubmitAsync(
+                prompt,
+                _terminal.SnapshotScreenAsync,
+                _terminal.GetLastSequenceAsync,
+                _terminal.WriteAsync,
+                new VerifiedSubmitOptions(
+                    TimeSpan.FromSeconds(_verification.EvidenceTimeoutSeconds),
+                    TimeSpan.FromMilliseconds(_verification.PollIntervalMs),
+                    TimeSpan.FromSeconds(_verification.PostSubmitAdvanceTimeoutSeconds)),
+                message => _logger?.LogWarning(
+                    "Session {SessionId} prompt delivery: {Message}", _terminal.SessionId, message),
+                ct);
+        }
+        catch (PromptDeliveryException ex)
+        {
+            _logger?.LogWarning(
+                "Session {SessionId} prompt delivery failed: {Message}", _terminal.SessionId, ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        EnsureStarted();
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await _terminal.GetLastSequenceAsync(ct) > _promptStartSequence)
+                return true;
+            await Task.Delay(25, ct);
+        }
+
+        return false;
+    }
+
+    public async Task SendInputAsync(string input, CancellationToken ct)
+    {
+        EnsureStarted();
+        await _terminal.WriteAsync(input, ct);
+    }
+
+    public Task ResizeAsync(int cols, int rows, CancellationToken ct)
+    {
+        EnsureStarted();
+        return _terminal.ResizeAsync(cols, rows, ct);
+    }
+
+    public async Task<bool> WaitForReadyAsync(CancellationToken ct)
+    {
+        EnsureStarted();
+        var quiet = await _terminal.WaitForQuietAsync(
+            TimeSpan.FromMilliseconds(_settings.GrokReadyQuietPeriodMs),
+            TimeSpan.FromMilliseconds(_settings.GrokReadyMaxWaitMs),
+            ct);
+        if (!quiet)
+            return false;
+
+        var remaining = TimeSpan.FromMilliseconds(_settings.GrokReadyMinTotalWaitMs)
+            - (DateTime.UtcNow - _terminal.StartedAt);
+        if (remaining > TimeSpan.Zero)
+        {
+            try { await Task.Delay(remaining, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+
+        return true;
+    }
+
+    public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
+    {
+        EnsureStarted();
+        var marked = await _terminal.WaitForOutputAsync(
+            text => text.Contains(IdleTitleSignal, StringComparison.Ordinal) || DonePattern.IsMatch(text),
+            TimeSpan.FromMilliseconds(_settings.GrokDoneQuietPeriodMs),
+            ct);
+        var done = marked || await _terminal.WaitForQuietAsync(
+            TimeSpan.FromMilliseconds(_settings.GrokDoneQuietPeriodMs),
+            TimeSpan.FromMilliseconds(_settings.GrokDoneMaxWaitMs),
+            ct);
+        var raw = await _terminal.SnapshotTextAsync(ct);
+        return new AgentTurnResult(
+            TurnCompleted: done,
+            ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
+            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
+            RawSnapshot: raw);
+    }
+
+    public string SnapshotRawOutput()
+    {
+        EnsureStarted();
+        return _terminal.SnapshotTextAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public string SnapshotRenderedScreen()
+    {
+        EnsureStarted();
+        return _terminal.SnapshotScreenAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private void EnsureStarted()
+    {
+        if (!_started)
+            throw new InvalidOperationException("RunnerGrokAdapter not started.");
+    }
+}

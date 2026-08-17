@@ -32,6 +32,8 @@
     <!-- Build the fake Claude (don't reference its assembly) so the end-to-end queue->PTY test can exec it. -->
     <ProjectReference Include="..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
                       ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <Target Name="CopyFakeClaude" AfterTargets="Build">
@@ -40,9 +42,13 @@
            Antiphon.Agents.Pty.Tests.csproj: an OutputPath=bin-fake/ build (needed because the
            daemons lock bin\) otherwise stages a stale exe or none, and the tests skip silently. -->
       <FakeClaudeOutput Include="..\..\src\Antiphon.FakeClaude\$(OutputPath)**\*" />
+      <FakeGrokOutput Include="..\..\src\Antiphon.FakeGrok\$(OutputPath)**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(FakeClaudeOutput)"
           DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FakeGrokOutput)"
+          DestinationFiles="@(FakeGrokOutput->'$(OutDir)fakegrok\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 

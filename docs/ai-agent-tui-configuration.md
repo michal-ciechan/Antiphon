@@ -1,6 +1,6 @@
 # AI Agent TUI Configuration — Operator Guide
 
-Configure terminal AI runners (Claude Code, Codex, OpenCode) through Antiphon instead of editing server files by hand.
+Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) through Antiphon instead of editing server files by hand.
 
 ## Concepts
 
@@ -36,6 +36,22 @@ On this machine, create **OpenCode Gateway** as wrapper-managed:
 Do **not** copy API keys or proxy values out of `ocg.ps1`.
 
 Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`; pick an exact identifier from the profile's discovery catalogue. On this local `ocg.ps1` wrapper, the runnable Grok 4.5 selection is the discovered `maven/grok-4.5` identifier. Do not rewrite a selected identifier to a wrapper default.
+
+## Local Grok Build TUI profile
+
+Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model id. Create **Grok** as wrapper-managed:
+
+| Field | Value |
+|---|---|
+| Runner type | Grok |
+| Executable | `grok.exe` (typically `%USERPROFILE%\.grok\bin\grok.exe`) |
+| Launch args | `--always-approve`, `--no-alt-screen` |
+| Version args | `--version` |
+| Discovery args | `models` |
+| Auth | WrapperManaged (login lives in `~/.grok/auth.json`) |
+| Model arg | `--model` |
+
+Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`; standing instructions go through `--rules`. Structured activity is quiet-time until Grok's ACP `updates.jsonl` is tailed — do not enable the Claude JSONL transcript tailer.
 
 ## Key custody
 
