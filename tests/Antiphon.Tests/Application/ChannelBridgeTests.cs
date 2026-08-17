@@ -63,7 +63,7 @@ public class ChannelBridgeTests
 
         h.Adapter.SentInput.ShouldContain("What's for dinner?");
         h.Adapter.SentInput.ShouldContain("Mike", customMessage: "the prompt must carry the author context");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "a reply correlation must be tracked");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "a reply correlation must be tracked");
     }
 
     [Test]
@@ -84,7 +84,7 @@ public class ChannelBridgeTests
         reply.ConversationId.ShouldBe(h.ChatId);
         reply.Kind.ShouldBe(ChannelReplyKind.Answer);
         reply.Text.ShouldBe("Pasta tonight — Ola already started the sauce.");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
     // Live failure 2026-07-24 (Antiphon-Family, Ola's Apple Music question): Claude wrote the
@@ -105,7 +105,7 @@ public class ChannelBridgeTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.ShouldBeEmpty();
-        h.Dispatcher.PendingCount(h.SessionId)
+        (await h.Dispatcher.PendingCountAsync(h.SessionId))
             .ShouldBe(1, "a text-less TurnEnd must leave the correlation pending, not consume it");
 
         // The reply text lands after the stop marker; its arrival re-triggers dispatch.
@@ -114,7 +114,7 @@ public class ChannelBridgeTests
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text
             .ShouldBe("Turn off the car's Bluetooth autoplay setting.");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
     // Live failure 2026-07-29 (AZ Care, first message to the freshly-bound agent): the turn had
@@ -138,7 +138,7 @@ public class ChannelBridgeTests
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text
             .ShouldBe("I don't see Ola's question — checking the message bus.");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0, "the interim dispatch consumed the correlation");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0, "the interim dispatch consumed the correlation");
 
         // The real answer lands after dispatch already consumed the correlation; its arrival
         // re-triggers dispatch, which must deliver it as a follow-up to the same conversation.
@@ -205,7 +205,7 @@ public class ChannelBridgeTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.ShouldBeEmpty();
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "the channel's correlation must survive for ITS turn");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "the channel's correlation must survive for ITS turn");
     }
 
     [Test]
@@ -219,7 +219,7 @@ public class ChannelBridgeTests
         await h.Bridge.HandleInboundAsync(msg, CancellationToken.None); // Kafka at-least-once redelivery
 
         h.Adapter.Inputs.Count(i => i.Contains("ping")).ShouldBe(1);
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1);
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
     }
 
     [Test]
@@ -260,7 +260,7 @@ public class ChannelBridgeTests
         body.ShouldContain("[Telegram \"Family\" — Mike ");
         body.ShouldContain("] line one\nline two\nline three");
         body.Split("[Telegram").Length.ShouldBe(2, "exactly ONE envelope header for the merged flush");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "one correlation per flush, not per message");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "one correlation per flush, not per message");
     }
 
     // PR 8: channel-routed messages carry the batching metadata (origin + conversation key) and
@@ -449,7 +449,7 @@ public class ChannelBridgeTests
         var prompt = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
         prompt.ShouldContain("[photo attached: ");
         prompt.ShouldContain("utr.jpg");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(1, "the photo message owes a reply like any other");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1, "the photo message owes a reply like any other");
 
         var path = prompt.Split("[photo attached: ")[1].Split(']')[0];
         File.Exists(path).ShouldBeTrue("the bytes must be on disk for the agent to Read");
@@ -510,7 +510,7 @@ public class ChannelBridgeTests
         await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
 
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
     [Test]
@@ -632,7 +632,6 @@ public class ChannelBridgeTests
         var dispatcher = provider.GetRequiredService<ChannelReplyDispatcher>();
         var bridge = new ChannelBridgeService(
             messaging,
-            dispatcher,
             provider.GetRequiredService<SessionMessageQueueService>(),
             provider.GetRequiredService<ChannelInboundDebouncer>(),
             eventBus,

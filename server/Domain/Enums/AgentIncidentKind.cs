@@ -143,4 +143,20 @@ public enum AgentIncidentKind
     /// carries the FailureReason that was wrong so the cause is on the record.
     /// </summary>
     SessionReAdopted = 20,
+
+    /// <summary>
+    /// A reply an agent owed an external chat was never published — the correlation was abandoned
+    /// unanswered (its TTL expired with no matching turn) or could not be routed to a conversation.
+    /// A human asked a question and got silence while the agent believes it answered.
+    ///
+    /// Always Critical: a channel correlation exists only because a real person is waiting on it,
+    /// and this is the incident that stops the loss being invisible. Live miss 2026-08-17
+    /// (CARD-0067): the reply routes lived only in process memory, a restart at 09:05:01Z wiped
+    /// four of them mid-conversation, and the Family agent emitted a 42-person guest list twice
+    /// into nothing. <c>OnTurnEndAsync</c> returned SILENTLY on the resulting miss, so no log line,
+    /// no incident and no surface anywhere recorded 47 minutes of silence. The correlation is now
+    /// durable (<see cref="Entities.SessionQueuedMessage.ChannelReplySettledAt"/>), and every
+    /// channel correlation now ends in exactly one of two states: a published reply, or this.
+    /// </summary>
+    ChannelReplyLost = 21,
 }

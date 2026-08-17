@@ -69,15 +69,12 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
         await h.MarkWorkingAsync();
 
-        // Two tracked channel messages coalesce into one turn; the one reply settles both.
+        // Two channel messages coalesce into one turn; the one reply settles both. Enqueuing IS the
+        // correlation now (CARD-0067) — there is no second Track() call to make.
         var prompt1 = "[Telegram \"Family\" — Mike 10:00] where are my keys";
         var prompt2 = "[Telegram \"Family\" — Mike 10:00] also what's for dinner";
         foreach (var p in new[] { prompt1, prompt2 })
-        {
-            h.Dispatcher.Track(h.SessionId, new ChannelReplyDispatcher.PendingChannelReply(
-                Guid.NewGuid(), "telegram", "-100777", "-100777", p, DateTime.UtcNow));
             await EnqueueChannelAsync(h, p);
-        }
 
         await h.InsertTranscriptEntryAsync(Antiphon.SessionRunner.Contracts.TranscriptKinds.TurnEnd, stopReason: "end_turn");
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
@@ -89,7 +86,7 @@ public class ChannelBatchingTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe("-100777");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0, "both correlations settled by the one reply");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0, "both correlations settled by the one reply");
     }
 
     [Test]
@@ -184,14 +181,13 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
 
         var prompt = "[Telegram \"Family\" — Mike 10:00] system note ack test";
-        h.Dispatcher.Track(h.SessionId, new ChannelReplyDispatcher.PendingChannelReply(
-            Guid.NewGuid(), "telegram", "-100777", "-100777", prompt, DateTime.UtcNow));
+        await h.SeedChannelCorrelationAsync(prompt, ConvKey);
 
         await h.InsertTurnAsync(prompt, "NO_REPLY");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.ShouldBeEmpty("a whole-turn NO_REPLY is the silent-turn contract");
-        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0, "the correlation is consumed, not leaked");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0, "the correlation is consumed, not leaked");
     }
 
     [Test]
@@ -200,8 +196,7 @@ public class ChannelBatchingTests
         await using var h = await CreateHarnessAsync();
 
         var prompt = "[Telegram \"Family\" — Mike 10:01] tricky no-reply mention";
-        h.Dispatcher.Track(h.SessionId, new ChannelReplyDispatcher.PendingChannelReply(
-            Guid.NewGuid(), "telegram", "-100777", "-100777", prompt, DateTime.UtcNow));
+        await h.SeedChannelCorrelationAsync(prompt, ConvKey);
 
         await h.InsertTurnAsync(prompt, "Sure — I'll reply NO_REPLY when there's nothing to say.");
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);

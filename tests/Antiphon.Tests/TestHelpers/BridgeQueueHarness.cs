@@ -296,6 +296,41 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         return id;
     }
 
+    /// <summary>
+    /// A channel-origin message already DELIVERED to the agent and still owed a reply — the durable
+    /// correlation that replaced <c>ChannelReplyDispatcher.Track()</c> (CARD-0067). Use this when the
+    /// test is about the reply half and should not also exercise the typing half.
+    /// <paramref name="sentAtUtc"/> backdates the correlation so the TTL sweep can be tested on a
+    /// real clock (the harness's TimeProvider also drives the queue's delivery delays, so a fake one
+    /// would hang them).
+    /// </summary>
+    public async Task<Guid> SeedChannelCorrelationAsync(
+        string body, string conversationKey, DateTime? sentAtUtc = null, Guid? sessionId = null)
+    {
+        var sid = sessionId ?? SessionId;
+        await using var db = CreateContext();
+        var seq = ((await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sid)
+            .MaxAsync(m => (long?)m.Sequence)) ?? 0) + 1;
+        var sent = sentAtUtc ?? DateTime.UtcNow;
+        var id = Guid.NewGuid();
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = id,
+            AgentSessionId = sid,
+            Body = body,
+            Status = QueuedMessageStatus.Sent,
+            Sequence = seq,
+            Origin = QueuedMessageOrigin.Channel,
+            ConversationKey = conversationKey,
+            CreatedAt = sent,
+            SentAt = sent,
+            DeliveryAttempts = 1,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     /// <summary>The transcript sequence a delivery starting now would use as its confirmation floor.</summary>
     public async Task<long> CurrentTranscriptMaxSequenceAsync(Guid? sessionId = null)
     {
@@ -306,15 +341,21 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             .MaxAsync(t => (long?)t.Sequence)) ?? 0;
     }
 
-    /// <summary>Binds a chat channel to the harness agent — the Critical-escalation condition.</summary>
-    public async Task BindChannelAsync()
+    /// <summary>
+    /// Binds a chat channel to the harness agent — the Critical-escalation condition. Returns the
+    /// channel's external id, which is the conversation id a <c>ConversationKey</c> must carry for a
+    /// reply to resolve its addressing handle from the catalog.
+    /// </summary>
+    public async Task<string> BindChannelAsync(string? externalId = null)
     {
+        externalId ??= $"bridge-queue-{Guid.NewGuid():N}";
         await using var db = CreateContext();
         db.ChatChannels.Add(new ChatChannel
         {
             Id = Guid.NewGuid(),
             Provider = "telegram",
-            ExternalId = $"bridge-queue-{Guid.NewGuid():N}",
+            ExternalId = externalId,
+            ReplyHandle = externalId,
             Kind = ChatChannelKind.Direct,
             Title = "Bound channel (test)",
             AgentId = AgentId,
@@ -323,6 +364,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             UpdatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
+        return externalId;
     }
 
     public async ValueTask DisposeAsync()
