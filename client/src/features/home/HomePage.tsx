@@ -13,7 +13,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core'
-import { useDisclosure, useLocalStorage } from '@mantine/hooks'
+import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks'
 import { useMemo } from 'react'
 import {
   TbAlertHexagon,
@@ -33,6 +33,7 @@ import { DelegateModal } from '../delegations/DelegateModal'
 import { FilesReviewPanel, type FilesPanelHeights } from '../agents/FilesReviewPanel'
 import { SessionTranscriptPanel } from '../agents/SessionTranscriptPanel'
 import { AgentRail } from './AgentRail'
+import { MobileHomePage } from './MobileHomePage'
 import { ProjectTasksPanel } from './ProjectTasksPanel'
 import {
   buildProjects,
@@ -53,11 +54,21 @@ const PAGE_HEIGHT = 'calc(100dvh - 56px - 2 * var(--mantine-spacing-md))'
 const FILES_HEIGHTS: FilesPanelHeights = { viewer: 'max(240px, calc(100vh - 275px))' }
 
 /**
+ * Below 48em (the app-wide mobile threshold — BoardPage, SessionTerminal) the home surface is the
+ * three bands, not the desktop rail squeezed narrow (spec 2026-08-17 §D3). The branch lives in a
+ * wrapper rather than an early return so neither page's hooks are ever conditionally skipped.
+ */
+export function HomePage() {
+  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
+  return isMobile ? <MobileHomePage /> : <DesktopHomePage />
+}
+
+/**
  * The home workspace (feature 008): one screen shaped like the actual working loop — pick a
  * project (a working directory) now and again, watch its agents, live in the files view (rendered
  * docs first), talk to the selected agent, and queue work for the pool without leaving the page.
  */
-export function HomePage() {
+function DesktopHomePage() {
   const agents = useAgentList()
   const tasks = useAgentTasks()
   const [delegateOpen, delegate] = useDisclosure(false)
