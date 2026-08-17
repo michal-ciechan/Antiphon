@@ -40,6 +40,7 @@ public sealed class CheckInterpreterProvisioner
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CheckInterpreterProvisioner> _logger;
     private readonly AgentControlService? _control;
+    private readonly AgentWorkspaceProvisioner? _workspace;
 
     public CheckInterpreterProvisioner(
         AppDbContext db,
@@ -48,13 +49,17 @@ public sealed class CheckInterpreterProvisioner
         ILogger<CheckInterpreterProvisioner> logger,
         // Optional so a harness that wires no control service still provisions the row; without it
         // the first check simply waits for a supervision tick to bring the session up.
-        AgentControlService? control = null)
+        AgentControlService? control = null,
+        // Optional for the same reason. The floor also lands on every StartAsync, so a harness
+        // without one is not a specialist without a CLAUDE.md — only one that gets it later.
+        AgentWorkspaceProvisioner? workspace = null)
     {
         _db = db;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
         _control = control;
+        _workspace = workspace;
     }
 
     /// <summary>
@@ -102,6 +107,11 @@ public sealed class CheckInterpreterProvisioner
         _db.Agents.Add(agent);
         await _db.SaveChangesAsync(ct);
 
+        // The CLAUDE.md floor (CARD-0059), after PrepareWorkspace has armed the hook so the generated
+        // text knows this agent has no tools. The specialist is the agent the floor was designed
+        // against: its directory is a bare scratch path with nothing in it to read.
+        _workspace?.Provision(agent);
+
         _logger.LogInformation(
             "Provisioned the check interpreter '{Slug}' ({AgentId}) in {Directory}",
             slug, agent.Id, directory);
@@ -138,6 +148,10 @@ public sealed class CheckInterpreterProvisioner
         // when they are already right — this is how a specialist whose workspace got cleaned up
         // (a temp sweep, a manual delete) heals instead of quietly regaining tool access.
         PrepareWorkspace(agent.WorkingDirectory);
+        // Same self-healing reasoning as the hook, one file over: a swept scratch directory gets its
+        // floor back, and the hand-written stopgap that predates this service is adopted under the
+        // marker the first time this runs against it.
+        _workspace?.Provision(agent);
 
         if (string.Equals(agent.SystemPromptAppend, CheckInterpretation.Contract, StringComparison.Ordinal))
             return;

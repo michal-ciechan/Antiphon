@@ -248,6 +248,10 @@ try
     builder.Services.AddScoped<CardWorkflowRunFactory>();
     builder.Services.AddScoped<AgentService>();
     builder.Services.AddScoped<AgentControlService>();
+    // The CLAUDE.md floor every agent's working directory carries (CARD-0059). Singleton: it holds no
+    // state, touches no database and its only dependency is a logger. Idempotent and never-clobbering,
+    // so calling it on every create and every launch costs a comparison when nothing has changed.
+    builder.Services.AddSingleton<AgentWorkspaceProvisioner>();
     builder.Services.AddScoped<AgentDraftService>();
     builder.Services.AddScoped<CardReviewService>();
     builder.Services.AddSingleton<MentionScanner>();

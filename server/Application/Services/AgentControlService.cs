@@ -34,6 +34,7 @@ public sealed class AgentControlService
     private readonly TimeProvider _timeProvider;
     private readonly DelegationSettings _delegationSettings;
     private readonly ILogger<AgentControlService> _logger;
+    private readonly AgentWorkspaceProvisioner? _workspace;
 
     public AgentControlService(
         AppDbContext db,
@@ -46,7 +47,10 @@ public sealed class AgentControlService
         TimeProvider timeProvider,
         IOptions<DelegationSettings> delegationSettings,
         ILogger<AgentControlService> logger,
-        AgentTuiLaunchResolver? launchResolver = null)
+        AgentTuiLaunchResolver? launchResolver = null,
+        // Optional for the same reason as everywhere else here: a harness that wires no provisioner
+        // still starts agents, it just starts them without the CLAUDE.md floor.
+        AgentWorkspaceProvisioner? workspace = null)
     {
         _db = db;
         _agentService = agentService;
@@ -59,6 +63,7 @@ public sealed class AgentControlService
         _timeProvider = timeProvider;
         _delegationSettings = delegationSettings.Value;
         _logger = logger;
+        _workspace = workspace;
     }
 
     /// <summary>
@@ -80,6 +85,12 @@ public sealed class AgentControlService
         // Already running — leave the existing process (and its remote-control state) untouched.
         if (await HasLiveSessionAsync(agent, ct))
             return await _agentService.GetByIdAsync(agent.Id, ct);
+
+        // A launch is the reconcile point for the CLAUDE.md floor (CARD-0059): Claude reads the file
+        // from cwd at every process start, so writing it here means a floor improved in a PR reaches
+        // every agent at its next launch with nothing stored to drift. Deliberately BEFORE the card
+        // branch, so a card spawn gets it too. Never clobbers an unmarked file and never throws.
+        _workspace?.Provision(agent);
 
         var remoteControl = request.RemoteControl ?? agent.RemoteControlEnabled;
         var remoteControlName = remoteControl ? agent.Name : null;

@@ -31,6 +31,7 @@ public sealed class AgentService
     private readonly TimeProvider _timeProvider;
     private readonly IDirectoryWriter _directoryWriter;
     private readonly ILogger<AgentService> _logger;
+    private readonly AgentWorkspaceProvisioner? _workspace;
 
     public AgentService(
         AppDbContext db,
@@ -38,7 +39,10 @@ public sealed class AgentService
         IEventBus eventBus,
         TimeProvider timeProvider,
         IDirectoryWriter directoryWriter,
-        ILogger<AgentService> logger)
+        ILogger<AgentService> logger,
+        // Optional so the many harnesses that construct this service by hand keep compiling; without
+        // it an agent is simply created without its CLAUDE.md floor, which the next launch writes.
+        AgentWorkspaceProvisioner? workspace = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -46,6 +50,7 @@ public sealed class AgentService
         _timeProvider = timeProvider;
         _directoryWriter = directoryWriter;
         _logger = logger;
+        _workspace = workspace;
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -238,6 +243,11 @@ public sealed class AgentService
             {
                 throw ConflictFrom(CreateFailedMessage, ex);
             }
+
+            // The CLAUDE.md floor (CARD-0059), after the row exists so it can name the agent and its
+            // job. Never clobbers an unmarked file, so an agent created in a repository checkout gets
+            // nothing written — the repo's own CLAUDE.md already serves it.
+            _workspace?.Provision(agent);
 
             await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
