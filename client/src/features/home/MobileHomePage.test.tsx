@@ -108,6 +108,7 @@ function seed({
   attention = [] as AttentionItemDto[],
   tasks = [] as unknown[],
   cards = [] as unknown[],
+  plans = [] as unknown[],
 } = {}) {
   server.use(
     http.get('/api/attention', () =>
@@ -115,6 +116,14 @@ function seed({
         generatedAt: '2026-08-17T10:00:00Z',
         runnerConsulted: true,
         items: attention,
+      }),
+    ),
+    http.get('/api/plans', () =>
+      HttpResponse.json({
+        root: 'C:/src/Antiphon',
+        rootResolved: true,
+        generatedAt: '2026-08-17T10:00:00Z',
+        plans,
       }),
     ),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
@@ -317,6 +326,48 @@ describe('MobileHomePage', () => {
 
     const row = await screen.findByText('#71 guest list flow — done')
     expect(row.closest('a')).toHaveAttribute('href', '/boards/b1')
+  })
+
+  it('a plan that changed in the window appears in the band, linking to the reader', async () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    window.localStorage.setItem(AWAY_LAST_SEEN_KEY, minutesAgo(90))
+    seed({
+      plans: [
+        {
+          relativePath: 'docs/superpowers/specs/2026-08-17-mobile.md',
+          fileName: '2026-08-17-mobile.md',
+          kind: 'Spec',
+          title: 'Mobile thread',
+          date: '2026-08-17',
+          status: 'Proposed',
+          cards: ['CARD-0035'],
+          mentionedCards: [],
+          sizeBytes: 100,
+          modifiedAt: minutesAgo(15),
+        },
+        {
+          relativePath: 'docs/superpowers/specs/2026-08-01-old.md',
+          fileName: '2026-08-01-old.md',
+          kind: 'Spec',
+          title: 'Old plan',
+          date: '2026-08-01',
+          status: null,
+          cards: [],
+          mentionedCards: [],
+          sizeBytes: 100,
+          modifiedAt: minutesAgo(300),
+        },
+      ],
+    })
+    renderWithProviders(<MobileHomePage />)
+
+    const row = await screen.findByText('plan — #35 Mobile thread')
+    expect(row.closest('a')).toHaveAttribute(
+      'href',
+      `/plans?file=${encodeURIComponent('docs/superpowers/specs/2026-08-17-mobile.md')}`,
+    )
+    // A plan untouched since before the window stays out.
+    expect(screen.queryByText(/Old plan/)).not.toBeInTheDocument()
   })
 
   it('a first visit reads as the last 24h, says so, and stamps the visit for next time', async () => {

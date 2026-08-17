@@ -61,7 +61,13 @@ export function taskWorkLine(
   return { line, sub: `${watch} · ${formatCost(task.subtreeCostUsd)}` }
 }
 
-/** Where a tap goes: the task's drawer — the surface that explains the line. */
+/**
+ * Where a tap goes: the card's thread when the title carries a citation (spec §D3 — "Tap →
+ * thread"; the route M5 had to wait for), else the task's drawer. The `card-56` form, not `#56`:
+ * a bare `#` in a path is a URL fragment and never reaches the router.
+ */
 export function workLineTarget(task: AgentTaskSummaryDto): string {
+  const match = TITLE_CITATION.exec(task.title)
+  if (match) return `/thread/card-${Number(match[1])}`
   return `/orchestrator?tab=delegations&task=${task.id}`
 }

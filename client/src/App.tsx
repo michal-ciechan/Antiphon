@@ -23,6 +23,7 @@ import { AgentsPage } from './features/agents/AgentsPage'
 import { AgentFilesPage } from './features/agents/AgentFilesPage'
 import { ChannelsPage } from './features/channels/ChannelsPage'
 import { PlanReaderPage } from './features/plans/PlanReaderPage'
+import { CardThreadPage } from './features/thread/CardThreadPage'
 
 const queryClient = new QueryClient()
 
@@ -131,6 +132,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Plans error">
                       <SuspenseBoundary variant="page">
                         <PlanReaderPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="thread/:cardId"
+                  element={
+                    <ErrorBoundary fallbackTitle="Thread error">
+                      <SuspenseBoundary variant="page">
+                        <CardThreadPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }

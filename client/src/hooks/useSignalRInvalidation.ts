@@ -67,7 +67,13 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   },
   {
     event: 'CardChanged',
-    getKeys: (p) => [['boards'], ...(p.boardId ? [['boards', p.boardId]] : [])],
+    // The thread projection is card-scoped but keyed by whichever identifier form the caller
+    // used, so the prefix is the only safe invalidation target.
+    getKeys: (p) => [
+      ['boards'],
+      ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['cards', 'thread'],
+    ],
   },
   {
     event: 'RunAttemptChanged',
@@ -126,6 +132,9 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       // CARD-0035 §D5 rules out a new SignalR event for the attention projection: every condition
       // it computes is derived from state that already broadcasts, so it rides these.
       ['attention'],
+      // The thread's task rows are correlated by citation, not by key, so no payload field can
+      // narrow this — any task change may belong to any open thread.
+      ['cards', 'thread'],
     ],
   },
   {

@@ -1,5 +1,6 @@
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
 import type { CardDto } from '../../api/boards'
+import type { PlanSummaryDto } from '../../api/plans'
 
 /**
  * "While you were away" — the pure half of band 3 on the mobile home (spec
@@ -36,6 +37,13 @@ export interface AwayDelta {
   /** Cards whose state moved inside the window, newest first. */
   cardChanges: CardChangeEntry[]
   /**
+   * Plans whose file changed inside the window, newest first (spec §D3: "plans that appeared").
+   * `modifiedAt` is the only clock a git file carries, so an edited old plan appears too — that is
+   * a feature: a plan that changed while you were away is exactly the kind of news this band is
+   * for.
+   */
+  newPlans: PlanSummaryDto[]
+  /**
    * Spend on the work that settled in the window — each task's OWN cost, not its subtree, so a
    * parent and child that both settle are never counted twice. Deliberately not "all spend in the
    * window": per-window spend on still-running work is not derivable from cumulative task rows,
@@ -49,6 +57,9 @@ export function computeAwayDelta(
   cards: CardDto[],
   lastSeenUtc: string | null,
   nowUtcMs: number,
+  // Trailing and defaulted so the plans list stays optional data the caller already holds — the
+  // module remains a pure delta computation (its contract), never a fetcher.
+  plans: PlanSummaryDto[] = [],
 ): AwayDelta {
   const firstVisit = lastSeenUtc === null
   const sinceMs = firstVisit
@@ -79,11 +90,16 @@ export function computeAwayDelta(
 
   const settledSpendUsd = settledTasks.reduce((sum, task) => sum + task.costUsd, 0)
 
+  const newPlans = plans
+    .filter((plan) => inWindow(plan.modifiedAt))
+    .sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))
+
   return {
     sinceUtc: new Date(sinceMs).toISOString(),
     firstVisit,
     settledTasks,
     cardChanges,
+    newPlans,
     settledSpendUsd,
   }
 }

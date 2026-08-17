@@ -1,7 +1,8 @@
 import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbHistory, TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbX } from 'react-icons/tb'
+import { TbHistory, TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useSpawnCard } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
@@ -11,6 +12,7 @@ import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { SessionTabs } from './SessionTabs'
+import { CardThreadPanel } from '../thread/CardThreadPanel'
 import './CardModal.css'
 
 interface CardModalProps {
@@ -25,6 +27,9 @@ interface CardModalProps {
 export function CardModal({ boardId, card, columns = [], opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  // On a phone the thread IS the card's landing view (spec §4): what happened, what's stuck, and
+  // the one-tap verbs — the terminal is the desktop's default, not the thumb's.
+  const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const spawnCard = useSpawnCard(boardId)
   const hasActiveSession = useMemo(
     () => card?.sessions.some((session) =>
@@ -144,10 +149,13 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
 
         <Box className="card-page__body">
           <Box className="card-page__workspace">
-            <Tabs defaultValue="sessions" keepMounted={false} className="card-page__tabs">
+            <Tabs defaultValue={isMobile ? 'thread' : 'sessions'} keepMounted={false} className="card-page__tabs">
               <Tabs.List className="card-page__tabsList">
                 <Tabs.Tab value="sessions" leftSection={<TbTerminal2 size={14} />}>
                   Sessions
+                </Tabs.Tab>
+                <Tabs.Tab value="thread" leftSection={<TbTimeline size={14} />}>
+                  Thread
                 </Tabs.Tab>
                 {showDiffReview && (
                   <Tabs.Tab value="diff">
@@ -170,6 +178,14 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                 <Box className="card-page__panelInner">
                   <SessionTabs boardId={boardId} sessions={card.sessions} compact fill />
                 </Box>
+              </Tabs.Panel>
+
+              {/* Lazy like History: `keepMounted={false}` means the thread projection is not
+                  fetched until the tab is opened (or is the mobile default). */}
+              <Tabs.Panel value="thread" className="card-page__panel">
+                <ScrollArea h="100%" type="auto" offsetScrollbars>
+                  <CardThreadPanel identifier={card.identifier} boardId={boardId} columns={columns} />
+                </ScrollArea>
               </Tabs.Panel>
 
               {showDiffReview && (

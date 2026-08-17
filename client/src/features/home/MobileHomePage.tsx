@@ -23,6 +23,7 @@ import {
 import { attentionKeys, useAttention, type AttentionItemDto } from '../../api/attention'
 import { apiGet, getApiErrorMessage } from '../../api/client'
 import { useAllBoardDetails, useBoards } from '../../api/boards'
+import { usePlanCatalog } from '../../api/plans'
 import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { BlockedReplyRow } from '../attention/BlockedReplyRow'
@@ -93,9 +94,18 @@ export function MobileHomePage() {
     [boardDetails.data],
   )
 
+  // "Plans that appeared" (spec §D3) — the delta computation stays pure; the catalog is just one
+  // more list the caller already holds, and an unresolved root contributes nothing rather than
+  // failing the band.
+  const planCatalog = usePlanCatalog(null)
+  const plans = useMemo(
+    () => (planCatalog.data?.rootResolved ? planCatalog.data.plans : []),
+    [planCatalog.data],
+  )
+
   const delta = useMemo(
-    () => computeAwayDelta(tasks.data ?? [], cards, lastSeen, nowMs),
-    [tasks.data, cards, lastSeen, nowMs],
+    () => computeAwayDelta(tasks.data ?? [], cards, lastSeen, nowMs, plans),
+    [tasks.data, cards, lastSeen, nowMs, plans],
   )
 
   if (attention.isLoading || tasks.isLoading) {
@@ -323,7 +333,8 @@ function AwayBand({ delta }: { delta: AwayDelta }) {
   const heading = delta.firstVisit
     ? 'While you were away · last 24h'
     : `While you were away · since ${formatClockTime(delta.sinceUtc)}`
-  const isEmpty = shownTasks.length === 0 && delta.cardChanges.length === 0
+  const isEmpty =
+    shownTasks.length === 0 && delta.cardChanges.length === 0 && delta.newPlans.length === 0
 
   return (
     <>
@@ -366,6 +377,19 @@ function AwayBand({ delta }: { delta: AwayDelta }) {
                   change.change === 'done' ? 'done' : 'started'
                 }`}
                 sub={formatClockTime(change.atUtc)}
+              />
+            </Fragment>
+          ))}
+          {delta.newPlans.map((plan) => (
+            <Fragment key={plan.relativePath}>
+              <Divider />
+              <AwayRow
+                to={`/plans?file=${encodeURIComponent(plan.relativePath)}`}
+                label={plan.title}
+                line={`plan — ${
+                  plan.cards.length > 0 ? `${plan.cards.map(displayIdentifier).join(' ')} ` : ''
+                }${plan.title}`}
+                sub={`${formatClockTime(plan.modifiedAt)}${plan.status ? ` · ${plan.status}` : ''}`}
               />
             </Fragment>
           ))}

@@ -160,6 +160,27 @@ describe('computeAwayDelta', () => {
     ])
   })
 
+  it('plans whose file changed inside the window surface as newPlans, newest first', () => {
+    const plan = (relativePath: string, modifiedAt: string) => ({
+      relativePath,
+      fileName: relativePath,
+      kind: 'Spec' as const,
+      title: relativePath,
+      date: null,
+      status: null,
+      cards: [],
+      mentionedCards: [],
+      sizeBytes: 1,
+      modifiedAt,
+    })
+    const delta = computeAwayDelta([], [], LAST_SEEN, NOW, [
+      plan('older.md', '2026-08-17T10:00:00Z'),
+      plan('newer.md', '2026-08-17T11:00:00Z'),
+      plan('untouched.md', '2026-08-17T08:00:00Z'),
+    ])
+    expect(delta.newPlans.map((p) => p.relativePath)).toEqual(['newer.md', 'older.md'])
+  })
+
   it('sums the OWN cost of settled work — a parent and child both settling never double-count', () => {
     const delta = computeAwayDelta(
       [

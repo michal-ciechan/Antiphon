@@ -93,11 +93,16 @@ describe('citationHead', () => {
 })
 
 describe('WorkLine', () => {
-  it('renders as a link to the task drawer', () => {
+  it('renders as a link to the card thread when the title carries a citation', () => {
     const t = task({})
     renderWithProviders(<WorkLine task={t} />)
     const link = screen.getByRole('link', { name: `Open ${t.title}` })
     expect(link).toHaveAttribute('href', workLineTarget(t))
+    expect(workLineTarget(t)).toBe('/thread/card-56')
+  })
+
+  it('a title without a citation falls back to the task drawer', () => {
+    const t = task({ title: 'tighten the deploy doc' })
     expect(workLineTarget(t)).toBe(`/orchestrator?tab=delegations&task=${t.id}`)
   })
 })
