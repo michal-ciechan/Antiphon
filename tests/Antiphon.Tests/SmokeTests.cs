@@ -368,9 +368,15 @@ public class SmokeTests
                 concurrencyToken
             });
             moveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            // A move answers a MoveCardResult, not a bare card: what it DID, not only what the
+            // card looks like afterwards (CARD-0051).
             var movedJson = await moveResponse.Content.ReadFromJsonAsync<JsonElement>();
-            movedJson.GetProperty("id").GetGuid().ShouldBe(cardId);
-            movedJson.GetProperty("boardColumnId").GetGuid().ShouldBe(columnId);
+            var movedCard = movedJson.GetProperty("card");
+            movedCard.GetProperty("id").GetGuid().ShouldBe(cardId);
+            movedCard.GetProperty("boardColumnId").GetGuid().ShouldBe(columnId);
+            // Same column, so nothing was active to spawn on and nothing was suppressed either.
+            movedJson.GetProperty("spawnedSessionId").ValueKind.ShouldBe(JsonValueKind.Null);
+            movedJson.GetProperty("spawnSuppressed").GetBoolean().ShouldBeFalse();
         }
         finally
         {
