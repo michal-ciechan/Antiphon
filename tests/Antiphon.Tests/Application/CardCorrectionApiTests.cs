@@ -143,6 +143,32 @@ public class CardCorrectionApiTests
         history!.Select(r => r.Kind).ShouldBe([CardRevisionKind.Unarchive, CardRevisionKind.Archive]);
     }
 
+    // CARD-0051: PATCH /{id} answers a MoveCardResult, not a bare CardDto. An out-of-repo caller
+    // reading the old shape breaks here loudly rather than silently reading `card.status` as
+    // undefined — and the response is now the only place a scripted move learns it landed in an
+    // active column with nobody on it.
+    [Test]
+    public async Task A_move_over_http_answers_the_card_and_what_it_did_about_spawning()
+    {
+        var (board, card) = await SeedAsync("Api move board", "Filed, not started", string.Empty);
+        using var client = _factory.CreateClient();
+        var columns = await client.GetFromJsonAsync<List<BoardColumnDto>>(
+            $"/api/boards/{board.Id}/columns", Json);
+        var activeColumn = columns!.Single(c => c.StateKey == "in-progress");
+
+        var response = await client.PatchAsJsonAsync(
+            $"/api/cards/{card.Id}",
+            new MoveCardRequest(activeColumn.Id, card.ConcurrencyToken, "Belongs here; not starting it."));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = (await response.Content.ReadFromJsonAsync<MoveCardResult>(Json))!;
+        result.Card.Id.ShouldBe(card.Id);
+        result.Card.Status.ShouldBe(CardStatus.InProgress);
+        result.Card.OwnerSessionId.ShouldBeNull();
+        result.SpawnedSessionId.ShouldBeNull();
+        result.SpawnSuppressed.ShouldBeTrue();
+    }
+
     // The fields assert against the CONSTANTS, never against 300/20000/4000/200: an endpoint that
     // serves numbers of its own is a second source of truth, and the drift only shows up as a
     // caller pre-checking against one ceiling and being refused by another.

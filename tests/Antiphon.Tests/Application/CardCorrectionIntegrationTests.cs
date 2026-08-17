@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -155,7 +155,7 @@ public class CardCorrectionIntegrationTests
                 new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, verdict),
                 CancellationToken.None);
 
-            moved.TerminalReason.ShouldBe(verdict);
+            moved.Card.TerminalReason.ShouldBe(verdict);
             await using var verify = CreateContext();
             var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
             stored.TerminalReason.ShouldBe(verdict);
@@ -225,7 +225,7 @@ public class CardCorrectionIntegrationTests
                 new MoveCardRequest(reviewColumn.Id, card.ConcurrencyToken, "The work already existed; skipping ahead."),
                 CancellationToken.None);
 
-            moved.TerminalReason.ShouldBeNull();
+            moved.Card.TerminalReason.ShouldBeNull();
             await using var verify = CreateContext();
             var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
             revision.Kind.ShouldBe(CardRevisionKind.Move);
@@ -271,7 +271,7 @@ public class CardCorrectionIntegrationTests
                 new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Fixed as part of CARD-0041."),
                 CancellationToken.None);
 
-            moved.TerminalReason.ShouldBe("Fixed as part of CARD-0041.");
+            moved.Card.TerminalReason.ShouldBe("Fixed as part of CARD-0041.");
             await using var verify = CreateContext();
             var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == card.Id);
             revision.Kind.ShouldBe(CardRevisionKind.Move);
@@ -583,8 +583,8 @@ public class CardCorrectionIntegrationTests
                 new MoveCardRequest(reviewColumn.Id, first.ConcurrencyToken, "Ready to look at."),
                 CancellationToken.None);
             var third = await harness.CardService.UpdateContentAsync(
-                moved.Id,
-                new UpdateCardContentRequest(moved.ConcurrencyToken, "Second correction.", Title: "Third"),
+                moved.Card.Id,
+                new UpdateCardContentRequest(moved.Card.ConcurrencyToken, "Second correction.", Title: "Third"),
                 CancellationToken.None);
 
             third.Title.ShouldBe("Third");
@@ -632,9 +632,9 @@ public class CardCorrectionIntegrationTests
                 CancellationToken.None);
 
             var corrected = await harness.CardService.UpdateContentAsync(
-                closed.Id,
+                closed.Card.Id,
                 new UpdateCardContentRequest(
-                    closed.ConcurrencyToken,
+                    closed.Card.ConcurrencyToken,
                     "The diagnosis was disproven; the fix landed in f078dd2.",
                     Description: "Checkout-path dependent: the prompt echo wrapped under long worktree paths."),
                 CancellationToken.None);
@@ -991,7 +991,7 @@ public class CardCorrectionIntegrationTests
         }
     }
 
-    private static async Task<MoveOutcome> CaptureAsync(Func<Task<CardDto>> move)
+    private static async Task<MoveOutcome> CaptureAsync(Func<Task<MoveCardResult>> move)
     {
         try
         {
@@ -1003,7 +1003,7 @@ public class CardCorrectionIntegrationTests
         }
     }
 
-    private sealed record MoveOutcome(CardDto? Card, Exception? Error);
+    private sealed record MoveOutcome(MoveCardResult? Move, Exception? Error);
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 

@@ -115,9 +115,11 @@ export interface CardRevisionDto {
 
 /**
  * LOCKSTEP PAIR with `CardService.MaxTitleLength` / `MaxDescriptionLength` / `MaxReasonLength`.
- * No endpoint serves these and adding one is not worth it for three integers — the counters here
- * are the UX and the server's 422 is the backstop, whose message the UI shows verbatim precisely
- * so that drift is visible rather than silent.
+ * `GET /api/cards/limits` now serves the same constants (CARD-0051) for callers that cannot
+ * hard-code them — scripts composing a correction from a file. The UI keeps its literals: a
+ * character counter that has to wait for a request is worse than one that cannot drift, and the
+ * server's 422 is still the backstop, whose message the UI shows verbatim precisely so that any
+ * drift is visible rather than silent.
  */
 export const CARD_LIMITS = {
   title: 300,
@@ -163,6 +165,24 @@ export interface MoveCardRequest {
    * cheap-to-read summary.
    */
   reason?: string | null
+  /**
+   * Whether a move into an ACTIVE column may start an agent session. Omitted means **false** —
+   * the server no longer spawns unasked, because a scripted move that only meant to file a card
+   * would start work and say nothing. The UI sends `true`: its move dialog asks first and warns
+   * that the target column spawns an agent, so the human has already opted in.
+   */
+  spawn?: boolean
+}
+
+/**
+ * What a move DID. `spawnedSessionId` is the session it started (previously computed and thrown
+ * away); `spawnSuppressed` is true when the target column was active and unowned and `spawn` was
+ * not set — the card moved into a column where work happens and no work started.
+ */
+export interface MoveCardResult {
+  card: CardDto
+  spawnedSessionId: string | null
+  spawnSuppressed: boolean
 }
 
 /**
@@ -364,7 +384,7 @@ export function useMoveCard(boardId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ cardId, request }: { cardId: string; request: MoveCardRequest }) =>
-      apiPatch<CardDto>(`/cards/${cardId}`, request),
+      apiPatch<MoveCardResult>(`/cards/${cardId}`, request),
     onMutate: async ({ cardId, request }) => {
       await queryClient.cancelQueries({ queryKey: boardKeys.detail(boardId) })
       const previous = queryClient.getQueryData<BoardDetailDto>(boardKeys.detail(boardId))

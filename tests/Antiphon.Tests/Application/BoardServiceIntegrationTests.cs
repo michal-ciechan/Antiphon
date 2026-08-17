@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -217,12 +217,15 @@ public class BoardServiceIntegrationTests
 
             var moved = await harness.CardService.MoveAsync(
                 card.Id,
-                new MoveCardRequest(activeColumn.Id, card.ConcurrencyToken),
+                new MoveCardRequest(activeColumn.Id, card.ConcurrencyToken, Spawn: true),
                 CancellationToken.None);
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
-            moved.Status.ShouldBe(CardStatus.InProgress);
-            moved.OwnerSessionId.ShouldNotBeNull();
+            moved.Card.Status.ShouldBe(CardStatus.InProgress);
+            moved.Card.OwnerSessionId.ShouldNotBeNull();
+            // The spawn is no longer a side effect the caller has to infer.
+            moved.SpawnedSessionId.ShouldBe(moved.Card.OwnerSessionId);
+            moved.SpawnSuppressed.ShouldBeFalse();
             adapter.Started.ShouldBeTrue();
             adapter.Killed.ShouldBeFalse();
             adapter.Disposed.ShouldBeFalse();
@@ -232,8 +235,8 @@ public class BoardServiceIntegrationTests
                 .SingleAsync(c => c.Id == card.Id);
             storedCard.Status.ShouldBe(CardStatus.Review);
             storedCard.BoardColumn.StateKey.ShouldBe("review");
-            storedCard.OwnerSessionId.ShouldBe(moved.OwnerSessionId);
-            var session = await verify.AgentSessions.SingleAsync(s => s.Id == moved.OwnerSessionId);
+            storedCard.OwnerSessionId.ShouldBe(moved.Card.OwnerSessionId);
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == moved.Card.OwnerSessionId);
             session.Status.ShouldBe(SessionStatus.Running);
             var attempt = await verify.RunAttempts.SingleAsync(a => a.AgentSessionId == session.Id);
             attempt.Phase.ShouldBe(RunPhase.Succeeded);
@@ -241,6 +244,56 @@ public class BoardServiceIntegrationTests
             harness.EventBus.PublishedEvents
                 .Count(e => e.Group is null && e.EventName == "CardChanged")
                 .ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // CARD-0051: the move used to spawn unconditionally and return a bare CardDto, so a scripted
+    // PATCH that only meant to file a card where it belongs started an agent and said nothing.
+    // Default-off, and the result says out loud that it moved into an active column with nobody
+    // on it — the alternative is discovering a dead session later, or nothing at all.
+    [Test]
+    public async Task Moving_into_an_active_column_without_asking_starts_nothing_and_reports_that()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "NEVER_RUNS" };
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "No Spawn Board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Filed where it belongs, not started"),
+                CancellationToken.None);
+            var activeColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+
+            var moved = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(activeColumn.Id, card.ConcurrencyToken, "Belongs here; not starting it yet."),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            moved.SpawnSuppressed.ShouldBeTrue();
+            moved.SpawnedSessionId.ShouldBeNull();
+            moved.Card.Status.ShouldBe(CardStatus.InProgress);
+            moved.Card.OwnerSessionId.ShouldBeNull();
+            adapter.Started.ShouldBeFalse();
+
+            await using var verify = CreateContext();
+            // Scoped to THIS card: the assembly shares one Postgres and other suites spawn freely.
+            (await verify.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
+            var storedCard = await verify.Cards.Include(c => c.BoardColumn).SingleAsync(c => c.Id == card.Id);
+            storedCard.BoardColumn.StateKey.ShouldBe("in-progress");
+            storedCard.OwnerSessionId.ShouldBeNull();
         }
         finally
         {
