@@ -291,7 +291,11 @@ describe('moving a card', () => {
       http.patch('/api/cards/card-2', async ({ request }) => {
         patchSpy(await request.json())
         await delay(50)
-        return HttpResponse.json({ ...board.columns[2].cards[0], boardColumnId: 'column-done', status: 'Done' })
+        return HttpResponse.json({
+          card: { ...board.columns[2].cards[0], boardColumnId: 'column-done', status: 'Done' },
+          spawnedSessionId: null,
+          spawnSuppressed: false,
+        })
       }),
     )
     const { queryClient } = renderBoardRoute('/boards/board-1?state=review')
@@ -305,10 +309,13 @@ describe('moving a card', () => {
     expect(optimistic?.columns[2].cards).toHaveLength(0)
     expect(optimistic?.columns[3].cards.map((item) => item.id)).toContain('card-2')
 
+    // spawn: true is what keeps the human UX bit-identical now that the server no longer spawns
+    // unasked - the dialog already warned that an active target starts an agent.
     await waitFor(() => expect(patchSpy).toHaveBeenCalledWith({
       boardColumnId: 'column-done',
       concurrencyToken: 'token-1',
       reason: 'fixed by CARD-0041',
+      spawn: true,
     }))
   })
 

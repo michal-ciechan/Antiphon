@@ -219,7 +219,16 @@ public sealed class CardService
     private static readonly Regex ForeignIdentifier =
         new(@"^[A-Za-z][A-Za-z0-9_]*-\d+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    public async Task<CardDto> MoveAsync(Guid id, MoveCardRequest request, CancellationToken ct)
+    /// <summary>
+    /// Moves a card, and starts an agent on it only if the caller asked for that.
+    /// </summary>
+    /// <remarks>
+    /// A move into an active, unowned column used to spawn unconditionally and discard the
+    /// <see cref="SpawnCardResult"/>, returning a bare <see cref="CardDto"/> — so a scripted move
+    /// could start an agent and the response said nothing at all. Now the spawn is opt-in and the
+    /// result reports both halves: which session started, or that one deliberately did not.
+    /// </remarks>
+    public async Task<MoveCardResult> MoveAsync(Guid id, MoveCardRequest request, CancellationToken ct)
     {
         ValidateMoveRequest(request);
 
@@ -253,13 +262,20 @@ public sealed class CardService
         if (targetColumn.IsTerminal && !wasTerminal && assignedAgentId is { } checkpointAgentId)
             await _reviewCheckpoints.CaptureAsync(checkpointAgentId, $"Card {card.Identifier} completed", ct);
 
+        Guid? spawnedSessionId = null;
+        var spawnSuppressed = false;
         if (targetColumn.IsActive && card.OwnerSessionId is null)
-            await SpawnAsync(card.Id, new SpawnCardRequest(), ct);
+        {
+            if (request.Spawn)
+                spawnedSessionId = (await SpawnAsync(card.Id, new SpawnCardRequest(), ct)).SessionId;
+            else
+                spawnSuppressed = true;
+        }
 
         if (queueRemoval is not null)
             await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
-        return await GetByIdAsync(card.Id, ct);
+        return new MoveCardResult(await GetByIdAsync(card.Id, ct), spawnedSessionId, spawnSuppressed);
     }
 
     /// <summary>

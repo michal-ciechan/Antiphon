@@ -108,8 +108,31 @@ public sealed record CreateCardRequest(
 /// (Until CARD-0019 there was no per-card history and a non-terminal move's reason was accepted
 /// and then dropped.)</para>
 /// </param>
+/// <param name="Spawn">
+/// Whether a move into an ACTIVE column may start an agent session on the card. Defaults to FALSE,
+/// which is a behaviour change: the move used to spawn unconditionally and say nothing about it,
+/// so a scripted PATCH that only meant to file a card where it belongs would start work and the
+/// caller would find out later, or never. The measured accidents were all scripted moves; the UI,
+/// which asks first and warns in the dialog, passes true.
+/// </param>
 public sealed record MoveCardRequest(
-    Guid BoardColumnId, Guid ConcurrencyToken, string? Reason = null);
+    Guid BoardColumnId, Guid ConcurrencyToken, string? Reason = null, bool Spawn = false);
+
+/// <summary>
+/// What a move DID, not just what the card looks like afterwards.
+/// </summary>
+/// <param name="SpawnedSessionId">
+/// The session this move started, or null. Previously <c>MoveAsync</c> called <c>SpawnAsync</c> and
+/// threw the <c>SpawnCardResult</c> away, so the one caller who most needed to know a session had
+/// been launched — a script — had no way to learn it.
+/// </param>
+/// <param name="SpawnSuppressed">
+/// True when the target column was active and unowned and <c>Spawn</c> was false: the card moved
+/// into a column where work happens and NO work started. Saying so is the point — the alternative
+/// is a caller discovering a card sitting in In Progress with nobody on it, days later.
+/// </param>
+public sealed record MoveCardResult(
+    CardDto Card, Guid? SpawnedSessionId, bool SpawnSuppressed);
 
 /// <summary>
 /// A correction to a card's text. Deliberately not an overload of <c>PATCH /cards/{id}</c>, which

@@ -65,6 +65,10 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
           boardColumnId: chosen.id,
           concurrencyToken: card.concurrencyToken,
           reason: reason.trim() || null,
+          // The server does not spawn unasked any more (CARD-0051). Here the human HAS asked: the
+          // menu item says "spawns an agent" and the dialog warns again before Move, so this keeps
+          // the UI behaving exactly as it did while scripted moves have to opt in.
+          spawn: true,
         },
       },
       {
