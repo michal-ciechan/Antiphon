@@ -556,6 +556,8 @@ describe('AgentsPage', () => {
         createWorkingDirectory: false,
         tuiProfileId: 'tui-profile-1',
         modelId: null,
+        // CARD-0060: create carries a style, and Normal is what an untouched picker means.
+        replyStyle: 'Normal',
       }),
     )
   })
@@ -620,6 +622,8 @@ describe('AgentsPage', () => {
         createWorkingDirectory: false,
         tuiProfileId: 'tui-profile-1',
         modelId: null,
+        // CARD-0060: create carries a style, and Normal is what an untouched picker means.
+        replyStyle: 'Normal',
       }),
     )
   })

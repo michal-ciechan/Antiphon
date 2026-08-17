@@ -37,7 +37,14 @@ import {
 } from 'react-icons/tb'
 import { Link, useSearchParams } from 'react-router'
 import type { AgentIncidentDto, AgentSummaryDto } from '../../api/agents'
-import { useAgent, useAgentIncidents, useAgentList, useStartAgent, useStopAgent } from '../../api/agents'
+import {
+  AGENT_REPLY_STYLE_OPTIONS,
+  useAgent,
+  useAgentIncidents,
+  useAgentList,
+  useStartAgent,
+  useStopAgent,
+} from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentActivityBadge } from './AgentActivityBadge'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
@@ -129,6 +136,7 @@ export function AgentsPage() {
                         {agent.name}
                       </Text>
                       <Group gap={4} style={{ flexShrink: 0 }}>
+                        <ReplyStyleBadge agent={agent} />
                         <SupervisionBadge agent={agent} compact />
                         <AgentActivityBadge agent={agent} />
                       </Group>
@@ -228,6 +236,7 @@ export function AgentsPage() {
                   <Title order={3}>{selected.data.name}</Title>
                   <AgentActivityBadge agent={selected.data} />
                   <SupervisionBadge agent={selected.data} />
+                  <ReplyStyleBadge agent={selected.data} />
                 </Group>
                 <Text size="sm" c="dimmed">
                   {selected.data.workingDirectory}
@@ -415,6 +424,27 @@ function IncidentRow({ incident }: { incident: AgentIncidentDto }) {
         </Text>
       </Group>
     </Paper>
+  )
+}
+
+/**
+ * The agent's reply style (CARD-0060), when it has one. Nothing at all for `Normal` — Normal
+ * composes no instruction, so a chip announcing it would be a badge for the absence of a setting on
+ * every agent in the list.
+ */
+function ReplyStyleBadge({ agent }: { agent: AgentSummaryDto }) {
+  const style = agent.replyStyle ?? 'Normal'
+  if (style === 'Normal') return null
+
+  return (
+    <Tooltip
+      label={AGENT_REPLY_STYLE_OPTIONS.find((option) => option.value === style)?.description ?? style}
+      withArrow
+    >
+      <Badge size="sm" color="grape" variant="light">
+        {style.toLowerCase()}
+      </Badge>
+    </Tooltip>
   )
 }
 

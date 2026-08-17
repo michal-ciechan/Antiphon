@@ -14,6 +14,40 @@ export interface AgentDefinitionDto {
 }
 
 export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
+
+/**
+ * How the agent writes (CARD-0060). `Normal` composes to NOTHING at launch — it is the default and
+ * the migration backfill, so choosing it changes an agent's launch arguments by exactly zero bytes.
+ */
+export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Explanatory'
+
+/** Picker options, least to most words. Normal is the default and is deliberately first. */
+export const AGENT_REPLY_STYLE_OPTIONS: Array<{
+  value: AgentReplyStyle
+  label: string
+  description: string
+}> = [
+  {
+    value: 'Normal',
+    label: 'Normal',
+    description: 'No style instruction at all — the model writes the way it does by default.',
+  },
+  {
+    value: 'Terse',
+    label: 'Terse',
+    description: 'Answer first, one line where one line will do. No preamble, no sign-off.',
+  },
+  {
+    value: 'Caveman',
+    label: 'Caveman',
+    description: 'Short word. Drop small word. Paths, flags and code still written exactly.',
+  },
+  {
+    value: 'Explanatory',
+    label: 'Explanatory',
+    description: 'Answer first, then the reasoning: alternatives, what it depends on, where it was read.',
+  },
+]
 /**
  * Generic model capability LEVEL — each agent kind maps it to its provider's ladder at launch
  * (Claude today: Frontier→Fable, High→Opus, Medium→Sonnet, Low→Haiku; a future GPT kind would
@@ -103,6 +137,8 @@ export interface AgentSummaryDto {
     effectiveModelId: string | null
     pendingRestart: boolean
   } | null
+  /** How the agent writes. Absent on an older server response — treat as 'Normal'. */
+  replyStyle?: AgentReplyStyle
 }
 
 export interface AgentSupervisionDto {
@@ -156,6 +192,12 @@ export interface AgentQueueCardDto {
 
 export interface AgentDetailDto extends AgentSummaryDto {
   queue: AgentQueueCardDto[]
+  /**
+   * The instruction bundles this agent's NEXT launch will carry, as `"style-caveman v1a2b3c4d"`.
+   * Read-only and recomputed server-side per request: nothing composed is stored anywhere, so this
+   * list cannot drift from what the repo's bundle files currently say.
+   */
+  composedBundles?: string[] | null
 }
 
 export interface CreateAgentRequest {
@@ -169,6 +211,8 @@ export interface CreateAgentRequest {
   modelLevel?: AgentModelLevel | null
   tuiProfileId?: string | null
   modelId?: string | null
+  /** Omit = Normal. Create deliberately still cannot set systemPromptAppend. */
+  replyStyle?: AgentReplyStyle
 }
 
 export interface UpdateAgentRequest {
@@ -189,6 +233,8 @@ export interface UpdateAgentRequest {
   /** When set, also applies modelId (null clears exact model). */
   tuiProfileId?: string | null
   modelId?: string | null
+  /** Omit/null = leave unchanged, so an older client cannot reset a chosen style to Normal. */
+  replyStyle?: AgentReplyStyle | null
 }
 
 export interface DraftAgentRequest {
