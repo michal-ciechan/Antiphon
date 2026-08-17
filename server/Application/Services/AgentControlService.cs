@@ -167,16 +167,38 @@ public sealed class AgentControlService
             if (string.IsNullOrWhiteSpace(agent.ModelId))
                 extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
 
-            if (!string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
+            // The agent's standing instructions, composed at launch (CARD-0058/0060): the reply-style
+            // block first, then the agent's own SystemPromptAppend, which keeps the final word
+            // because it is the most specific thing anybody wrote about this one agent. Per-agent
+            // bundle attachments are slice 6; a standing agent carries no role bundles today.
+            //
+            // A Normal style resolves to no bundle at all, so for every agent that existed before
+            // CARD-0060 this composes to its SystemPromptAppend byte for byte and the launch
+            // arguments are unchanged.
+            var composed = InstructionBundleComposer.Compose(
+                styleBundleKey: AgentReplyStyles.ComposedKey(agent.ReplyStyle),
+                systemPromptAppend: agent.SystemPromptAppend);
+            if (!composed.IsEmpty)
             {
                 var boundChannels = await _db.ChatChannels
                     .Where(c => c.AgentId == agent.Id && c.Enabled)
                     .Select(c => new { c.Provider, c.Title, c.ExternalId })
                     .ToListAsync(ct);
+                // Substitution runs over the WHOLE composed text, bundles included — pinned harmless
+                // by InstructionBundleTests, which refuses a bundle containing either placeholder.
                 var rendered = ChannelPreamble.Render(
-                    agent.SystemPromptAppend,
+                    composed.Text,
                     agent.Name,
                     boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
+                // Guarded on the RENDERED text, not the composed one: {channels} expands, and it is
+                // the expanded string that has to fit on the command line. Throws rather than
+                // truncating — half a contract with nothing on screen to say so is worse than a
+                // launch that fails and names what to shrink.
+                InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                    composed with { Text = rendered },
+                    extraArgs,
+                    _delegationSettings.CommandLineBudgetChars,
+                    $"Agent '{agent.Name}'");
                 extraArgs.AddRange(["--append-system-prompt", rendered]);
             }
         }

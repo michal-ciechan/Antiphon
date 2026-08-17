@@ -208,6 +208,7 @@ public sealed class AgentService
                 AssignmentPolicy = request.AssignmentPolicy,
                 Status = AgentStatus.Idle,
                 ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
+                ReplyStyle = request.ReplyStyle,
                 BoardId = board.Id,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -286,6 +287,8 @@ public sealed class AgentService
             agent.SystemPromptAppend = string.IsNullOrWhiteSpace(systemPromptAppend) ? null : systemPromptAppend;
         if (request.ModelLevel is { } modelLevel)
             agent.ModelLevel = modelLevel;
+        if (request.ReplyStyle is { } replyStyle)
+            agent.ReplyStyle = replyStyle;
         if (request.TuiProfileId is { } profileId)
         {
             await ApplyTuiSelectionAsync(
@@ -748,7 +751,8 @@ public sealed class AgentService
             agent.TuiProfileId,
             agent.ModelId,
             configured,
-            liveSelection);
+            liveSelection,
+            agent.ReplyStyle);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -800,7 +804,13 @@ public sealed class AgentService
             agent.TuiProfileId,
             agent.ModelId,
             configured,
-            liveSelection);
+            liveSelection,
+            agent.ReplyStyle,
+            // What the NEXT launch will carry, composed the same way AgentControlService composes it
+            // — recomputed per request rather than stored, so the list can never drift from the repo.
+            InstructionBundleComposer
+                .Compose(styleBundleKey: AgentReplyStyles.ComposedKey(agent.ReplyStyle))
+                .Stamps);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)

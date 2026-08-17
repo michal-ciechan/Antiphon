@@ -24,8 +24,12 @@ public class InstructionBundleTests
         // Pinned rather than counted: the resource glob is `Bundles\*.md` minus README.md, so a file
         // added, renamed or accidentally embedded shows up HERE rather than in an agent's system
         // prompt. Adding a bundle is meant to cost this one line.
-        InstructionBundles.All.Keys.Order().ShouldBe(
-            ["board-api", "check-interpreter", "delegate-basics", "orchestrator"]);
+        InstructionBundles.All.Keys.Order().ShouldBe([
+            "board-api", "check-interpreter", "delegate-basics", "orchestrator",
+            // One per AgentReplyStyle value (CARD-0060), style-normal included — see AgentReplyStyles
+            // for why the one that is never composed still ships as a file.
+            "style-caveman", "style-explanatory", "style-normal", "style-terse",
+        ]);
     }
 
     [Test]

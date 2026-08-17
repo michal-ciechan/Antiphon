@@ -39,6 +39,16 @@ public class Agent
     /// </summary>
     public string? SystemPromptAppend { get; set; }
 
+    /// <summary>
+    /// How this agent writes (CARD-0060). Composed into <c>--append-system-prompt</c> AFTER any
+    /// bundles and BEFORE <see cref="SystemPromptAppend"/>, so the agent's own hand-written contract
+    /// keeps the final word over a style picked from a dropdown.
+    ///
+    /// <para><see cref="AgentReplyStyle.Normal"/> — the default and the migration backfill — composes
+    /// to nothing at all, so this column changes no existing agent's launch arguments.</para>
+    /// </summary>
+    public AgentReplyStyle ReplyStyle { get; set; } = AgentReplyStyle.Normal;
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The board automatically created for this agent when it was added.</summary>

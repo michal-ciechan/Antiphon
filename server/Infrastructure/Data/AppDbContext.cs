@@ -733,6 +733,10 @@ public class AppDbContext : DbContext
             // every Frontier-dispatched delegate row read High). The entity's own initializer
             // keeps High as the default for creators that don't set it.
             entity.Property(a => a.ModelLevel).IsRequired();
+            // Same reasoning as ModelLevel above, and it bites harder here: Normal IS 0, so a
+            // HasDefaultValue would make EF omit every explicitly-chosen Normal from the INSERT.
+            // The migration's column default backfills existing rows; the model never relies on it.
+            entity.Property(a => a.ReplyStyle).IsRequired();
             entity.Property(a => a.ModelId).HasMaxLength(500);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();
