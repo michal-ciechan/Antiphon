@@ -63,6 +63,18 @@ public sealed class AttentionService
     private const int EvidenceChars = 400;
     private const int CheckDigestTailLines = 6;
 
+    /// <summary>
+    /// The one runner status this projection acts on. The runner's vocabulary is its own (a string,
+    /// not our <see cref="SessionStatus"/>), and "Running" is the only value that can contradict a
+    /// settled database row — an "Exited" runner session next to a DB row that says Stopped is two
+    /// systems AGREEING, which is not news.
+    /// </summary>
+    private const string RunnerRunningStatus = "Running";
+
+    /// <summary>The DB verdicts a live runner session contradicts.</summary>
+    private static bool IsSettled(SessionStatus status) =>
+        status is SessionStatus.Stopped or SessionStatus.Failed;
+
     private readonly AppDbContext _db;
     private readonly ISessionRunnerClient _runnerClient;
     private readonly SupervisionSettings _supervision;
@@ -111,16 +123,26 @@ public sealed class AttentionService
         var checkDigests = await LoadLatestCheckDigestsAsync(subjects, ct);
 
         items.AddRange(await BuildBlockedAsync(blocked, costs, checkDigests, ct));
-        items.AddRange(await BuildOpenTaskItemsAsync(open, now, costs, checkDigests, attachedIncidents, ct));
+        var openItems = await BuildOpenTaskItemsAsync(open, now, costs, checkDigests, attachedIncidents, ct);
+        items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildRecentFailureItems(failed, costs, checkDigests));
 
-        // Asked unconditionally, and its answer is only ever a flag in slice 1: CARD-0035 slice 2
-        // diffs this list against the session rows to produce SessionDisagreement. The call is here
-        // now because RunnerConsulted is a claim about whether anybody asked, and a flag that is
-        // hard-coded false is not a claim at all.
-        var runnerConsulted = await TryConsultRunnerAsync(ct);
+        // Asked unconditionally, because RunnerConsulted is a claim about whether anybody asked and a
+        // flag that is hard-coded false is not a claim at all. ONE call: the diff below consumes this
+        // same list rather than asking the runner a second question about the same moment.
+        var runnerSessions = await TryListRunnerSessionsAsync(ct);
+        if (runnerSessions is not null)
+        {
+            // The sessions the task pass has just pronounced dead. A disagreement row about one of
+            // them is not a second opinion, it is the reason those rows are wrong — so it says so.
+            var deadSessions = openItems
+                .Where(i => i.Kind == AttentionKind.DeadSession && i.SessionId is not null)
+                .Select(i => i.SessionId!.Value)
+                .ToHashSet();
+            items.AddRange(await BuildSessionDisagreementItemsAsync(runnerSessions, deadSessions, ct));
+        }
 
         // Severity first — a row's rank IS its severity — then oldest-stuck first inside a band, so
         // the thing that has been waiting longest is the thing at the top of its group.
@@ -129,7 +151,7 @@ public sealed class AttentionService
             .ThenBy(i => i.SinceUtc ?? DateTime.MaxValue)
             .ToList();
 
-        return new AttentionDto(now, runnerConsulted, ordered);
+        return new AttentionDto(now, runnerSessions is not null, ordered);
     }
 
     // ---- condition 1: a delegate asked a question ------------------------------------------------
@@ -410,28 +432,7 @@ public sealed class AttentionService
             return items;
 
         var sessionIds = parked.Select(m => m.AgentSessionId).Distinct().ToList();
-        var sessionKeys = sessionIds.Select(id => id.ToString("D")).ToList();
-
-        // Two routes from a session to its agent, because two kinds of session exist: a standing
-        // agent owns its session through PersistentSessionId, and a delegate's session is named by
-        // the task that dispatched it.
-        var standing = await _db.Agents.AsNoTracking()
-            .Where(a => a.PersistentSessionId != null && sessionKeys.Contains(a.PersistentSessionId))
-            .Select(a => new { a.Id, a.Name, a.PersistentSessionId })
-            .ToListAsync(ct);
-        var agentBySessionKey = standing
-            .GroupBy(a => a.PersistentSessionId!)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        var delegates = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId != null
-                && sessionIds.Contains(t.AgentSessionId!.Value)
-                && t.AgentId != null)
-            .Select(t => new { SessionId = t.AgentSessionId!.Value, AgentId = t.AgentId!.Value, t.AgentName })
-            .ToListAsync(ct);
-        var delegateBySession = delegates
-            .GroupBy(t => t.SessionId)
-            .ToDictionary(g => g.Key, g => g.First());
+        var owners = await ResolveSessionOwnersAsync(sessionIds, ct);
 
         var channelBound = (await _db.ChatChannels.AsNoTracking()
                 .Where(c => c.AgentId != null)
@@ -442,11 +443,9 @@ public sealed class AttentionService
 
         foreach (var message in parked)
         {
-            var key = message.AgentSessionId.ToString("D");
-            var owner = agentBySessionKey.GetValueOrDefault(key);
-            var fallback = delegateBySession.GetValueOrDefault(message.AgentSessionId);
-            var agentId = owner?.Id ?? fallback?.AgentId;
-            var agentName = owner?.Name ?? fallback?.AgentName;
+            var owner = owners.GetValueOrDefault(message.AgentSessionId);
+            var agentId = owner?.AgentId;
+            var agentName = owner?.AgentName;
 
             // Critical when the agent is channel-bound: a parked channel reply is not a stalled
             // delivery, it is a person on the other end of a line that has gone dead.
@@ -545,14 +544,131 @@ public sealed class AttentionService
             costs.GetValueOrDefault(task.Id),
             [AttentionAction.Retry, AttentionAction.OpenDrawer])).ToList();
 
-    // ---- the runner ------------------------------------------------------------------------------
+    // ---- condition 8: the runner and the database disagree ---------------------------------------
 
-    private async Task<bool> TryConsultRunnerAsync(CancellationToken ct)
+    /// <summary>
+    /// The one condition that is not a query (CARD-0035 slice 2): what the session runner says it is
+    /// running, diffed against what the database believes.
+    ///
+    /// <para><b>Why this duplicates <c>SessionReconciliationService</c> on purpose.</b> That service
+    /// is the thing that FIXES a disagreement — it re-adopts, it retries a kill. This one only
+    /// reports, read-only, and it is the safety net that stays honest when reconciliation is broken,
+    /// disabled, or itself the bug. A diagnostic view whose correctness depends on the machinery it
+    /// exists to diagnose is not a safety net. Nothing here reaches into that service.</para>
+    ///
+    /// <para><b>Neither arm implies a kill.</b> The 2026-08-16 miss (CARD-0056) was a perfectly
+    /// healthy session — the operator's own working conversation — marked Failed by a launch path
+    /// that leaked what it started. A pass that resolved that mismatch by killing would have killed
+    /// somebody mid-sentence, so the verb is offered to a human behind a confirm and the row says
+    /// plainly that the live process may be the side that is right.</para>
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildSessionDisagreementItemsAsync(
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions,
+        IReadOnlySet<Guid> deadSessions,
+        CancellationToken ct)
+    {
+        var items = new List<AttentionItemDto>();
+
+        var live = runnerSessions
+            .Where(s => string.Equals(s.Status, RunnerRunningStatus, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(s => s.SessionId)
+            .Select(g => g.First())
+            .ToList();
+        if (live.Count == 0)
+            return items;
+
+        var ids = live.Select(s => s.SessionId).ToList();
+        var rows = await _db.AgentSessions.AsNoTracking()
+            .Where(s => ids.Contains(s.Id))
+            .Select(s => new { s.Id, s.Status, s.Cwd, s.DefinitionName, s.EndedAt, s.FailureReason })
+            .ToListAsync(ct);
+        var byId = rows.ToDictionary(r => r.Id);
+        var owners = await ResolveSessionOwnersAsync(ids, ct);
+
+        foreach (var runner in live)
+        {
+            var owner = owners.GetValueOrDefault(runner.SessionId);
+            var shortId = runner.SessionId.ToString("N")[..8];
+            var started = Utc(runner.StartedAt);
+            var where = runner.HostPid is { } host
+                ? $"pid {runner.Pid?.ToString() ?? "?"} in pty-host {host}"
+                : $"pid {runner.Pid?.ToString() ?? "?"}";
+
+            // Arm 2 — the runner is running something the database has never heard of. Unclaimed is
+            // SUSPECT, not broken: it is usually somebody's work that a server restart lost track of,
+            // which is exactly why it is a row a human reads rather than a thing anything reclaims.
+            if (!byId.TryGetValue(runner.SessionId, out var row))
+            {
+                items.Add(new AttentionItemDto(
+                    AttentionKind.SessionDisagreement,
+                    AlertSeverity.Warning,
+                    null,
+                    runner.SessionId,
+                    owner?.AgentId,
+                    null,
+                    owner?.AgentName ?? $"Unclaimed session {shortId}",
+                    $"The runner is running session {shortId} and the database has no row for it.",
+                    Excerpt(
+                        $"Running since {started:u} as {where}"
+                        + (runner.Adopted ? ", adopted from a previous runner." : ".")
+                        + " Nothing in the database claims this session, so no supervisor, check-in or"
+                        + " queue flush will ever reach it — but it may still be somebody's live work."
+                        + " Read it before killing it."),
+                    started,
+                    null,
+                    owner?.AgentId is null
+                        ? [AttentionAction.KillSession]
+                        : [AttentionAction.OpenAgent, AttentionAction.KillSession]));
+                continue;
+            }
+
+            // Arm 1 — the database has written this session off while the runner still has it. This
+            // is the shape that silently disables check-ins (a Failed parent row makes the dispatcher
+            // stop delivering to it), so it is Error: something IS broken, and it is the DB row.
+            if (!IsSettled(row.Status))
+                continue;
+
+            var downstream = deadSessions.Contains(runner.SessionId)
+                ? " Any task listed above as DeadSession on this session is downstream of this one"
+                  + " fact — those tasks are not dead, and retrying them would start a second agent"
+                  + " alongside the one already running."
+                : string.Empty;
+
+            items.Add(new AttentionItemDto(
+                AttentionKind.SessionDisagreement,
+                AlertSeverity.Error,
+                null,
+                runner.SessionId,
+                owner?.AgentId,
+                null,
+                owner?.AgentName ?? row.DefinitionName ?? $"Session {shortId}",
+                $"The database says {row.Status} but the runner is still running session {shortId}.",
+                Excerpt(
+                    $"Running since {started:u} as {where}, in {row.Cwd}."
+                    + downstream
+                    + " The live process is evidence the database row is wrong; reconciliation"
+                    + " re-adopts this shape, so open it before killing anything."
+                    + (string.IsNullOrWhiteSpace(row.FailureReason)
+                        ? string.Empty
+                        : $" The row's recorded reason: {row.FailureReason}")),
+                row.EndedAt ?? started,
+                null,
+                [AttentionAction.OpenAgent, AttentionAction.KillSession]));
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// The runner's own list, or null when it could not answer. Null is the only way this projection
+    /// says "nobody asked" — it must never be confused with an empty list, which is the far stronger
+    /// claim that nothing disagrees.
+    /// </summary>
+    private async Task<IReadOnlyList<SessionRunnerSessionDto>?> TryListRunnerSessionsAsync(CancellationToken ct)
     {
         try
         {
-            await _runnerClient.ListAsync(ct);
-            return true;
+            return await _runnerClient.ListAsync(ct);
         }
         // An HttpClient timeout arrives as a TaskCanceledException with NOTHING cancelled, so the
         // token has to be consulted before an OCE may be treated as shutdown.
@@ -561,11 +677,65 @@ public sealed class AttentionService
             _logger.LogDebug(
                 ex, "The session runner did not answer the attention sweep; runner-derived conditions "
                 + "are omitted from this response");
-            return false;
+            return null;
         }
     }
 
+    /// <summary>Runner clocks are UTC; a round-trip that lost the marker must not shift the row.</summary>
+    private static DateTime Utc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
+
     // ---- shared lookups --------------------------------------------------------------------------
+
+    /// <summary>Whose session this is, as far as the database can say.</summary>
+    private sealed record SessionOwner(Guid? AgentId, string? AgentName);
+
+    /// <summary>
+    /// Session → owning agent, by BOTH routes, because two kinds of session exist: a standing agent
+    /// owns its session through <c>PersistentSessionId</c> (a string column, hence the "D" keys), and
+    /// a delegate's session is named only by the task that dispatched it. Neither route is queried
+    /// through <c>AgentSessions</c>, so this answers for a runner session with no session row at all
+    /// — which is precisely the case <see cref="AttentionKind.SessionDisagreement"/>'s second arm is.
+    /// </summary>
+    private async Task<Dictionary<Guid, SessionOwner>> ResolveSessionOwnersAsync(
+        IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+    {
+        var owners = new Dictionary<Guid, SessionOwner>();
+        if (sessionIds.Count == 0)
+            return owners;
+
+        var ids = sessionIds.Distinct().ToList();
+        var keys = ids.Select(id => id.ToString("D")).ToList();
+
+        var standing = await _db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId != null && keys.Contains(a.PersistentSessionId))
+            .Select(a => new { a.Id, a.Name, a.PersistentSessionId })
+            .ToListAsync(ct);
+        foreach (var agent in standing)
+        {
+            if (Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+                owners.TryAdd(sessionId, new SessionOwner(agent.Id, agent.Name));
+        }
+
+        var delegates = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId != null
+                && ids.Contains(t.AgentSessionId!.Value)
+                && t.AgentId != null)
+            .Select(t => new { SessionId = t.AgentSessionId!.Value, AgentId = t.AgentId!.Value, t.AgentName })
+            .ToListAsync(ct);
+        foreach (var group in delegates.GroupBy(t => t.SessionId))
+        {
+            // The standing agent wins: it OWNS the session, where a task merely ran in one.
+            var first = group.First();
+            owners.TryAdd(group.Key, new SessionOwner(first.AgentId, first.AgentName));
+        }
+
+        return owners;
+    }
 
     /// <summary>
     /// Rolled-up spend per listed task. Reuses <see cref="AgentTaskService.IsDescendantOf"/> rather

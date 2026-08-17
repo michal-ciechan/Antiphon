@@ -356,7 +356,114 @@ public class AttentionServiceTests
         (await ItemsForAsync(scenario)).ShouldNotContain(i => i.TaskId == task);
     }
 
+    // ---- 8. SessionDisagreement -------------------------------------------------------------------
+
+    [Test]
+    public async Task a_session_the_database_wrote_off_but_the_runner_still_runs_is_listed()
+    {
+        // The CARD-0056 shape, seen from the outside: a launch path that failed after starting the
+        // process left the row Failed while the agent kept running. That false Failed silently
+        // disabled the caller's check-ins for four hours, and nothing surfaced it.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 50);
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+
+        var item = (await ItemsForAsync(scenario, Running(session, pid: 4242, hostPid: 77)))
+            .Single(i => i.Kind == AttentionKind.SessionDisagreement && i.SessionId == session);
+
+        item.Severity.ShouldBe(AlertSeverity.Error, "a live process proves the database row is wrong");
+        item.AgentId.ShouldBe(agent);
+        item.Headline.ShouldContain("Failed");
+        item.Headline.ShouldContain("still running");
+        item.Evidence.ShouldContain("4242");
+        item.Actions[0].ShouldBe(
+            AttentionAction.OpenAgent,
+            "look before you kill — this exact row was once the operator's own live conversation");
+        item.Actions.ShouldContain(AttentionAction.KillSession);
+    }
+
+    [Test]
+    public async Task a_runner_session_with_no_database_row_is_listed_as_unclaimed()
+    {
+        await using var scenario = new Scenario();
+        var orphan = scenario.ClaimSessionId();
+
+        var item = (await ItemsForAsync(scenario, Running(orphan)))
+            .Single(i => i.SessionId == orphan);
+
+        item.Kind.ShouldBe(AttentionKind.SessionDisagreement);
+        item.Severity.ShouldBe(
+            AlertSeverity.Warning, "unclaimed is suspect, not broken — it is usually somebody's work");
+        item.Title.ShouldContain("Unclaimed");
+        item.Actions.ShouldBe([AttentionAction.KillSession]);
+        item.Evidence.ShouldContain("Read it before killing it.");
+    }
+
+    [Test]
+    public async Task a_disagreement_says_the_dead_session_rows_above_it_are_wrong()
+    {
+        // Both rows are true about their own subject, and read together they contradict: the task
+        // pass says "dead, retry it" and the runner says the agent is alive. Retrying would start a
+        // SECOND agent alongside the running one, so the disagreement row names the trap.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 5);
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 20);
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.UserPrompt, "go", null));
+
+        var mine = await ItemsForAsync(scenario, Running(session));
+
+        mine.Single(i => i.TaskId == task).Kind.ShouldBe(AttentionKind.DeadSession);
+        mine.Single(i => i.Kind == AttentionKind.SessionDisagreement)
+            .Evidence.ShouldContain("those tasks are not dead");
+    }
+
+    [Test]
+    public async Task a_session_both_sides_agree_is_running_is_not_a_disagreement()
+    {
+        // The healthy case, and by far the commonest: every live session in the fleet appears in the
+        // runner's list. If agreement produced a row the view would be nothing BUT rows.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        await scenario.AddAgentAsync(persistentSession: session);
+
+        (await ItemsForAsync(scenario, Running(session)))
+            .ShouldNotContain(i => i.Kind == AttentionKind.SessionDisagreement);
+    }
+
+    [Test]
+    public async Task a_runner_session_that_has_exited_is_not_a_disagreement()
+    {
+        // An Exited runner session next to a Stopped row is two systems AGREEING. Only "Running" can
+        // contradict a settled row, and reconciliation already owns the live-row-vs-exited direction.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Stopped, endedMinutesAgo: 10);
+        await scenario.AddAgentAsync(persistentSession: session);
+
+        (await ItemsForAsync(scenario, Running(session) with { Status = "Exited", ExitCode = 0 }))
+            .ShouldNotContain(i => i.Kind == AttentionKind.SessionDisagreement);
+    }
+
     // ---- degradation ------------------------------------------------------------------------------
+
+    [Test]
+    public async Task a_runner_that_cannot_answer_omits_the_disagreement_rather_than_reporting_none()
+    {
+        // The distinction the flag exists for. This session WOULD be a disagreement, and the runner
+        // being down must not turn that into a clean bill of health — the condition is absent, and
+        // RunnerConsulted is how the client tells absent from empty.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync(SessionStatus.Failed, endedMinutesAgo: 30);
+        await scenario.AddAgentAsync(persistentSession: session);
+
+        var result = await BuildService(new FakeRunnerClient
+        {
+            Sessions = [Running(session)],
+            ListError = new HttpRequestException("connection refused"),
+        }).GetAsync(CancellationToken.None);
+
+        result.RunnerConsulted.ShouldBeFalse();
+        result.Items.ShouldNotContain(i => i.Kind == AttentionKind.SessionDisagreement);
+    }
 
     [Test]
     public async Task a_runner_that_cannot_answer_degrades_instead_of_throwing()
@@ -416,11 +523,18 @@ public class AttentionServiceTests
     // ---- harness ------------------------------------------------------------------------------------
 
     /// <summary>Only the rows this test created — the shared-database rule, mechanised.</summary>
-    private static async Task<List<AttentionItemDto>> ItemsForAsync(Scenario scenario)
+    private static async Task<List<AttentionItemDto>> ItemsForAsync(
+        Scenario scenario, params SessionRunnerSessionDto[] runnerSessions)
     {
-        var result = await BuildService(new FakeRunnerClient()).GetAsync(CancellationToken.None);
+        var result = await BuildService(new FakeRunnerClient { Sessions = runnerSessions })
+            .GetAsync(CancellationToken.None);
         return result.Items.Where(scenario.Owns).ToList();
     }
+
+    /// <summary>What the runner says when it is running a session — the only status that can differ.</summary>
+    private static SessionRunnerSessionDto Running(Guid sessionId, int? pid = 1234, int? hostPid = null) =>
+        new(sessionId, pid, DateTime.UtcNow.AddMinutes(-45), "Running", null, AgentExitReason.Unknown,
+            LastSequence: 900, HostPid: hostPid);
 
     private static AttentionService BuildService(ISessionRunnerClient runner) =>
         new(CreateContext(), runner, Options.Create(new SupervisionSettings()), TimeProvider.System,
@@ -443,7 +557,21 @@ public class AttentionServiceTests
         public bool Owns(AttentionItemDto item) =>
             (item.TaskId is { } t && _tasks.Contains(t))
             || (item.MessageId is { } m && _messages.Contains(m))
-            || (item.TaskId is null && item.MessageId is null && item.AgentId is { } a && _agents.Contains(a));
+            || (item.TaskId is null && item.MessageId is null && item.AgentId is { } a && _agents.Contains(a))
+            // Session-scoped rows (SessionDisagreement) may carry no task, message or agent at all —
+            // an unclaimed runner session is by definition owned by nothing the database knows.
+            || (item.TaskId is null && item.MessageId is null && item.SessionId is { } s && _sessions.Contains(s));
+
+        /// <summary>
+        /// A session id this test owns for filtering purposes but deliberately never inserts — the
+        /// unclaimed arm exists precisely for ids with no <c>AgentSessions</c> row behind them.
+        /// </summary>
+        public Guid ClaimSessionId()
+        {
+            var id = Guid.NewGuid();
+            _sessions.Add(id);
+            return id;
+        }
 
         public async Task<Guid> AddSessionAsync(
             SessionStatus status = SessionStatus.Running, int? endedMinutesAgo = null)

@@ -8,8 +8,7 @@ namespace Antiphon.Server.Application.Dtos;
 /// is inferred from silence alone.
 ///
 /// <para>The numbering is part of the contract: the client maps kind → label/colour/actions, so a
-/// member is APPENDED, never renumbered. <see cref="SessionDisagreement"/> is declared here but is
-/// populated by slice 2 (it needs the runner diff), so that slice stays purely additive.</para>
+/// member is APPENDED, never renumbered.</para>
 /// </summary>
 public enum AttentionKind
 {
@@ -45,8 +44,11 @@ public enum AttentionKind
     ChecksSpent = 6,
 
     /// <summary>
-    /// The runner and the database disagree about a session (runner-Running vs DB-Failed/Stopped, or
-    /// a runner session with no DB row at all). SLICE 2 — the projection does not emit this yet.
+    /// The runner and the database disagree about a session: runner-Running against a DB row that
+    /// says Failed or Stopped (Error — the row is wrong, and a wrong row silently disables check-ins
+    /// to that session), or a runner session with no DB row at all (Warning — unclaimed is suspect,
+    /// not proven broken, and it is usually somebody's live work). ABSENT rather than empty when
+    /// <see cref="AttentionDto.RunnerConsulted"/> is false.
     /// </summary>
     SessionDisagreement = 7,
 
