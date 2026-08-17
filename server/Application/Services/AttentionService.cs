@@ -159,7 +159,7 @@ public sealed class AttentionService
     private async Task<List<AttentionItemDto>> BuildBlockedAsync(
         IReadOnlyList<AgentTask> blocked,
         IReadOnlyDictionary<Guid, decimal> costs,
-        IReadOnlyDictionary<Guid, string> checkDigests,
+        IReadOnlyDictionary<Guid, CheckExplanation> checkDigests,
         CancellationToken ct)
     {
         var items = new List<AttentionItemDto>();
@@ -217,7 +217,7 @@ public sealed class AttentionService
         IReadOnlyList<AgentTask> open,
         DateTime now,
         IReadOnlyDictionary<Guid, decimal> costs,
-        IReadOnlyDictionary<Guid, string> checkDigests,
+        IReadOnlyDictionary<Guid, CheckExplanation> checkDigests,
         HashSet<Guid> attachedIncidents,
         CancellationToken ct)
     {
@@ -529,7 +529,7 @@ public sealed class AttentionService
     private static List<AttentionItemDto> BuildRecentFailureItems(
         IReadOnlyList<AgentTask> failed,
         IReadOnlyDictionary<Guid, decimal> costs,
-        IReadOnlyDictionary<Guid, string> checkDigests) =>
+        IReadOnlyDictionary<Guid, CheckExplanation> checkDigests) =>
         failed.Select(task => new AttentionItemDto(
             AttentionKind.RecentFailure,
             AlertSeverity.Warning,
@@ -775,16 +775,25 @@ public sealed class AttentionService
     }
 
     /// <summary>
-    /// The tail of each task's most recent check digest. This is the v1 explanation column: it is
-    /// deterministic, it is already stored, and it is present on every task a check has ever run on
-    /// (CARD-0035 §D4 — slice 5 puts the interpreter's own reading above it at the same site).
+    /// What the last check on each task said — the interpreter's own reading when one is stored
+    /// (CARD-0035 slice 5), otherwise the tail of the digest.
+    ///
+    /// <para>The reading WINS whenever it exists, and that is the whole point of slice 5: the digest
+    /// tail is deterministic and always present, but it is six lines of <c>commits=3 changed=1</c>
+    /// that a human still has to interpret, while the specialist has already done exactly that job at
+    /// exactly this altitude. Before the reading was stored the best explanation the system produced
+    /// was thrown away — it reached the caller's note and an uncorrelated task row, neither of which
+    /// this projection can query.</para>
+    ///
+    /// <para>Absence is not a degradation to report: a check that ran before slice 5, or one whose
+    /// interpreter was busy, simply falls back to the same digest tail v1 always showed.</para>
     /// </summary>
-    private async Task<Dictionary<Guid, string>> LoadLatestCheckDigestsAsync(
+    private async Task<Dictionary<Guid, CheckExplanation>> LoadLatestCheckDigestsAsync(
         IReadOnlyList<AgentTask> subjects, CancellationToken ct)
     {
-        var digests = new Dictionary<Guid, string>();
+        var explanations = new Dictionary<Guid, CheckExplanation>();
         if (subjects.Count == 0)
-            return digests;
+            return explanations;
 
         var ids = subjects.Select(t => t.Id).Distinct().ToList();
         var events = await _db.AgentTaskEvents.AsNoTracking()
@@ -795,24 +804,41 @@ public sealed class AttentionService
         foreach (var group in events.GroupBy(e => e.AgentTaskId))
         {
             var latest = group.OrderByDescending(e => e.At).First();
+
+            if (AgentTaskCheckService.TryReadInterpretation(latest.Detail) is { } reading)
+            {
+                explanations[group.Key] = new CheckExplanation(Excerpt(reading), FromInterpreter: true);
+                continue;
+            }
+
             var tail = Tail(latest.Detail, CheckDigestTailLines);
             if (!string.IsNullOrWhiteSpace(tail))
-                digests[group.Key] = tail;
+                explanations[group.Key] = new CheckExplanation(tail, FromInterpreter: false);
         }
 
-        return digests;
+        return explanations;
     }
+
+    /// <summary>
+    /// The last check's explanation and where it came from. The provenance is carried rather than
+    /// inferred because the two read completely differently: one is a specialist's judgement and the
+    /// other is raw counters, and a row that labelled counters as a reading would be claiming
+    /// somebody looked when nobody did.
+    /// </summary>
+    private sealed record CheckExplanation(string Text, bool FromInterpreter);
 
     // ---- text ------------------------------------------------------------------------------------
 
-    private static string Evidence(string primary, string? checkDigest)
+    private static string Evidence(string primary, CheckExplanation? check)
     {
         var head = Excerpt(primary);
-        if (string.IsNullOrWhiteSpace(checkDigest))
+        if (check is null || string.IsNullOrWhiteSpace(check.Text))
             return head;
+
+        var label = check.FromInterpreter ? "The last check read it as:" : "Last check:";
         return string.IsNullOrWhiteSpace(head)
-            ? $"Last check:\n{checkDigest}"
-            : $"{head}\n\nLast check:\n{checkDigest}";
+            ? $"{label}\n{check.Text}"
+            : $"{head}\n\n{label}\n{check.Text}";
     }
 
     private static string Excerpt(string? text)

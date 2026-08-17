@@ -34,6 +34,27 @@ public sealed class AgentTaskCheckService
     /// <summary>How much of the digest the task's timeline entry keeps.</summary>
     private const int EventDetailChars = 900;
 
+    /// <summary>
+    /// How much of the interpreter's reading the timeline entry keeps (CARD-0035 slice 5). Its own
+    /// budget, deliberately: sharing the digest's 900 would mean a long reading ate the evidence it
+    /// is a reading OF, and the digest is the part that is reviewable.
+    /// </summary>
+    private const int InterpretationDetailChars = 600;
+
+    /// <summary>
+    /// The line a <see cref="AgentTaskEventType.Check"/> event's detail puts above the interpreter's
+    /// reading, and the one below it that opens the digest (CARD-0035 slice 5).
+    ///
+    /// <para>They are a parsing contract, not decoration: <c>AttentionService</c> reads the reading
+    /// back out of the stored detail with <see cref="TryReadInterpretation"/>, so the boundary has to
+    /// be findable in text nobody controls. Both headings are scrubbed OUT of the reading before it
+    /// is written, so the first <see cref="DigestHeading"/> after the reading is always the real one.</para>
+    /// </summary>
+    public const string ReadingHeading = "READING (check interpreter):";
+
+    /// <inheritdoc cref="ReadingHeading"/>
+    public const string DigestHeading = "DIGEST:";
+
     private readonly AppDbContext _db;
     private readonly DelegateCheckProbe _probe;
     private readonly SessionMessageQueueService _queue;
@@ -134,13 +155,12 @@ public sealed class AgentTaskCheckService
         // interpretation of facts nobody recorded is not reviewable. What the interpreter cost is
         // recorded HERE as well as on the interpretation task's own row, so the question "what did
         // watching this task cost" is answerable from the timeline without a join (§1.6).
-        var detail = interpretation.EventLine is { } line ? $"{line}\n\n{digest}" : digest;
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
             AgentTaskId = task.Id,
             Type = AgentTaskEventType.Check,
-            Detail = detail.Length <= EventDetailChars ? detail : detail[..EventDetailChars] + "…",
+            Detail = ComposeEventDetail(interpretation.Text, interpretation.EventLine, digest),
             At = _timeProvider.GetUtcNow().UtcDateTime,
         });
         await _db.SaveChangesAsync(ct);
@@ -155,6 +175,86 @@ public sealed class AgentTaskCheckService
 
     /// <summary>One conversation per task, so a check never coalesces with anything else.</summary>
     public static string ConversationKey(Guid taskId) => $"check:{taskId:N}";
+
+    /// <summary>
+    /// What a <see cref="AgentTaskEventType.Check"/> event stores (CARD-0035 slice 5): the cost line,
+    /// then the interpreter's reading, then the digest.
+    ///
+    /// <para><b>Why the reading is stored at all.</b> The specialist's 3-5 lines were built for
+    /// exactly the altitude a human reads a stuck task at, and until now the system threw the best
+    /// explanation it produces away: the reading reached the caller's note (a message body nothing
+    /// can query) and the interpretation task's own <c>Result</c> row (correlated to the checked task
+    /// by TITLE TEXT, no FK), so no surface could answer "what did the interpreter make of THIS
+    /// task". Storing it here needs no table and no key — the event already belongs to the task.</para>
+    ///
+    /// <para><b>The digest keeps its own budget and stays below the reading.</b> The reading is a
+    /// judgement; the digest is the evidence for it, and a reader who distrusts the first wants the
+    /// second intact rather than squeezed. Truncation therefore only ever eats the digest's tail,
+    /// exactly as it did before this slice.</para>
+    /// </summary>
+    internal static string ComposeEventDetail(string? reading, string? eventLine, string digest)
+    {
+        var body = digest.Length <= EventDetailChars ? digest : digest[..EventDetailChars] + "…";
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(eventLine))
+            parts.Add(eventLine!.Trim());
+
+        if (Fit(reading) is { } read)
+        {
+            parts.Add($"{ReadingHeading}\n{read}");
+            // Only labelled when there is something above it to be told apart FROM. A degraded check
+            // stores exactly what it stored before this slice, which is what makes the change
+            // retroactively harmless: every pre-slice event still parses as digest-only.
+            parts.Add($"{DigestHeading}\n{body}");
+        }
+        else
+        {
+            parts.Add(body);
+        }
+
+        return string.Join("\n\n", parts).ReplaceLineEndings("\n");
+    }
+
+    /// <summary>
+    /// The interpreter's reading, read back out of a stored <see cref="AgentTaskEventType.Check"/>
+    /// detail — null when that check ran before this slice, or degraded to the digest.
+    ///
+    /// <para>Null is the honest answer for both, and the caller falls back to the digest tail rather
+    /// than showing an empty explanation column.</para>
+    /// </summary>
+    public static string? TryReadInterpretation(string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+            return null;
+
+        var text = detail.ReplaceLineEndings("\n");
+        var start = text.IndexOf(ReadingHeading, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+
+        start += ReadingHeading.Length;
+        var end = text.IndexOf($"\n{DigestHeading}", start, StringComparison.Ordinal);
+        var reading = (end < 0 ? text[start..] : text[start..end]).Trim();
+        return reading.Length == 0 ? null : reading;
+    }
+
+    /// <summary>
+    /// The reading, trimmed to its own budget and with both headings scrubbed out of it — a reading
+    /// that happened to contain the digest heading would otherwise cut its own read-back short.
+    /// </summary>
+    private static string? Fit(string? reading)
+    {
+        if (string.IsNullOrWhiteSpace(reading))
+            return null;
+
+        var text = reading.ReplaceLineEndings("\n").Trim()
+            .Replace(ReadingHeading, "READING:", StringComparison.Ordinal)
+            .Replace(DigestHeading, "digest:", StringComparison.Ordinal);
+        return text.Length <= InterpretationDetailChars
+            ? text
+            : text[..InterpretationDetailChars] + "…";
+    }
 
     /// <summary>How often the wait re-reads the interpretation task's row (CARD-0047 §1.1).</summary>
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);

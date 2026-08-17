@@ -274,6 +274,41 @@ public class AttentionServiceTests
             customMessage: "the tail of the latest check digest IS the v1 explanation column");
     }
 
+    /// <summary>
+    /// CARD-0035 slice 5. The digest tail is deterministic and always there, but it is six lines of
+    /// <c>commits=3 changed=1</c> that a human still has to interpret — and the check interpreter has
+    /// already done exactly that job at exactly this altitude. Once its reading is stored on the
+    /// Check event it WINS, because a row that made the operator re-derive the diagnosis from raw
+    /// counters is throwing away the best explanation the system produced.
+    /// </summary>
+    [Test]
+    public async Task the_check_interpreters_reading_beats_the_digest_tail_when_one_was_stored()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 12, checkCount: 10, nextCheckAt: null);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.TurnEnd, null, null));
+        await scenario.AddTaskEventAsync(
+            task, AgentTaskEventType.Check,
+            AgentTaskCheckService.ComposeEventDetail(
+                "STALLED — three commits, then 40 minutes of nothing. It finished and never reported.",
+                "interpreter: task abcd1234, $0.0031",
+                "TASK abcd1234: something\n  status=Dispatched\nGIT: commits=3 changed=1 untracked=0"),
+            minutesAgo: 6);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Evidence.ShouldContain("STALLED — three commits", customMessage:
+            "the specialist's reading, verbatim");
+        item.Evidence.ShouldContain("The last check read it as:", customMessage:
+            "labelled as a judgement — counters presented as a reading would claim somebody looked");
+        item.Evidence.ShouldNotContain("commits=3", customMessage:
+            "and NOT the digest tail as well: two explanations of one fact is one too many");
+    }
+
     [Test]
     public async Task a_task_that_is_still_being_checked_is_not_listed()
     {
