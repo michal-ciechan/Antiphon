@@ -83,6 +83,25 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void every_bundle_summarises_itself_in_its_opening_sentence()
+    {
+        // The attachment picker (slice 6) shows this next to the key, so an operator is not choosing
+        // from filenames. Derived rather than a second field: every bundle already opens by saying
+        // what it is, and a hand-written summary would be one more thing to leave stale.
+        InstructionBundles.Get(InstructionBundles.Orchestrator).Summary
+            .ShouldBe("You are an orchestrator.");
+        InstructionBundles.Get(InstructionBundles.BoardApi).Summary
+            .ShouldBe("Working the Antiphon board.");
+
+        foreach (var bundle in InstructionBundles.All.Values)
+        {
+            bundle.Summary.ShouldNotBeNullOrWhiteSpace(bundle.Key);
+            bundle.Summary.Length.ShouldBeLessThanOrEqualTo(200, bundle.Key);
+            bundle.Summary.ShouldNotContain("\n", customMessage: bundle.Key);
+        }
+    }
+
+    [Test]
     public void an_unknown_key_throws_and_names_the_ones_that_exist()
     {
         var ex = Should.Throw<KeyNotFoundException>(() => InstructionBundles.Get("delegate-basic"));

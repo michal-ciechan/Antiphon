@@ -357,6 +357,122 @@ public class AgentSystemPromptLaunchTests
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.ReplyStyle, style));
     }
 
+    // ---------- per-agent attachments and the drift badge (CARD-0058 slice 6) ----------
+
+    [Test]
+    public async Task An_attached_bundle_rides_the_launch_of_a_standing_agent_that_has_no_role()
+    {
+        // The card this slice closes, on the path that proves it: a standing agent belongs to no
+        // delegate role, so before attachments there was NO way for it to carry board-api short of
+        // pasting the text into its own system prompt by hand.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await AttachAsync(h, InstructionBundles.BoardApi);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true);
+
+        var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs;
+        var append = args[args.ToList().IndexOf("--append-system-prompt") + 1];
+        var boardApi = InstructionBundles.Get(InstructionBundles.BoardApi);
+        append.ShouldStartWith($"[bundle:board-api v{boardApi.Version}]");
+        append.ShouldContain(boardApi.Text);
+        append.ShouldEndWith(RenderedForHarnessAgent, customMessage:
+            "the agent's own contract still keeps the last word over an attached bundle");
+        started.ComposedBundles.ShouldBe([boardApi.Stamp]);
+
+        // What the launch recorded — stamps only. This is the ONLY composed state stored anywhere,
+        // and it is what the drift comparison matches against.
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.AsNoTracking()
+            .SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!));
+        session.ComposedBundleStamp.ShouldBe(boardApi.Stamp);
+        session.ComposedBundleStamp.ShouldNotContain(boardApi.Text);
+        started.BundlesOutOfDate.ShouldBeFalse("it launched with exactly what the repo says now");
+        started.AttachedBundleKeys.ShouldBe([InstructionBundles.BoardApi]);
+    }
+
+    [Test]
+    public async Task Attaching_a_bundle_to_a_running_agent_raises_the_drift_badge_and_touches_nothing_else()
+    {
+        // The constraint that outranks the feature: reconciliation is recompute-AT-LAUNCH. Attaching
+        // a bundle to a live session must change the badge and NOTHING about the session — no second
+        // launch, no text typed into a composer that is already running under the old instructions.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var started = await StartAsync(h, fresh: true);
+        started.BundlesOutOfDate.ShouldBeFalse();
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        var submittedBefore = adapter.SubmittedBodies.Count;
+
+        await AttachAsync(h, InstructionBundles.BoardApi);
+
+        using var scope = h.Provider.CreateScope();
+        var detail = await scope.ServiceProvider.GetRequiredService<AgentService>()
+            .GetByIdAsync(h.AgentId, CancellationToken.None);
+        detail.BundlesOutOfDate.ShouldBeTrue("it is running with instructions the repo has moved past");
+        detail.ComposedBundles.ShouldBe([InstructionBundles.Get(InstructionBundles.BoardApi).Stamp],
+            "and the list already shows what the NEXT launch will carry");
+        Factory(h).Created.Count.ShouldBe(1, "no relaunch — a badge is not a trigger");
+        adapter.SubmittedBodies.Count.ShouldBe(
+            submittedBefore, "and nothing was typed into the live session");
+    }
+
+    [Test]
+    public async Task The_badge_clears_at_the_next_launch_because_a_launch_is_the_reconcile_point()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        var started = await StartAsync(h, fresh: true);
+        await AttachAsync(h, InstructionBundles.BoardApi);
+
+        // End the session the agent is ACTUALLY on (the one the fresh start just made), not the
+        // harness's original — a still-live session makes the next start an idempotent no-op.
+        var live = Guid.Parse(started.PersistentSessionId!);
+        await EndSessionAsync(h, live, SessionStatus.Stopped);
+        await h.Runtime.DisposeSessionAsync(live);
+
+        // A RESUME, deliberately: launch args are rebuilt per invocation, so a resumed process picks
+        // up the new bundle too — and the stamp has to be rewritten or the badge would never clear.
+        var resumed = await StartAsync(h, fresh: false);
+
+        Guid.Parse(resumed.PersistentSessionId!).ShouldBe(live, "a resumable session keeps its id");
+
+        resumed.BundlesOutOfDate.ShouldBeFalse();
+        var args = Factory(h).Created[^1].StartedArgs.ToList();
+        args[args.IndexOf("--append-system-prompt") + 1].ShouldStartWith("[bundle:board-api v");
+    }
+
+    [Test]
+    public async Task An_agent_with_no_attachments_and_no_style_records_an_empty_stamp_not_a_null_one()
+    {
+        // "" and null are different answers and the difference is load-bearing: "" says this launch
+        // carried nothing, which attaching a first bundle then contradicts. Were it null, the badge
+        // could never appear for the overwhelmingly common agent.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true);
+
+        await using var db = CreateContext();
+        (await db.AgentSessions.AsNoTracking()
+                .SingleAsync(s => s.Id == Guid.Parse(started.PersistentSessionId!)))
+            .ComposedBundleStamp.ShouldBe(string.Empty);
+        started.BundlesOutOfDate.ShouldBeFalse();
+    }
+
+    private static async Task AttachAsync(BridgeQueueHarness h, params string[] keys)
+    {
+        using var scope = h.Provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var agent = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+        await AgentBundleAttachments.SetAsync(db, agent, keys, DateTime.UtcNow, CancellationToken.None);
+        await db.SaveChangesAsync();
+    }
+
     // ---------- harness ----------
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
@@ -398,10 +514,14 @@ public class AgentSystemPromptLaunchTests
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, template));
     }
 
-    private static async Task EndSessionAsync(BridgeQueueHarness h, SessionStatus status)
+    private static Task EndSessionAsync(BridgeQueueHarness h, SessionStatus status) =>
+        EndSessionAsync(h, h.SessionId, status);
+
+    private static async Task EndSessionAsync(BridgeQueueHarness h, Guid sessionId, SessionStatus status)
     {
+        _ = h;
         await using var db = CreateContext();
-        await db.AgentSessions.Where(s => s.Id == h.SessionId)
+        await db.AgentSessions.Where(s => s.Id == sessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status));
     }
 

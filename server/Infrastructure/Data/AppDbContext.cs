@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<BoardColumn> BoardColumns => Set<BoardColumn>();
     public DbSet<Card> Cards => Set<Card>();
     public DbSet<Agent> Agents => Set<Agent>();
+    public DbSet<AgentBundleAttachment> AgentBundleAttachments => Set<AgentBundleAttachment>();
     public DbSet<CardRevision> CardRevisions => Set<CardRevision>();
     public DbSet<CardWorkflowRun> CardWorkflowRuns => Set<CardWorkflowRun>();
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
@@ -768,6 +769,24 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<AgentBundleAttachment>(entity =>
+        {
+            entity.ToTable("AgentBundleAttachments");
+            // Composite natural key: "this agent carries this bundle" is a fact that can only be
+            // true once, so the database says so rather than a service checking for duplicates.
+            entity.HasKey(a => new { a.AgentId, a.BundleKey });
+            // Matches the longest key the catalog's own naming can produce with room to spare; the
+            // value is a filename, not prose.
+            entity.Property(a => a.BundleKey).IsRequired().HasMaxLength(100);
+            entity.Property(a => a.Position).IsRequired();
+            entity.Property(a => a.CreatedAt).IsRequired();
+
+            entity.HasOne(a => a.Agent)
+                .WithMany(agent => agent.BundleAttachments)
+                .HasForeignKey(a => a.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<Card>(entity =>
         {
             entity.ToTable("Cards");
@@ -955,6 +974,10 @@ public class AppDbContext : DbContext
             entity.Property(s => s.FailureReason).HasMaxLength(2000);
             entity.Property(s => s.DelegationTokenHash).HasMaxLength(64);
             entity.Property(s => s.EffectiveModelId).HasMaxLength(500);
+            // Stamps, not text — one "key vhash8" per composed bundle. Generous but bounded: the
+            // whole catalog stamped at once is a few hundred characters, and a column that could
+            // grow without limit would be a composed-text store by accident.
+            entity.Property(s => s.ComposedBundleStamp).HasMaxLength(2000);
 
             entity.HasIndex(s => s.DelegationTokenHash)
                 .HasDatabaseName("IX_AgentSessions_DelegationTokenHash");

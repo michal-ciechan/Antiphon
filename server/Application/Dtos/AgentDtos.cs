@@ -47,7 +47,12 @@ public sealed record AgentSummaryDto(
     AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null,
     // How the agent writes (CARD-0060). Normal composes to nothing; the list renders a chip for
     // anything else.
-    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal);
+    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // The live session was launched with instruction bundles the repo has since moved on from —
+    // an edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
+    // Informational ONLY: it restarts with the new ones at its next launch and nothing here forces
+    // that. False whenever there is no live session, or no recorded stamp to compare.
+    bool BundlesOutOfDate = false);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -82,7 +87,28 @@ public sealed record AgentDetailDto(
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
     // The bundle stamps this agent's NEXT launch will carry — "style-caveman v1a2b3c4d". Read-only
     // and recomputed per request: there is no stored composition anywhere, which is the point.
-    IReadOnlyList<string>? ComposedBundles = null);
+    IReadOnlyList<string>? ComposedBundles = null,
+    // See AgentSummaryDto.BundlesOutOfDate.
+    bool BundlesOutOfDate = false,
+    // The bundle KEYS attached to this agent, in composition order — what the settings modal's
+    // multi-select round-trips. Distinct from ComposedBundles, which is the whole composition
+    // (attachments AND the reply-style block) stamped with versions.
+    IReadOnlyList<string>? AttachedBundleKeys = null);
+
+/// <summary>
+/// One attachable bundle from the catalog (CARD-0058). The catalog is CODE — markdown files in the
+/// repo — so this is read-only everywhere; the only thing an operator chooses is which agent carries
+/// which key.
+/// </summary>
+public sealed record InstructionBundleDto(
+    string Key,
+    // Content hash of the bundle file. Changes when the file changes; there is nothing to bump.
+    string Version,
+    // "board-api v1a2b3c4d" — the same string that rides the composed output and the drift stamp.
+    string Stamp,
+    // First line of the file, for the picker. The bundles lead with a title line by convention.
+    string Summary,
+    int Chars);
 
 public sealed record AgentTuiConfiguredSelectionDto(
     Guid? TuiProfileId,
@@ -171,7 +197,13 @@ public sealed record UpdateAgentRequest(
     Guid? TuiProfileId = null,
     string? ModelId = null,
     // Null = leave unchanged (CARD-0060), so an older caller cannot reset a chosen style to Normal.
-    AgentReplyStyle? ReplyStyle = null);
+    AgentReplyStyle? ReplyStyle = null,
+    // The bundles this agent carries on top of what its role implies (CARD-0058 slice 6). Null =
+    // leave unchanged, same reason as ReplyStyle: an older caller must not silently detach
+    // everything. An EMPTY list is the explicit "detach all". Order is composition order; unknown or
+    // style keys are rejected 422 rather than dropped, because a key an operator typed that names
+    // nothing is a mistake worth hearing about.
+    IReadOnlyList<string>? BundleKeys = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

@@ -50,6 +50,23 @@ public static class AgentEndpoints
             };
         });
 
+        // The instruction bundles an operator may attach to an agent (CARD-0058 slice 6). Read-only
+        // and unauthenticated-by-the-same-rules as /definitions: the catalog is CODE — markdown
+        // files under server/Bundles/, embedded in this assembly and versioned by content hash — so
+        // there is nothing here to write. What an operator chooses is which agent carries which key,
+        // and that rides UpdateAgentRequest.BundleKeys with the rest of the agent's settings rather
+        // than a second write path that could disagree with it.
+        //
+        // Reply-style bundles are deliberately absent: the ReplyStyle dropdown already picks one,
+        // and a second control that could contradict it would give an agent two voices.
+        agents.MapGet("/bundles", () =>
+        {
+            var catalog = InstructionBundles.Attachable
+                .Select(b => new InstructionBundleDto(b.Key, b.Version, b.Stamp, b.Summary, b.Text.Length))
+                .ToList();
+            return Results.Ok(catalog);
+        });
+
         agents.MapGet("/{id:guid}", async (
             Guid id,
             AgentService service,

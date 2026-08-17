@@ -938,7 +938,12 @@ public sealed class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
 
-        var spec = BuildLaunchSpec(claimed, agent, session);
+        // After the commit, so a pinned agent's attachments are read from a settled view. A fresh
+        // pool delegate has none — its row was created moments ago in this same transaction — so
+        // this is a lookup that costs nothing in the common case and is the whole point in the
+        // pinned one (CARD-0058 slice 6).
+        var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+        var spec = BuildLaunchSpec(claimed, agent, session, attachedBundleKeys);
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
@@ -1070,7 +1075,19 @@ public sealed class AgentTaskDispatcher
     /// as <c>--model &lt;alias&gt;</c>, the standing instructions as <c>--append-system-prompt</c>,
     /// and the ANTIPHON_* env block that lets the delegate call back without being told who it is.
     /// </summary>
-    internal AgentLaunchSpec BuildLaunchSpec(AgentTask task, Agent agent, AgentSession session)
+    /// <param name="attachedBundleKeys">
+    /// Bundles attached to the resolved agent (CARD-0058 slice 6), on top of what its role implies.
+    /// A fresh pool delegate is born with none, so in the common case this is empty — it matters
+    /// when a task is PINNED to a standing agent, which is how an agent that works the card API
+    /// comes to carry <c>board-api</c> without widening the role map for every delegate of its role.
+    /// Passed in rather than read off the entity: <c>agent.BundleAttachments</c> on an agent loaded
+    /// without the include is empty, and empty is indistinguishable from "none attached".
+    /// </param>
+    internal AgentLaunchSpec BuildLaunchSpec(
+        AgentTask task,
+        Agent agent,
+        AgentSession session,
+        IReadOnlyList<string>? attachedBundleKeys = null)
     {
         var extraArgs = new List<string>
         {
@@ -1093,7 +1110,7 @@ public sealed class AgentTaskDispatcher
         // it retires — bounded by PoolIdleRetireMinutes, and deliberately not "fixed" by typing
         // bundles into a live session.
         var composed = InstructionBundleComposer.Compose(
-            InstructionBundles.ForDelegate(task.Kind, task.Role));
+            InstructionBundles.ForDelegate(task.Kind, task.Role, attachedBundleKeys));
         var subject = $"Task {DelegationReportFormatter.Short(task.Id)} ({task.Kind}/{task.Role})";
         // Guarded BEFORE anything is added: over-budget throws at compose time and the launch fails
         // loudly. Truncating would run the delegate under half a contract with nothing to show it.

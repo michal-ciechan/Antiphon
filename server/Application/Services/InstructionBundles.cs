@@ -32,6 +32,29 @@ public sealed record InstructionBundle(string Key, string Version, string Text)
 
     /// <summary>Compact form for a DTO or a log line: <c>delegate-basics v3f9a1b2c</c>.</summary>
     public string Stamp => $"{Key} v{Version}";
+
+    /// <summary>
+    /// The bundle's opening sentence — what a picker shows next to the key so an operator choosing
+    /// an attachment is not choosing from filenames alone. Derived, never a second field to keep in
+    /// step with the file: every bundle opens by saying what it is ("You are an orchestrator.",
+    /// "Working the Antiphon board."), so the first sentence is already the summary.
+    /// </summary>
+    public string Summary
+    {
+        get
+        {
+            var end = Text.IndexOf(". ", StringComparison.Ordinal);
+            var line = Text.IndexOf('\n');
+            // Whichever ends first: a bundle whose opening line has no sentence break is summarised
+            // by that line rather than by the whole first paragraph run together.
+            if (line >= 0 && (end < 0 || line < end))
+                return Truncate(Text[..line].TrimEnd());
+            return end < 0 ? Truncate(Text) : Truncate(Text[..(end + 1)]);
+        }
+    }
+
+    private static string Truncate(string value) =>
+        value.Length <= 200 ? value : value[..199].TrimEnd() + "…";
 }
 
 /// <summary>
@@ -95,15 +118,47 @@ public static class InstructionBundles
     public static string TextOf(string key) => Get(key).Text;
 
     /// <summary>
+    /// Is this key in the catalog? The counterpart to <see cref="Get"/>'s throw, and it exists for
+    /// exactly one caller: an <c>AgentBundleAttachment</c> row names a key by string, the catalog is
+    /// code, and a PR that renames a bundle file leaves those rows pointing at nothing. Attachment
+    /// state is data and outlives the code it points at, so that case has to be a question with an
+    /// answer rather than an exception on a launch path.
+    /// </summary>
+    public static bool Exists(string key) => All.ContainsKey(key);
+
+    /// <summary>
+    /// A style bundle is chosen by <see cref="AgentReplyStyle"/>, never attached by hand.
+    /// </summary>
+    public static bool IsStyle(string key) => key.StartsWith(StylePrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The bundles an operator may attach to an agent (CARD-0058 slice 6), key-ordered.
+    ///
+    /// <para>Everything in the catalog EXCEPT the reply styles. A style already has a control — the
+    /// <see cref="AgentReplyStyle"/> dropdown — and a second one that could contradict it would let
+    /// an agent carry two voices at once, with the composer's dedup unable to help because the two
+    /// paths name different style keys.</para>
+    /// </summary>
+    public static IReadOnlyList<InstructionBundle> Attachable =>
+        [.. All.Values.Where(b => !IsStyle(b.Key)).OrderBy(b => b.Key, StringComparer.Ordinal)];
+
+    /// <summary>
     /// Which bundles a DELEGATE launch carries, from the shape of its task (plan §4). A code-level
     /// map, not configuration: which standing rules a role needs is a design decision that belongs
     /// in a PR next to the rules themselves.
     ///
-    /// <para>Delegate agent rows are ephemeral (<c>task-&lt;id&gt;</c>, deleted when the task
-    /// settles), so per-agent attachments could never reach them — the role is the only durable
-    /// handle there is.</para>
+    /// <para>A FRESH pool delegate's agent row is ephemeral (<c>task-&lt;id&gt;</c>, deleted when the
+    /// task settles), so nobody can have attached anything to it and the role is the only handle
+    /// there is. A task PINNED to a standing agent is the case where
+    /// <paramref name="attachedBundleKeys"/> carries something (CARD-0058 slice 6).</para>
     /// </summary>
-    public static IReadOnlyList<string> ForDelegate(AgentTaskKind kind, AgentTaskRole role)
+    /// <param name="attachedBundleKeys">
+    /// Bundles attached to the resolved agent, appended AFTER the role's defaults: the role says
+    /// what this shape of work always needs, an attachment is the operator adding to that. Deduped
+    /// by the composer, so a bundle reachable both ways appears exactly once.
+    /// </param>
+    public static IReadOnlyList<string> ForDelegate(
+        AgentTaskKind kind, AgentTaskRole role, IReadOnlyList<string>? attachedBundleKeys = null)
     {
         // STRUCTURAL CARVE-OUT, not incidental. A Check task is pinned to the standing check
         // interpreter, whose own contract is reconciled onto its row and rendered by
@@ -111,15 +166,23 @@ public static class InstructionBundles
         // Handing it "commit and push each slice" would be an impossible instruction, and it would
         // reach it on exactly the path nobody watches: the dispatcher only builds a launch spec for a
         // pinned agent when that agent's session is NOT already up.
+        //
+        // Attachments do NOT reopen it. Being pinned is exactly what makes the interpreter the agent
+        // most likely to have some, and the carve-out is about what it can OBEY, not about where the
+        // instruction came from.
         if (role == AgentTaskRole.Check)
             return [];
 
         // A sub-orchestrator is a delegate too — it gets the delegate rules AND its own contract. The
         // orchestrator block comes first because it is what the agent IS; the basics are how the
         // harness behaves around it.
-        return kind == AgentTaskKind.Orchestrator
+        IReadOnlyList<string> roleKeys = kind == AgentTaskKind.Orchestrator
             ? [Orchestrator, DelegateBasics]
             : [DelegateBasics];
+
+        return attachedBundleKeys is null or { Count: 0 }
+            ? roleKeys
+            : [.. roleKeys, .. attachedBundleKeys];
     }
 
     private static FrozenDictionary<string, InstructionBundle> Load()

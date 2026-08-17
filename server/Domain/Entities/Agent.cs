@@ -79,4 +79,12 @@ public class Agent
     public Board? Board { get; set; }
     public ICollection<Card> QueueCards { get; set; } = new List<Card>();
     public ICollection<CardWorkflowRun> WorkflowRuns { get; set; } = new List<CardWorkflowRun>();
+
+    /// <summary>
+    /// Optional instruction bundles attached to THIS agent (CARD-0058 slice 6), on top of whatever
+    /// its role implies. Deliberately never read through this navigation on a launch path: an agent
+    /// loaded without the include would compose silently without its bundles, so the launch paths
+    /// query <c>AgentBundleAttachments.LoadAsync</c> explicitly instead.
+    /// </summary>
+    public ICollection<AgentBundleAttachment> BundleAttachments { get; set; } = new List<AgentBundleAttachment>();
 }

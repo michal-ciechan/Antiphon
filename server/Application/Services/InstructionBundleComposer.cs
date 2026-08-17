@@ -16,6 +16,17 @@ public sealed record ComposedInstructions(string Text, IReadOnlyList<Instruction
 
     /// <summary><c>["delegate-basics v3f9a1b2c", …]</c> — for a log line, a DTO or a drift check.</summary>
     public IReadOnlyList<string> Stamps => [.. Bundles.Select(b => b.Stamp)];
+
+    /// <summary>
+    /// The whole composition on one line — <c>"orchestrator v1a2b3c4d, delegate-basics v3f9a1b2c"</c>
+    /// — which is what a session row stores at launch and what the drift check compares (CARD-0058
+    /// slice 6). Empty for a composition that carried no bundles, and that empty string is a real
+    /// answer: it says this launch carried nothing, which a later attachment then contradicts.
+    ///
+    /// <para>It rides the CONTENT HASHES already in each stamp. There is no second version to bump,
+    /// which is the entire reason the comparison can be a string match.</para>
+    /// </summary>
+    public string StampLine => string.Join(", ", Stamps);
 }
 
 /// <summary>
@@ -96,6 +107,26 @@ public static class InstructionBundleComposer
             ? ComposedInstructions.Empty
             : new ComposedInstructions(text.ToString(), bundles);
     }
+
+    /// <summary>
+    /// Is a session running with instructions the repo has since moved on from (CARD-0058 slice 6)?
+    ///
+    /// <para>A pure string comparison of the launch's stamp line against a composition recomputed
+    /// now. Because every stamp carries the bundle's own content hash, an edited bundle file, an
+    /// attachment added or removed, and a changed reply style all show up the same way, and none of
+    /// them needs a version anybody remembers to bump.</para>
+    ///
+    /// <para><paramref name="launchedStamp"/> null means NO EVIDENCE — a session from before the
+    /// column existed, or one launched by a path that composes nothing — and no evidence never
+    /// raises the badge. Only a recorded stamp that disagrees does.</para>
+    ///
+    /// <para>Answering true is the whole job. Nothing acts on it: a running session keeps the
+    /// bundles it was launched with until its next launch, and the badge exists to make that
+    /// bounded staleness visible, not to type instructions into a live session.</para>
+    /// </summary>
+    public static bool IsOutOfDate(string? launchedStamp, ComposedInstructions current) =>
+        launchedStamp is not null
+        && !string.Equals(launchedStamp, current.StampLine, StringComparison.Ordinal);
 
     /// <summary>
     /// The command-line guard. THROWS RATHER THAN TRUNCATES: a truncated system prompt is an agent

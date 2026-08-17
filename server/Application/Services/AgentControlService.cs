@@ -156,6 +156,10 @@ public sealed class AgentControlService
         var profileKind = await PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
         var extraArgs = new List<string>();
+        // Null until a composition actually happens, and the difference is load-bearing: it is what
+        // the session row stores, and a null there means "no evidence" and can never raise a drift
+        // badge. A non-Claude launch composes nothing and must not claim it composed nothing.
+        string? composedStamp = null;
         if (isClaudeCode)
         {
             var sessionName = agent.Name.Trim();
@@ -167,17 +171,29 @@ public sealed class AgentControlService
             if (string.IsNullOrWhiteSpace(agent.ModelId))
                 extraArgs.AddRange(["--model", ModelLevelAliases.ForClaude(agent.ModelLevel)]);
 
-            // The agent's standing instructions, composed at launch (CARD-0058/0060): the reply-style
-            // block first, then the agent's own SystemPromptAppend, which keeps the final word
-            // because it is the most specific thing anybody wrote about this one agent. Per-agent
-            // bundle attachments are slice 6; a standing agent carries no role bundles today.
+            // The agent's standing instructions, composed at launch (CARD-0058/0060): the bundles
+            // attached to THIS agent, then the reply-style block, then the agent's own
+            // SystemPromptAppend, which keeps the final word because it is the most specific thing
+            // anybody wrote about this one agent. A standing agent has no role, so attachments are
+            // the only way it can carry a bundle — this is what lets an agent that works the card
+            // API receive board-api without every delegate of some role receiving it too.
             //
-            // A Normal style resolves to no bundle at all, so for every agent that existed before
-            // CARD-0060 this composes to its SystemPromptAppend byte for byte and the launch
-            // arguments are unchanged.
+            // Queried, never read off agent.BundleAttachments: the agent here is loaded FOR UPDATE
+            // with no includes, so the navigation would be empty and the agent would launch without
+            // its bundles and without a sound.
+            //
+            // With no attachments and a Normal style — which resolves to no bundle at all — this
+            // composes to the agent's SystemPromptAppend byte for byte, so every agent that existed
+            // before CARD-0058/0060 launches with unchanged arguments.
+            var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
             var composed = InstructionBundleComposer.Compose(
-                styleBundleKey: AgentReplyStyles.ComposedKey(agent.ReplyStyle),
-                systemPromptAppend: agent.SystemPromptAppend);
+                attachedKeys,
+                AgentReplyStyles.ComposedKey(agent.ReplyStyle),
+                agent.SystemPromptAppend);
+            // Recorded even when it is empty: "" says this launch carried no bundles, which a
+            // later attachment then genuinely contradicts. Stamps only — the composed text is never
+            // stored, so there is nothing here that can drift from the repo's own files.
+            composedStamp = composed.StampLine;
             if (!composed.IsEmpty)
             {
                 var boundChannels = await _db.ChatChannels
@@ -254,6 +270,10 @@ public sealed class AgentControlService
                 previous.DelegationTokenHash = delegationTokenHash;
                 previous.TuiProfileRevisionId = resolved.ProfileRevisionId;
                 previous.EffectiveModelId = resolved.EffectiveModelId;
+                // A resume is a LAUNCH — the args are rebuilt per invocation, so the resumed process
+                // carries whatever the repo says today. Restamping is what keeps the badge honest:
+                // leaving the old stamp would keep flagging drift the resume just resolved.
+                previous.ComposedBundleStamp = composedStamp;
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(
@@ -279,7 +299,8 @@ public sealed class AgentControlService
             LastSeenAt = now,
             DelegationTokenHash = delegationTokenHash,
             TuiProfileRevisionId = resolved.ProfileRevisionId,
-            EffectiveModelId = resolved.EffectiveModelId
+            EffectiveModelId = resolved.EffectiveModelId,
+            ComposedBundleStamp = composedStamp,
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);

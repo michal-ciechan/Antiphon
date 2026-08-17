@@ -44,6 +44,24 @@ public class AgentSession
     /// </summary>
     public string? DelegationTokenHash { get; set; }
 
+    /// <summary>
+    /// The instruction bundles this session was LAUNCHED carrying, as one stamp line —
+    /// <c>"board-api v1a2b3c4d, style-terse v9f8e7d6c"</c> (CARD-0058 slice 6). The ONLY composed
+    /// state that is stored anywhere, and it deliberately stores the STAMPS rather than the text:
+    /// the drift check is then a string match against a composition recomputed from the repo, with
+    /// no second versioning scheme to keep in step with the content hashes.
+    ///
+    /// <para>Empty string means "this launch composed nothing", which is a real and different fact
+    /// from NULL — null means no launch path recorded a composition here at all (a session that
+    /// predates this column, or a card spawn, which composes no bundles). Only a non-null stamp is
+    /// evidence, so a null can never raise a drift badge.</para>
+    ///
+    /// <para>It is never used to REBUILD a prompt. A running session keeps the bundles it started
+    /// with until its next launch — bounded and deliberate — and this column exists to make that
+    /// visible, not to trigger a fix.</para>
+    /// </summary>
+    public string? ComposedBundleStamp { get; set; }
+
     public Card Card { get; set; } = null!;
     public Worktree? Worktree { get; set; }
     public AgentTuiProfileRevision? TuiProfileRevision { get; set; }

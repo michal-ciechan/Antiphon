@@ -66,15 +66,39 @@ public sealed class AgentService
 
         var liveSessions = await LoadLiveSessionsAsync(agents.Select(a => a.PersistentSessionId), ct);
         var supervision = await LoadSupervisionAsync(agents.Where(a => a.AlwaysOn).Select(a => a.Id), ct);
+        // One query for every agent's attachments (CARD-0058 slice 6) — the list's drift badges are
+        // otherwise N queries. Explicit rather than an Include for the same reason the launch paths
+        // are: a missing include reads as "no attachments" and would clear every badge on the page.
+        var attachments = await AgentBundleAttachments.LoadAsync(
+            _db, [.. agents.Select(a => a.Id)], _logger, ct);
         var result = new List<AgentSummaryDto>(agents.Count);
         foreach (var a in agents)
         {
             var live = ResolveLiveSession(liveSessions, a.PersistentSessionId);
             result.Add(ToSummaryDto(
-                a, live, supervision.GetValueOrDefault(a.Id), await IsSessionWorkingAsync(live, ct)));
+                a,
+                live?.Dto,
+                supervision.GetValueOrDefault(a.Id),
+                await IsSessionWorkingAsync(live?.Dto, ct),
+                IsOutOfDate(live, Compose(a, attachments.GetValueOrDefault(a.Id, [])))));
         }
         return result;
     }
+
+    /// <summary>
+    /// What this agent's NEXT launch will compose (CARD-0058) — the same call
+    /// <c>AgentControlService</c> makes, so the UI and the launch can never disagree about which
+    /// bundles an agent carries. Recomputed per request; nothing composed is stored.
+    /// </summary>
+    private static ComposedInstructions Compose(Agent agent, IReadOnlyList<string> attachedKeys) =>
+        InstructionBundleComposer.Compose(attachedKeys, AgentReplyStyles.ComposedKey(agent.ReplyStyle));
+
+    /// <summary>
+    /// Drift: the live session was launched carrying something other than what the repo composes
+    /// now. No live session, or a session with no recorded stamp, is NO EVIDENCE — never drift.
+    /// </summary>
+    private static bool IsOutOfDate(LiveSession? live, ComposedInstructions current) =>
+        live is not null && InstructionBundleComposer.IsOutOfDate(live.BundleStamp, current);
 
     /// <summary>
     /// The transcript-derived "mid-turn right now" signal for a live session — what the agent
@@ -92,7 +116,9 @@ public sealed class AgentService
             ? (await LoadSupervisionAsync([agent.Id], ct)).GetValueOrDefault(agent.Id)
             : null;
         var live = ResolveLiveSession(liveSessions, agent.PersistentSessionId);
-        return ToDetailDto(agent, live, supervision, await IsSessionWorkingAsync(live, ct));
+        var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+        return ToDetailDto(
+            agent, live?.Dto, supervision, await IsSessionWorkingAsync(live?.Dto, ct), live, attachedKeys);
     }
 
     public async Task<IReadOnlyList<AgentIncidentDto>> GetIncidentsAsync(Guid agentId, int take, CancellationToken ct)
@@ -127,9 +153,17 @@ public sealed class AgentService
                 ct);
     }
 
+    /// <summary>
+    /// A live session as the DTO layer needs it, plus the one thing the DTO does not carry: the
+    /// bundle stamp its launch recorded (CARD-0058 slice 6). Kept off
+    /// <see cref="AgentSessionSummaryDto"/> deliberately — the stamp is an input to a comparison the
+    /// server makes, not a fact the client has any use for.
+    /// </summary>
+    private sealed record LiveSession(AgentSessionSummaryDto Dto, string? BundleStamp);
+
     // Loads the live (Starting/Running/Stopping) AgentSession for each agent's persistent session id,
     // keyed by session id. Stale/ended sessions are excluded so the UI only offers to open a real terminal.
-    private async Task<Dictionary<Guid, AgentSessionSummaryDto>> LoadLiveSessionsAsync(
+    private async Task<Dictionary<Guid, LiveSession>> LoadLiveSessionsAsync(
         IEnumerable<string?> persistentSessionIds, CancellationToken ct)
     {
         var ids = persistentSessionIds
@@ -144,27 +178,29 @@ public sealed class AgentService
         var sessions = await _db.AgentSessions
             .AsNoTracking()
             .Where(s => ids.Contains(s.Id) && LiveSessionStatuses.Contains(s.Status))
-            .Select(s => new AgentSessionSummaryDto(
-                s.Id,
-                s.DefinitionName,
-                s.AgentKind,
-                s.Status,
-                s.Cwd,
-                s.CreatedAt,
-                s.StartedAt,
-                s.LastSeenAt,
-                s.EndedAt,
-                s.ExitCode,
-                s.FailureReason,
-                s.TuiProfileRevisionId,
-                s.EffectiveModelId))
+            .Select(s => new LiveSession(
+                new AgentSessionSummaryDto(
+                    s.Id,
+                    s.DefinitionName,
+                    s.AgentKind,
+                    s.Status,
+                    s.Cwd,
+                    s.CreatedAt,
+                    s.StartedAt,
+                    s.LastSeenAt,
+                    s.EndedAt,
+                    s.ExitCode,
+                    s.FailureReason,
+                    s.TuiProfileRevisionId,
+                    s.EffectiveModelId),
+                s.ComposedBundleStamp))
             .ToListAsync(ct);
 
-        return sessions.ToDictionary(s => s.Id);
+        return sessions.ToDictionary(s => s.Dto.Id);
     }
 
-    private static AgentSessionSummaryDto? ResolveLiveSession(
-        Dictionary<Guid, AgentSessionSummaryDto> liveSessions, string? persistentSessionId)
+    private static LiveSession? ResolveLiveSession(
+        Dictionary<Guid, LiveSession> liveSessions, string? persistentSessionId)
         => Guid.TryParse(persistentSessionId, out var id) && liveSessions.TryGetValue(id, out var session)
             ? session
             : null;
@@ -289,6 +325,11 @@ public sealed class AgentService
             agent.ModelLevel = modelLevel;
         if (request.ReplyStyle is { } replyStyle)
             agent.ReplyStyle = replyStyle;
+        // CARD-0058 slice 6. Null leaves attachments alone; an empty list detaches everything. The
+        // rows change here and nothing else does: the agent's RUNNING session keeps the bundles it
+        // launched with, which is what the drift badge on the detail DTO is for.
+        if (request.BundleKeys is { } bundleKeys)
+            await AgentBundleAttachments.SetAsync(_db, agent, bundleKeys, UtcNow(), ct);
         if (request.TuiProfileId is { } profileId)
         {
             await ApplyTuiSelectionAsync(
@@ -721,7 +762,8 @@ public sealed class AgentService
     }
 
     private static AgentSummaryDto ToSummaryDto(
-        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision, bool working = false)
+        Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision,
+        bool working = false, bool bundlesOutOfDate = false)
     {
         var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
         return new AgentSummaryDto(
@@ -752,12 +794,13 @@ public sealed class AgentService
             agent.ModelId,
             configured,
             liveSelection,
-            agent.ReplyStyle);
+            agent.ReplyStyle,
+            bundlesOutOfDate);
     }
 
     private static AgentDetailDto ToDetailDto(
         Agent agent, AgentSessionSummaryDto? liveSession, AgentSupervisionDto? supervision = null,
-        bool working = false)
+        bool working = false, LiveSession? live = null, IReadOnlyList<string>? attachedKeys = null)
     {
         var queue = agent.QueueCards
             .Where(c => c.AgentQueuePosition is not null)
@@ -776,6 +819,8 @@ public sealed class AgentService
                 c.ActiveWorkflowRun?.CurrentStage?.Name))
             .ToList();
         var (configured, liveSelection) = MapTuiSelection(agent, liveSession);
+        var keys = attachedKeys ?? [];
+        var composed = Compose(agent, keys);
 
         return new AgentDetailDto(
             agent.Id,
@@ -808,9 +853,9 @@ public sealed class AgentService
             agent.ReplyStyle,
             // What the NEXT launch will carry, composed the same way AgentControlService composes it
             // — recomputed per request rather than stored, so the list can never drift from the repo.
-            InstructionBundleComposer
-                .Compose(styleBundleKey: AgentReplyStyles.ComposedKey(agent.ReplyStyle))
-                .Stamps);
+            composed.Stamps,
+            IsOutOfDate(live, composed),
+            keys);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)

@@ -111,17 +111,66 @@ public class DelegateBundleLaunchTests
         brief.ShouldContain(task.Goal, customMessage: "the brief carries the goal and the ephemeral state");
     }
 
+    // ---- per-agent attachments (CARD-0058 slice 6) -----------------------------------------------
+
+    [Test]
+    public void a_pinned_agents_attachments_ride_its_launch_on_top_of_its_role()
+    {
+        // The card, stated as a launch: board-api is on NO role, so a delegate working the card API
+        // never received it and widening the role map would have handed it to every delegate of that
+        // role. An attachment reaches exactly the one agent — and the role's own bundle still comes
+        // first, because the role says what this shape of work always needs.
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Code);
+
+        var append = AppendedSystemPrompt(dispatcher, task, [InstructionBundles.BoardApi]);
+
+        append.ShouldStartWith("[bundle:delegate-basics v");
+        append.ShouldContain($"[bundle:board-api v{InstructionBundles.Get(InstructionBundles.BoardApi).Version}]");
+        append.ShouldContain(InstructionBundles.TextOf(InstructionBundles.BoardApi));
+        append.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal)
+            .ShouldBeLessThan(append.IndexOf("[bundle:board-api", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void attaching_a_bundle_the_role_already_grants_composes_it_once()
+    {
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Code);
+
+        var append = AppendedSystemPrompt(dispatcher, task, [InstructionBundles.DelegateBasics]);
+
+        var first = append.IndexOf("[bundle:delegate-basics", StringComparison.Ordinal);
+        first.ShouldBe(0);
+        append.IndexOf("[bundle:delegate-basics", first + 1, StringComparison.Ordinal)
+            .ShouldBe(-1, "the composer dedupes by key, so attaching a role default is harmless");
+    }
+
+    [Test]
+    public void a_check_task_still_launches_with_nothing_even_when_its_agent_carries_attachments()
+    {
+        // The check interpreter is the agent most likely to be PINNED, and therefore the one most
+        // likely to have an attachment. The carve-out is about what it can obey — no tools, a
+        // deny-all PreToolUse hook — not about which map the instruction came through.
+        var (dispatcher, _) = CreateHarness();
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Check);
+
+        ArgsOf(dispatcher, task, [InstructionBundles.BoardApi]).ShouldNotContain("--append-system-prompt");
+    }
+
     // ---- harness -------------------------------------------------------------------------------
 
-    private static string AppendedSystemPrompt(AgentTaskDispatcher dispatcher, AgentTask task)
+    private static string AppendedSystemPrompt(
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
     {
-        var args = ArgsOf(dispatcher, task);
+        var args = ArgsOf(dispatcher, task, attached);
         var flag = args.IndexOf("--append-system-prompt");
         flag.ShouldBeGreaterThanOrEqualTo(0, $"args were [{string.Join(", ", args)}]");
         return args[flag + 1];
     }
 
-    private static List<string> ArgsOf(AgentTaskDispatcher dispatcher, AgentTask task)
+    private static List<string> ArgsOf(
+        AgentTaskDispatcher dispatcher, AgentTask task, IReadOnlyList<string>? attached = null)
     {
         var agent = new Agent
         {
@@ -142,7 +191,7 @@ public class DelegateBundleLaunchTests
             Rows = 30,
         };
 
-        return [.. dispatcher.BuildLaunchSpec(task, agent, session).Args];
+        return [.. dispatcher.BuildLaunchSpec(task, agent, session, attached).Args];
     }
 
     private static AgentTask TaskFor(AgentTaskKind kind, AgentTaskRole role) => new()
