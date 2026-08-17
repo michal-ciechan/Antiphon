@@ -11,7 +11,7 @@
 //
 // Browser: connects over CDP to the already-running Edge (BU_CDP_URL / localhost:9222 — the same
 // instance browser-harness drives) via playwright-core, so no browser download is needed.
-// Storybook: uses a running dev server on 17283, or boots one itself (--ci) and kills it after.
+// Storybook: uses a running dev server on 17209, or boots one itself (--ci) and kills it after.
 //
 // Usage:  node scripts/storybook-screenshots.mjs [story-id-substring ...]
 
@@ -23,7 +23,7 @@ import { chromium } from 'playwright-core'
 
 const clientDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(clientDir, '..', 'docs', 'ui-screenshots')
-const storybookUrl = process.env.STORYBOOK_URL ?? 'http://localhost:17283'
+const storybookUrl = process.env.STORYBOOK_URL ?? 'http://localhost:17209'
 const cdpUrl = process.env.BU_CDP_URL ?? 'http://localhost:9222'
 const filters = process.argv.slice(2)
 
@@ -42,7 +42,7 @@ async function main() {
     console.log('Storybook not running — booting one (this takes ~30s)…')
     storybookChild = spawn(
       process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['storybook', 'dev', '-p', '17283', '--no-open', '--ci'],
+      ['storybook', 'dev', '-p', '17209', '--no-open', '--ci'],
       { cwd: clientDir, stdio: 'ignore', shell: process.platform === 'win32' },
     )
     const deadline = Date.now() + 120_000

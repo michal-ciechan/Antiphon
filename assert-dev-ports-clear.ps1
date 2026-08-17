@@ -1,5 +1,5 @@
 param(
-    [string[]]$Ports = @("17281", "17282", "17283"),
+    [string[]]$Ports = @("17202", "17203", "17209"),
     [switch]$StopPortOwners
 )
 

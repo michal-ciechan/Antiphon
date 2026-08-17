@@ -76,10 +76,10 @@ const NAV_ITEMS = [
   { to: '/settings', label: 'Settings' },
 ]
 
-// Storybook is served at storybook.<app-host> behind Caddy on codeperf, else :17283 locally.
+// Storybook is served at storybook.<app-host> behind Caddy on codeperf, else :17209 locally.
 function storybookUrl(): string {
   const { protocol, host, hostname } = window.location
-  return host.endsWith('.codeperf.net') ? `${protocol}//storybook.${host}` : `${protocol}//${hostname}:17283`
+  return host.endsWith('.codeperf.net') ? `${protocol}//storybook.${host}` : `${protocol}//${hostname}:17209`
 }
 
 // Shared by the desktop header and the mobile drawer. onNavigate closes the drawer on tap.

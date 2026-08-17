@@ -29,7 +29,7 @@ Use this skill when the user wants to start, stop, restart, reset, upgrade, back
 | 17280 | PostgreSQL           | Docker container   |
 | 17281 | .NET API server      | `dotnet run`       |
 | 17282 | React/Vite client    | `npm run dev`      |
-| 17283 | Storybook (optional) | `npm run storybook`|
+| 17209 | Storybook (optional) | `npm run storybook`|
 
 ---
 

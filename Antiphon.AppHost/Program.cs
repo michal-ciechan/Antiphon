@@ -75,11 +75,11 @@ builder.AddNpmApp("client", "../client", "dev")
     .WithEnvironment("BROWSER", "none")
     .WithHttpEndpoint(port: 17203, env: "VITE_PORT");
 
-// ── Storybook (component workshop — same client project, "storybook" npm script on :17283) ──
+// ── Storybook (component workshop — same client project, "storybook" npm script on :17209) ──
 // Started so its Caddy vhost (storybook.antiphon.<machine>.codeperf.net) has something to proxy.
-// isProxied:false because the script pins -p 17283; Aspire just tracks that direct endpoint.
+// isProxied:false because the script pins -p 17209; Aspire just tracks that direct endpoint.
 builder.AddNpmApp("storybook", "../client", "storybook")
     .WithEnvironment("BROWSER", "none")
-    .WithHttpEndpoint(port: 17283, isProxied: false);
+    .WithHttpEndpoint(port: 17209, isProxied: false);
 
 builder.Build().Run();

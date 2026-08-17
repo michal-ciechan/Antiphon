@@ -11,7 +11,7 @@ ContractSnapshotTests (tests/Antiphon.E2E)          ← REAL app: shared WebAppl
 client/src/test/fixtures/contract/*.json            ← the ONLY allowed source for story mock data
         │  imported + seeded into a QueryClient (no MSW — repo convention)
         ▼
-*.stories.tsx (Storybook, port 17283)               ← component/page states, no volatile chrome
+*.stories.tsx (Storybook, port 17209)               ← component/page states, no volatile chrome
         │  rendered headlessly via the story iframe
         ▼
 docs/ui-screenshots/*.png (+ README index)          ← visual docs + drastic-breakage tripwire
@@ -53,7 +53,7 @@ docs/ui-screenshots/*.png (+ README index)          ← visual docs + drastic-br
   download), renders every story's bare `iframe.html` (manager chrome never appears), disables
   animations/caret, waits for Monaco where present, and writes
   `docs/ui-screenshots/<story-id>.png` plus a `README.md` index.
-- Uses the running Storybook on 17283 or boots one itself (`--ci`) and kills it after.
+- Uses the running Storybook on 17209 or boots one itself (`--ci`) and kills it after.
 - Filter by story id substring: `npm run screenshots -- filesreviewpanel`.
 - **Workflow**: after UI changes, regenerate and review the image diff in git — a drastically
   broken render is visible before anyone opens the app, and the committed PNGs double as UI

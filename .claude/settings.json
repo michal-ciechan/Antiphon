@@ -19,7 +19,7 @@
             { "name": "PostgreSQL", "url": "http://localhost:17280" },
             { "name": "API Server", "url": "http://localhost:17281" },
             { "name": "Client", "url": "http://localhost:17282" },
-            { "name": "Storybook", "url": "http://localhost:17283" }
+            { "name": "Storybook", "url": "http://localhost:17209" }
           ]
         }
       ]
