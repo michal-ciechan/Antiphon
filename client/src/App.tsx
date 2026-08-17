@@ -22,6 +22,7 @@ import { OrchestratorPage } from './features/orchestrator/OrchestratorPage'
 import { AgentsPage } from './features/agents/AgentsPage'
 import { AgentFilesPage } from './features/agents/AgentFilesPage'
 import { ChannelsPage } from './features/channels/ChannelsPage'
+import { PlanReaderPage } from './features/plans/PlanReaderPage'
 
 const queryClient = new QueryClient()
 
@@ -120,6 +121,16 @@ export default function App() {
                     <ErrorBoundary fallbackTitle="Channels error">
                       <SuspenseBoundary variant="page">
                         <ChannelsPage />
+                      </SuspenseBoundary>
+                    </ErrorBoundary>
+                  }
+                />
+                <Route
+                  path="plans"
+                  element={
+                    <ErrorBoundary fallbackTitle="Plans error">
+                      <SuspenseBoundary variant="page">
+                        <PlanReaderPage />
                       </SuspenseBoundary>
                     </ErrorBoundary>
                   }
