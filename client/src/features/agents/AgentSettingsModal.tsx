@@ -1,10 +1,12 @@
 import {
+  Alert,
   Button,
   Code,
   Divider,
   Group,
   Input,
   Modal,
+  MultiSelect,
   SegmentedControl,
   Select,
   Stack,
@@ -15,13 +17,14 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
-import { TbTrash } from 'react-icons/tb'
+import { TbAlertTriangle, TbTrash } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentReplyStyle, AgentSummaryDto } from '../../api/agents'
 import {
   AGENT_REPLY_STYLE_OPTIONS,
   fetchPreamblePreset,
   useAgent,
   useDeleteAgent,
+  useInstructionBundles,
   useUpdateAgent,
 } from '../../api/agents'
 import { useBoards } from '../../api/boards'
@@ -58,6 +61,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
+  const [bundleKeys, setBundleKeys] = useState<string[]>([])
+  const [seededBundlesFor, setSeededBundlesFor] = useState<string | null>(null)
   const [loadingPreset, setLoadingPreset] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
@@ -65,8 +70,25 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   // opened from the summary in the agents list. Only fetched while the modal is open.
   const detail = useAgent(opened && agent ? agent.id : null)
   const composedBundles = detail.data?.composedBundles ?? []
+  const bundles = useInstructionBundles(opened)
+  // The option LABEL is the bare key, because it is also what the selected pill shows and a pill
+  // carrying a whole sentence is unreadable. The summary rides renderOption instead, where there is
+  // room for it and where it is actually needed — choosing.
+  const bundleOptions = useMemo(
+    () => (bundles.data ?? []).map((b) => ({ value: b.key, label: b.key })),
+    [bundles.data],
+  )
+  const bundleSummaries = useMemo(
+    () => new Map((bundles.data ?? []).map((b) => [b.key, b])),
+    [bundles.data],
+  )
+  // The badge, not a button: the agent picks the new instructions up at its NEXT launch and nothing
+  // here forces one. Typing bundles into a live session is the thing this design deliberately does
+  // not do, so the notice says what will happen rather than offering to make it happen now.
+  const outOfDate = detail.data?.bundlesOutOfDate ?? false
 
-  // Reload the form whenever a different agent is opened.
+  // Reload the form whenever a different agent is opened. Attachments come from the DETAIL fetch,
+  // so they are seeded in their own effect below rather than here.
   useEffect(() => {
     if (!opened || !agent) return
     setName(agent.name)
@@ -82,7 +104,17 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     // An older server response omits the field entirely; Normal is what that means.
     setReplyStyle(agent.replyStyle ?? 'Normal')
     setConfirmingDelete(false)
+    setSeededBundlesFor(null)
   }, [agent, opened])
+
+  // Seeded from the DETAIL response, which is the only place attachments are reported — the list
+  // this modal opens from carries the summary. Seeded ONCE per agent: the detail query polls every
+  // 5s, and re-seeding on each response would wipe a selection the operator was still editing.
+  useEffect(() => {
+    if (!opened || !detail.data || detail.data.id === seededBundlesFor) return
+    setBundleKeys(detail.data.attachedBundleKeys ?? [])
+    setSeededBundlesFor(detail.data.id)
+  }, [opened, detail.data, seededBundlesFor])
 
   const handleUsePreset = async () => {
     setLoadingPreset(true)
@@ -119,6 +151,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         tuiProfileId,
         modelId,
         replyStyle,
+        // Always sent, so an emptied picker detaches: null on the request means "leave unchanged".
+        bundleKeys,
       },
       {
         onSuccess: () => {
@@ -235,9 +269,29 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           />
         </Input.Wrapper>
 
+        <MultiSelect
+          label="Attached bundles"
+          description="Standing instruction blocks this agent carries on top of anything its role implies. The bundles themselves live in the repo (server/Bundles/) — this only chooses which ones this agent gets. Reply style is picked above, not here."
+          placeholder={bundleKeys.length === 0 ? 'None attached' : undefined}
+          data={bundleOptions}
+          value={bundleKeys}
+          onChange={setBundleKeys}
+          disabled={bundles.isLoading}
+          renderOption={({ option }) => (
+            <Stack gap={0}>
+              <Text size="sm">{option.value}</Text>
+              <Text size="xs" c="dimmed">
+                {bundleSummaries.get(option.value)?.summary ?? ''}
+              </Text>
+            </Stack>
+          )}
+          searchable
+          clearable
+        />
+
         <Input.Wrapper
           label="Carries bundles"
-          description="Standing instruction blocks composed into --append-system-prompt at the agent's next launch. Versions are content hashes — editing a bundle in the repo changes them."
+          description="What the agent's NEXT launch composes into --append-system-prompt, in order. Versions are content hashes — editing a bundle in the repo changes them."
         >
           <Group gap="xs" mt={4}>
             {composedBundles.length === 0 ? (
@@ -251,6 +305,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
             )}
           </Group>
         </Input.Wrapper>
+
+        {outOfDate && (
+          <Alert color="yellow" icon={<TbAlertTriangle size={16} />} title="Restarts with updated instructions">
+            The running session was launched with different bundles than the list above. It keeps the ones
+            it started with until its next launch — nothing is typed into a live session.
+          </Alert>
+        )}
 
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>

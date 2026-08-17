@@ -48,6 +48,8 @@ const detail: AgentDetailDto = { ...agent, queue: [] }
 function handlers(summary: AgentSummaryDto[] = [agent], detailDto: AgentDetailDto = detail) {
   return [
     http.get('/api/agents', () => HttpResponse.json(summary)),
+    // BEFORE the ':id' pattern, which would otherwise swallow it (CARD-0058 slice 6).
+    http.get('/api/agents/bundles', () => HttpResponse.json([])),
     http.get('/api/agents/:id', () => HttpResponse.json(detailDto)),
     http.get('/api/boards', () => HttpResponse.json([])),
     http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),

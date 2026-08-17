@@ -29,6 +29,7 @@ import {
   TbPlayerPlay,
   TbPlayerStop,
   TbPlus,
+  TbRefreshAlert,
   TbSettings,
   TbShieldCheck,
   TbShieldPause,
@@ -137,6 +138,7 @@ export function AgentsPage() {
                       </Text>
                       <Group gap={4} style={{ flexShrink: 0 }}>
                         <ReplyStyleBadge agent={agent} />
+                        <BundleDriftBadge agent={agent} />
                         <SupervisionBadge agent={agent} compact />
                         <AgentActivityBadge agent={agent} />
                       </Group>
@@ -237,6 +239,7 @@ export function AgentsPage() {
                   <AgentActivityBadge agent={selected.data} />
                   <SupervisionBadge agent={selected.data} />
                   <ReplyStyleBadge agent={selected.data} />
+                  <BundleDriftBadge agent={selected.data} />
                 </Group>
                 <Text size="sm" c="dimmed">
                   {selected.data.workingDirectory}
@@ -443,6 +446,30 @@ function ReplyStyleBadge({ agent }: { agent: AgentSummaryDto }) {
     >
       <Badge size="sm" color="grape" variant="light">
         {style.toLowerCase()}
+      </Badge>
+    </Tooltip>
+  )
+}
+
+/**
+ * The running session was launched with instruction bundles the repo has since moved on from
+ * (CARD-0058) — an edited bundle file, an attachment added or removed, a changed reply style.
+ *
+ * Deliberately quiet and deliberately inert: the agent picks the new instructions up at its NEXT
+ * launch, and nothing here offers to make that happen now. Typing bundles into a live session is
+ * exactly what this design does not do — the staleness is bounded and the badge is here to make it
+ * visible, not to trigger a fix.
+ */
+function BundleDriftBadge({ agent }: { agent: AgentSummaryDto }) {
+  if (!agent.bundlesOutOfDate) return null
+
+  return (
+    <Tooltip
+      label="Running with older instruction bundles. It restarts with the current ones at its next launch."
+      withArrow
+    >
+      <Badge size="sm" color="yellow" variant="light" leftSection={<TbRefreshAlert size={12} />}>
+        bundles
       </Badge>
     </Tooltip>
   )

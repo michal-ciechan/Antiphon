@@ -139,6 +139,12 @@ export interface AgentSummaryDto {
   } | null
   /** How the agent writes. Absent on an older server response — treat as 'Normal'. */
   replyStyle?: AgentReplyStyle
+  /**
+   * The live session was launched with instruction bundles the repo has since moved on from — an
+   * edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
+   * Informational only: the agent picks the new ones up at its next launch and nothing forces that.
+   */
+  bundlesOutOfDate?: boolean
 }
 
 export interface AgentSupervisionDto {
@@ -198,6 +204,29 @@ export interface AgentDetailDto extends AgentSummaryDto {
    * list cannot drift from what the repo's bundle files currently say.
    */
   composedBundles?: string[] | null
+  /**
+   * The bundle KEYS attached to this agent, in composition order — what the settings modal's picker
+   * round-trips. Distinct from `composedBundles`, which is the whole composition (attachments AND
+   * the reply-style block) stamped with versions.
+   */
+  attachedBundleKeys?: string[] | null
+}
+
+/**
+ * One attachable bundle from the catalog (CARD-0058). The catalog is CODE — markdown files under
+ * `server/Bundles/`, versioned by content hash — so this is read-only: the only thing an operator
+ * chooses is which agent carries which key. Reply-style bundles are deliberately absent; the reply
+ * style dropdown already picks one.
+ */
+export interface InstructionBundleDto {
+  key: string
+  /** Content hash of the bundle file. Changes when the file changes; there is nothing to bump. */
+  version: string
+  /** `"board-api v1a2b3c4d"` — the same string that rides the composed output and the drift stamp. */
+  stamp: string
+  /** The bundle's opening sentence, for the picker. */
+  summary: string
+  chars: number
 }
 
 export interface CreateAgentRequest {
@@ -235,6 +264,12 @@ export interface UpdateAgentRequest {
   modelId?: string | null
   /** Omit/null = leave unchanged, so an older client cannot reset a chosen style to Normal. */
   replyStyle?: AgentReplyStyle | null
+  /**
+   * The bundles this agent carries on top of what its role implies (CARD-0058). Omit/null = leave
+   * unchanged, same reason as replyStyle — an older client must not silently detach everything. An
+   * EMPTY array is the explicit "detach all". Order is composition order.
+   */
+  bundleKeys?: string[] | null
 }
 
 export interface DraftAgentRequest {
@@ -262,6 +297,7 @@ export interface StartAgentRequest {
 
 export const agentKeys = {
   definitions: ['agents', 'definitions'] as const,
+  bundles: ['agents', 'bundles'] as const,
   all: ['agents', 'list'] as const,
   detail: (id: string) => ['agents', 'detail', id] as const,
   queue: (id: string) => ['agents', 'queue', id] as const,
@@ -294,6 +330,19 @@ export function useAgentDefinitions() {
   return useQuery({
     queryKey: agentKeys.definitions,
     queryFn: () => apiGet<AgentRegistryDto>('/agents/definitions'),
+  })
+}
+
+/**
+ * The bundles an operator may attach to an agent. The catalog only changes when the server does, so
+ * this is fetched once and never polled — unlike the agent list, nothing here moves on its own.
+ */
+export function useInstructionBundles(enabled = true) {
+  return useQuery({
+    queryKey: agentKeys.bundles,
+    queryFn: () => apiGet<InstructionBundleDto[]>('/agents/bundles'),
+    staleTime: Infinity,
+    enabled,
   })
 }
 

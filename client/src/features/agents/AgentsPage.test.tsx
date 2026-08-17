@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { notifications } from '@mantine/notifications'
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentDetailDto, AgentSummaryDto } from '../../api/agents'
+import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../../api/agents'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
@@ -171,9 +171,22 @@ const boardDetail: BoardDetailDto = {
   ],
 }
 
+const instructionBundles: InstructionBundleDto[] = [
+  {
+    key: 'board-api',
+    version: '1a2b3c4d',
+    stamp: 'board-api v1a2b3c4d',
+    summary: 'Working the Antiphon board.',
+    chars: 2400,
+  },
+]
+
 function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: AgentDetailDto = agentDetail) {
   return [
     http.get('/api/agents', () => HttpResponse.json(summary)),
+    // BEFORE the ':id' pattern, which would otherwise swallow it and answer an agent detail
+    // object where the settings modal expects a list of bundles (CARD-0058 slice 6).
+    http.get('/api/agents/bundles', () => HttpResponse.json(instructionBundles)),
     http.get('/api/agents/:id', () => HttpResponse.json(detail)),
     http.get('/api/agent-tui/profiles', () => HttpResponse.json([agentTuiProfile])),
     http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
