@@ -313,6 +313,24 @@ public sealed class DelegationSettings
     /// </summary>
     public int SubagentGraceMinutes { get; set; } = 30;
 
+    /// <summary>
+    /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
+    /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
+    /// sweep that saw it that way, in memory — a server restart only ever delays the failure.
+    ///
+    /// <para>The window is not politeness, it is the CARD-0056 brake. A DB row saying a session is
+    /// Failed was once wrong about a healthy session — the operator's own — and reconciliation's
+    /// third pass RE-ADOPTS such a row on positive evidence, flipping it back to Running (which
+    /// removes the task from this sweep's predicate entirely). Three minutes is a dozen of that
+    /// sweep's 15 s passes, and also enough for the transcript backfill a session-close triggers to
+    /// give ordinary settlement its chance at a report that arrived just before the death.</para>
+    ///
+    /// <para><b>Escape hatch:</b> <c>&lt;= 0</c> disarms the sweep entirely — nothing is failed on a
+    /// dead session and the state is left to the attention projection and a human, which is exactly
+    /// the behaviour that shipped before this card.</para>
+    /// </summary>
+    public int DeadSessionFailGraceMinutes { get; set; } = 3;
+
     // ── Scheduled check-ins on a running delegate (CARD-0047) ───────────────────────────────────
     //
     // An orchestrator hears nothing between dispatch and the report. These five knobs decide when a

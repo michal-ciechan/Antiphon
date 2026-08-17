@@ -1,0 +1,68 @@
+using Antiphon.Server.Domain.Enums;
+
+namespace Antiphon.Server.Application.Services;
+
+/// <summary>
+/// The ONE definition of "this open task's session is dead" (CARD-0021), and the one sentence that
+/// says which way it died.
+///
+/// <para>It exists as a shared function rather than as two copies because this repo already carries
+/// three lockstep implementations of the working/idle rule and every drift between them has cost a
+/// real incident. Here the two consumers are
+/// <see cref="AttentionService"/>'s <c>DeadSession</c> condition — which SURFACES the state — and
+/// <c>AgentTaskDispatcher.FailDeadSessionTasksAsync</c> — which ACTS on it. A projection that showed
+/// a row the sweep would not fail, or a sweep that failed a task the projection never showed, would
+/// be a defect with no single place to fix it. <c>AgentTaskDeadSessionReconciliationTests</c> pins
+/// them to the same table of verdicts.</para>
+///
+/// <para>Deliberately pure: no DB, no runner, no clock. The runner-answer gate and the grace window
+/// that guard the ACTION (CARD-0056) live in the sweep, because they are about whether it is safe to
+/// act on this verdict — not about what the verdict is.</para>
+/// </summary>
+public static class AgentTaskLiveness
+{
+    /// <summary>
+    /// The four fields of a session row the verdict reads. A <c>null</c> snapshot means the row is
+    /// GONE — that is the only way "row missing" is spelled, so no caller can disagree with another
+    /// about what a present-but-empty snapshot would mean.
+    /// </summary>
+    public readonly record struct SessionSnapshot(
+        SessionStatus Status, DateTime? EndedAt, string? FailureReason);
+
+    /// <summary>
+    /// Is the session behind an open (Dispatched/Working) task dead — i.e. is it certain that no
+    /// report is coming from it?
+    ///
+    /// <para>Four ways, all of them positive facts about a row rather than inferences from silence:
+    /// the task names no session at all (a dispatch writes <c>AgentSessionId</c> in the same save as
+    /// its status, so a null one is as broken as a Stopped row); the session row is gone; the status
+    /// is <see cref="SessionStatus.Stopped"/> or <see cref="SessionStatus.Failed"/>; or
+    /// <c>EndedAt</c> is set while the status still says otherwise.</para>
+    ///
+    /// <para><b>Stopped counts.</b> An operator ended the session; settlement is not coming, and
+    /// leaving the task open forever is exactly the 2026-08-09 zombie shape this card is about.</para>
+    /// </summary>
+    public static bool IsDeadSession(Guid? agentSessionId, SessionSnapshot? session) =>
+        agentSessionId is null
+        || session is not { } s
+        || s.Status is SessionStatus.Stopped or SessionStatus.Failed
+        || s.EndedAt is not null;
+
+    /// <summary>
+    /// Which of the four ways it died, as a clause that reads inside a sentence ("Still Dispatched
+    /// but <i>its session is Failed</i>."). Shared for the same reason the predicate is: the
+    /// attention row and the task's own <c>FailureReason</c> describing the same session differently
+    /// is how an operator ends up believing they are two problems.
+    ///
+    /// <para>Only meaningful when <see cref="IsDeadSession"/> is true; on a live session it falls
+    /// through to naming the status, which is honest but says nothing.</para>
+    /// </summary>
+    public static string Describe(Guid? agentSessionId, SessionSnapshot? session) =>
+        agentSessionId is null
+            ? "the task has no session at all"
+            : session is not { } s
+                ? "its session row is gone"
+                : s.EndedAt is not null && s.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
+                    ? $"its session ended at {s.EndedAt:u} while still marked {s.Status}"
+                    : $"its session is {s.Status}";
+}

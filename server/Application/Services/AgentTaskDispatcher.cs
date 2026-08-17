@@ -35,6 +35,8 @@ public sealed class AgentTaskDispatcher
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly AgentTaskReplyService? _replies;
     private readonly AgentTaskCheckQueue? _checkQueue;
+    private readonly ISessionRunnerClient? _runnerClient;
+    private readonly DeadSessionFirstSeenState? _deadSessions;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -54,8 +56,16 @@ public sealed class AgentTaskDispatcher
         AgentTaskReplyService? replies = null,
         // Same contract for CARD-0047: no queue registered means no check sweep, so a harness that
         // predates it keeps working and never claims a check it has no worker to run.
-        AgentTaskCheckQueue? checkQueue = null)
+        AgentTaskCheckQueue? checkQueue = null,
+        // And for CARD-0021's dead-session sweep, which needs BOTH: the runner is the evidence that
+        // a session really is gone, and the state is the grace clock. Either missing leaves the
+        // sweep unarmed — it must never fail a task on the DB row alone (see
+        // FailDeadSessionTasksAsync), so an absent runner client disarms rather than degrades.
+        ISessionRunnerClient? runnerClient = null,
+        DeadSessionFirstSeenState? deadSessions = null)
     {
+        _runnerClient = runnerClient;
+        _deadSessions = deadSessions;
         _checkQueue = checkQueue;
         _replies = replies;
         _ptyProfile = ptyProfile;
@@ -73,7 +83,7 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <param name="SweepFailures">
-    /// How many of the tick's five clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's six clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -86,7 +96,7 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The five clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The six clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
@@ -102,6 +112,12 @@ public sealed class AgentTaskDispatcher
         // boot prompt was lost, which is categorically different from slow progress and must fail
         // loudly, never escalate (a bigger model can't fix an undelivered brief).
         sweepFailures += await RunSweepAsync("delivery watchdog", FailNeverStartedAsync, ct);
+
+        // And with work whose SESSION died under it (CARD-0021). Distinct from the watchdog above,
+        // which only ever asks whether a Dispatched task started: a Working task is outside its
+        // query altogether, and a task whose session wrote a transcript and then died passes its
+        // "did it start" test forever. Three zombies sat open for hours on 2026-08-09 that way.
+        sweepFailures += await RunSweepAsync("dead-session reconciler", FailDeadSessionTasksAsync, ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
@@ -366,7 +382,9 @@ public sealed class AgentTaskDispatcher
                 reason =
                     $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
                     + $"the session has zero transcript entries ({evidence}). "
-                    + "See the agent's incidents for the delivery errors.";
+                    + "See the agent's incidents for the delivery errors — and if one of them is a "
+                    + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
+                    + "transcript bound to read (CARD-0064), so check the session before re-running.";
             }
             else if (await _db.AgentIncidents.AnyAsync(
                 i => i.SessionId == sessionId
@@ -428,6 +446,182 @@ public sealed class AgentTaskDispatcher
             _logger.LogWarning(
                 "Task {ShortId} failed by the delivery watchdog (session {SessionId}): {Reason}",
                 DelegationReportFormatter.Short(task.Id), sessionId, reason);
+            failed++;
+        }
+
+        return failed;
+    }
+
+    /// <summary>
+    /// CARD-0021: an open task whose SESSION is dead is failed, with the session's own reason, and
+    /// the caller is told. Detection of this state already existed (the attention projection's
+    /// DeadSession row, CARD-0035) — what did not was anything that ACTED on it, so three tasks sat
+    /// Dispatched for hours on 2026-08-09 behind sessions that had been gone the whole time.
+    ///
+    /// <para><b>Fail, not retry.</b> A dead session with an unsettled task is unambiguous: no report
+    /// is coming, and <c>Failed</c> with the real reason is the truthful state. Re-running is the
+    /// caller's decision — the completion note reaches the parent session, and the attention row's
+    /// Retry action is there for the human.</para>
+    ///
+    /// <para><b>It never kills anything, and that is the point.</b> CARD-0056 exists because a row
+    /// reading Failed was once wrong about a perfectly healthy session — the operator's own — and a
+    /// pass that resolved the mismatch by killing would have killed it mid-sentence. Everything
+    /// destructive that <see cref="FailNeverStartedAsync"/> does on its way out stays there; this
+    /// sweep is its tail MINUS the kill. Two evidence gates guard even the DB write, both required:
+    /// </para>
+    ///
+    /// <list type="number">
+    /// <item>The runner must ANSWER. An unreachable runner is no evidence of anything (the doctrine
+    /// <c>SessionReconciliationService</c> already runs on), and the task has waited minutes
+    /// already — another 5 s tick costs nothing.</item>
+    /// <item>The runner must NOT list the session Running. That combination — row dead, process
+    /// alive — is precisely the false-Failed shape reconciliation's third pass re-adopts, and
+    /// re-adoption flips the row back to Running, which takes the task out of this predicate
+    /// altogether. It also covers the flap-cap state, where a human has already been escalated to.</item>
+    /// </list>
+    ///
+    /// <para>Plus <see cref="DelegationSettings.DeadSessionFailGraceMinutes"/> from the FIRST sweep
+    /// that saw the task dead, so re-adoption and a late settlement both win the race.</para>
+    ///
+    /// <para><see cref="AgentTaskRole.Check"/> tasks are excluded: their lifecycle belongs to
+    /// <c>AgentTaskCheckService</c> (a delivery failure already produces <c>DeliveryFailed</c>),
+    /// they are pinned to the standing interpreter, and a completion note about one would be noise
+    /// in the caller's session.</para>
+    /// </summary>
+    internal async Task<int> FailDeadSessionTasksAsync(CancellationToken ct)
+    {
+        // Both are needed and neither degrades: without the runner there is no evidence gate, and
+        // without the state the grace would restart on every tick (the dispatcher is scoped).
+        if (_runnerClient is null || _deadSessions is null)
+            return 0;
+
+        var grace = TimeSpan.FromMinutes(_settings.DeadSessionFailGraceMinutes);
+        if (grace <= TimeSpan.Zero)
+            return 0;
+
+        var open = await _db.AgentTasks
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.Role != AgentTaskRole.Check)
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            return 0;
+
+        var sessionIds = open
+            .Where(t => t.AgentSessionId is not null)
+            .Select(t => t.AgentSessionId!.Value)
+            .Distinct()
+            .ToList();
+        var sessionById = (await _db.AgentSessions.AsNoTracking()
+                .Where(s => sessionIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason })
+                .ToListAsync(ct))
+            .ToDictionary(
+                s => s.Id,
+                s => new AgentTaskLiveness.SessionSnapshot(s.Status, s.EndedAt, s.FailureReason));
+
+        var dead = new List<(AgentTask Task, AgentTaskLiveness.SessionSnapshot? Session)>();
+        foreach (var task in open)
+        {
+            AgentTaskLiveness.SessionSnapshot? session =
+                task.AgentSessionId is Guid sid && sessionById.TryGetValue(sid, out var row) ? row : null;
+
+            if (AgentTaskLiveness.IsDeadSession(task.AgentSessionId, session))
+                dead.Add((task, session));
+            else
+                // It recovered (or never was). Drop the burned grace: a later, unrelated death must
+                // start its own window rather than be acted on the instant it is first seen.
+                _deadSessions.Forget(task.Id);
+        }
+
+        if (dead.Count == 0)
+            return 0;
+
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions;
+        try
+        {
+            runnerSessions = await _runnerClient.ListAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Gate 1. Not an error and not degraded operation — the sweep simply has no evidence
+            // this pass. Debug, because a runner restart makes this the ordinary case for a minute.
+            _logger.LogDebug(
+                ex, "Dead-session reconciliation skipped for {Count} task(s): session runner unreachable",
+                dead.Count);
+            return 0;
+        }
+
+        var runnerRunning = runnerSessions
+            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            .Select(s => s.SessionId)
+            .ToHashSet();
+
+        var now = UtcNow();
+        var failed = 0;
+        foreach (var (task, session) in dead)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Gate 2. The row is wrong about a live process — CARD-0056's exact shape. Leave the
+            // task alone and forget it: reconciliation re-adopts the session, which flips the row to
+            // Running and takes this task out of the predicate.
+            if (task.AgentSessionId is Guid live && runnerRunning.Contains(live))
+            {
+                _deadSessions.Forget(task.Id);
+                _logger.LogDebug(
+                    "Task {ShortId} reads dead-session but the runner still serves session {SessionId} — "
+                    + "leaving it to reconciliation",
+                    DelegationReportFormatter.Short(task.Id), live);
+                continue;
+            }
+
+            var firstSeen = _deadSessions.FirstSeenAt(task.Id, now);
+            if (now - firstSeen < grace)
+                continue;
+
+            var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
+            var evidence = session?.FailureReason
+                ?? (session?.Status == SessionStatus.Stopped
+                    ? "stopped before the task settled, with no failure reason — an operator ended it"
+                    : "no failure reason recorded");
+            var reason =
+                $"Session died before the task settled: {what} ({evidence}). No report is coming"
+                + (task.AgentSessionId is Guid sessionId
+                    ? $"; read session {sessionId} before re-running this task."
+                    : ".");
+
+            await FailAsync(task, reason, ct);
+
+            // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
+            // the whole justification for acting is that the session is already gone, so if that
+            // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
+            await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
+            await _db.SaveChangesAsync(ct);
+
+            if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
+            {
+                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+                try
+                {
+                    await _queue.EnqueueAsync(
+                        parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex, "Could not deliver dead-session failure of task {ShortId} to parent session {SessionId}",
+                        DelegationReportFormatter.Short(task.Id), parentSession);
+                }
+            }
+
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+            _logger.LogWarning(
+                "Task {ShortId} failed by the dead-session reconciler: {Reason}",
+                DelegationReportFormatter.Short(task.Id), reason);
+
+            _deadSessions.Forget(task.Id);
             failed++;
         }
 
