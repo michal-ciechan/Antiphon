@@ -64,6 +64,13 @@ public static class InstructionBundles
     /// <summary>The check interpreter's contract, moved here from <c>CheckInterpretation</c>.</summary>
     public const string CheckInterpreter = "check-interpreter";
 
+    /// <summary>
+    /// The reply-style blocks (CARD-0060), one per <see cref="AgentReplyStyle"/> value. Resolved
+    /// through <see cref="AgentReplyStyles"/> rather than named directly — the map from enum to key
+    /// is the one place that knows <c>Normal</c> is not composed at all.
+    /// </summary>
+    public const string StylePrefix = "style-";
+
     private const string ResourcePrefix = "Antiphon.Server.Bundles.";
     private const string ResourceSuffix = ".md";
 

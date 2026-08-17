@@ -44,7 +44,10 @@ public sealed record AgentSummaryDto(
     Guid? TuiProfileId = null,
     string? ModelId = null,
     AgentTuiConfiguredSelectionDto? ConfiguredSelection = null,
-    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null);
+    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null,
+    // How the agent writes (CARD-0060). Normal composes to nothing; the list renders a chip for
+    // anything else.
+    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -75,7 +78,11 @@ public sealed record AgentDetailDto(
     Guid? TuiProfileId = null,
     string? ModelId = null,
     AgentTuiConfiguredSelectionDto? ConfiguredSelection = null,
-    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null);
+    AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null,
+    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // The bundle stamps this agent's NEXT launch will carry — "style-caveman v1a2b3c4d". Read-only
+    // and recomputed per request: there is no stored composition anywhere, which is the point.
+    IReadOnlyList<string>? ComposedBundles = null);
 
 public sealed record AgentTuiConfiguredSelectionDto(
     Guid? TuiProfileId,
@@ -130,7 +137,10 @@ public sealed record CreateAgentRequest(
     // Null/omitted = installation default profile.
     Guid? TuiProfileId = null,
     // Null/omitted = runner default model (no exact --model argument).
-    string? ModelId = null);
+    string? ModelId = null,
+    // CARD-0060. Create finally gains a composition-relevant field; SystemPromptAppend deliberately
+    // still is NOT one of them (update-only, out of scope here).
+    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -159,7 +169,9 @@ public sealed record UpdateAgentRequest(
     AgentModelLevel? ModelLevel = null,
     // Null = leave profile selection unchanged. When set, ModelId is applied too (null clears exact model).
     Guid? TuiProfileId = null,
-    string? ModelId = null);
+    string? ModelId = null,
+    // Null = leave unchanged (CARD-0060), so an older caller cannot reset a chosen style to Normal.
+    AgentReplyStyle? ReplyStyle = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

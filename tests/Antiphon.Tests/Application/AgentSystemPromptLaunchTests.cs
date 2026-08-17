@@ -280,6 +280,83 @@ public class AgentSystemPromptLaunchTests
             .ShouldBeEmpty("nothing queued either — the note is not deferred, it is not sent at all");
     }
 
+    // ---------- reply style (CARD-0060) ----------
+
+    [Test]
+    public async Task A_normal_style_agent_launches_with_exactly_the_arguments_it_did_before()
+    {
+        // The migration's whole claim, measured on the real launch path rather than on the composer:
+        // ReplyStyle defaults to Normal, Normal resolves to no bundle, and the append is the rendered
+        // preamble with nothing before it. Sibling of Start_with_system_prompt_append_passes_flag_on_
+        // fresh_launch, kept separate because THIS is the one that must go red if Normal ever composes.
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await EndSessionAsync(h, SessionStatus.Failed);
+        await using (var db = CreateContext())
+        {
+            (await db.Agents.SingleAsync(a => a.Id == h.AgentId)).ReplyStyle
+                .ShouldBe(AgentReplyStyle.Normal, "the default a created agent gets");
+        }
+
+        await StartAsync(h, fresh: true);
+
+        var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs;
+        args[args.ToList().IndexOf("--append-system-prompt") + 1].ShouldBe(
+            RenderedForHarnessAgent, "byte for byte — no header, no separator, no style block");
+    }
+
+    [Test]
+    public async Task A_styled_agent_carries_its_style_block_before_its_own_contract()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetPreambleAsync(h, Template);
+        await SetStyleAsync(h, AgentReplyStyle.Caveman);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        await StartAsync(h, fresh: true);
+
+        var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs;
+        var append = args[args.ToList().IndexOf("--append-system-prompt") + 1];
+        append.ShouldStartWith("[bundle:style-caveman v");
+        append.ShouldContain(AgentReplyStyles.CorrectnessSentence);
+        append.ShouldEndWith(
+            RenderedForHarnessAgent,
+            customMessage: "the agent's own contract keeps the last word over a style from a dropdown");
+        // Substitution runs over the WHOLE append, so the placeholders must still have resolved —
+        // and the style block must not have been mangled by it.
+        append.ShouldNotContain("{agentName}");
+    }
+
+    [Test]
+    public async Task A_style_alone_produces_the_flag_but_still_no_launch_notes()
+    {
+        // Adding a style must not start handing a workspace ritual to agents that never had one: the
+        // notes gate stays keyed on SystemPromptAppend, not on "composes something".
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetStyleAsync(h, AgentReplyStyle.Terse);
+        await EndSessionAsync(h, SessionStatus.Failed);
+
+        var started = await StartAsync(h, fresh: true);
+
+        var adapter = Factory(h).Created.ShouldHaveSingleItem();
+        var args = adapter.StartedArgs;
+        var flagIndex = args.ToList().IndexOf("--append-system-prompt");
+        flagIndex.ShouldBeGreaterThanOrEqualTo(0);
+        args[flagIndex + 1].ShouldBe(InstructionBundles.Get("style-terse").Render());
+        adapter.SubmittedBodies.ShouldBeEmpty("no preamble, so no bootstrap — style is not a preamble");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages
+                .AnyAsync(m => m.AgentSessionId == Guid.Parse(started.PersistentSessionId!)))
+            .ShouldBeFalse();
+    }
+
+    private static async Task SetStyleAsync(BridgeQueueHarness h, AgentReplyStyle style)
+    {
+        await using var db = CreateContext();
+        await db.Agents.Where(a => a.Id == h.AgentId)
+            .ExecuteUpdateAsync(u => u.SetProperty(a => a.ReplyStyle, style));
+    }
+
     // ---------- harness ----------
 
     private static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
