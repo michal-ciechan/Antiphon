@@ -176,6 +176,34 @@ public class LogRetentionTests
     }
 
     [Test]
+    public async Task Shipped_config_keeps_hosting_diagnostics_at_Warning_because_it_logs_query_strings()
+    {
+        // Security, not volume (73573ba, moved from a code-level override in CARD-0065):
+        // Hosting.Diagnostics writes the FULL query string into request start/finish events. Secret
+        // endpoints reject query-string values, but logging a rejected value would still disclose
+        // it; Antiphon's own request log records method + path without query. appsettings.json
+        // cannot carry a comment, so this test is where the rationale lives — removing the override
+        // from config re-arms the disclosure and must go red here.
+        var events = new List<LogEvent>();
+        using var log = new LoggerConfiguration()
+            .ReadFrom.Configuration(ShippedServerConfiguration())
+            .WriteTo.Sink(new CollectingSink(events))
+            .CreateLogger();
+
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Hosting.Diagnostics")
+            .Information("Request starting HTTP/1.1 GET http://localhost/api/secrets?value=hunter2");
+
+        events.ShouldBeEmpty("Hosting.Diagnostics at Information logs full query strings — "
+            + "keep Serilog:MinimumLevel:Override:Microsoft.AspNetCore.Hosting.Diagnostics at Warning");
+
+        // A real request failure from the same source still lands.
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Hosting.Diagnostics")
+            .Warning("Request failed");
+        events.Count.ShouldBe(1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task Turning_a_source_down_is_configuration_not_code()
     {
         // Re-arming EF command logging for one debugging session must be a config edit (or

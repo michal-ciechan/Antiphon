@@ -50,14 +50,12 @@ try
         var retention =
             Antiphon.Server.Infrastructure.Logging.FileLogRetentionPolicy.FromConfiguration(
                 ctx.Configuration);
+        // Source levels (including the security-motivated Hosting.Diagnostics turn-down — it logs
+        // full query strings) live in Serilog:MinimumLevel:Override in configuration, never here:
+        // a debugging session re-arms a source with a config edit, not a rebuild. Pinned by
+        // LogRetentionTests.
         lc
             .ReadFrom.Configuration(ctx.Configuration)
-            // Hosting.Diagnostics includes the full query string in request start/finish events.
-            // Secret endpoints reject query-string values, but logging a rejected value would
-            // still disclose it; Antiphon's own request log records method + path without query.
-            .MinimumLevel.Override(
-                "Microsoft.AspNetCore.Hosting.Diagnostics",
-                Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .WriteTo.Console(
                 restrictedToMinimumLevel: consoleLevel,
