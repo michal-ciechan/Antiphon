@@ -162,7 +162,7 @@ public sealed class SessionMessageQueueService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await BuildQueueDtoAsync(db, sessionId, ct);
+        return await BuildQueueDtoAsync(db, sessionId, Math.Max(1, _verification.MaxDeliveryAttempts), ct);
     }
 
     /// <summary>Remove a pending message before it is delivered.</summary>
@@ -1281,14 +1281,28 @@ public sealed class SessionMessageQueueService
         return true;
     }
 
+    /// <param name="maxAttempts">
+    /// The parking threshold, passed in rather than read here so the flag is decided by the SAME
+    /// setting the attention projection reads (CARD-0035 slice 4). Parking is not a status: a parked
+    /// message is Pending like any other, and a queue that could not say so showed CARD-0055's
+    /// parked messages as ordinary pending ones — visible, and silently never going anywhere.
+    /// </param>
     private static async Task<SessionQueueDto> BuildQueueDtoAsync(
-        AppDbContext db, Guid sessionId, CancellationToken ct)
+        AppDbContext db, Guid sessionId, int maxAttempts, CancellationToken ct)
     {
         var messages = await db.SessionQueuedMessages
             .AsNoTracking()
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
             .OrderBy(m => m.Sequence)
-            .Select(m => new QueuedMessageDto(m.Id, m.Sequence, m.Body, m.Status.ToString(), m.CreatedAt))
+            .Select(m => new QueuedMessageDto(
+                m.Id,
+                m.Sequence,
+                m.Body,
+                m.Status.ToString(),
+                m.CreatedAt,
+                m.DeliveryAttempts,
+                m.Origin.ToString(),
+                m.DeliveryAttempts >= maxAttempts))
             .ToListAsync(ct);
         var working = await IsWorkingAsync(db, sessionId, ct);
         return new SessionQueueDto(sessionId, messages, working);

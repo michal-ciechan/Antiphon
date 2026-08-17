@@ -1,12 +1,13 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import type { AttentionDto, AttentionItemDto, AttentionKind } from '../../api/attention'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AttentionPanel } from './AttentionPanel'
 
 // Mantine tooltips and collapses on a loaded machine overrun the 5s default.
 import { vi } from 'vitest'
+vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 vi.setConfig({ testTimeout: 20_000 })
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -175,5 +176,220 @@ describe('AttentionPanel', () => {
 
     expect(await screen.findByTestId('attention-row-ParkedMessage')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Open Parked message/ })).not.toBeInTheDocument()
+  })
+
+  // ---- slice 4: the actions ---------------------------------------------------------------------
+
+  it('sends a parked message now, at the manual endpoint that bypasses parking', async () => {
+    // CARD-0055 parks a message after it spends its delivery attempts and every AUTOMATIC path then
+    // excludes it — deliberately. The manual send is the only thing left that moves it, and until
+    // this slice there was no button anywhere that reached it.
+    const sent: string[] = []
+    serve({
+      items: [
+        item({
+          kind: 'ParkedMessage',
+          severity: 'Critical',
+          title: 'Parked message to Family',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+          actions: ['SendNow', 'CancelMessage'],
+        }),
+      ],
+    })
+    server.use(
+      http.post('/api/sessions/sess-1/messages/msg-1/send-now', () => {
+        sent.push('send-now')
+        return HttpResponse.json({ sessionId: 'sess-1', messages: [], working: false })
+      }),
+    )
+
+    renderWithProviders(<AttentionPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Send now' }))
+
+    await waitFor(() => expect(sent).toEqual(['send-now']))
+  })
+
+  it('drops a parked message at the message endpoint, not the task one', async () => {
+    const dropped: string[] = []
+    serve({
+      items: [
+        item({
+          kind: 'ParkedMessage',
+          severity: 'Error',
+          title: 'Parked message to Family',
+          sessionId: 'sess-1',
+          messageId: 'msg-1',
+          actions: ['SendNow', 'CancelMessage'],
+        }),
+      ],
+    })
+    server.use(
+      http.delete('/api/sessions/sess-1/messages/msg-1', () => {
+        dropped.push('cancel')
+        return HttpResponse.json({ sessionId: 'sess-1', messages: [], working: false })
+      }),
+    )
+
+    renderWithProviders(<AttentionPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Drop message' }))
+
+    await waitFor(() => expect(dropped).toEqual(['cancel']))
+  })
+
+  it('answers a blocked delegate in place instead of sending the human to the drawer', async () => {
+    const bodies: unknown[] = []
+    serve({
+      items: [
+        item({
+          kind: 'BlockedQuestion',
+          severity: 'Critical',
+          title: 'Which branch?',
+          taskId: 'task-1',
+          actions: ['Reply', 'Cancel', 'Escalate'],
+        }),
+      ],
+    })
+    server.use(
+      http.post('/api/agent-tasks/task-1/reply', async ({ request }) => {
+        bodies.push(await request.json())
+        return HttpResponse.json({ id: 'task-1', status: 'Working' })
+      }),
+    )
+
+    renderWithProviders(<AttentionPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Answer it' }))
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: 'Answer the delegate' }),
+      'land it on master',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Send answer' }))
+
+    await waitFor(() => expect(bodies).toEqual([{ message: 'land it on master' }]))
+  })
+
+  it('leads a past-expected row with reading it, not with retrying it', async () => {
+    // The ordering is the server's and it matters most here: a task that is merely finishing quietly
+    // is the commonest thing on this list, and a Retry in the primary slot would put a second agent
+    // on work that was about to report. The first button reads it; nothing here retries by reflex.
+    serve({
+      items: [
+        item({
+          kind: 'PastExpectedIdle',
+          severity: 'Warning',
+          title: 'Migrate the board API',
+          taskId: 'task-9',
+          actions: ['OpenDrawer', 'Retry', 'Cancel', 'Escalate'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    const row = await screen.findByTestId('attention-row-PastExpectedIdle')
+    // The row body is itself a button (it navigates); the verbs are the ones without an aria-label.
+    const labels = within(row)
+      .getAllByRole('button')
+      .filter((node) => !node.getAttribute('aria-label'))
+      .map((node) => node.textContent)
+    expect(labels[0]).toBe('Read it first')
+    expect(labels).toContain('Retry')
+  })
+
+  it('never kills a session on one click — the confirm names the session', async () => {
+    // The 2026-08-16 miss (CARD-0056) was a HEALTHY session the database had written off: the
+    // operator's own working conversation. A one-click kill on this row would have ended it
+    // mid-sentence, so the dialog has to say which session, and offer leaving it alone.
+    const killed: string[] = []
+    serve({
+      items: [
+        item({
+          kind: 'SessionDisagreement',
+          severity: 'Error',
+          title: 'Antiphon-Opus',
+          sessionId: 'cefed08a-1111-2222-3333-444444444444',
+          evidence: 'Running since 2026-08-14 as pid 4120, in C:\\src\\Antiphon.',
+          actions: ['KillSession'],
+        }),
+      ],
+    })
+    server.use(
+      http.post('/api/sessions/cefed08a-1111-2222-3333-444444444444/kill', () => {
+        killed.push('kill')
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderWithProviders(<AttentionPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Kill session' }))
+
+    // Nothing has been killed yet, and the dialog names the session it would end.
+    expect(killed).toEqual([])
+    expect(await screen.findByText('Kill session cefed08a?')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave it running' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Kill session cefed08a' }))
+    await waitFor(() => expect(killed).toEqual(['kill']))
+  })
+
+  it('offers no verb it has no subject for', async () => {
+    // The server names actions and ids in separate fields. A Retry button on a row with no taskId
+    // would fail on click with a URL containing "null" — worse than not offering it.
+    serve({
+      items: [
+        item({
+          kind: 'RecentCriticalIncident',
+          severity: 'Error',
+          title: 'axc',
+          agentId: 'agent-1',
+          actions: ['OpenAgent', 'Retry'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    const row = await screen.findByTestId('attention-row-RecentCriticalIncident')
+    expect(within(row).getByRole('button', { name: 'Open agent' })).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  })
+
+  it('shows the spend even when it is zero', async () => {
+    // $0 on a NeverStarted row is not noise — it is the row confirming the delegate never ran.
+    serve({
+      items: [
+        item({ kind: 'NeverStarted', severity: 'Error', taskId: 't1', subtreeCostUsd: 0 }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('$0')).toBeInTheDocument()
+  })
+
+  // ---- slice 5: the interpreter's reading -------------------------------------------------------
+
+  it('renders the check interpreter’s reading verbatim, line breaks and all', async () => {
+    // Slice 5 stores the specialist's 3-5 lines on the Check event, so the server can send THAT as
+    // the evidence instead of six lines of raw counters. The panel must not reflow it: the reading's
+    // shape is how it is read.
+    serve({
+      items: [
+        item({
+          kind: 'ChecksSpent',
+          severity: 'Warning',
+          title: 'Sweep the logs',
+          taskId: 't1',
+          evidence:
+            'The last check read it as:\nSTALLED — three commits, then 40 minutes of nothing.\nThe delegate is idle at the prompt with a finished branch.',
+          actions: ['OpenDrawer'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText(/STALLED — three commits/)).toBeInTheDocument()
+    expect(screen.getByText(/The last check read it as:/)).toBeInTheDocument()
   })
 })

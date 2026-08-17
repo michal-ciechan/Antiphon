@@ -122,9 +122,27 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                   <Badge size="xs" variant="default" color="gray">
                     {i + 1}
                   </Badge>
-                  <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {m.body}
-                  </Text>
+                  <Stack gap={4} style={{ minWidth: 0 }}>
+                    {/* CARD-0055 shipped parking with no way to see it: a message that has spent its
+                        delivery attempts stays Pending and sits here looking exactly like one that
+                        is about to go out, while every automatic path has already excluded it. The
+                        chip is the whole difference between "queued" and "nothing will ever type
+                        this again — send it yourself or drop it". */}
+                    {m.parked && (
+                      <Tooltip
+                        multiline
+                        w={280}
+                        label={`Typed ${m.deliveryAttempts} time(s) and never confirmed in the transcript. No automatic path will retry it — use send now, or remove it.`}
+                      >
+                        <Badge size="xs" variant="light" color="red">
+                          Parked
+                        </Badge>
+                      </Tooltip>
+                    )}
+                    <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {m.body}
+                    </Text>
+                  </Stack>
                 </Group>
                 <Group gap={4} wrap="nowrap">
                   <Tooltip label="Send now">

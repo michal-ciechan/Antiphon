@@ -65,6 +65,17 @@ export interface QueuedMessageDto {
   body: string
   status: string
   createdAt: string
+  /** How many times this has been typed into the terminal (CARD-0055). */
+  deliveryAttempts: number
+  /** Who enqueued it: `Ui`, `Channel`, `Check`, `Delegation`… */
+  origin: string
+  /**
+   * Pending AND out of delivery attempts. Parking is not a status — a parked message looks exactly
+   * like a pending one on `status` — so this flag is the ONLY thing that tells a human nothing
+   * automatic will ever type it again. The server computes it against the same setting the
+   * attention projection reads, so the queue and that view cannot disagree.
+   */
+  parked: boolean
 }
 
 /** Pending messages for a session, plus whether the agent is currently working. */
