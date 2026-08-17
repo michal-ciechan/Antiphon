@@ -166,6 +166,23 @@ public sealed record CardRevisionDto(
     string? EditedBy,
     DateTime CreatedAt);
 
+/// <summary>
+/// What a card's text may weigh, in characters, straight from the <c>CardService</c> constants that
+/// enforce it.
+/// </summary>
+/// <remarks>
+/// The 422 side has been self-describing since CARD-0019 — an over-limit value comes back naming
+/// both the limit and the actual length. What was missing is asking BEFORE composing: a caller
+/// assembling a 20 KB description from a file has no way to find out that it will not fit except by
+/// sending it. Every field here is the constant itself, so the endpoint cannot drift from the
+/// enforcement; a test asserts that equality rather than the numbers.
+/// </remarks>
+public sealed record CardLimitsDto(
+    int MaxTitleLength,
+    int MaxDescriptionLength,
+    int MaxReasonLength,
+    int MaxActorLength);
+
 public sealed record SpawnCardRequest(
     string? DefinitionName = null,
     int Cols = 120,

@@ -23,6 +23,15 @@ public static class CardEndpoints
         var cards = app.MapGroup("/api/cards")
             .WithTags("Cards");
 
+        // Registered before /{id} for readers, not for the router: a literal segment outranks a
+        // route parameter regardless of order. If that ever stopped being true the resolver's 422
+        // arm catches it — "limits" is not identifier-shaped — rather than reporting "no such card".
+        cards.MapGet("/limits", () => Results.Ok(new CardLimitsDto(
+            CardService.MaxTitleLength,
+            CardService.MaxDescriptionLength,
+            CardService.MaxReasonLength,
+            CardService.MaxActorLength)));
+
         cards.MapGet("/{id}", async (
             string id,
             CardService service,
