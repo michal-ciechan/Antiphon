@@ -224,11 +224,17 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         string? text = null,
         string? stopReason = null,
         Guid? sessionId = null,
-        DateTime? timestamp = null) =>
-        InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp);
+        DateTime? timestamp = null,
+        bool? isApiError = null,
+        string? apiErrorClass = null,
+        int? apiErrorStatus = null) =>
+        InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp,
+            isApiError, apiErrorClass, apiErrorStatus);
 
     private static async Task<long> InsertEntryAsync(
-        Guid sessionId, string kind, string? text = null, string? stopReason = null, DateTime? timestamp = null)
+        Guid sessionId, string kind, string? text = null, string? stopReason = null,
+        DateTime? timestamp = null, bool? isApiError = null, string? apiErrorClass = null,
+        int? apiErrorStatus = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
@@ -243,10 +249,30 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Text = text,
             StopReason = stopReason,
             Timestamp = timestamp,
+            IsApiError = isApiError,
+            ApiErrorClass = apiErrorClass,
+            ApiErrorStatus = apiErrorStatus,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
         return seq;
+    }
+
+    /// <summary>
+    /// The measured API-error stub shape (CARD-0072 S1): the error string as ordinary AssistantText
+    /// plus a stop_sequence TurnEnd, both stamped IsApiError. Inserted after a UserPrompt this makes
+    /// a turn that was killed by the API rather than answered.
+    /// </summary>
+    public async Task InsertApiErrorStubAsync(
+        string errorText = "API Error: 429 You've hit your usage limit. Your limit will reset at 6:10pm (Europe/London).",
+        string apiErrorClass = "rate_limit",
+        int? apiErrorStatus = 429,
+        Guid? sessionId = null)
+    {
+        await InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, errorText, sessionId: sessionId,
+            isApiError: true, apiErrorClass: apiErrorClass, apiErrorStatus: apiErrorStatus);
+        await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "stop_sequence", sessionId: sessionId,
+            isApiError: true, apiErrorClass: apiErrorClass, apiErrorStatus: apiErrorStatus);
     }
 
     /// <summary>A full turn (UserPrompt, AssistantText, TurnEnd/end_turn), transcript-driven like prod.</summary>

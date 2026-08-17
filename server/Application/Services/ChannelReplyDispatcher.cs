@@ -206,7 +206,28 @@ public sealed class ChannelReplyDispatcher
         // With no text yet the correlations stay pending; the AssistantText that follows (or a
         // later TurnEnd) re-triggers dispatch, and genuinely silent turns' correlations age out
         // via the TTL.
-        var (responseText, maxTextSeq) = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+        var (responseText, maxTextSeq, containsApiErrorStub) =
+            await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+
+        // S2 (CARD-0071): a turn killed by the API must never be published as a chat reply. The
+        // stub's error string is ordinary AssistantText, so without this check "API Error: 529
+        // Overloaded" would go to a family chat — and, because settling happens before the produce,
+        // publishing it would also CONSUME the correlation and cancel the genuine answer. The whole
+        // turn is withheld, not just the stub line stripped: a multi-call turn can produce real text
+        // before a later API call dies, and publishing the fragment would settle the correlation
+        // against half an answer. The correlations stay owed — a resumed turn's real answer routes
+        // by the same stored prompt match, and if nothing ever answers, the TTL sweep's Critical
+        // ChannelReplyLost incident is the designed backstop (no second timeout here).
+        if (containsApiErrorStub)
+        {
+            _logger.LogWarning(
+                "Turn on session {SessionId} (prompt seq {PromptSeq}) was killed by an API error; withholding "
+                + "the channel reply for the whole turn. {Count} correlation(s) stay owed for a resumed turn, "
+                + "with the TTL sweep as the backstop.",
+                sessionId, userPrompt.Sequence, open.Count);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(responseText))
         {
             _logger.LogDebug(
@@ -602,8 +623,22 @@ public sealed class ChannelReplyDispatcher
                 && t.Kind == TranscriptKinds.AssistantText
                 && t.Sequence > turn.MaxTextSeq)
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Text })
+            .Select(t => new { t.Sequence, t.Text, t.Kind, t.IsApiError })
             .ToListAsync(ct);
+
+        // S2 (CARD-0071), same rule as the main path: an API-error stub in the trailing window
+        // withholds the whole follow-up — the turn died mid-stream and its error string must not
+        // reach the chat, not even beside real trailing text. The watermark is NOT advanced, which
+        // is deliberate: nothing was sent, and the next turn's prompt drops this record anyway.
+        if (late.Any(l => TranscriptKinds.IsApiErrorStub(l.Kind, l.IsApiError)))
+        {
+            _logger.LogWarning(
+                "Trailing text on session {SessionId} (dispatched prompt seq {PromptSeq}) contains an API-error "
+                + "stub; withholding the follow-up reply.",
+                sessionId, turn.PromptSeq);
+            return;
+        }
+
         var texts = late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).ToList();
         if (texts.Count == 0)
             return;
@@ -647,8 +682,11 @@ public sealed class ChannelReplyDispatcher
     // at the TurnEnd sequence, because the stop marker can precede the reply text in Claude's
     // transcript ordering. At dispatch time the next turn hasn't produced entries yet, so an open
     // upper bound is safe. Also returns the highest sequence included, so trailing text that lands
-    // after this dispatch can be told apart from what was already sent.
-    private static async Task<(string? Text, long MaxSeq)> ExtractTurnResponseAsync(
+    // after this dispatch can be told apart from what was already sent — and whether the window
+    // contains an API-error stub (CARD-0071), which the caller withholds the whole turn on. Stub
+    // rows are additionally excluded from the join so no refactor of the withhold can ever let the
+    // error string ride out inside a reply body.
+    private static async Task<(string? Text, long MaxSeq, bool ContainsApiErrorStub)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
         var nextPromptSeq = await db.TranscriptEntries
@@ -666,12 +704,16 @@ public sealed class ChannelReplyDispatcher
 
         var entries = await query
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Text })
+            .Select(t => new { t.Sequence, t.Text, t.Kind, t.IsApiError })
             .ToListAsync(ct);
 
         var maxSeq = entries.Count > 0 ? entries[^1].Sequence : promptSeq;
-        var joined = string.Join("\n\n", entries.Select(t => t.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
-        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), maxSeq);
+        var containsStub = entries.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError));
+        var joined = string.Join("\n\n", entries
+            .Where(t => !TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError))
+            .Select(t => t.Text)
+            .Where(t => !string.IsNullOrWhiteSpace(t)));
+        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), maxSeq, containsStub);
     }
 
     // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can

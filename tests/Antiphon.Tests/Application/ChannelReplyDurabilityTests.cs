@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -216,5 +217,111 @@ public class ChannelReplyDurabilityTests
         (await db.AgentIncidents.AnyAsync(
                 i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
             .ShouldBeFalse("a turn the bridge did not start is normal, not an incident");
+    }
+
+    // CARD-0071 (S2 of the usage-limit spec). A turn killed by the API writes its error string as
+    // ordinary AssistantText, so before this guard "API Error: 529 Overloaded" was a publishable
+    // reply — and because dispatch settles BEFORE producing, publishing it would also consume the
+    // correlation and cancel the genuine answer forever. The stub turn must publish NOTHING and
+    // leave the correlation owed for a resumed turn (or, failing that, the TTL sweep).
+    [Test]
+    public async Task A_turn_killed_by_an_api_error_publishes_nothing_and_stays_owed()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 09:30] what time is dinner";
+
+        var messageId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertApiErrorStubAsync();
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty("an API error string must never reach a chat");
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull(
+            "the correlation stays OWED — settling it would cancel the resumed turn's genuine answer");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+                i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
+            .ShouldBeFalse("withholding is not loss — the TTL sweep owns the give-up, and it has not expired");
+    }
+
+    // The spec's decision is to withhold the TURN, not to strip the stub line: a multi-call turn can
+    // produce real text before a later API call dies, and publishing the fragment would settle the
+    // correlation against half an answer.
+    [Test]
+    public async Task A_mixed_turn_with_real_text_beside_the_stub_is_withheld_whole()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 09:35] book the restaurant";
+
+        var messageId = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "Looking at their booking page now.");
+        await h.InsertApiErrorStubAsync(
+            errorText: "API Error: 529 Overloaded", apiErrorClass: "server_error", apiErrorStatus: 529);
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldBeEmpty(
+            "half an answer would settle the correlation against an interim fragment");
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldBeNull();
+    }
+
+    // The follow-up path gathers trailing text for an already-answered turn; a stub landing there
+    // must withhold the follow-up the same way (the spec names both gather sites).
+    [Test]
+    public async Task A_stub_in_the_trailing_window_withholds_the_follow_up()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var prompt = "[Telegram \"Family\" — Mike 09:40] and the flowers?";
+
+        await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, "Ordered — peonies, pickup Friday.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(1, "the real answer goes out normally");
+
+        // The turn keeps writing (stop marker mid-stream) and then dies on the API: real trailing
+        // text AND the stub, with no new prompt in between.
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "One more thing about the vases —");
+        await h.InsertApiErrorStubAsync(
+            errorText: "API Error: 529 Overloaded", apiErrorClass: "server_error", apiErrorStatus: 529);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(1,
+            "the follow-up window contains a stub, so the whole follow-up is withheld");
+    }
+
+    // Withholding leans on the TTL sweep as its give-up path, so prove the two compose: a stub-killed
+    // turn that nothing ever resumes still ends in the Critical incident, never in silence.
+    [Test]
+    public async Task A_withheld_correlation_that_ages_out_still_raises_the_critical_incident()
+    {
+        await using var h = await CreateHarnessAsync();
+        var chatId = await h.BindChannelAsync();
+        var conversationKey = $"telegram:{chatId}";
+        var prompt = "[Telegram \"Family\" — Ola 07:10] did you pay the deposit?";
+
+        var messageId = await h.SeedChannelCorrelationAsync(
+            prompt, conversationKey, sentAtUtc: DateTime.UtcNow.AddHours(-2));
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, prompt);
+        await h.InsertApiErrorStubAsync();
+
+        var abandoned = await h.Dispatcher.SweepStaleCorrelationsAsync(CancellationToken.None);
+        abandoned.ShouldBeGreaterThanOrEqualTo(1, "a shared database means other rows may ride along");
+
+        h.Messaging.SentReplies.ShouldBeEmpty();
+        (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull("abandoning is terminal");
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost)
+                .ToListAsync())
+            .ShouldHaveSingleItem()
+            .Severity.ShouldBe(AlertSeverity.Critical);
     }
 }
