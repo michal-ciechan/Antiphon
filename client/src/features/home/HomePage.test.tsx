@@ -117,6 +117,8 @@ function seed({
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    // The mobile branch's away band asks for boards; desktop never does.
+    http.get('/api/boards', () => HttpResponse.json([])),
     http.get('/api/attention', () =>
       HttpResponse.json({
         generatedAt: '2026-08-17T10:00:00Z',
