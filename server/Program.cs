@@ -238,6 +238,11 @@ try
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
+    // The read-only projection over the plan files in the repo (mobile-thread spec §D1). A
+    // singleton because its 30s catalog cache is the whole point — a phone polling a thread must
+    // not stat two dozen files per tap.
+    builder.Services.AddSingleton<PlanCatalogService>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<PlanCatalogService>());
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -505,6 +510,7 @@ try
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapAttentionEndpoints();
+    app.MapPlanEndpoints();
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
 
