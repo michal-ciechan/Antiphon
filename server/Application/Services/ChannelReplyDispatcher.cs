@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -12,28 +13,47 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Routes an agent's turn output back down the external channel that asked for it. The bridge
-/// registers a pending correlation when it enqueues a channel message into a session; when that
-/// session completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
-/// this dispatcher matches the turn's <c>UserPrompt</c> back to the pending prompt, extracts the
-/// assistant's text for that turn, classifies it (final answer vs question — see
+/// Routes an agent's turn output back down the external channel that asked for it. When a session
+/// completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
+/// this dispatcher matches the turn's <c>UserPrompt</c> back to the channel message that started it,
+/// extracts the assistant's text for that turn, classifies it (final answer vs question — see
 /// <see cref="ChannelReplyKind"/>; Progress is reserved for future mid-turn notes), and produces a
 /// <see cref="ChannelReply"/> to the outbound topic.
 ///
-/// Singleton: owns the in-memory correlation map. Prompt-matching (not blind FIFO) means a turn a
-/// human triggered directly in the terminal never sends a stray reply to the chat.
+/// <para><b>ONE STORE (CARD-0067).</b> There is no correlation map. The reply target is resolved at
+/// dispatch time from the <see cref="SessionQueuedMessage"/> row the bridge already persisted for
+/// the inbound half — <see cref="SessionQueuedMessage.Body"/> is the prompt to match,
+/// <see cref="SessionQueuedMessage.ConversationKey"/> is <c>{provider}:{conversationId}</c>, and
+/// <see cref="SessionQueuedMessage.ChannelReplySettledAt"/> is the consume marker. Until 2026-08-17
+/// the two halves of one round trip lived in two stores, one durable and one not: the bridge called
+/// <c>Track()</c> into a <see cref="ConcurrentDictionary"/> immediately before persisting the queued
+/// row, so any restart in between voided the reply. A hard restart at 09:05:01Z that day killed four
+/// live correlations and the Family agent's guest list — 42 people, then 64 — was emitted twice and
+/// published never, with no log line and no incident anywhere.</para>
+///
+/// <para><b>NO SILENT LOSS.</b> Every channel correlation now ends in exactly one of two states: a
+/// published reply, or a Critical <see cref="AgentIncidentKind.ChannelReplyLost"/> incident when it
+/// is abandoned unanswered (TTL expiry, or a conversation key nothing can be routed to). The
+/// abandon sweep runs both per-session on turn end and globally via
+/// <see cref="SweepStaleCorrelationsAsync"/>, because a session that answers into a void may never
+/// end another turn to be swept on.</para>
+///
+/// Singleton. Prompt-matching (not blind FIFO) means a turn a human triggered directly in the
+/// terminal never sends a stray reply to the chat.
 /// </summary>
 public sealed class ChannelReplyDispatcher
 {
-    public sealed record PendingChannelReply(
-        Guid ChannelId,
-        string Provider,
-        string? ReplyHandle,
-        string ConversationId,
-        string Prompt,
-        DateTime EnqueuedAtUtc);
-
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId);
+
+    /// <summary>Why a correlation was abandoned without an answer. Both are Critical incidents.</summary>
+    private enum LossReason
+    {
+        /// <summary>No turn matching this prompt completed inside <c>PendingReplyTtlMinutes</c>.</summary>
+        StaleTtl,
+
+        /// <summary>The turn WAS answered, but the stored conversation key names no routable target.</summary>
+        Unroutable,
+    }
 
     // The last turn we replied for, per session. Claude can keep writing AssistantText AFTER the
     // TurnEnd that triggered dispatch (observed live 2026-07-29, AZ Care: TurnEnd, AssistantText,
@@ -46,7 +66,6 @@ public sealed class ChannelReplyDispatcher
 
     private sealed record DispatchedTurn(long PromptSeq, long MaxTextSeq, IReadOnlyList<ReplyTarget> Targets);
 
-    private readonly ConcurrentDictionary<Guid, ConcurrentQueue<PendingChannelReply>> _pending = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IAntiphonMessagingProducer _producer;
     private readonly Settings.ChannelBridgeSettings _settings;
@@ -67,27 +86,42 @@ public sealed class ChannelReplyDispatcher
         _logger = logger;
     }
 
-    /// <summary>Register "session X owes channel Y a reply for prompt P".</summary>
-    public void Track(Guid sessionId, PendingChannelReply pending) =>
-        _pending.GetOrAdd(sessionId, _ => new ConcurrentQueue<PendingChannelReply>()).Enqueue(pending);
-
-    /// <summary>Pending correlations for a session (test/diagnostic surface).</summary>
-    public int PendingCount(Guid sessionId) =>
-        _pending.TryGetValue(sessionId, out var q) ? q.Count : 0;
+    /// <summary>
+    /// Channel correlations still owed a reply on this session (test/diagnostic surface). Async
+    /// because the correlations live in Postgres now — the whole point of CARD-0067.
+    /// </summary>
+    public async Task<int> PendingCountAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await OpenCorrelations(db).CountAsync(m => m.AgentSessionId == sessionId, ct);
+    }
 
     /// <summary>
-    /// Called on every completed turn. Cheap no-op for sessions with no channel correlations.
+    /// A channel message that has reached the agent and is still owed a reply.
+    ///
+    /// <para><see cref="QueuedMessageStatus.Sent"/> is deliberate: a correlation becomes owed only
+    /// once the agent has actually been handed the message (CARD-0055 makes Sent mean a matching
+    /// <c>UserPrompt</c> transcript record exists). A row still Pending, or Canceled, is the INBOUND
+    /// path's problem — the delivery verification, parking and incidents of CARD-0055 already own
+    /// it, and reporting it here as a lost reply would double-count the same silence.</para>
+    /// </summary>
+    private static IQueryable<SessionQueuedMessage> OpenCorrelations(AppDbContext db) =>
+        db.SessionQueuedMessages
+            .Where(m => m.Origin == QueuedMessageOrigin.Channel
+                && m.Status == QueuedMessageStatus.Sent
+                && m.ConversationKey != null
+                && m.ChannelReplySettledAt == null);
+
+    /// <summary>
+    /// Called on every completed turn. Cheap for sessions with no channel correlations (one indexed
+    /// count), and the only path that can turn an agent's turn into a chat reply.
     /// </summary>
     public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
-            if (_pending.TryGetValue(sessionId, out var queue) && !queue.IsEmpty)
-            {
-                EvictStale(queue);
-                if (!queue.IsEmpty)
-                    await DispatchAsync(sessionId, queue, ct);
-            }
+            await DispatchAsync(sessionId, ct);
 
             // Trailing text for an already-answered turn (stop marker mid-stream) goes out as a
             // follow-up. No-op unless this session's last dispatched turn is still the live one.
@@ -100,10 +134,40 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
-    private async Task DispatchAsync(Guid sessionId, ConcurrentQueue<PendingChannelReply> queue, CancellationToken ct)
+    /// <summary>
+    /// The global abandon sweep, for the periodic supervision tick. The per-session sweep inside
+    /// <see cref="DispatchAsync"/> only ever runs when that session ends ANOTHER turn — and the
+    /// 2026-08-17 shape is precisely a session that answered into a void, so a correlation on a
+    /// session that goes quiet must not depend on it to be reported.
+    /// </summary>
+    public async Task<int> SweepStaleCorrelationsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            return await AbandonStaleCorrelationsAsync(db, sessionId: null, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Channel reply correlation sweep failed");
+            return 0;
+        }
+    }
+
+    private async Task DispatchAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await AbandonStaleCorrelationsAsync(db, sessionId, ct);
+
+        var open = await OpenCorrelations(db)
+            .Where(m => m.AgentSessionId == sessionId)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            return;
 
         // The turn that just finished: latest TurnEnd, its preceding UserPrompt, and the assistant
         // text in between.
@@ -111,7 +175,15 @@ public sealed class ChannelReplyDispatcher
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
             .MaxAsync(t => (long?)t.Sequence, ct);
         if (turnEndSeq is not long endSeq)
+        {
+            // Not silence any more: a channel-bound session with owed correlations and NO TurnEnd row
+            // is either pre-first-turn or missing its transcript entirely (CARD-0006's bind failure,
+            // which has its own incident). Either way the correlations stay owed and the TTL reports.
+            _logger.LogDebug(
+                "Session {SessionId} owes {Count} channel reply/replies but its transcript has no TurnEnd yet",
+                sessionId, open.Count);
             return;
+        }
 
         var userPrompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -120,7 +192,13 @@ public sealed class ChannelReplyDispatcher
             .OrderByDescending(t => t.Sequence)
             .FirstOrDefaultAsync(ct);
         if (userPrompt?.Text is not string promptText)
+        {
+            _logger.LogDebug(
+                "Session {SessionId} owes {Count} channel reply/replies but the turn ending at seq {EndSeq} "
+                + "has no preceding UserPrompt to match",
+                sessionId, open.Count, endSeq);
             return;
+        }
 
         // Extract the response BEFORE consuming any correlations: Claude sometimes writes the
         // turn's stop marker before its reply text (observed live 2026-07-24: TurnEnd seq N,
@@ -136,29 +214,87 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        // Only answer turns WE started: match the turn's prompt against pending correlations. A human
-        // typing directly into the terminal produces turns that match nothing and are skipped. A
-        // BATCHED turn (several queued channel messages coalesced into one body) matches — and
-        // consumes — every constituent correlation by containment.
-        var matches = TakeAllMatching(queue, promptText);
+        // Only answer turns WE started: match the turn's prompt against the queued bodies still owed
+        // a reply. A human typing directly into the terminal produces turns that match nothing and
+        // are skipped. A BATCHED turn (several queued channel messages coalesced into one body)
+        // matches — and settles — every constituent row by containment, exactly as the in-memory
+        // queue did: the row's Body IS the string the bridge enqueued and the queue typed.
+        var normalizedTurn = Normalize(promptText);
+        var matches = open.Where(m => PromptsMatch(Normalize(m.Body), normalizedTurn)).ToList();
         if (matches.Count == 0)
+        {
+            // The 2026-08-17 hole. This used to be a bare `return` — the one place that knew a
+            // channel-bound agent had just finished a turn and answered nobody. It is a legitimate
+            // state (the operator typed into the terminal while a chat message was still in flight),
+            // so it is not an incident: the correlations stay owed and the TTL sweep raises the
+            // Critical incident if nothing ever answers them. But it is never again invisible.
+            _logger.LogWarning(
+                "Turn on session {SessionId} (prompt seq {PromptSeq}) matched NONE of the {Count} channel "
+                + "correlation(s) still owed a reply for {Conversations}. They stay owed; if no turn ever "
+                + "matches them the TTL sweep raises a ChannelReplyLost incident.",
+                sessionId, userPrompt.Sequence, open.Count, DescribeConversations(open));
             return;
+        }
 
-        // Consuming the correlations closes the turn — remember its watermark so text that lands
+        // Resolve the reply target from the row itself — the whole CARD-0067 fix. ConversationKey is
+        // '{provider}:{conversationId}'; the addressing handle comes from the channel catalog, which
+        // keeps the newest one the provider gave us (for every Telegram record on the topic it equals
+        // the conversation id). ConversationId alone is a complete address for the gateway, so a
+        // missing catalog row degrades to a Warning and still sends — a reply nobody reads because
+        // the handle was null would be this card's bug wearing a different hat.
+        var targets = new List<ReplyTarget>();
+        var unroutable = new List<SessionQueuedMessage>();
+        foreach (var group in matches.GroupBy(m => m.ConversationKey!, StringComparer.Ordinal))
+        {
+            if (!TrySplitConversationKey(group.Key, out var provider, out var conversationId))
+            {
+                unroutable.AddRange(group);
+                continue;
+            }
+
+            var channel = await db.ChatChannels.AsNoTracking()
+                .Where(c => c.Provider == provider && c.ExternalId == conversationId)
+                .Select(c => new { c.ReplyHandle })
+                .FirstOrDefaultAsync(ct);
+            if (channel is null)
+            {
+                _logger.LogWarning(
+                    "No channel catalog row for {ConversationKey} (session {SessionId}); addressing the reply "
+                    + "by conversation id alone", group.Key, sessionId);
+            }
+
+            targets.Add(new ReplyTarget(provider, channel?.ReplyHandle, conversationId));
+        }
+
+        if (unroutable.Count > 0)
+        {
+            // The turn was answered and there is nowhere to send it. That is a lost reply, not a
+            // skip, so it settles with a Critical incident rather than being retried forever.
+            await SettleAsync(db, unroutable, ct);
+            await ReportLostAsync(sessionId, unroutable, LossReason.Unroutable, ct);
+            matches = matches.Except(unroutable).ToList();
+            if (matches.Count == 0)
+                return;
+        }
+
+        // CLAIM BEFORE SENDING. Marking settled first is what makes a restart safe in the other
+        // direction: the dispatcher is re-triggered for the same turn all the time (an AssistantText
+        // arrival, the closing TurnEnd, a reconnect's backfilled boundary), and with a durable
+        // correlation an unclaimed row would answer the same turn again — a duplicate into a real
+        // family chat. Same shape, and the same reasoning, as the queue stamping Sent before it types.
+        // A produce failure below un-claims, so a broker blip retries on the next turn end.
+        await SettleAsync(db, matches, ct);
+
+        // Settling the correlations closes the turn — remember its watermark so text that lands
         // AFTER this dispatch (stop marker mid-stream) can still be delivered as a follow-up.
-        var targets = matches
-            .GroupBy(m => (m.Provider, m.ConversationId))
-            .Select(g => g.Last())
-            .Select(m => new ReplyTarget(m.Provider, m.ReplyHandle, m.ConversationId))
-            .ToList();
         _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, targets);
 
-        // The frozen silent-turn contract: a whole-turn NO_REPLY consumes the correlations and
+        // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
         if (ChannelContracts.IsNoReply(responseText))
         {
             _logger.LogInformation(
-                "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) consumed without a reply",
+                "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
             return;
         }
@@ -167,24 +303,177 @@ public sealed class ChannelReplyDispatcher
         var text = Truncate(bodyText);
         var kind = ClassifyKind(bodyText);
 
-        // One reply per distinct conversation, addressed via the NEWEST match's handle. With
-        // same-conversation batching this loop is degenerate (exactly one send) — the fan-out is a
-        // deliberate latent safety net in case batching scope ever widens to cross-conversation.
-        foreach (var target in targets)
+        // One reply per distinct conversation. With same-conversation batching this loop is
+        // degenerate (exactly one send) — the fan-out is a deliberate latent safety net in case
+        // batching scope ever widens to cross-conversation.
+        try
         {
-            var reply = new ChannelReply
+            foreach (var target in targets)
             {
-                Channel = target.Provider,
-                ReplyHandle = target.ReplyHandle,
-                ConversationId = target.ConversationId,
-                Text = text.Length == 0 ? null : text,
-                Kind = kind,
-                Attachments = attachments,
-            };
-            await _producer.SendAsync(reply, ct);
-            _logger.LogInformation(
-                "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
-                reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
+                var reply = new ChannelReply
+                {
+                    Channel = target.Provider,
+                    ReplyHandle = target.ReplyHandle,
+                    ConversationId = target.ConversationId,
+                    Text = text.Length == 0 ? null : text,
+                    Kind = kind,
+                    Attachments = attachments,
+                };
+                await _producer.SendAsync(reply, ct);
+                _logger.LogInformation(
+                    "Sent {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId}",
+                    reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Un-claim so the next turn end tries again, and drop the follow-up watermark with it —
+            // a turn whose reply never left must not have trailing text sent on its behalf.
+            _dispatched.TryRemove(sessionId, out _);
+            foreach (var m in matches)
+                m.ChannelReplySettledAt = null;
+            await db.SaveChangesAsync(CancellationToken.None);
+            _logger.LogError(ex,
+                "Producing the channel reply for session {SessionId} failed; {Count} correlation(s) returned to "
+                + "owed for the next turn end", sessionId, matches.Count);
+        }
+    }
+
+    /// <summary>The durable consume marker — see <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>.</summary>
+    private async Task SettleAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> rows, CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        foreach (var row in rows)
+            row.ChannelReplySettledAt = now;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary><c>{provider}:{conversationId}</c>; split on the FIRST colon (chat ids carry none).</summary>
+    private static bool TrySplitConversationKey(
+        string conversationKey, out string provider, out string conversationId)
+    {
+        provider = string.Empty;
+        conversationId = string.Empty;
+        var separator = conversationKey.IndexOf(':');
+        if (separator <= 0 || separator == conversationKey.Length - 1)
+            return false;
+
+        provider = conversationKey[..separator];
+        conversationId = conversationKey[(separator + 1)..];
+        return true;
+    }
+
+    private static string DescribeConversations(IEnumerable<SessionQueuedMessage> rows) =>
+        string.Join(", ", rows.Select(m => m.ConversationKey).Distinct(StringComparer.Ordinal));
+
+    /// <summary>
+    /// The TTL sweep, durable version of the old in-memory <c>EvictStale</c>. A correlation that ages
+    /// past <c>PendingReplyTtlMinutes</c> with no matching turn is abandoned — and abandoning it is
+    /// reported as a Critical incident, because the only reason a channel correlation exists is that a
+    /// person is waiting on it. The clock runs from <see cref="SessionQueuedMessage.SentAt"/> (when the
+    /// agent actually got the message), NOT from enqueue: a message that sat Pending behind a long
+    /// turn would otherwise be stale the instant it was finally delivered.
+    /// </summary>
+    private async Task<int> AbandonStaleCorrelationsAsync(
+        AppDbContext db, Guid? sessionId, CancellationToken ct)
+    {
+        var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-_settings.PendingReplyTtlMinutes);
+        var query = OpenCorrelations(db).Where(m => (m.SentAt ?? m.CreatedAt) < cutoff);
+        if (sessionId is Guid scoped)
+            query = query.Where(m => m.AgentSessionId == scoped);
+
+        var stale = await query.OrderBy(m => m.Sequence).ToListAsync(ct);
+        if (stale.Count == 0)
+            return 0;
+
+        await SettleAsync(db, stale, ct);
+        foreach (var bySession in stale.GroupBy(m => m.AgentSessionId))
+            await ReportLostAsync(bySession.Key, bySession.ToList(), LossReason.StaleTtl, ct);
+
+        return stale.Count;
+    }
+
+    /// <summary>
+    /// The end of silent loss. Logs at Error and records a Critical
+    /// <see cref="AgentIncidentKind.ChannelReplyLost"/> incident on the agent that owns the session —
+    /// which routes through the normal alert pipeline, i.e. it reaches a human. Always Critical: a
+    /// channel correlation exists only because somebody in a chat asked something.
+    ///
+    /// <para>Runs in its OWN scope on purpose. The caller's context holds the rows it has just marked
+    /// settled; a failed incident insert (an agent row deleted underneath us, a constraint) would
+    /// otherwise leave a poisoned entity tracked there and break every later save on it.</para>
+    /// </summary>
+    private async Task ReportLostAsync(
+        Guid sessionId,
+        IReadOnlyList<SessionQueuedMessage> lost,
+        LossReason reason,
+        CancellationToken ct)
+    {
+        var conversations = DescribeConversations(lost);
+        var why = reason switch
+        {
+            LossReason.Unroutable =>
+                $"the stored conversation key names no routable target ({conversations})",
+            _ => $"no turn matching the message completed within {_settings.PendingReplyTtlMinutes} minutes",
+        };
+        var oldest = lost.Min(m => m.SentAt ?? m.CreatedAt);
+
+        _logger.LogError(
+            "CHANNEL REPLY LOST: {Count} message(s) from {Conversations} routed into session {SessionId} were "
+            + "never answered — {Why}. Oldest owed since {Oldest:u}. Message ids: {MessageIds}. "
+            + "A human asked and got silence.",
+            lost.Count, conversations, sessionId, why, oldest,
+            string.Join(", ", lost.Select(m => m.Id)));
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sessionIdText = sessionId.ToString("D");
+            var agentId = await db.Agents
+                .Where(a => a.PersistentSessionId == sessionIdText)
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync(ct);
+            if (agentId is null && TrySplitConversationKey(lost[0].ConversationKey!, out var p, out var cid))
+            {
+                // A session the agent no longer points at (relaunched, re-adopted) still belongs to
+                // whichever agent the conversation is bound to — that is the agent a human is waiting on.
+                agentId = await db.ChatChannels
+                    .Where(c => c.Provider == p && c.ExternalId == cid && c.AgentId != null)
+                    .Select(c => c.AgentId)
+                    .FirstOrDefaultAsync(ct);
+            }
+            if (agentId is not Guid owner)
+            {
+                // Nothing to hang an incident on — the Error line above is the whole record. Never
+                // swallow: an unowned session that answers a chat is itself worth seeing.
+                _logger.LogError(
+                    "No agent owns session {SessionId}, so the lost channel reply could not be recorded as an "
+                    + "incident. {Count} message(s) from {Conversations} went unanswered.",
+                    sessionId, lost.Count, conversations);
+                return;
+            }
+
+            // Scoped supervisor sharing this scope's AppDbContext; RecordIncidentAsync does NOT save.
+            var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+            if (supervisor is null)
+                return;
+
+            await supervisor.RecordIncidentAsync(
+                owner,
+                sessionId,
+                AgentIncidentKind.ChannelReplyLost,
+                AlertSeverity.Critical,
+                $"A reply this agent owed {conversations} was never sent: {lost.Count} message(s) went "
+                + $"unanswered because {why}. Someone in that chat asked a question and got silence.",
+                failureReason: reason.ToString(),
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Recording the lost channel reply incident for session {SessionId} failed", sessionId);
         }
     }
 
@@ -276,9 +565,19 @@ public sealed class ChannelReplyDispatcher
 
     // A turn we already replied for can gain more AssistantText: Claude sometimes writes a stop
     // marker mid-stream, dispatch fires with only the text so far (e.g. interim narration between
-    // tool calls), and the real answer follows seconds later. The correlations are gone by then, so
+    // tool calls), and the real answer follows seconds later. The correlations are settled by then, so
     // route the trailing text to the same targets. The watermark claim via TryUpdate keeps racing
     // triggers (AssistantText arrival + the closing TurnEnd) from double-sending.
+    //
+    // This watermark is deliberately still process-memory only, and it is the one thing CARD-0067 did
+    // NOT make durable: it addresses a turn that has ALREADY been answered, so losing it to a restart
+    // costs at most a trailing fragment, never the answer — and a durable version would have to decide
+    // what "already sent" means for text a dead process may or may not have produced.
+    //
+    // NOT FIXED HERE, still open: the bail at the latestPromptSeq check below. Seq 469 on 2026-08-17
+    // (the guest list) was doomed by it independently of the restart — the newer prompt landed in the
+    // SAME persistence batch as the text it concerns, so there is no window in which the trailing text
+    // exists and the next prompt does not. That is CARD-0055 slice 7 / CARD-0067 slice 2.
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
         if (!_dispatched.TryGetValue(sessionId, out var turn))
@@ -376,28 +675,9 @@ public sealed class ChannelReplyDispatcher
     }
 
     // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can
-    // append suffixes and long prompts may be normalised — match on a generous probe. Consumes
-    // EVERY match: a batched turn's body contains several pending prompts, and each must be
-    // settled by the one reply (queue order is preserved for non-matches).
-    private List<PendingChannelReply> TakeAllMatching(ConcurrentQueue<PendingChannelReply> queue, string turnPrompt)
-    {
-        var normalizedTurn = Normalize(turnPrompt);
-        var retained = new List<PendingChannelReply>();
-        var matches = new List<PendingChannelReply>();
-
-        while (queue.TryDequeue(out var candidate))
-        {
-            if (PromptsMatch(Normalize(candidate.Prompt), normalizedTurn))
-                matches.Add(candidate);
-            else
-                retained.Add(candidate);
-        }
-        foreach (var keep in retained)
-            queue.Enqueue(keep);
-
-        return matches;
-    }
-
+    // append suffixes and long prompts may be normalised — match on a generous probe. EVERY match
+    // settles: a batched turn's body contains several owed prompts, and each must be closed by the
+    // one reply. Non-matches simply stay owed (there is no queue to preserve order in any more).
     private static bool PromptsMatch(string pending, string turn)
     {
         var probe = pending.Length <= 120 ? pending : pending[..120];
@@ -427,17 +707,5 @@ public sealed class ChannelReplyDispatcher
         return lines.TakeLast(2).Any(l => l.EndsWith('?'))
             ? ChannelReplyKind.Question
             : ChannelReplyKind.Answer;
-    }
-
-    private void EvictStale(ConcurrentQueue<PendingChannelReply> queue)
-    {
-        var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-_settings.PendingReplyTtlMinutes);
-        while (queue.TryPeek(out var head) && head.EnqueuedAtUtc < cutoff)
-        {
-            if (queue.TryDequeue(out var dropped))
-                _logger.LogWarning(
-                    "Dropped stale channel reply correlation for channel {ChannelId} (enqueued {EnqueuedAt:u})",
-                    dropped.ChannelId, dropped.EnqueuedAtUtc);
-        }
     }
 }

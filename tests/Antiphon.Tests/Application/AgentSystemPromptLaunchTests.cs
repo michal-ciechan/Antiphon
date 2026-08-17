@@ -242,7 +242,7 @@ public class AgentSystemPromptLaunchTests
         var started = await StartAsync(h, fresh: true);
         var newSessionId = Guid.Parse(started.PersistentSessionId!);
 
-        h.Dispatcher.PendingCount(newSessionId).ShouldBe(0, "launch notes never track a reply correlation");
+        (await h.Dispatcher.PendingCountAsync(newSessionId)).ShouldBe(0, "launch notes never track a reply correlation");
         await h.InsertTurnAsync(ChannelPreamble.BootstrapBody, "READY", newSessionId);
         await h.Dispatcher.OnTurnEndAsync(newSessionId, CancellationToken.None);
         h.Messaging.SentReplies.ShouldBeEmpty();

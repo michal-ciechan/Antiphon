@@ -53,5 +53,23 @@ public class SessionQueuedMessage
     /// </summary>
     public long? LastDeliveryBaselineSequence { get; set; }
 
+    /// <summary>
+    /// For <see cref="QueuedMessageOrigin.Channel"/> rows: when the reply this message OWES its
+    /// human was settled — either a <c>ChannelReply</c> was produced for it, or it was abandoned
+    /// unanswered (which raises a Critical <see cref="Domain.Enums.AgentIncidentKind.ChannelReplyLost"/>
+    /// incident). Null on a Sent channel row means "somebody in a chat is still waiting". Always
+    /// null on non-Channel rows — they owe nobody a reply.
+    ///
+    /// <para>CARD-0067. This column is the durable half of the round trip. The message coming IN
+    /// was always in Postgres; the route back OUT lived in a <c>ConcurrentDictionary</c> inside
+    /// <c>ChannelReplyDispatcher</c>, so a server restart between "routed" and "turn ended" voided
+    /// the reply with no log line, no incident and no user-visible signal. On 2026-08-17 a restart
+    /// at 09:05:01Z killed four live correlations and a family's guest list was emitted twice and
+    /// published never. The reply target is now resolved from this row at dispatch time
+    /// (<see cref="ConversationKey"/> carries <c>{provider}:{conversationId}</c>), and this
+    /// timestamp is what keeps a restart from ANSWERING THE SAME TURN TWICE into a live chat.</para>
+    /// </summary>
+    public DateTime? ChannelReplySettledAt { get; set; }
+
     public AgentSession AgentSession { get; set; } = null!;
 }

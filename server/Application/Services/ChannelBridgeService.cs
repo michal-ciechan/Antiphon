@@ -29,7 +29,6 @@ public sealed class ChannelBridgeService : BackgroundService
     private static readonly TimeSpan SessionPollInterval = TimeSpan.FromSeconds(2);
 
     private readonly IAntiphonMessagingConsumer _consumer;
-    private readonly ChannelReplyDispatcher _dispatcher;
     private readonly SessionMessageQueueService _queue;
     private readonly ChannelInboundDebouncer _debouncer;
     private readonly IEventBus _eventBus;
@@ -40,7 +39,6 @@ public sealed class ChannelBridgeService : BackgroundService
 
     public ChannelBridgeService(
         IAntiphonMessagingConsumer consumer,
-        ChannelReplyDispatcher dispatcher,
         SessionMessageQueueService queue,
         ChannelInboundDebouncer debouncer,
         IEventBus eventBus,
@@ -50,7 +48,6 @@ public sealed class ChannelBridgeService : BackgroundService
         ILogger<ChannelBridgeService> logger)
     {
         _consumer = consumer;
-        _dispatcher = dispatcher;
         _queue = queue;
         _debouncer = debouncer;
         _eventBus = eventBus;
@@ -173,17 +170,16 @@ public sealed class ChannelBridgeService : BackgroundService
                 text,
                 TimeZoneInfo.Local);
 
-            // Register the reply correlation BEFORE enqueuing: an idle agent gets the message
-            // delivered synchronously inside EnqueueAsync, and its turn could complete before a
-            // later Track() ran.
-            _dispatcher.Track(sessionId, new ChannelReplyDispatcher.PendingChannelReply(
-                channel.Id,
-                channel.Provider,
-                newest.ReplyHandle,
-                newest.Conversation.Id,
-                prompt,
-                _timeProvider.GetUtcNow().UtcDateTime));
-
+            // THE enqueue IS the reply correlation (CARD-0067). The persisted row carries everything
+            // the reply needs — Body (the prompt to match a turn against), Origin=Channel and
+            // ConversationKey ('{provider}:{conversationId}') — and ChannelReplyDispatcher resolves
+            // the target from it at dispatch time. There used to be a Track() call right here, writing
+            // the route back OUT into process memory a moment before the route IN was committed to
+            // Postgres: two stores for the two halves of one round trip. A hard restart on 2026-08-17
+            // between the two lost four live correlations and a family's guest list. It also removes an
+            // ordering hazard rather than working around one — the row exists before the queue types a
+            // single keystroke, so an idle agent that answers inside EnqueueAsync can no longer finish
+            // its turn before the correlation is recorded.
             await _queue.EnqueueAsync(
                 sessionId, prompt, MessageSendMode.WhenIdle, CancellationToken.None,
                 origin: QueuedMessageOrigin.Channel,

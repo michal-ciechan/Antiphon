@@ -1023,6 +1023,12 @@ public class AppDbContext : DbContext
             entity.HasIndex(m => new { m.AgentSessionId, m.Status, m.Sequence })
                 .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_Status_Sequence");
 
+            // CARD-0067: the channel-reply correlation sweep is a GLOBAL query over the handful of
+            // rows still owed a reply, so it gets a partial index rather than a table scan.
+            entity.HasIndex(m => new { m.Origin, m.Status })
+                .HasDatabaseName("IX_SessionQueuedMessages_OpenChannelCorrelations")
+                .HasFilter("\"ChannelReplySettledAt\" IS NULL");
+
             entity.HasOne(m => m.AgentSession)
                 .WithMany()
                 .HasForeignKey(m => m.AgentSessionId)
