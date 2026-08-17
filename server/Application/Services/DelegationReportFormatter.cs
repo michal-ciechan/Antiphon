@@ -309,6 +309,65 @@ public static class DelegationReportFormatter
         return sb.ToString();
     }
 
+    /// <summary>
+    /// A mid-flight refinement to a RUNNING delegate (CARD-0062). Two constraints shape the wording.
+    /// The marker must ride it, because the delegate's next finished turn correlates back to the
+    /// task through the prompt it answered — a refinement without it would make that turn read as a
+    /// human's, raising the uncorrelated-report incident. And the delegate must be told NOT to end
+    /// its turn just to acknowledge: a turn end after a marked prompt IS settlement, so a bare
+    /// "noted, adjusting" turn would settle the task with the acknowledgment as its report. The
+    /// acknowledgment the caller needs — did this arrive before or after the relevant decision —
+    /// goes at the head of the eventual report instead, where ordering is on the record.
+    /// Marker at BOTH ends for the same reason briefs carry it twice: the tail is the only fragment
+    /// that survived every measured pty loss (2026-08-11).
+    /// </summary>
+    public static string BuildRefinement(AgentTask task, string message)
+    {
+        var marker = TaskMarker(task.Id);
+        return $"""
+            {marker} REFINEMENT
+
+            Your caller refined this task while you are working. Your brief stands except as amended
+            below. Fold it in and continue — do NOT end your turn just to acknowledge it, because
+            ending a turn is read as your report. When you do report, open with one line saying this
+            refinement arrived and how it affected the work.
+
+            {message.Trim()}
+
+            {marker}
+            """.ReplaceLineEndings("\n");
+    }
+
+    /// <summary>
+    /// A refinement too long to type intact — same shape as <see cref="BuildBriefPointer"/>, and
+    /// like it the pointer never grows a body of its own. <paramref name="spillPath"/> null falls
+    /// back to the task's event timeline via the API, where the refinement's head is on record.
+    /// </summary>
+    public static string BuildRefinementPointer(
+        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength)
+    {
+        var marker = TaskMarker(task.Id);
+        var where = string.IsNullOrWhiteSpace(spillPath)
+            ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the newest \"Refined\" event"
+            : spillPath;
+
+        return $"""
+            {marker} REFINEMENT
+
+            Your caller refined this task while you are working, but the refinement is
+            {fullLength:N0} characters — too long to type into a terminal without the transport
+            dropping part of it. Read it in full before continuing:
+
+                {where}
+
+            Your brief stands except as amended there. Fold it in and continue — do NOT end your
+            turn just to acknowledge it. When you report, open with one line saying the refinement
+            arrived and how it affected the work.
+
+            {marker}
+            """.ReplaceLineEndings("\n");
+    }
+
     private static string StatusWord(AgentTaskStatus status) => status switch
     {
         AgentTaskStatus.Succeeded => "done",

@@ -12,6 +12,10 @@ Reports arrive between your turns as `[task <id> done] ...`. Do not poll and do 
 end your turn; the report will reach you. When a delegate asks a question, answer it with
 -Reply. Taking the work back is the failure mode this exists to prevent.
 
+If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
+file another agent owns, a step that became unnecessary — steer it with
+-Refine <taskId> "one sentence" instead of cancelling and redispatching.
+
 If a piece is big enough to need its own decomposition, send a sub-orchestrator
 (-Orchestrator) rather than trying to run its steps yourself.
 

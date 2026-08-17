@@ -172,6 +172,15 @@ automatically — see "What the delegate is told" below; don't type them into `-
   ```powershell
   pwsh -NoProfile -File scripts/delegate.ps1 -Reply <taskId> "yes, accept negatives"
   ```
+- **A running delegate can be steered without cancelling it** (CARD-0062). A spec that sharpens
+  mid-flight — a test failure you already diagnosed elsewhere, a file another agent owns, "skip
+  slice 3" — is one sentence, not a cancel-and-redispatch:
+  ```powershell
+  pwsh -NoProfile -File scripts/delegate.ps1 -Refine <taskId> "the CARD-0050 failures are known-red; do not chase them"
+  ```
+  It lands between the delegate's turns (never mid-tool-call), its report will open by noting the
+  refinement arrived, and the task's timeline records what you said. A still-queued task gets the
+  message folded into its brief instead; a Blocked one needs `-Reply`, not this.
 - **Need a task's full text later?** `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>`
 
 ## What the delegate is told

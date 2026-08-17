@@ -68,7 +68,14 @@ param(
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
 
+    # Steer a RUNNING delegate without cancelling it: -Refine <taskId> "your message". Delivered
+    # between its turns; a still-queued task gets the message folded into its brief instead. Use
+    # -Reply, not this, for a task that is Blocked on a question.
+    [Parameter(ParameterSetName = 'Refine', Mandatory = $true)]
+    [string]$Refine,
+
     [Parameter(ParameterSetName = 'Reply', Position = 0)]
+    [Parameter(ParameterSetName = 'Refine', Position = 0)]
     [string]$Message,
 
     # Look up a task you already created.
@@ -124,6 +131,21 @@ switch ($PSCmdlet.ParameterSetName) {
         }
         Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Reply/reply" -Body @{ message = $Message } | Out-Null
         Write-Output "Answered task $Reply. It will resume and report back."
+        return
+    }
+
+    'Refine' {
+        if ([string]::IsNullOrWhiteSpace($Message)) {
+            Write-Error 'Pass the message as the first argument: delegate.ps1 -Refine <taskId> "your message"'
+            exit 1
+        }
+        $summary = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Refine/refine" -Body @{ message = $Message }
+        if ($summary.status -eq 'Queued') {
+            Write-Output "Refined task $Refine before dispatch - folded into its brief."
+        }
+        else {
+            Write-Output "Refined task $Refine. The message will land between its turns; its report will note it."
+        }
         return
     }
 

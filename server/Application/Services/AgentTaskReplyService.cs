@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -235,6 +236,119 @@ public sealed class AgentTaskReplyService
         await PublishAsync(task, ct);
         var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
         return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+    }
+
+    /// <summary>
+    /// Tell a delegate something while it is STILL WORKING (CARD-0062): a constraint remembered, a
+    /// failure already diagnosed elsewhere, "skip slice 3". The alternative was cancel-and-redispatch,
+    /// throwing away everything done so far. Rides the same queue as a reply — WhenIdle, so it lands
+    /// between turns and can never corrupt work in progress, and delivery is transcript-confirmed
+    /// (CARD-0055) rather than assumed.
+    ///
+    /// <para>Deliberately NOT a state change: the task stays Dispatched/Working and only a
+    /// <see cref="AgentTaskEventType.Refined"/> event records what the delegate was told and when.
+    /// A still-Queued task has no session to speak to, so its refinement amends the BRIEF instead —
+    /// the goal is what the dispatcher types at dispatch, so the amendment rides the brief itself.
+    /// A Blocked task is redirected to the reply verb (a refinement would not unblock it), and a
+    /// settled one is refused: nothing may correlate to a settled task and reopen it. If the task
+    /// settles AFTER the enqueue, the queued note still cannot reopen anything —
+    /// <see cref="OnTurnEndAsync"/> only settles tasks that are Dispatched or Working.</para>
+    /// </summary>
+    public async Task<AgentTaskSummaryDto> RefineAsync(Guid taskId, string message, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            throw new ValidationException(nameof(message), "A refinement message is required.");
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId);
+
+        var now = UtcNow();
+        var trimmed = message.Trim();
+
+        switch (task.Status)
+        {
+            case AgentTaskStatus.Queued:
+                // Nothing is running yet, so there is nobody to message — fold the refinement into
+                // the goal, which is what BuildBrief types verbatim at dispatch.
+                task.Goal = $"{task.Goal.TrimEnd()}\n\nREFINEMENT (added by the caller before dispatch):\n{trimmed}";
+                task.ConcurrencyToken = Guid.NewGuid();
+                db.AgentTaskEvents.Add(NewEvent(
+                    taskId, AgentTaskEventType.Refined,
+                    $"Caller refined the brief before dispatch: {trimmed}", now));
+                await db.SaveChangesAsync(ct);
+                break;
+
+            case AgentTaskStatus.Dispatched:
+            case AgentTaskStatus.Working:
+                if (task.AgentSessionId is not Guid sessionId)
+                    throw new ConflictException("The delegate's session is no longer available.");
+
+                // The event is saved BEFORE the enqueue: if delivery fails the timeline still shows
+                // what the caller tried to say, which is the record a diverging report is judged by.
+                db.AgentTaskEvents.Add(NewEvent(
+                    taskId, AgentTaskEventType.Refined,
+                    $"Caller refined the running task: {trimmed}", now));
+                await db.SaveChangesAsync(ct);
+
+                var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+                var body = FitRefinementForTyping(task, trimmed, now);
+                await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                break;
+
+            case AgentTaskStatus.Blocked:
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(taskId)} is waiting for an ANSWER — "
+                    + "reply to its question instead (the reply verb), so it resumes.");
+
+            default:
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(taskId)} has already settled "
+                    + $"({task.Status}) — there is nothing left to refine.");
+        }
+
+        await PublishAsync(task, ct);
+        var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+        return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+    }
+
+    /// <summary>
+    /// The refinement as it will actually be typed — the same spill-or-inline gate a brief gets
+    /// (<see cref="AgentTaskDispatcher.FitBriefForTyping"/>), against the same ceiling: a refinement
+    /// is an instruction, not a deliverable, so <c>BriefInlineMaxBytes</c> is the number that
+    /// governs it. Above the ceiling the full text goes to a timestamped file (never overwriting an
+    /// earlier refinement's) and a pointer is typed instead; if the file cannot be written the
+    /// pointer names the task's event timeline, where the head of the text is on record.
+    /// </summary>
+    private string FitRefinementForTyping(AgentTask task, string message, DateTime now)
+    {
+        var ceilings = _ptyProfile?.Ceilings
+            ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+        var body = DelegationReportFormatter.BuildRefinement(task, message);
+        if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.BriefInlineMaxBytes)
+            return body;
+
+        string? spillPath = null;
+        try
+        {
+            var absolute = Path.Combine(
+                task.WorkingDirectory,
+                ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-refinement-{now:yyyyMMddHHmmss}.md");
+            Directory.CreateDirectory(Path.GetDirectoryName(absolute)!);
+            File.WriteAllText(absolute, body);
+            spillPath = absolute;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: could not write the refinement spill file; pointing at the API instead",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        return DelegationReportFormatter.BuildRefinementPointer(task, _settings, spillPath, body.Length);
     }
 
     private async Task SettleAsync(

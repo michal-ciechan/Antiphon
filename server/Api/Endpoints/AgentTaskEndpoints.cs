@@ -73,6 +73,20 @@ public static class AgentTaskEndpoints
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Ok(await replies.AnswerAsync(taskId, request.Message, ct));
         });
+
+        // Steer a RUNNING delegate without cancelling it (CARD-0062). Same body shape as reply;
+        // unlike reply it never changes status — a Queued task's brief is amended in place, a
+        // running one gets the message WhenIdle, and a settled one is refused.
+        tasks.MapPost("/{id}/refine", async (
+            string id,
+            ReplyToAgentTaskRequest request,
+            AgentTaskService service,
+            AgentTaskReplyService replies,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await replies.RefineAsync(taskId, request.Message, ct));
+        });
     }
 
     /// <summary>

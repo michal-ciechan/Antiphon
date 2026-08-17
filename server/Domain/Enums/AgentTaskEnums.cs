@@ -112,4 +112,12 @@ public enum AgentTaskEventType
     /// only trace it leaves on the task.
     /// </summary>
     Check = 13,
+
+    /// <summary>
+    /// The caller refined the task mid-flight (CARD-0062) — a message to a delegate that is already
+    /// working, or an amendment folded into a still-queued brief. Records what the delegate was told
+    /// and when, so a report that diverges from the original brief reads as steered, not off-piste.
+    /// Never a state change: the task keeps working.
+    /// </summary>
+    Refined = 14,
 }

@@ -59,6 +59,8 @@ export type AgentTaskEventType =
   | 'Warning'
   /** A scheduled check-in ran (CARD-0047) — an observation, never a state change. */
   | 'Check'
+  /** The caller refined the task mid-flight (CARD-0062) — what the delegate was told and when. */
+  | 'Refined'
 
 export interface AgentTaskSummaryDto {
   id: string
