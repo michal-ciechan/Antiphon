@@ -235,6 +235,9 @@ try
     // The standing specialist that interprets a check's bundle (CARD-0047 slice 4). Provisioning is
     // idempotent and self-healing, so it is safe to call at startup and again from any check.
     builder.Services.AddScoped<CheckInterpreterProvisioner>();
+    // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
+    // that already exists, and it is scoped because it is one query burst per request.
+    builder.Services.AddScoped<AttentionService>();
     builder.Services.AddScoped<RetryScheduler>();
     builder.Services.AddSingleton<OrchestratorControlState>();
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
@@ -494,6 +497,7 @@ try
     app.MapSessionEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
+    app.MapAttentionEndpoints();
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
 

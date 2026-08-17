@@ -742,7 +742,9 @@ public sealed class AgentTaskService
             task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount);
     }
 
-    private static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)
+    /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board
+    /// does — two answers to "what has this run cost" would eventually differ.</summary>
+    internal static bool IsDescendantOf(AgentTask candidate, Guid ancestorId, IReadOnlyList<AgentTask> family)
     {
         var seen = 0;
         var current = candidate;
