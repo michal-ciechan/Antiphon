@@ -1,13 +1,16 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AttentionItemDto } from '../../api/attention'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
+import { AWAY_LAST_SEEN_KEY } from './awayDelta'
 import { MobileHomePage } from './MobileHomePage'
 import { formatClockTime } from './workLineFormat'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 vi.setConfig({ testTimeout: 20_000 })
+
+beforeEach(() => window.localStorage.clear())
 
 function task(overrides: Record<string, unknown> = {}) {
   return {
@@ -67,9 +70,44 @@ function attentionItem(overrides: Partial<AttentionItemDto> = {}): AttentionItem
   }
 }
 
+function card(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'c1',
+    boardId: 'b1',
+    boardColumnId: 'col1',
+    ownerSessionId: null,
+    currentWorktreeId: null,
+    assignedAgentId: null,
+    assignedAgentName: null,
+    agentQueuePosition: null,
+    activeWorkflowRunId: null,
+    workflowRunStatus: null,
+    currentWorkflowStageName: null,
+    identifier: 'CARD-0067',
+    title: 'reply durability',
+    description: '',
+    priority: 0,
+    labels: [],
+    status: 'Done',
+    concurrencyToken: 'ct',
+    createdAt: '2026-08-16T08:00:00Z',
+    updatedAt: '2026-08-17T10:00:00Z',
+    startedAt: null,
+    completedAt: null,
+    terminalReason: null,
+    sessions: [],
+    revisionCount: 1,
+    archivedAt: null,
+    archivedReason: null,
+    archivedBy: null,
+    ...overrides,
+  }
+}
+
 function seed({
   attention = [] as AttentionItemDto[],
   tasks = [] as unknown[],
+  cards = [] as unknown[],
 } = {}) {
   server.use(
     http.get('/api/attention', () =>
@@ -80,6 +118,39 @@ function seed({
       }),
     ),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/boards', () =>
+      HttpResponse.json(
+        cards.length === 0
+          ? []
+          : [{ id: 'b1', projectId: 'p1', projectName: 'antiphon', name: 'main', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: cards.length, createdAt: '2026-08-16T08:00:00Z', updatedAt: '2026-08-17T10:00:00Z' }],
+      ),
+    ),
+    http.get('/api/boards/b1', () =>
+      HttpResponse.json({
+        id: 'b1',
+        projectId: 'p1',
+        projectName: 'antiphon',
+        name: 'main',
+        description: '',
+        trackerKind: 'Internal',
+        maxConcurrentSessions: 1,
+        columns: [
+          {
+            id: 'col1',
+            stateKey: 'done',
+            name: 'Done',
+            columnOrder: 0,
+            cardStatus: 'Done',
+            isActive: false,
+            isTerminal: true,
+            maxConcurrentSessions: null,
+            cards,
+          },
+        ],
+        createdAt: '2026-08-16T08:00:00Z',
+        updatedAt: '2026-08-17T10:00:00Z',
+      }),
+    ),
   )
 }
 
@@ -172,6 +243,93 @@ describe('MobileHomePage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Send now' }))
     await waitFor(() => expect(sent).toBe(1))
     expect(screen.getByRole('button', { name: 'Drop message' })).toBeInTheDocument()
+  })
+
+  it('the away band leads with what finished, quoting the report’s own first line', async () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    const lastSeen = minutesAgo(90)
+    window.localStorage.setItem(AWAY_LAST_SEEN_KEY, lastSeen)
+    seed({
+      tasks: [
+        task({}),
+        task({
+          id: 't-settled',
+          title: 'CARD-0067 - reply durability',
+          status: 'Succeeded',
+          completedAt: minutesAgo(30),
+          costUsd: 0.5,
+          nextCheckAt: null,
+          checkCount: 0,
+        }),
+        task({
+          id: 't-old',
+          title: 'settled before the window',
+          status: 'Succeeded',
+          completedAt: minutesAgo(240),
+          nextCheckAt: null,
+          checkCount: 0,
+        }),
+      ],
+    })
+    server.use(
+      http.get('/api/agent-tasks/t-settled', () =>
+        HttpResponse.json({
+          summary: task({ id: 't-settled' }),
+          goal: 'make the reply route durable',
+          result: 'Landed the route; 6 tests green.\nLong detail follows.',
+          resultFilePath: null,
+          failureReason: null,
+          mergeTargetRef: null,
+          events: [],
+        }),
+      ),
+    )
+    renderWithProviders(<MobileHomePage />)
+
+    expect(
+      await screen.findByText('#67 reply durability — finished — Landed the route; 6 tests green.'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(`While you were away · since ${formatClockTime(lastSeen)}`),
+    ).toBeInTheDocument()
+    // Settled-before-the-window work stays out; the spend line counts only what settled inside it.
+    expect(screen.queryByText(/settled before the window/)).not.toBeInTheDocument()
+    expect(screen.getByText('Spent $0.50 on work that settled in this window.')).toBeInTheDocument()
+    // Band order: live lines above the delta.
+    const text = screen.getByTestId('mobile-home').textContent ?? ''
+    expect(text.indexOf('In motion')).toBeLessThan(text.indexOf('While you were away'))
+  })
+
+  it('cards that changed state land in the band, linking to their board', async () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    window.localStorage.setItem(AWAY_LAST_SEEN_KEY, minutesAgo(90))
+    seed({
+      cards: [
+        card({
+          id: 'c-done',
+          identifier: 'CARD-0071',
+          title: 'guest list flow',
+          completedAt: minutesAgo(20),
+        }),
+      ],
+    })
+    renderWithProviders(<MobileHomePage />)
+
+    const row = await screen.findByText('#71 guest list flow — done')
+    expect(row.closest('a')).toHaveAttribute('href', '/boards/b1')
+  })
+
+  it('a first visit reads as the last 24h, says so, and stamps the visit for next time', async () => {
+    seed({})
+    renderWithProviders(<MobileHomePage />)
+
+    expect(await screen.findByText('While you were away · last 24h')).toBeInTheDocument()
+    expect(screen.getByTestId('away-empty')).toHaveTextContent('Nothing finished while you were away.')
+    await waitFor(() => {
+      const stamped = window.localStorage.getItem(AWAY_LAST_SEEN_KEY)
+      expect(stamped).not.toBeNull()
+      expect(Number.isNaN(Date.parse(stamped!))).toBe(false)
+    })
   })
 
   it('warning-severity rows stay on the desktop diagnostic tab — the phone gets Critical/Error only', async () => {

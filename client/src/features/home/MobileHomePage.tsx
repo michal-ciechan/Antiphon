@@ -1,5 +1,6 @@
 import {
   Badge,
+  Box,
   Button,
   Divider,
   Group,
@@ -10,19 +11,33 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Fragment, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
-import { useAgentTasks, type AgentTaskSummaryDto } from '../../api/agentTasks'
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router'
+import {
+  agentTaskKeys,
+  useAgentTasks,
+  type AgentTaskDetailDto,
+  type AgentTaskSummaryDto,
+} from '../../api/agentTasks'
 import { attentionKeys, useAttention, type AttentionItemDto } from '../../api/attention'
-import { getApiErrorMessage } from '../../api/client'
+import { apiGet, getApiErrorMessage } from '../../api/client'
+import { useAllBoardDetails, useBoards } from '../../api/boards'
 import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
+import { displayIdentifier } from '../../shared/cardIdentifier'
 import { BlockedReplyRow } from '../attention/BlockedReplyRow'
 import { ATTENTION_VISUALS, ageSeconds, keyOf, targetOf } from '../attention/attentionVisuals'
-import { formatDuration } from '../delegations/taskVisuals'
+import { formatCost, formatDuration } from '../delegations/taskVisuals'
+import {
+  computeAwayDelta,
+  firstSentence,
+  readLastSeen,
+  stampLastSeen,
+  type AwayDelta,
+} from './awayDelta'
 import { isActiveTask } from './projectGrouping'
 import { WorkLine } from './WorkLine'
-import { formatClockTime } from './workLineFormat'
+import { citationHead, formatClockTime, workLineTarget } from './workLineFormat'
 
 /**
  * The phone home: three bands in fixed order (spec `2026-08-17-mobile-thread-and-plan-surfacing.md`
@@ -60,6 +75,29 @@ export function MobileHomePage() {
     [tasks.data],
   )
 
+  // The away window (M6, CARD-0036's pull half): the previous visit and this visit's clock are
+  // both read ONCE per mount, so the delta is stable for the whole stay — a task that settles
+  // while the screen is open belongs to the live bands, not to "while you were away". The stamp
+  // is a side effect, so it lives in an effect, not the render.
+  const [lastSeen] = useState(() => readLastSeen(window.localStorage))
+  const [nowMs] = useState(() => Date.now())
+  useEffect(() => {
+    stampLastSeen(window.localStorage, new Date(nowMs).toISOString())
+  }, [nowMs])
+
+  const boards = useBoards()
+  const boardIds = useMemo(() => (boards.data ?? []).map((board) => board.id), [boards.data])
+  const boardDetails = useAllBoardDetails(boardIds)
+  const cards = useMemo(
+    () => (boardDetails.data ?? []).flatMap((board) => board.columns.flatMap((column) => column.cards)),
+    [boardDetails.data],
+  )
+
+  const delta = useMemo(
+    () => computeAwayDelta(tasks.data ?? [], cards, lastSeen, nowMs),
+    [tasks.data, cards, lastSeen, nowMs],
+  )
+
   if (attention.isLoading || tasks.isLoading) {
     return (
       <Group justify="center" py="xl">
@@ -72,6 +110,7 @@ export function MobileHomePage() {
     <Stack gap={0} maw={480} mx="auto" data-testid="mobile-home">
       {needsYou.length === 0 ? <CalmCard tasks={inMotion} /> : <NeedsYouBand items={needsYou} />}
       <InMotionBand tasks={inMotion} />
+      <AwayBand delta={delta} />
     </Stack>
   )
 }
@@ -254,6 +293,115 @@ function NeedsYouRow({ item }: { item: AttentionItemDto }) {
         )}
       </Stack>
     </Paper>
+  )
+}
+
+/** Rows shown before the band folds the rest into a counted "+ n more" line — never silently. */
+const MAX_AWAY_TASK_ROWS = 6
+
+/**
+ * Band 3: what happened since the last visit (spec §D3; CARD-0036's pull half). Settled tasks
+ * lead — on a calm day this is the band that answers "so what got done?" — each with the first
+ * sentence of its report; then cards that changed state; then the spend on what settled. Check
+ * readings deliberately do NOT stream here (§D4: no firehose) — they live on the thread and in
+ * the attention rows.
+ */
+function AwayBand({ delta }: { delta: AwayDelta }) {
+  const shownTasks = delta.settledTasks.slice(0, MAX_AWAY_TASK_ROWS)
+  const hidden = delta.settledTasks.length - shownTasks.length
+
+  // The report's first sentence lives on the detail DTO; one fetch per shown row, cached under
+  // the drawer's own key so opening the drawer later costs nothing extra.
+  const details = useQueries({
+    queries: shownTasks.map((task) => ({
+      queryKey: agentTaskKeys.detail(task.id),
+      queryFn: () => apiGet<AgentTaskDetailDto>(`/agent-tasks/${task.id}`),
+      staleTime: 60_000,
+    })),
+  })
+
+  const heading = delta.firstVisit
+    ? 'While you were away · last 24h'
+    : `While you were away · since ${formatClockTime(delta.sinceUtc)}`
+  const isEmpty = shownTasks.length === 0 && delta.cardChanges.length === 0
+
+  return (
+    <>
+      <BandTitle>{heading}</BandTitle>
+      {isEmpty ? (
+        <Text size="sm" c="dimmed" px={4} data-testid="away-empty">
+          Nothing finished while you were away.
+        </Text>
+      ) : (
+        <Paper withBorder radius="md" px="xs" data-testid="away-band">
+          {shownTasks.map((task, index) => (
+            <Fragment key={task.id}>
+              {index > 0 && <Divider />}
+              <AwayRow
+                to={workLineTarget(task)}
+                label={task.title}
+                line={settledTaskLine(task, firstSentence(details[index]?.data?.result ?? null))}
+                sub={`${formatClockTime(task.completedAt!)} · ${formatCost(task.costUsd)}`}
+              />
+            </Fragment>
+          ))}
+          {hidden > 0 && (
+            <>
+              <Divider />
+              <AwayRow
+                to="/orchestrator?tab=delegations"
+                label="all settled work"
+                line={`+ ${hidden} more settled`}
+                sub="open the delegations board"
+              />
+            </>
+          )}
+          {delta.cardChanges.map((change) => (
+            <Fragment key={change.card.id}>
+              <Divider />
+              <AwayRow
+                to={`/boards/${change.card.boardId}`}
+                label={change.card.title}
+                line={`${displayIdentifier(change.card.identifier)} ${change.card.title} — ${
+                  change.change === 'done' ? 'done' : 'started'
+                }`}
+                sub={formatClockTime(change.atUtc)}
+              />
+            </Fragment>
+          ))}
+        </Paper>
+      )}
+      {delta.settledSpendUsd > 0 && (
+        <Text size="xs" c="dimmed" px={4} mt={4}>
+          Spent {formatCost(delta.settledSpendUsd)} on work that settled in this window.
+        </Text>
+      )}
+    </>
+  )
+}
+
+/** `#67 finished — <the report's own first line>`, or the bare outcome when no report exists. */
+function settledTaskLine(task: AgentTaskSummaryDto, sentence: string | null): string {
+  const verb =
+    task.status === 'Succeeded' ? 'finished' : task.status === 'Failed' ? 'failed' : 'cancelled'
+  const head = `${citationHead(task.title)} — ${verb}`
+  return sentence ? `${head} — ${sentence}` : head
+}
+
+function AwayRow({ to, label, line, sub }: { to: string; label: string; line: string; sub: string }) {
+  return (
+    <UnstyledButton component={Link} to={to} w="100%" py={8} px={4} aria-label={`Open ${label}`}>
+      <Group justify="space-between" wrap="nowrap" gap={4}>
+        <Box style={{ minWidth: 0 }}>
+          <Text size="sm" lineClamp={2}>
+            {line}
+          </Text>
+          <Text size="xs" c="dimmed" truncate>
+            {sub}
+          </Text>
+        </Box>
+      </Group>
+    </UnstyledButton>
   )
 }
 
