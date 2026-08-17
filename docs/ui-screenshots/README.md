@@ -69,3 +69,27 @@ here before anyone opens the app.
 ## Delegations/Board — Delegate
 
 ![delegations-board--delegate](./delegations-board--delegate.png)
+
+## Proposals/Mobile home — Needs You
+
+![proposals-mobile-home--needs-you](./proposals-mobile-home--needs-you.png)
+
+## Proposals/Mobile home — Calm
+
+![proposals-mobile-home--calm](./proposals-mobile-home--calm.png)
+
+## Proposals/Card thread — Open
+
+![proposals-card-thread--open](./proposals-card-thread--open.png)
+
+## Proposals/Card thread — Settled
+
+![proposals-card-thread--settled](./proposals-card-thread--settled.png)
+
+## Proposals/Plan reader — ToC first
+
+![proposals-plan-reader--toc-first](./proposals-plan-reader--toc-first.png)
+
+## Proposals/Plan reader — Section open
+
+![proposals-plan-reader--section-open](./proposals-plan-reader--section-open.png)
