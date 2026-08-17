@@ -1434,6 +1434,241 @@ public class AgentTaskReplyIntegrationTests
 
     private static string? TaskWorktreePath(AgentTask task) => task.WorktreePath;
 
+    // ---- a turn killed by an API error must never settle as done (CARD-0071 S3) ------------
+
+    /// <summary>
+    /// The 2026-08-17 live miss, replayed: tasks ee0a18a5 and 27e20988 were killed by the account
+    /// session limit, and both settled <c>Succeeded</c> with "You've hit your usage limit…" stored
+    /// as their Result — the limit message WAS the report, and every surface said the work was
+    /// done. The error text is not a report: the task must FAIL, with a reason naming the class,
+    /// and the error text must never land in Result.
+    /// </summary>
+    [Test]
+    public async Task a_turn_killed_by_an_api_error_fails_the_task_and_never_stores_the_error_text()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, configure: t => t.AgentId = agentId);
+
+        await SeedApiErrorStubTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "visibly dead beats invisibly Succeeded");
+        failed.Result.ShouldBeNull("the error text is not a report and must never be stored as one");
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason!.ShouldContain("rate_limit");
+        failed.FailureReason.ShouldContain("usage limit", customMessage: "the reason names the error itself");
+        failed.FailureReason.ShouldContain(
+            sessionId.ToString(), customMessage: "the work may be real — name where to read it");
+        failed.CompletedAt.ShouldNotBeNull();
+
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+
+        // The caller must HEAR about the death, not discover it on the board.
+        var note = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == parentSessionId)
+            .SingleAsync();
+        note.Body.ShouldContain("killed by an API error");
+
+        // The API refused one response; the SESSION is structurally healthy. A live Shared
+        // delegate pools warm exactly as after FailUnreportedTurnAsync — anything else leaks it
+        // Busy forever.
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Test]
+    public async Task real_narration_beside_the_stub_still_fails_rather_than_settling_on_it()
+    {
+        // A turn that did real visible work and THEN died on the API: the narration is not the
+        // verdict (CARD-0046 already established that) and the death outranks it — settling
+        // Succeeded on mid-turn text would hide that the turn never finished.
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedApiErrorStubTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration: "I'll start by reading the spec.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.Result.ShouldBeNull("neither the error text nor the narration is this turn's report");
+        failed.FailureReason!.ShouldContain("rate_limit");
+    }
+
+    [Test]
+    public async Task the_api_error_incident_is_warning_when_the_agent_is_not_channel_bound()
+    {
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
+        incident.Severity.ShouldBe(
+            AlertSeverity.Warning, "a Wall death with nobody waiting on a channel is loud, not critical");
+        incident.Message.ShouldContain(DelegationReportFormatter.Short(task.Id));
+        incident.Message.ShouldContain("NOT stored", customMessage: "the incident says what did not happen");
+    }
+
+    [Test]
+    public async Task the_api_error_incident_is_critical_when_the_agent_is_channel_bound()
+    {
+        // The CARD-0055/0067 severity rule: a channel binding means a real person is on the other
+        // end of this agent, and its death just went silent at them.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+        await using (var db = CreateContext())
+        {
+            db.ChatChannels.Add(new ChatChannel
+            {
+                Id = Guid.NewGuid(),
+                Provider = "telegram",
+                ExternalId = $"chat-{Guid.NewGuid():N}",
+                Kind = ChatChannelKind.Direct,
+                AgentId = agentId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    [Test]
+    public async Task a_needs_human_error_is_critical_even_without_a_channel()
+    {
+        // authentication_failed: nothing automatic will ever fix it and no retry will ever be
+        // scheduled — a human is the only recovery, so the incident must reach one.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+
+        await SeedApiErrorStubTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id),
+            errorText: "API Error: 401 authentication_error — OAuth token has expired.",
+            apiErrorClass: "authentication_failed", apiErrorStatus: null);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .FailureReason!.ShouldContain("NeedsHuman");
+    }
+
+    [Test]
+    public async Task a_dirty_shared_checkout_is_named_in_the_api_error_incident()
+    {
+        // Spec §D6: auto-salvage of a dead task's uncommitted work is rejected (on a shared
+        // checkout the dirt cannot be safely attributed), so the incident carries the exposure for
+        // the human who decides instead.
+        using var repo = new ScratchGitRepo("antiphon-reply-apierror");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "uncommitted-work.cs"), "the dead task's edits\n");
+
+        var agentId = await SeedAgentAsync(repo.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            repo.Path, configure: t => t.AgentId = agentId);
+
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied);
+        incident.Message.ShouldContain(
+            "uncommitted-work.cs", customMessage: "git status --short of the shared checkout rides the incident");
+    }
+
+    [Test]
+    public async Task an_unmarked_stub_turn_is_not_an_uncorrelated_report()
+    {
+        // The stub's error string must not count as assistant text ANYWHERE: without the marker the
+        // turn is not ours, and "API Error: 429…" must not read as a finished-looking report either
+        // — that incident is what the delivery watchdog kills tasks on.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+
+        await SeedApiErrorStubTurnAsync(sessionId, "a prompt with no marker on it");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "an unmarked turn settles nothing, dead or not");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ApiErrorTurnDied))
+            .ShouldBeFalse("the guard is scoped to the MARKED turn");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBeFalse("an error string is not a report somebody failed to attribute");
+    }
+
+    /// <summary>
+    /// The measured API-error stub shape (sessions 19b6bdbb / 3c8cef08, 2026-08-17; CARD-0072
+    /// sweep): ONE synthetic assistant record, normalized to an AssistantText carrying the error
+    /// string plus a <c>stop_sequence</c> TurnEnd, with S1's three fields stamped on both rows.
+    /// </summary>
+    private static async Task SeedApiErrorStubTurnAsync(
+        Guid sessionId, string prompt,
+        string errorText =
+            "API Error: 429 You've hit your usage limit. Your limit will reset at 6:10pm (Europe/London).",
+        string apiErrorClass = "rate_limit", int? apiErrorStatus = 429,
+        string? narration = null)
+    {
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
+        if (narration is not null)
+        {
+            var chatter = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, narration);
+            chatter.ApiCallId = $"msg_{Guid.NewGuid():N}";
+            db.TranscriptEntries.Add(chatter);
+        }
+
+        var stubText = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, errorText);
+        stubText.IsApiError = true;
+        stubText.ApiErrorClass = apiErrorClass;
+        stubText.ApiErrorStatus = apiErrorStatus;
+        db.TranscriptEntries.Add(stubText);
+
+        var stubEnd = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+        stubEnd.StopReason = "stop_sequence";
+        stubEnd.IsApiError = true;
+        stubEnd.ApiErrorClass = apiErrorClass;
+        stubEnd.ApiErrorStatus = apiErrorStatus;
+        db.TranscriptEntries.Add(stubEnd);
+        await db.SaveChangesAsync();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     // Most cases pin the ceiling explicitly so they stay readable as the shipped default moves;

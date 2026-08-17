@@ -159,4 +159,18 @@ public enum AgentIncidentKind
     /// channel correlation now ends in exactly one of two states: a published reply, or this.
     /// </summary>
     ChannelReplyLost = 21,
+
+    /// <summary>
+    /// A delegated task's turn was killed by the API itself — an API-error stub ended it (usage
+    /// limit, 5xx, auth-expired; <c>TranscriptKinds.IsApiErrorStub</c>) — so there is no report and
+    /// the error text must never be stored as one. Warning normally; Critical when the agent is
+    /// channel-bound (a human is waiting on a dead line — the CARD-0055/0067 severity rule) or the
+    /// error class is NeedsHuman (nothing automatic can ever fix auth-expired/model-not-found).
+    ///
+    /// Live miss 2026-08-17 (CARD-0071): two limit-killed delegates settled Succeeded with
+    /// "You've hit your usage limit…" stored as their Result — the limit message WAS the report,
+    /// and every surface said the tasks had finished. The incident carries <c>git status --short</c>
+    /// of a shared checkout so a human deciding about the dead task sees any uncommitted exposure.
+    /// </summary>
+    ApiErrorTurnDied = 22,
 }

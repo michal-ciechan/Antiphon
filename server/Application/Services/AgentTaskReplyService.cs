@@ -75,6 +75,18 @@ public sealed class AgentTaskReplyService
                 return;
 
             var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
+
+            if (turn.ApiErrorStub is { } stub)
+            {
+                // CARD-0071 S3: the marked turn was killed by the API itself. The error text is NOT
+                // a report — two limit-killed delegates settled Succeeded with "You've hit your
+                // usage limit…" stored as their Result on 2026-08-17, and every surface said the
+                // work was done. Checked before every other verdict about the turn: nothing further
+                // is coming from a dead turn, so there is nothing to defer on or settle with.
+                await FailApiErrorTurnAsync(scope.ServiceProvider, db, task, sessionId, stub, ct);
+                return;
+            }
+
             if (turn.Report is not string report)
             {
                 if (turn.UncorrelatedReport)
@@ -527,6 +539,129 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
+    /// The marked turn was ended by an API-error stub (CARD-0071 S3, spec §D6): the API killed the
+    /// turn — usage limit, 5xx, auth-expired — after Claude Code's own retry was exhausted, and the
+    /// stub's error string is the only "text" the turn-ending response wrote. It is NOT a report and
+    /// is never stored as <see cref="AgentTask.Result"/>; the task FAILS with a reason naming the
+    /// class and the error, because visibly dead beats invisibly "Succeeded" (both 2026-08-17
+    /// limit-killed delegates settled Succeeded with the limit message as their report). When S5's
+    /// resume machinery lands, a scheduled resume will keep the task Working instead — this arm is
+    /// the no-resume-coming half of §D6 and stays as the NeedsHuman/retries-exhausted terminal.
+    ///
+    /// <para>The delegate goes through the ordinary release path for the same reason
+    /// <see cref="FailUnreportedTurnAsync"/> does: the SESSION is structurally healthy (idle, its
+    /// own TurnEnd written) — the API refused one response, not the agent — and skipping the
+    /// release would leak the agent Busy forever, since only settlement frees it.</para>
+    /// </summary>
+    private async Task FailApiErrorTurnAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId,
+        ApiErrorStubFacts stub, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var classification = ApiErrorClassifier.Classify(stub.ErrorClass, stub.ErrorStatus, stub.ErrorText);
+        var errorText = string.IsNullOrWhiteSpace(stub.ErrorText)
+            ? "(the stub carried no error text)"
+            : stub.ErrorText.Trim();
+        if (errorText.Length > 600)
+            errorText = errorText[..600] + "…";
+
+        var reason =
+            $"The delegate's turn was killed by an API error ({classification}: "
+            + (stub.ErrorClass ?? "no error class")
+            + (stub.ErrorStatus is int status ? $", HTTP {status}" : string.Empty)
+            + $") — {errorText} The error text is not a report and no report exists. The work may "
+            + $"well be real — read session {sessionId} before re-running this task.";
+
+        task.Status = AgentTaskStatus.Failed;
+        task.FailureReason = reason;
+        task.CompletedAt = now;
+        task.ConcurrencyToken = Guid.NewGuid();
+        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Failed, reason, now));
+
+        await ReleaseDelegateAsync(services, db, task, now, ct);
+        await db.SaveChangesAsync(ct);
+
+        // Severity is the CARD-0055/0067 rule: Critical when the agent is channel-bound (a human is
+        // waiting on a line this death just went silent on) — and for NeedsHuman, where no retry
+        // will ever exist and a human is the ONLY recovery.
+        var channelBound = task.AgentId is Guid boundAgentId
+            && await db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == boundAgentId, ct);
+        var severity = channelBound || classification == ApiErrorClassification.NeedsHuman
+            ? AlertSeverity.Critical
+            : AlertSeverity.Warning;
+
+        // A dirty SHARED checkout is the human's exposure to see when deciding about the dead task
+        // (spec §D6): auto-salvage is rejected — the operator's own edits live there too — so the
+        // incident carries the evidence instead. Best-effort by design.
+        var dirt = task.Workspace == WorkspaceMode.Shared
+            ? await TryReadGitStatusShortAsync(task.WorkingDirectory, ct)
+            : null;
+
+        await RecordIncidentOnceAsync(
+            services, db, task, sessionId, AgentIncidentKind.ApiErrorTurnDied,
+            $"Delegate task {DelegationReportFormatter.Short(task.Id)} died on an API error ({classification})",
+            $"Task {DelegationReportFormatter.Short(task.Id)} was killed by an API error, not "
+            + $"finished: {classification} ({stub.ErrorClass ?? "no error class"}"
+            + (stub.ErrorStatus is int s ? $", HTTP {s}" : string.Empty)
+            + $"). The task is Failed and the error text was NOT stored as its result: {errorText}"
+            + (string.IsNullOrWhiteSpace(dirt)
+                ? string.Empty
+                : $"\n\nThe shared checkout at {task.WorkingDirectory} has uncommitted changes the "
+                  + $"dead task may own (git status --short):\n{dirt}"),
+            ct, severity);
+
+        _logger.LogWarning(
+            "Task {ShortId} failed: session {SessionId}'s turn was killed by an API error "
+            + "({Classification}: {Class}/{Status})",
+            DelegationReportFormatter.Short(task.Id), sessionId, classification,
+            stub.ErrorClass, stub.ErrorStatus);
+
+        await DeliverToParentAsync(task, reason, ct);
+        await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// <c>git status --short</c> of a directory, or null when it cannot be read (not a repo, no
+    /// git, timeout). Diagnostics only — a failure here must never affect settlement.
+    /// </summary>
+    private async Task<string?> TryReadGitStatusShortAsync(string workingDirectory, CancellationToken ct)
+    {
+        try
+        {
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "git",
+                ArgumentList = { "status", "--short" },
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            if (!process.Start())
+                return null;
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var output = await process.StandardOutput.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            if (process.ExitCode != 0)
+                return null;
+
+            var trimmed = output.TrimEnd();
+            if (trimmed.Length == 0)
+                return null;
+            return trimmed.Length <= 2000 ? trimmed : trimmed[..2000] + "\n…(truncated)";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Could not read git status of {Dir} for the API-error incident", workingDirectory);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// What the caller reads ABOVE the report, in the note delivered to its terminal. The report is
     /// forwarded either way — it is real text and it may well be useful — but a caller that acts on
     /// preamble as though it were a verdict is exactly what CARD-0046 cost six times over.
@@ -565,13 +700,15 @@ public sealed class AgentTaskReplyService
             message, ct);
 
     /// <summary>
-    /// One Warning incident + alert per (session, kind) — the shared body behind
-    /// <see cref="RecordFinalMessageMissingAsync"/> and slice 4's abandoned-subagent incident. The
-    /// dedup is what keeps a delegate that keeps ending turns from burying its own first finding.
+    /// One incident + alert per (session, kind), Warning unless overridden — the shared body behind
+    /// <see cref="RecordFinalMessageMissingAsync"/>, slice 4's abandoned-subagent incident and the
+    /// API-error death (whose severity varies with channel-binding and error class). The dedup is
+    /// what keeps a delegate that keeps ending turns from burying its own first finding.
     /// </summary>
     private async Task RecordIncidentOnceAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId,
-        AgentIncidentKind kind, string title, string message, CancellationToken ct)
+        AgentIncidentKind kind, string title, string message, CancellationToken ct,
+        AlertSeverity severity = AlertSeverity.Warning)
     {
         if (task.AgentId is not Guid agentId)
             return;
@@ -589,7 +726,7 @@ public sealed class AgentTaskReplyService
                 AgentId = agentId,
                 SessionId = sessionId,
                 Kind = kind,
-                Severity = AlertSeverity.Warning,
+                Severity = severity,
                 Message = message,
                 CreatedAt = UtcNow(),
             });
@@ -599,7 +736,7 @@ public sealed class AgentTaskReplyService
             {
                 await alerts.RaiseAsync(
                     new AlertRaise(
-                        AlertSeverity.Warning,
+                        severity,
                         Source: "delegation",
                         Title: title,
                         Detail: message,
@@ -821,17 +958,29 @@ public sealed class AgentTaskReplyService
     /// subagent grace expired (CARD-0046 slice 4). Non-zero means the report is at best incomplete
     /// and at worst the announcement of work that never landed.
     /// </param>
+    /// <param name="ApiErrorStub">
+    /// Non-null when the marked turn was ENDED by an API-error stub (CARD-0071 S3): the API killed
+    /// the turn and the stub's error string is not a report. Outranks every other verdict — the
+    /// task fails with a reason naming the class, and the error text is never stored as Result.
+    /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
         bool UncorrelatedReport,
         bool DeferredForFinalMessage = false,
         bool FinalMessageMissing = false,
         int NarrationDiscardedChars = 0,
-        int AbandonedSubagents = 0)
+        int AbandonedSubagents = 0,
+        ApiErrorStubFacts? ApiErrorStub = null)
     {
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
     }
+
+    /// <summary>
+    /// What the stub itself carried (S1's three fields plus its error string) — everything the
+    /// fail arm needs to classify and to name the death, straight off the turn-ending row.
+    /// </summary>
+    private readonly record struct ApiErrorStubFacts(string? ErrorClass, int? ErrorStatus, string? ErrorText);
 
     /// <summary>
     /// The turn's assistant text, but only if the turn was the one we asked for — its prompt must
@@ -869,9 +1018,17 @@ public sealed class AgentTaskReplyService
 
         // Each row with the API response it belongs to: the report is one of those responses, not
         // the whole turn (slice 2), and telling them apart is what ApiCallId is for.
-        var texts = await query.OrderBy(t => t.Sequence)
-            .Select(t => new TurnText(t.Text, t.ApiCallId))
+        var rows = await query.OrderBy(t => t.Sequence)
+            .Select(t => new TurnText(t.Text, t.ApiCallId, t.IsApiError))
             .ToListAsync(ct);
+
+        // An API-error stub's error string is never report material, whatever else happens below —
+        // not the final message, not the joined fallback, not an "uncorrelated report" a human gets
+        // blamed for (CARD-0071 S3). Structural, never text-matched: an agent legitimately writing
+        // ABOUT these errors must not trip it.
+        var texts = rows
+            .Where(t => !TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
+            .ToList();
         var joined = Join(texts.Select(t => t.Text));
 
         // The marker gate. A human typing in this terminal produces a prompt without it — but so
@@ -879,6 +1036,24 @@ public sealed class AgentTaskReplyService
         // Distinguishing them is not possible; SAYING SO is, which is the whole point of the flag.
         if (!promptText.Contains(DelegationReportFormatter.TaskMarker(taskId), StringComparison.Ordinal))
             return new TurnOutcome(null, joined.Length > 0);
+
+        // CARD-0071 S3, checked the moment the turn is known to be OURS and before any other
+        // verdict: a turn whose ending is an API-error stub is DEAD — the API killed it after
+        // Claude Code's own retry was exhausted, no more records are coming, and its error text is
+        // not a report. Deciding here (rather than in OnTurnEndAsync) keeps the whole shape of the
+        // turn in one place; deferring for subagents or the final-message grace would wait on a
+        // response that structurally cannot arrive.
+        if (TranscriptKinds.IsApiErrorStub(end.Kind, end.IsApiError))
+        {
+            var stubText = Join(rows
+                .Where(t => TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, t.IsApiError))
+                .Select(t => t.Text));
+            return new TurnOutcome(
+                null, false,
+                ApiErrorStub: new ApiErrorStubFacts(
+                    end.ApiErrorClass, end.ApiErrorStatus,
+                    stubText.Length > 0 ? stubText : null));
+        }
 
         // CARD-0046 slice 4. The turn is ours and it ended — but a turn that handed its work to
         // BACKGROUND subagents has not done the work, it has announced it. Checked before the
@@ -1031,7 +1206,7 @@ public sealed class AgentTaskReplyService
     private readonly record struct SubagentWait(int Unanswered, DateTime? LastEntryAt);
 
     /// <summary>One assistant-text row of the turn, carrying the API response it was part of.</summary>
-    private readonly record struct TurnText(string? Text, string? ApiCallId);
+    private readonly record struct TurnText(string? Text, string? ApiCallId, bool? IsApiError);
 
     /// <summary>A candidate turn-opening prompt: everything the walk-back needs to judge one.</summary>
     private sealed record PromptRow(long Sequence, string? Text, DateTime? Timestamp);
