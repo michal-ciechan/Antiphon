@@ -5,91 +5,127 @@ namespace Antiphon.Server.Api.Endpoints;
 
 public static class CardEndpoints
 {
+    /// <summary>
+    /// Every route here takes <c>{id}</c> as a STRING, not <c>{id:guid}</c>, and resolves it
+    /// through <see cref="CardService.ResolveCardIdAsync"/> first.
+    /// </summary>
+    /// <remarks>
+    /// The precedent and the argument are <see cref="AgentTaskEndpoints"/>': the id a caller SEES
+    /// must be the id the API TAKES. A card is called CARD-0051 in commit messages, docs, the UI
+    /// and every conversation about it; its guid appears nowhere a human reads. A separate
+    /// resolve-then-act endpoint would put back exactly the round trip this removes.
+    ///
+    /// <para>What the <c>:guid</c> constraint bought was an automatic 404 on garbage. The resolver
+    /// answers 422 instead, naming the forms it accepts — the same protection with a message.</para>
+    /// </remarks>
     public static void MapCardEndpoints(this WebApplication app)
     {
         var cards = app.MapGroup("/api/cards")
             .WithTags("Cards");
 
-        cards.MapPatch("/{id:guid}", async (
-            Guid id,
+        cards.MapGet("/{id}", async (
+            string id,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.GetByIdAsync(cardId, cancellationToken));
+        });
+
+        cards.MapPatch("/{id}", async (
+            string id,
             MoveCardRequest request,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.MoveAsync(id, request, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.MoveAsync(cardId, request, cancellationToken));
         });
 
         // Separate from PATCH /{id}, which is move-only: one verb that both moves and rewrites
         // invites partial-intent bugs, and the two have different concurrency stories.
-        cards.MapPatch("/{id:guid}/content", async (
-            Guid id,
+        cards.MapPatch("/{id}/content", async (
+            string id,
             UpdateCardContentRequest request,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.UpdateContentAsync(id, request, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.UpdateContentAsync(cardId, request, cancellationToken));
         });
 
-        cards.MapGet("/{id:guid}/revisions", async (
-            Guid id,
+        cards.MapGet("/{id}/revisions", async (
+            string id,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.GetRevisionsAsync(id, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.GetRevisionsAsync(cardId, cancellationToken));
         });
 
-        cards.MapPost("/{id:guid}/spawn", async (
-            Guid id,
+        cards.MapPost("/{id}/spawn", async (
+            string id,
             SpawnCardRequest request,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Accepted($"/api/cards/{id}", await service.SpawnAsync(id, request, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Accepted(
+                $"/api/cards/{cardId}", await service.SpawnAsync(cardId, request, cancellationToken));
         });
 
         // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
         // and this is not a delete — hard delete deliberately does not exist for cards.
-        cards.MapPost("/{id:guid}/archive", async (
-            Guid id,
+        cards.MapPost("/{id}/archive", async (
+            string id,
             ArchiveCardRequest request,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.ArchiveAsync(id, request, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.ArchiveAsync(cardId, request, cancellationToken));
         });
 
-        cards.MapPost("/{id:guid}/unarchive", async (
-            Guid id,
+        cards.MapPost("/{id}/unarchive", async (
+            string id,
             UnarchiveCardRequest request,
             CardService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.UnarchiveAsync(id, request, cancellationToken));
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.UnarchiveAsync(cardId, request, cancellationToken));
         });
 
-        cards.MapGet("/{id:guid}/diff", async (
-            Guid id,
+        cards.MapGet("/{id}/diff", async (
+            string id,
+            CardService cardService,
             CardReviewService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.GetDiffAsync(id, cancellationToken));
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.GetDiffAsync(cardId, cancellationToken));
         });
 
-        cards.MapPost("/{id:guid}/comments", async (
-            Guid id,
+        cards.MapPost("/{id}/comments", async (
+            string id,
             CardCommentRequest request,
+            CardService cardService,
             CardReviewService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Accepted($"/api/cards/{id}", await service.PostCommentAsync(id, request, cancellationToken));
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Accepted(
+                $"/api/cards/{cardId}", await service.PostCommentAsync(cardId, request, cancellationToken));
         });
 
-        cards.MapPost("/{id:guid}/pr", async (
-            Guid id,
+        cards.MapPost("/{id}/pr", async (
+            string id,
+            CardService cardService,
             CardReviewService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.OpenPullRequestAsync(id, cancellationToken));
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.OpenPullRequestAsync(cardId, cancellationToken));
         });
     }
 }

@@ -57,6 +57,41 @@ public sealed class BoardService
         return ToDetailDto(board, includeArchived);
     }
 
+    /// <summary>
+    /// The board's columns and nothing else — every column carries the <c>IsActive</c> /
+    /// <c>IsTerminal</c> / <c>Name</c> a caller needs to pick a move target, and no cards.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="GetByIdAsync(Guid, CancellationToken)"/> is the only way to learn a column id
+    /// today, and it carries every card on the board with it — 252 KB measured on the Antiphon
+    /// board. A script resolving "which column is Done" should not have to download the board to
+    /// find out, and neither should anything else that only wants the shape.
+    /// </remarks>
+    public async Task<IReadOnlyList<BoardColumnDto>> GetColumnsAsync(Guid id, CancellationToken ct)
+    {
+        if (!await _db.Boards.AsNoTracking().AnyAsync(b => b.Id == id, ct))
+            throw new NotFoundException(nameof(Board), id);
+
+        var columns = await _db.BoardColumns
+            .AsNoTracking()
+            .Where(c => c.BoardId == id)
+            .OrderBy(c => c.ColumnOrder)
+            .ToListAsync(ct);
+
+        return columns
+            .Select(c => new BoardColumnDto(
+                c.Id,
+                c.StateKey,
+                c.Name,
+                c.ColumnOrder,
+                c.CardStatus,
+                c.IsActive,
+                c.IsTerminal,
+                c.MaxConcurrentSessions,
+                []))
+            .ToList();
+    }
+
     public async Task<BoardDetailDto> CreateAsync(CreateBoardRequest request, CancellationToken ct)
     {
         ValidateBoardRequest(request);

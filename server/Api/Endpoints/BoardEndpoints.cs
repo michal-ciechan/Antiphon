@@ -28,6 +28,16 @@ public static class BoardEndpoints
             return Results.Ok(await service.GetByIdAsync(id, includeArchived, cancellationToken));
         });
 
+        // The board's shape without its contents: what a scripted move needs to turn a column NAME
+        // into a column id, at a fraction of the full board payload.
+        boards.MapGet("/{id:guid}/columns", async (
+            Guid id,
+            BoardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.GetColumnsAsync(id, cancellationToken));
+        });
+
         boards.MapPost("/", async (
             CreateBoardRequest request,
             BoardService service,

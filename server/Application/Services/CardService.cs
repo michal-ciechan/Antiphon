@@ -1,4 +1,5 @@
-﻿using Antiphon.Server.Application.Dtos;
+﻿using System.Text.RegularExpressions;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -123,6 +124,100 @@ public sealed class CardService
         var card = await LoadCardAsync(id, ct);
         return BoardService.ToCardDto(card);
     }
+
+    /// <summary>
+    /// A card id as the caller ALREADY KNOWS it: the guid, or the identifier in any form that gets
+    /// written down — <c>CARD-0051</c>, <c>card-51</c>, <c>#51</c>, <c>51</c> — plus a foreign
+    /// tracker's own exact form (<c>PROJ-12</c>). Modeled on
+    /// <see cref="AgentTaskService.ResolveTaskIdAsync"/>: 0 matches is a 404, 1 is the id, more is
+    /// a 409.
+    /// </summary>
+    /// <remarks>
+    /// The match is EXACT, never a prefix. <c>client/src/shared/cardIdentifier.ts</c> deliberately
+    /// matches identifier prefixes so incremental typing in the search box narrows (<c>4</c> finds
+    /// #4, #40, #41); an API where <c>5</c> could mean CARD-0005 or CARD-0051 would be a footgun on
+    /// a route that writes.
+    ///
+    /// <para><c>Identifier</c> is unique PER BOARD (<c>IX_Cards_BoardId_Identifier</c>), not
+    /// globally, so two boards can each hold a CARD-0001. Every card in this deployment sits on one
+    /// board today, which makes the 409 arm look theoretical — it is not: the day a second board
+    /// files its first card it gets CARD-0001 again, and a resolver that took the first row would
+    /// silently address the wrong card.</para>
+    ///
+    /// <para>An input that is neither a guid nor identifier-SHAPED is a 422 rather than a 404: it
+    /// is a caller mistake, not a missing card, and the message can say so. The shape is narrow on
+    /// purpose (digits, or <c>PREFIX-digits</c>) — it is what makes a literal route segment that
+    /// ever stopped outranking <c>{id}</c> fail loudly instead of reporting "no such card".</para>
+    /// </remarks>
+    public async Task<Guid> ResolveCardIdAsync(string idOrIdentifier, CancellationToken ct)
+    {
+        var raw = (idOrIdentifier ?? string.Empty).Trim();
+        if (Guid.TryParse(raw, out var cardId))
+        {
+            if (!await _db.Cards.AsNoTracking().AnyAsync(c => c.Id == cardId, ct))
+                throw new NotFoundException(nameof(Card), cardId);
+            return cardId;
+        }
+
+        var canonical = TryCanonicalIdentifier(raw);
+        if (canonical is null && !ForeignIdentifier.IsMatch(raw))
+        {
+            throw new ValidationException(
+                nameof(idOrIdentifier),
+                $"'{raw}' is neither a card id nor a card identifier. "
+                + "Use the card's guid, or its identifier (CARD-0051, card-51, #51, 51).");
+        }
+
+        // Canonical form OR the raw text case-insensitively, so a board synced from a foreign
+        // tracker resolves by the identifier IT hands out and not only by ours.
+        var lowered = raw.ToLowerInvariant();
+        var canonicalOrRaw = canonical ?? raw;
+        var matches = await _db.Cards
+            .AsNoTracking()
+            .Where(c => c.Identifier == canonicalOrRaw || c.Identifier.ToLower() == lowered)
+            .Select(c => c.Id)
+            .Take(2)
+            .ToListAsync(ct);
+
+        return matches.Count switch
+        {
+            0 => throw new NotFoundException(nameof(Card), canonicalOrRaw),
+            1 => matches[0],
+            _ => throw new ConflictException(
+                $"Card identifier '{canonicalOrRaw}' matches cards on more than one board "
+                + "— use the card's guid."),
+        };
+    }
+
+    /// <summary>
+    /// The forms <c>cardIdentifier.ts</c> accepts, normalized to the stored canonical identifier:
+    /// trim, drop a leading <c>#</c>, drop a <c>card-</c>/<c>card </c> prefix, drop leading zeros.
+    /// Null when what is left is not all digits — i.e. not one of OUR identifiers.
+    /// </summary>
+    private static string? TryCanonicalIdentifier(string raw)
+    {
+        var value = raw.StartsWith('#') ? raw[1..].Trim() : raw;
+        if (value.StartsWith("card", StringComparison.OrdinalIgnoreCase)
+            && value.Length > 5
+            && (value[4] == '-' || value[4] == ' '))
+        {
+            value = value[5..].Trim();
+        }
+
+        if (value.Length == 0 || !value.All(char.IsAsciiDigit))
+            return null;
+
+        // TryParse rather than Parse: a 40-digit "identifier" is not one of ours, and overflowing
+        // here would be a 500 on input a caller typed.
+        return int.TryParse(value, out var number) ? $"CARD-{number:0000}" : null;
+    }
+
+    /// <summary>
+    /// <c>PREFIX-123</c>: the shape every tracker worth syncing from uses. Anything else is told to
+    /// use the guid rather than being reported as a missing card.
+    /// </summary>
+    private static readonly Regex ForeignIdentifier =
+        new(@"^[A-Za-z][A-Za-z0-9_]*-\d+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public async Task<CardDto> MoveAsync(Guid id, MoveCardRequest request, CancellationToken ct)
     {
