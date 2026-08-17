@@ -89,15 +89,41 @@ function task(overrides: Record<string, unknown>) {
   }
 }
 
+function attentionItem(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'BlockedQuestion',
+    severity: 'Critical',
+    taskId: 't1',
+    sessionId: null,
+    agentId: null,
+    messageId: null,
+    title: 'Which branch?',
+    headline: 'Blocked — waiting on a human answer.',
+    evidence: '',
+    sinceUtc: '2026-08-17T09:00:00Z',
+    subtreeCostUsd: null,
+    actions: ['Reply'],
+    ...overrides,
+  }
+}
+
 function seed({
   agents = [agent({})],
   tasks = [] as unknown[],
   gitInfos = {} as Record<string, unknown>,
   worktrees = {} as Record<string, unknown>,
+  attention = [] as unknown[],
 } = {}) {
   server.use(
     http.get('/api/agents', () => HttpResponse.json(agents)),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/attention', () =>
+      HttpResponse.json({
+        generatedAt: '2026-08-17T10:00:00Z',
+        runnerConsulted: true,
+        items: attention,
+      }),
+    ),
     // Directories not seeded read as plain non-git folders — grouping degrades gracefully.
     http.get('/api/filesystem/workspaces', ({ request }) => {
       const paths = new URL(request.url).searchParams.getAll('path')
@@ -278,6 +304,35 @@ describe('HomePage', () => {
     expect(
       await screen.findByText('No agent is scoped to this worktree yet.'),
     ).toBeInTheDocument()
+  })
+
+  it('carries a Needs attention badge to the diagnostic tab when something is stuck', async () => {
+    // The landing screen is where an operator actually lives, and CARD-0002's rail is unbuilt — so
+    // until it lands this badge is the only route from "I am working" to "something needs me".
+    seed({
+      attention: [
+        attentionItem({}),
+        attentionItem({ kind: 'DeadSession', severity: 'Error', taskId: 't2', title: 'Ship it' }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+
+    const badge = await screen.findByText('Needs attention (2)')
+    expect(badge.closest('a')).toHaveAttribute('href', '/orchestrator?tab=attention')
+  })
+
+  it('shows no attention badge on a quiet fleet, and counts settled failures as quiet', async () => {
+    // A permanent "0" chip is a control nobody sees after a week; the badge only means something if
+    // its PRESENCE does. Failures are 24h context, not something anybody has to act on.
+    seed({
+      attention: [
+        attentionItem({ kind: 'RecentFailure', severity: 'Warning', taskId: 't3', title: 'Died' }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+
+    await waitFor(() => expect(screen.getByTestId('project-switcher')).toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument())
   })
 
   it('remembers the chosen project across mounts', async () => {
