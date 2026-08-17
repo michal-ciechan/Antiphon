@@ -41,6 +41,19 @@ public static class CardEndpoints
             return Results.Ok(await service.GetByIdAsync(cardId, cancellationToken));
         });
 
+        // The whole of one piece of work: the card, its plans, its tasks and its commits. Read-only
+        // and additive — no existing route's shape changes, and the assembly is a projection over
+        // records that already exist rather than a new one (mobile-thread spec §D2).
+        cards.MapGet("/{id}/thread", async (
+            string id,
+            CardService cardService,
+            CardThreadService service,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.GetAsync(cardId, cancellationToken));
+        });
+
         cards.MapPatch("/{id}", async (
             string id,
             MoveCardRequest request,
