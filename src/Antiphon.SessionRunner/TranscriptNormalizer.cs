@@ -29,7 +29,12 @@ public readonly record struct TranscriptPart(
     int? InputTokens = null,
     int? OutputTokens = null,
     int? CacheReadTokens = null,
-    int? CacheCreationTokens = null);
+    int? CacheCreationTokens = null,
+    // API-error stub evidence (CARD-0072): the raw record's top-level error/isApiErrorMessage/
+    // apiErrorStatus, stamped on the stub's AssistantText and TurnEnd parts (null everywhere else).
+    bool? IsApiError = null,
+    string? ApiErrorClass = null,
+    int? ApiErrorStatus = null);
 
 /// <summary>
 /// Normalizes one line of a Claude Code session JSONL transcript into zero or more
@@ -83,6 +88,14 @@ public static class TranscriptNormalizer
         var stopReason = GetString(msg, "stop_reason");
         var apiCallId = GetString(msg, "id");
         var (inTok, outTok, cacheRead, cacheCreate) = GetUsage(msg);
+        // API-error stub fields (CARD-0072), TOP-LEVEL on the record, carried verbatim: a dead turn
+        // is one synthetic assistant line with error ("rate_limit"/"server_error"/…),
+        // isApiErrorMessage:true and (sometimes) a numeric apiErrorStatus. The benign
+        // "No response requested." synthetic carries isApiErrorMessage:FALSE and no error — carrying
+        // the raw values (not a computed verdict) keeps that distinction visible downstream.
+        var isApiError = GetBool(root, "isApiErrorMessage");
+        var apiErrorClass = GetString(root, "error");
+        var apiErrorStatus = GetInt(root, "apiErrorStatus");
 
         if (msg.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
         {
@@ -93,7 +106,10 @@ public static class TranscriptNormalizer
                     case "text":
                         var text = GetString(block, "text");
                         if (!string.IsNullOrWhiteSpace(text))
-                            parts.Add(new TranscriptPart(TranscriptKinds.AssistantText, uuid, parent, ts, role, text, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate));
+                            parts.Add(new TranscriptPart(
+                                TranscriptKinds.AssistantText, uuid, parent, ts, role, text, null, null, null, null, null,
+                                apiCallId, inTok, outTok, cacheRead, cacheCreate,
+                                isApiError, apiErrorClass, apiErrorStatus));
                         break;
                     case "thinking":
                         var thinking = GetString(block, "thinking");
@@ -118,7 +134,8 @@ public static class TranscriptNormalizer
         if (!string.IsNullOrEmpty(stopReason) && stopReason != "tool_use")
             parts.Add(new TranscriptPart(
                 TranscriptKinds.TurnEnd, uuid, parent, ts, role, null, null, null, null, null, stopReason,
-                apiCallId, inTok, outTok, cacheRead, cacheCreate));
+                apiCallId, inTok, outTok, cacheRead, cacheCreate,
+                isApiError, apiErrorClass, apiErrorStatus));
 
         return parts;
     }

@@ -25,4 +25,8 @@ public sealed record TranscriptEntryDto(
     int? InputTokens = null,
     int? OutputTokens = null,
     int? CacheReadTokens = null,
-    int? CacheCreationTokens = null);
+    int? CacheCreationTokens = null,
+    // API-error stub evidence (CARD-0072), for optional client rendering (S7) — cosmetic, may lag.
+    bool? IsApiError = null,
+    string? ApiErrorClass = null,
+    int? ApiErrorStatus = null);

@@ -133,6 +133,118 @@ public class TranscriptNormalizerTests
         parts.ShouldAllBe(p => p.ApiCallId == text.ApiCallId);
     }
 
+    // Verbatim real records (CARD-0072 sweep): one line per measured error/status combination,
+    // line 0 being the exact wall stub that killed delegate task ee0a18a5 on 2026-08-17, plus the
+    // benign "No response requested." synthetic (isApiErrorMessage:FALSE) as the negative §6.6
+    // pins — a collision between the benign shape and the stub flag must fail loudly here.
+    private static string[] ApiErrorFixtureLines() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "api-error-stubs.jsonl"))
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToArray();
+
+    /// <summary>
+    /// The S1 carriage itself (CARD-0072): a wall stub's top-level error/isApiErrorMessage/
+    /// apiErrorStatus — discarded entirely before this change — land on BOTH of the stub's parts.
+    /// The stub also carries its own ordinary TurnEnd, which is why detection is a consumer-side
+    /// predicate and no working/idle rule changes: the session already reads idle.
+    /// </summary>
+    [Test]
+    public void A_wall_stub_stamps_the_api_error_fields_on_both_its_parts()
+    {
+        var parts = TranscriptNormalizer.Normalize(ApiErrorFixtureLines()[0]);
+
+        parts.Count.ShouldBe(2);
+        parts[0].Kind.ShouldBe(TranscriptKinds.AssistantText);
+        parts[0].Text.ShouldBe("You've hit your session limit · resets 6:10pm (Europe/London)");
+        parts[1].Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        parts[1].StopReason.ShouldBe("stop_sequence", "the stub ends its turn like any other record");
+        foreach (var part in parts)
+        {
+            part.IsApiError.ShouldBe(true);
+            part.ApiErrorClass.ShouldBe("rate_limit");
+            part.ApiErrorStatus.ShouldBe(429);
+            TranscriptKinds.IsApiErrorStub(part.Kind, part.IsApiError).ShouldBeTrue();
+        }
+    }
+
+    // Each measured class, verbatim: the status is OPTIONAL on the real records (auth and the
+    // connection drop carry none), so null status must survive the carriage as null, not 0.
+    [Test]
+    public void Every_measured_stub_class_carries_its_fields_and_trips_the_predicate()
+    {
+        var lines = ApiErrorFixtureLines();
+        var expected = new (string Class, int? Status)[]
+        {
+            ("rate_limit", 429),
+            ("server_error", 529),
+            ("server_error", null), // connection drop
+            ("authentication_failed", null),
+            ("model_not_found", 404),
+        };
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var text = TranscriptNormalizer.Normalize(lines[i])
+                .Where(p => p.Kind == TranscriptKinds.AssistantText)
+                .ShouldHaveSingleItem($"fixture line {i}");
+            text.IsApiError.ShouldBe(true, $"fixture line {i}");
+            text.ApiErrorClass.ShouldBe(expected[i].Class, $"fixture line {i}");
+            text.ApiErrorStatus.ShouldBe(expected[i].Status, $"fixture line {i}");
+            TranscriptKinds.IsApiErrorStub(text.Kind, text.IsApiError).ShouldBeTrue($"fixture line {i}");
+        }
+    }
+
+    /// <summary>
+    /// The benign synthetic (§6.6's assumed-disjoint shape, pinned as a negative): it shares the
+    /// stub's synthetic model and stop_sequence but carries <c>isApiErrorMessage:FALSE</c> and no
+    /// error — so the raw false is carried (not laundered to null) and the predicate stays cold.
+    /// This is also why stop_reason was rejected as the signal: this record would trip it.
+    /// </summary>
+    [Test]
+    public void The_benign_no_response_synthetic_is_not_a_stub()
+    {
+        var parts = TranscriptNormalizer.Normalize(ApiErrorFixtureLines()[5]);
+
+        var text = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ShouldHaveSingleItem();
+        text.Text.ShouldBe("No response requested.");
+        text.IsApiError.ShouldBe(false);
+        text.ApiErrorClass.ShouldBeNull();
+        text.ApiErrorStatus.ShouldBeNull();
+        parts.ShouldAllBe(p => !TranscriptKinds.IsApiErrorStub(p.Kind, p.IsApiError));
+    }
+
+    // Text matching is REJECTED as the signal (spec §D1): an agent legitimately writing about
+    // these errors — as the spec itself does — must never trip detection. An ordinary assistant
+    // record whose text IS the limit message has no stub fields, and stays invisible.
+    [Test]
+    public void An_agent_merely_writing_the_limit_message_never_trips_the_predicate()
+    {
+        const string line =
+            """{"type":"assistant","uuid":"u-talk","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"You've hit your session limit · resets 6:10pm (Europe/London) — that is the stub text this spec is about."}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(2);
+        foreach (var part in parts)
+        {
+            part.IsApiError.ShouldBeNull("an ordinary record never carried the flag");
+            TranscriptKinds.IsApiErrorStub(part.Kind, part.IsApiError).ShouldBeFalse();
+        }
+    }
+
+    // The predicate is structural in BOTH directions: the flag without a stub-bearing kind (a
+    // hypothetical flagged UserPrompt) is not a stub row either.
+    [Test]
+    public void The_predicate_requires_a_stub_bearing_kind()
+    {
+        TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, true).ShouldBeTrue();
+        TranscriptKinds.IsApiErrorStub(TranscriptKinds.TurnEnd, true).ShouldBeTrue();
+        TranscriptKinds.IsApiErrorStub(TranscriptKinds.UserPrompt, true).ShouldBeFalse();
+        TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, false).ShouldBeFalse();
+        TranscriptKinds.IsApiErrorStub(TranscriptKinds.AssistantText, null).ShouldBeFalse();
+        TranscriptKinds.IsApiErrorStub(null, true).ShouldBeFalse();
+    }
+
     [Test]
     public void Other_system_records_are_still_skipped()
     {

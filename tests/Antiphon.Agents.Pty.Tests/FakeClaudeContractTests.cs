@@ -439,6 +439,103 @@ public class FakeClaudeContractTests
         }
     }
 
+    /// <summary>
+    /// CARD-0072 (S1): the armed turn dies on an API-error stub — ONE synthetic assistant record
+    /// carrying top-level <c>error</c>/<c>isApiErrorMessage:true</c>/<c>apiErrorStatus</c> and its
+    /// OWN <c>stop_sequence</c> TurnEnd (shape verbatim from the 23 measured stubs; the real-record
+    /// pins live in TranscriptNormalizerTests' api-error-stubs.jsonl fixture — no headed canary
+    /// exists because hitting a real limit on purpose is neither reproducible nor affordable).
+    /// The NEXT turn answers normally: the measured revival — a typed "Continue" into exactly this
+    /// state worked immediately, six times across the sweep.
+    /// </summary>
+    [Test]
+    public async Task An_armed_api_error_kills_that_turn_only_and_writes_the_measured_stub_record()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-apierror-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                ["ANTIPHON_FAKE_API_ERROR"] = "rate_limit",
+            });
+
+            await runner.SendLineAsync("doomed turn");
+            (await runner.WaitForOutputAsync(
+                    s => s.Contains("You've hit your session limit"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("the dead turn renders the error text, not a response");
+
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            lines.Length.ShouldBe(2, "the prompt was recorded (the API call happened) plus ONE stub record");
+            ContentOf(lines[0]).ShouldBe("doomed turn");
+
+            // The stub, structurally: top-level fields beside an ordinary text block + TurnEnd.
+            using (var doc = System.Text.Json.JsonDocument.Parse(lines[1]))
+            {
+                var root = doc.RootElement;
+                root.GetProperty("error").GetString().ShouldBe("rate_limit");
+                root.GetProperty("isApiErrorMessage").GetBoolean().ShouldBeTrue();
+                root.GetProperty("apiErrorStatus").GetInt32().ShouldBe(429);
+                var msg = root.GetProperty("message");
+                msg.GetProperty("model").GetString().ShouldBe("<synthetic>");
+                msg.GetProperty("stop_reason").GetString().ShouldBe(
+                    "stop_sequence", "the stub carries its OWN TurnEnd — the working rules read idle unchanged");
+                TranscriptKinds.IsApiErrorStub(
+                        TranscriptKinds.AssistantText, root.GetProperty("isApiErrorMessage").GetBoolean())
+                    .ShouldBeTrue();
+            }
+
+            // The revival: the very next turn answers normally, with no stub fields.
+            await runner.SendLineAsync("Continue");
+            (await runner.WaitForOutputAsync(s => s.Contains("FAKE response to: Continue"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue("a turn after the armed one must answer normally — the measured revival");
+            var after = await WaitForTranscriptLinesAsync(path, 4);
+            after.Length.ShouldBe(4);
+            after[3].ShouldContain("\"stop_reason\":\"end_turn\"");
+            after[3].ShouldNotContain("isApiErrorMessage");
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    // Auth stubs carry NO apiErrorStatus on the real records — the absence itself is measured, so
+    // the fake must model a missing member, not a null one.
+    [Test]
+    public async Task An_auth_stub_omits_the_status_field_entirely()
+    {
+        SkipIfUnavailable();
+        var path = Path.Combine(Path.GetTempPath(), $"fakeclaude-apierror-auth-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(new Dictionary<string, string>
+            {
+                ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path,
+                ["ANTIPHON_FAKE_API_ERROR"] = "authentication_failed",
+            });
+
+            await runner.SendLineAsync("doomed");
+            (await runner.WaitForOutputAsync(s => s.Contains("Login expired"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+            var lines = await WaitForTranscriptLinesAsync(path, 2);
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+
+            lines.Length.ShouldBe(2);
+            lines[1].ShouldContain("\"error\":\"authentication_failed\"");
+            lines[1].ShouldContain("\"isApiErrorMessage\":true");
+            lines[1].ShouldNotContain("apiErrorStatus",
+                customMessage: "the real auth stubs have NO status member at all");
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
     // The transcript is written after the screen output, so "the screen said Compacted" is not
     // evidence the records landed. Poll for the expected count, then assert on what arrived.
     private static async Task<string[]> WaitForTranscriptLinesAsync(string path, int expected)

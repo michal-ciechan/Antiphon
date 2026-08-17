@@ -58,7 +58,12 @@ public sealed record SessionRunnerTranscriptEvent(
     int? InputTokens = null,
     int? OutputTokens = null,
     int? CacheReadTokens = null,
-    int? CacheCreationTokens = null);
+    int? CacheCreationTokens = null,
+    // API-error stub evidence (CARD-0072) — see RunnerTranscriptEvent: additive-optional so a
+    // lagging runner (nulls) or a lagging server (ignored members) stays compatible.
+    bool? IsApiError = null,
+    string? ApiErrorClass = null,
+    int? ApiErrorStatus = null);
 
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,
