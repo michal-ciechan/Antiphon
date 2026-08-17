@@ -14,6 +14,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Instruction bundles (CARD-0058): markdown in the repo, compiled in, loaded by
+      InstructionBundles from the assembly manifest. Embedded rather than copied to the output so a
+      bundle can never go missing from a deployment or be hand-edited beside a running server —
+      changing one is a PR, which is the point. README.md is documentation FOR the bundles, not one
+      of them; InstructionBundleTests pins the key set so an accidental inclusion fails a test
+      rather than reaching an agent's system prompt.
+    -->
+    <EmbeddedResource Include="Bundles\*.md" Exclude="Bundles\README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
     <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.*" />
