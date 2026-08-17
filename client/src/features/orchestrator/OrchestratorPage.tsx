@@ -1,24 +1,37 @@
-import { Tabs } from '@mantine/core'
+import { Badge, Tabs } from '@mantine/core'
 import { useSearchParams } from 'react-router'
-import { TbCards, TbSitemap } from 'react-icons/tb'
+import { TbAlertHexagon, TbCards, TbSitemap } from 'react-icons/tb'
+import { useAttention } from '../../api/attention'
+import { AttentionPanel } from '../attention/AttentionPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
 import { OrchestratorPanel } from './OrchestratorPanel'
 
+const TABS = ['cards', 'delegations', 'attention'] as const
+type TabValue = (typeof TABS)[number]
+
 /**
- * "What is the fleet doing right now", in its two forms: cards being dispatched onto boards, and
- * delegated tasks fanning out from an orchestrator. They share a page because they answer the same
- * question — and the tab lives in the URL so a link to a run stays a link to a run.
+ * "What is the fleet doing right now", in its three forms: cards being dispatched onto boards,
+ * delegated tasks fanning out from an orchestrator, and — the diagnostic one — what is stuck.
+ * They share a page because they answer the same question, and because a stuck row's natural
+ * click-through is the task drawer on the tab next door. The tab lives in the URL so a link to a
+ * run stays a link to a run.
  */
 export function OrchestratorPage() {
   const [params, setParams] = useSearchParams()
-  const tab = params.get('tab') === 'delegations' ? 'delegations' : 'cards'
+  const requested = params.get('tab')
+  const tab: TabValue = TABS.includes(requested as TabValue) ? (requested as TabValue) : 'cards'
+  const attention = useAttention()
+
+  // Settled failures are carried as context and must not make a healthy fleet look busy — the badge
+  // counts only conditions that are still open, matching the panel's own header.
+  const openCount = (attention.data?.items ?? []).filter((item) => item.kind !== 'RecentFailure').length
 
   return (
     <Tabs
       value={tab}
       onChange={(value) => {
         const next = new URLSearchParams(params)
-        if (value === 'delegations') next.set('tab', 'delegations')
+        if (value && value !== 'cards') next.set('tab', value)
         else next.delete('tab')
         setParams(next, { replace: true })
       }}
@@ -30,6 +43,19 @@ export function OrchestratorPage() {
         <Tabs.Tab value="delegations" leftSection={<TbSitemap size={16} />}>
           Delegations
         </Tabs.Tab>
+        <Tabs.Tab
+          value="attention"
+          leftSection={<TbAlertHexagon size={16} />}
+          rightSection={
+            openCount > 0 ? (
+              <Badge size="xs" variant="filled" color="danger" circle>
+                {openCount}
+              </Badge>
+            ) : null
+          }
+        >
+          Needs attention
+        </Tabs.Tab>
       </Tabs.List>
 
       <Tabs.Panel value="cards">
@@ -37,6 +63,9 @@ export function OrchestratorPage() {
       </Tabs.Panel>
       <Tabs.Panel value="delegations">
         <DelegationsBoard />
+      </Tabs.Panel>
+      <Tabs.Panel value="attention">
+        <AttentionPanel />
       </Tabs.Panel>
     </Tabs>
   )

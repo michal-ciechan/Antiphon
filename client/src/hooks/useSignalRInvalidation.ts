@@ -82,6 +82,8 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [
       ['agents', 'list'],
       ...(p.agentId ? [['agents', 'detail', p.agentId]] : []),
+      // An agent's incidents and its session's fate both feed the attention projection.
+      ['attention'],
     ],
   },
   {
@@ -121,6 +123,9 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [
       ['agentTasks', 'list'],
       ...(p.taskId ? [['agentTasks', 'detail', p.taskId]] : []),
+      // CARD-0035 §D5 rules out a new SignalR event for the attention projection: every condition
+      // it computes is derived from state that already broadcasts, so it rides these.
+      ['attention'],
     ],
   },
   {
