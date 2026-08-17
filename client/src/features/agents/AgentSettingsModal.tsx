@@ -1,9 +1,29 @@
-import { Button, Divider, Group, Modal, Select, Stack, Switch, Text, TextInput, Textarea } from '@mantine/core'
+import {
+  Button,
+  Code,
+  Divider,
+  Group,
+  Input,
+  Modal,
+  SegmentedControl,
+  Select,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Textarea,
+} from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbTrash } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentSummaryDto } from '../../api/agents'
-import { fetchPreamblePreset, useDeleteAgent, useUpdateAgent } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentReplyStyle, AgentSummaryDto } from '../../api/agents'
+import {
+  AGENT_REPLY_STYLE_OPTIONS,
+  fetchPreamblePreset,
+  useAgent,
+  useDeleteAgent,
+  useUpdateAgent,
+} from '../../api/agents'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentTuiSelection } from './AgentTuiSelection'
@@ -37,8 +57,14 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
+  const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [loadingPreset, setLoadingPreset] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  // The composed bundle list lives on the DETAIL dto (it is derived, not stored), and this modal is
+  // opened from the summary in the agents list. Only fetched while the modal is open.
+  const detail = useAgent(opened && agent ? agent.id : null)
+  const composedBundles = detail.data?.composedBundles ?? []
 
   // Reload the form whenever a different agent is opened.
   useEffect(() => {
@@ -53,6 +79,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
     setSystemPromptAppend(agent.systemPromptAppend ?? '')
+    // An older server response omits the field entirely; Normal is what that means.
+    setReplyStyle(agent.replyStyle ?? 'Normal')
     setConfirmingDelete(false)
   }, [agent, opened])
 
@@ -90,6 +118,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         systemPromptAppend: systemPromptAppend.trim(),
         tuiProfileId,
         modelId,
+        replyStyle,
       },
       {
         onSuccess: () => {
@@ -190,6 +219,38 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
             Use Telegram preset
           </Button>
         </Group>
+
+        <Input.Wrapper
+          label="Reply style"
+          description={
+            AGENT_REPLY_STYLE_OPTIONS.find((option) => option.value === replyStyle)?.description ?? ''
+          }
+        >
+          <SegmentedControl
+            fullWidth
+            mt={4}
+            data={AGENT_REPLY_STYLE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            value={replyStyle}
+            onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
+          />
+        </Input.Wrapper>
+
+        <Input.Wrapper
+          label="Carries bundles"
+          description="Standing instruction blocks composed into --append-system-prompt at the agent's next launch. Versions are content hashes — editing a bundle in the repo changes them."
+        >
+          <Group gap="xs" mt={4}>
+            {composedBundles.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                None — this agent launches with its own system prompt alone.
+              </Text>
+            ) : (
+              composedBundles.map((bundle) => (
+                <Code key={bundle}>{bundle}</Code>
+              ))
+            )}
+          </Group>
+        </Input.Wrapper>
 
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>

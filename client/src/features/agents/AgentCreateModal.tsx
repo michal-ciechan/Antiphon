@@ -1,9 +1,20 @@
-import { Button, Divider, Group, Modal, Select, Stack, TextInput, Textarea } from '@mantine/core'
+import {
+  Button,
+  Divider,
+  Group,
+  Input,
+  Modal,
+  SegmentedControl,
+  Select,
+  Stack,
+  TextInput,
+  Textarea,
+} from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy } from '../../api/agents'
-import { useCreateAgent, useDraftAgent } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentReplyStyle } from '../../api/agents'
+import { AGENT_REPLY_STYLE_OPTIONS, useCreateAgent, useDraftAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
@@ -32,6 +43,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
   const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
+  const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const { data: profiles } = useAgentTuiProfiles()
 
   const reset = () => {
@@ -44,6 +56,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setAssignmentPolicy('AutoPick')
     setTuiProfileId(null)
     setModelId(null)
+    setReplyStyle('Normal')
     draftAgent.reset()
   }
 
@@ -71,6 +84,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         createWorkingDirectory: createDir,
         tuiProfileId: profileId,
         modelId,
+        replyStyle,
       },
       {
         onSuccess: () => {
@@ -167,6 +181,20 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onProfileChange={setTuiProfileId}
           onModelChange={setModelId}
         />
+        <Input.Wrapper
+          label="Reply style"
+          description={
+            AGENT_REPLY_STYLE_OPTIONS.find((option) => option.value === replyStyle)?.description ?? ''
+          }
+        >
+          <SegmentedControl
+            fullWidth
+            mt={4}
+            data={AGENT_REPLY_STYLE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            value={replyStyle}
+            onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
+          />
+        </Input.Wrapper>
         <Group justify="flex-end">
           <Button variant="subtle" onClick={handleClose}>
             Cancel
