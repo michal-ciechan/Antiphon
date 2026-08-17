@@ -118,6 +118,122 @@ public class AgentTaskCheckInterpreterTests
             "no live marker of anyone else's task may ride into the specialist's session");
     }
 
+    // ---- CARD-0035 slice 5: the reading is STORED, not just delivered ---------------------------
+
+    /// <summary>
+    /// The best explanation this system produces used to be thrown away. The specialist's reading
+    /// reached the caller's note (a message body nothing can query) and the interpretation task's own
+    /// <c>Result</c> row (correlated to the checked task by TITLE TEXT — no FK), so no surface could
+    /// answer "what did the interpreter make of THIS task". The Check event already belongs to the
+    /// task, which is why storing it here needs no table and no key.
+    /// </summary>
+    [Test]
+    public async Task the_check_event_stores_the_reading_above_the_digest()
+    {
+        using var h = new Harness();
+        var specialist = await h.EnsureSpecialistAsync();
+        var seed = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var run = Task.Run(() => h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
+        var interpretation = await h.WaitForInterpretationAsync(specialist.Id);
+        await h.SettleInterpretationAsync(
+            interpretation.Id,
+            result: "STALLED — three commits in the first 6 minutes, then 40 minutes of nothing.\n"
+                + "The delegate is idle at the prompt with a finished branch and never reported.",
+            costUsd: 0.0031m);
+        await h.PumpClockAsync(run);
+        await run;
+
+        await using var verify = CreateContext();
+        var check = (await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
+            .ToListAsync()).ShouldHaveSingleItem();
+
+        // Read back through the SAME helper the attention projection uses — a stored reading nothing
+        // can find again is exactly the state this slice exists to end.
+        var reading = AgentTaskCheckService.TryReadInterpretation(check.Detail);
+        reading.ShouldNotBeNull();
+        reading!.ShouldContain("STALLED — three commits");
+        reading.ShouldContain("never reported", customMessage: "verbatim, across its own line breaks");
+
+        check.Detail.ShouldContain("interpreter: task ", customMessage: "the cost line is unchanged");
+        check.Detail.ShouldContain("TASK ", customMessage:
+            "and the digest — the EVIDENCE for the reading — is still there, below it");
+        check.Detail.IndexOf(AgentTaskCheckService.ReadingHeading, StringComparison.Ordinal)
+            .ShouldBeLessThan(
+                check.Detail.IndexOf(AgentTaskCheckService.DigestHeading, StringComparison.Ordinal),
+                "the judgement reads first; the counters are what you check it against");
+    }
+
+    /// <summary>
+    /// A degraded check stores what it always stored, byte for byte, and reads back as "no reading".
+    /// That is what makes the change retroactively harmless: every pre-slice event on the live
+    /// database still parses as digest-only rather than as an empty reading.
+    /// </summary>
+    [Test]
+    public async Task a_degraded_check_stores_the_digest_alone_and_reads_back_as_no_reading()
+    {
+        using var h = new Harness(s => s.CheckInterpreterMaxBacklog = 1);
+        var specialist = await h.EnsureSpecialistAsync();
+        await h.SeedPendingInterpretationAsync(specialist.Id, AgentTaskStatus.Queued);
+        var seed = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        (await h.Checks.RunCheckAsync(seed.Task.Id, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        await using var verify = CreateContext();
+        var check = (await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
+            .ToListAsync()).ShouldHaveSingleItem();
+
+        check.Detail.ShouldStartWith("TASK ", customMessage: "the pre-slice shape, unchanged");
+        check.Detail.ShouldNotContain(AgentTaskCheckService.ReadingHeading);
+        AgentTaskCheckService.TryReadInterpretation(check.Detail).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The digest keeps its own 900-char budget and the reading gets a separate one. Sharing would
+    /// mean a long reading ate the evidence it is a reading OF, which is the half a sceptical reader
+    /// actually needs.
+    /// </summary>
+    [Test]
+    public void the_two_halves_are_budgeted_apart_and_the_reading_survives_a_long_digest()
+    {
+        var digest = string.Join("\n", Enumerable.Range(0, 400).Select(i => $"TASK line {i}"));
+        var reading = new string('r', 5_000);
+
+        var detail = AgentTaskCheckService.ComposeEventDetail(reading, "interpreter: task abcd1234, $0.0031", digest);
+
+        detail.ShouldStartWith("interpreter: task abcd1234");
+        detail.Length.ShouldBeLessThan(2_000, "bounded — the column is 4000 and both halves are capped");
+        var read = AgentTaskCheckService.TryReadInterpretation(detail);
+        read.ShouldNotBeNull();
+        read!.ShouldStartWith("rrrr", customMessage: "the reading survives whole-ish, from its head");
+        detail.ShouldContain("TASK line 0", customMessage: "and the digest still opens with its facts");
+    }
+
+    /// <summary>
+    /// A reading that happens to contain the heading text must not be able to cut its own read-back
+    /// short — the boundary is a parsing contract over prose nobody controls.
+    /// </summary>
+    [Test]
+    public void a_reading_that_quotes_the_headings_still_reads_back_whole()
+    {
+        var detail = AgentTaskCheckService.ComposeEventDetail(
+            $"It says {AgentTaskCheckService.DigestHeading} and then stops.\nSecond line.",
+            eventLine: null,
+            digest: "TASK deadbeef: the real digest");
+
+        var read = AgentTaskCheckService.TryReadInterpretation(detail);
+        read.ShouldNotBeNull();
+        read!.ShouldContain("Second line.", customMessage: "the whole reading, not the half before a quote");
+        detail.ShouldContain("TASK deadbeef", customMessage: "and the real digest is still below it");
+    }
+
     // ---- every other path is the digest, degraded ------------------------------------------------
 
     [Test]
