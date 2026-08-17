@@ -147,14 +147,19 @@ first check, and it doesn't buy the delegate more time to run.
 
 ## Rules
 
+These are rules for YOU, the caller. The rules the *delegate* works under are delivered to it
+automatically — see "What the delegate is told" below; don't type them into `-Goal`.
+
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
 - **Write `-Goal` as an outcome, not a procedure.** The delegate decides how.
+- **Put the state of today in `-Goal`, not the standing rules.** Known-red tests, what already
+  landed, what is out of scope, which ports are taken — that is what only you know. The harness
+  rules it already has.
 - **Don't poll — this rule is for the CALLER, not the delegate.** As the caller, the report is
   delivered into your session as `[task <id> done] ...` when it lands; end your turn and it will
-  reach you. **If you ARE the delegate, the opposite applies:** your final message IS the report,
-  so finish the work and say what you found — never end a turn expecting to be re-invoked, and
-  never spawn sub-agents and end your turn awaiting them (a Worker settles when its turn ends;
-  make it a `-Orchestrator` if it genuinely needs to fan out).
+  reach you. The delegate's side of this is the opposite and it is already in
+  `server/Bundles/delegate-basics.md`: it settles when its turn ends, so it finishes the work in the
+  foreground and never waits to be re-invoked.
 
   > Historical note, because a wrong theory here cost real debugging time on 2026-08-13/14: when
   > six delegates appeared to "end their turns early" and return only preamble, this bullet was
@@ -171,6 +176,25 @@ first check, and it doesn't buy the delegate more time to run.
 
 ## What the delegate is told
 
-You don't need to write reporting instructions into your goal — every delegate is already told to
-lead with the outcome, give only what the caller needs to act, skip preamble and narration, and
-write anything past 20,000 characters to a file and summarise it instead.
+Two things reach every delegate without you writing them, so writing them again only costs the
+delegate's attention:
+
+**The reporting contract**, in its brief — lead with the outcome, give only what the caller needs in
+order to act, skip preamble and narration, and spill anything past the ceiling to a file and point
+at it.
+
+**The standing harness rules**, composed into its `--append-system-prompt` at launch from
+`server/Bundles/delegate-basics.md` (CARD-0058) — foreground-only, no sub-delegation, commit and push
+each slice, `--property:OutputPath=bin-<name>/` with a forward slash, verify pre-existing red by
+stashing first. A sub-orchestrator also gets `server/Bundles/orchestrator.md`, the contract that
+makes it decompose rather than do the work.
+
+**That directory is canonical, and this file deliberately does not restate what is in it.** A rule
+copied here would be a second version of the truth, and the copy is the one that goes stale — which
+is exactly what happened to the list this section replaced. To change how every future delegate
+behaves, edit the bundle in a PR; a running delegate keeps what it launched with, and a warm pool
+agent until it retires (60 minutes idle).
+
+What is NOT in a bundle, and is therefore yours to say in `-Goal`: today's known-red tests, what has
+already landed, what is out of scope, and anything else that is true this afternoon and false next
+month.

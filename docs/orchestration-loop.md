@@ -94,26 +94,35 @@ check at **$0.12**.
 
 ## 3. Writing a brief
 
-Rules earned the hard way. Each one maps to a real failure.
+**The standing rules are delivered automatically now (CARD-0058). Do not retype them.** Every
+delegate launches with `server/Bundles/delegate-basics.md` composed into its
+`--append-system-prompt` — foreground-only, no sub-delegation, commit-and-push each slice,
+`OutputPath` with a forward slash, verify pre-existing red by stashing before blaming yourself. That
+file is **canonical**; this section deliberately does not restate its contents, because a rule
+restated in three places drifts in three places, and it drifted here first. Improve a rule by
+editing that file in a PR: every future dispatch gets the better version, with nothing to
+reconcile. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
 
-- **"Run every command in the FOREGROUND and wait — never background a run and end your turn."**
-  A planner backgrounded its test runs, ended its turn, settled having written nothing, cost $8.48
-  and left orphaned processes running for hours.
-- **"Do not sub-delegate; do not use the Agent tool."** A Worker settles when its turn ends, so one
-  that fans out and waits settles on its preamble. If it genuinely needs to fan out, make it
-  `-Orchestrator`.
-- **"Commit and push each slice as it completes; put the real outcome in the commit message."**
-  Commits are the durable report. Two delegates were cut loose mid-task and their work survived only
-  because it was committed — a third's survived only because it happened to be on disk.
-- **Name the known-failing tests**, and say "verify by stashing before blaming yourself". Otherwise
-  every report re-litigates pre-existing red.
+So a brief is now **the goal plus the state of today**, and the state is the part no bundle can
+carry:
+
+- **Name the known-failing tests** and say to verify by stashing. The *rule* is in the bundle; today's
+  actual red list is not — it changes weekly, and a bundle naming last week's would be worse than
+  silence.
 - **Say what is already done** ("slices 1 and 5 are landed as X and Y, build on them, do not redo")
   and **what is out of scope**.
-- **`--property:OutputPath=bin-<name>/` — FORWARD slash**, and delete it across all ~12 project dirs
-  afterwards. A trailing backslash creates a directory whose name ends in a space, which breaks the
-  entire build with an error naming unrelated projects.
-- Give **outcomes, not procedures**. The exception is process constraints like these, which are
-  about how the harness behaves, not how to do the work.
+- **Say the warning count, the flaky suites, the ports in use** — anything true this afternoon and
+  false next month.
+- Give **outcomes, not procedures**. The delegate decides how.
+
+The test of whether this worked is mechanical: briefs are stored on task rows, so sample the next
+week's and grep for the six rule-paragraphs. If they are still being typed, the inversion did not
+take and this section is still too gentle.
+
+Bundles reach a delegate **at launch**, which has one bounded consequence worth knowing: a warm
+pool delegate keeps the bundles it started with until it retires (60 minutes idle). Nothing types
+bundles into a live session, deliberately — if a rule change matters urgently for work in flight,
+say it in the brief for that dispatch.
 
 ---
 
@@ -222,6 +231,10 @@ Split by what each part actually is:
 - Corrections to a card's text go through `PATCH /api/cards/{id}/content` (CARD-0019), which records
   a revision with a reason. Before that shipped, a wrong card could only be corrected by filing
   another card.
+- **The card API's own traps are canonical in `server/Bundles/board-api.md`** — no card-by-id GET,
+  the concurrency token rotating on every write, 422 rather than 400, write bodies from a file. That
+  bundle is what gets attached to an agent that works the board, so fix a wrong rule there rather
+  than here.
 - Findings that outlive the card go in `docs/investigations/`. Agent scratch output lands in
   `.antiphon/`, which is **gitignored** — an 11 KB proven root-cause writeup was nearly lost that way.
 
