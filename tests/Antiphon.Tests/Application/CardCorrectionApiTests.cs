@@ -143,6 +143,37 @@ public class CardCorrectionApiTests
         history!.Select(r => r.Kind).ShouldBe([CardRevisionKind.Unarchive, CardRevisionKind.Archive]);
     }
 
+    // The fields assert against the CONSTANTS, never against 300/20000/4000/200: an endpoint that
+    // serves numbers of its own is a second source of truth, and the drift only shows up as a
+    // caller pre-checking against one ceiling and being refused by another.
+    [Test]
+    public async Task The_limits_endpoint_serves_the_constants_that_do_the_enforcing()
+    {
+        using var client = _factory.CreateClient();
+
+        var limits = await client.GetFromJsonAsync<CardLimitsDto>("/api/cards/limits", Json);
+
+        limits.ShouldNotBeNull();
+        limits.MaxTitleLength.ShouldBe(CardService.MaxTitleLength);
+        limits.MaxDescriptionLength.ShouldBe(CardService.MaxDescriptionLength);
+        limits.MaxReasonLength.ShouldBe(CardService.MaxReasonLength);
+        limits.MaxActorLength.ShouldBe(CardService.MaxActorLength);
+    }
+
+    // A regression here comes back as a 422 "not a card identifier", because /{id} would have
+    // swallowed the literal segment.
+    [Test]
+    public async Task The_limits_route_is_not_swallowed_by_the_identifier_route()
+    {
+        using var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/cards/limits");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        body.TryGetProperty("maxTitleLength", out _).ShouldBeTrue();
+    }
+
     /// <summary>Seeds one project, one board and one card through the real services.</summary>
     private async Task<(BoardDetailDto Board, CardDto Card)> SeedAsync(
         string boardName, string cardTitle, string cardDescription)
