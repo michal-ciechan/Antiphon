@@ -1,0 +1,613 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-0021 slice 1 — the sweep that ACTS on a dead session. Detection of the state already
+/// existed (the attention projection's DeadSession row); nothing failed the task, so on 2026-08-09
+/// three tasks sat Dispatched for hours behind sessions that had been gone the whole time. Two of
+/// those shapes are structurally invisible to the delivery watchdog: a <b>Working</b> task is
+/// outside its query entirely, and a Dispatched task whose session wrote a transcript before dying
+/// passes its "did it start" test forever.
+///
+/// <para><b>The constraint that outranks the feature</b> is CARD-0056: a row reading Failed was once
+/// wrong about a perfectly healthy session — the operator's own. So the sweep never kills anything,
+/// and it needs two independent pieces of evidence before it will even write Failed on a task: the
+/// runner must ANSWER, and it must not list the session Running. The test that matters most in this
+/// file is <c>a_session_the_runner_still_serves_is_left_alone</c>.</para>
+///
+/// <para><b>Shared-database discipline.</b> This is a FLEET-GLOBAL sweep over one Postgres shared by
+/// the whole assembly, so the class takes <c>[NotInParallel]</c> with NO group key (a key would
+/// serialise it only against itself) and every assertion is scoped to rows the test itself created.
+/// The fake runner goes further and reports every session the database knows about as Running
+/// EXCEPT the ones a test declares gone — so the sweep is structurally unable to fail another
+/// suite's row, which a bare empty session list would happily have done.</para>
+/// </summary>
+[Category("Integration")]
+[NotInParallel]
+public class AgentTaskDeadSessionReconciliationTests
+{
+    // ---- 1-5: the five ways a session is dead ----------------------------------------------------
+
+    [Test]
+    public async Task a_dispatched_task_behind_a_failed_session_is_failed_with_the_sessions_own_reason()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)");
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain(
+            "the pty-host exited (code 1)",
+            customMessage: "the session's own reason is the evidence — the sweep must carry it, not restate it");
+        failed.FailureReason.ShouldContain(
+            task.SessionId.ToString(), customMessage: "say where to read what actually happened");
+
+        harness.Stopper.Killed.ShouldBeEmpty(
+            "THE SWEEP NEVER KILLS — the session is dead by evidence, and if that evidence were "
+            + "wrong a kill would be the CARD-0056 disaster");
+        harness.Runner.Killed.ShouldBeEmpty("and not through the runner client either");
+
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldContain(
+                b => b.Contains("the pty-host exited (code 1)"),
+                "the caller must HEAR about the death, not discover it");
+
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == task.AgentId))
+            .ShouldBeFalse("the ephemeral delegate is cleaned up, exactly as the watchdog's tail does");
+    }
+
+    /// <summary>
+    /// The case <c>FailNeverStartedAsync</c> structurally cannot reach: its query is
+    /// <c>Status == Dispatched</c>, so a task that got as far as Working and then lost its session
+    /// was never a candidate for any automatic settlement at all.
+    /// </summary>
+    [Test]
+    public async Task a_working_task_behind_a_dead_session_is_failed_too()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Working, SessionStatus.Failed, failureReason: "process vanished");
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+    }
+
+    [Test]
+    public async Task a_task_whose_session_row_is_gone_is_failed_and_the_reason_says_so()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Running);
+        await scenario.DeleteSessionRowAsync(task.SessionId);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("session row is gone");
+    }
+
+    [Test]
+    public async Task a_session_that_ended_while_still_marked_running_is_dead_for_the_task()
+    {
+        // The row disagrees with itself. Lockstep with the attention projection, which has always
+        // counted this: something closed the session without writing its status.
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Running, endedMinutesAgo: 6);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("while still marked Running");
+    }
+
+    [Test]
+    public async Task a_stopped_session_counts_as_dead_and_the_reason_names_the_stop()
+    {
+        // An operator ended it. No settlement is coming, so leaving the task open forever is the
+        // zombie shape this card is about — but the reason must not read like a crash.
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Stopped);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var failed = await scenario.ReadTaskAsync(task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("Stopped");
+        failed.FailureReason.ShouldContain("an operator ended it");
+    }
+
+    // ---- 6-8: the evidence gates -----------------------------------------------------------------
+
+    /// <summary>
+    /// THE test. Row dead, process alive — the exact false-Failed shape CARD-0056 was written about,
+    /// where a healthy session (the operator's own) was marked Failed by a launch-verification false
+    /// positive. Reconciliation's third pass re-adopts such a session; this sweep must not settle the
+    /// task under it in the meantime.
+    /// </summary>
+    [Test]
+    public async Task a_session_the_runner_still_serves_is_left_alone()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Failed);
+        // Nothing is declared gone, so the fake reports this session Running — as the real runner
+        // would about a process it is still serving.
+        var harness = scenario.Harness();
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "a live process outranks a dead row, always");
+        harness.FirstSeen.IsTracking(task.Id).ShouldBeFalse(
+            "and the grace is dropped, so a genuine death later starts its own window");
+    }
+
+    [Test]
+    public async Task an_unreachable_runner_settles_nothing_and_throws_nothing()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Failed);
+        var harness = scenario.Harness(task.SessionId);
+        harness.Runner.ListError = new HttpRequestException("connection refused");
+
+        // An unanswerable runner is no evidence of anything — the same doctrine reconciliation runs
+        // on. The task has already waited minutes; another 5 s tick costs nothing.
+        harness.Clock.Advance(TimeSpan.FromMinutes(10));
+        (await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None)).ShouldBe(0);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    [Test]
+    public async Task the_grace_has_to_elapse_before_anything_is_failed()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Failed);
+        var harness = scenario.Harness(task.SessionId);
+
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "the first observation only starts the clock");
+
+        harness.Clock.Advance(TimeSpan.FromMinutes(3) + TimeSpan.FromSeconds(1));
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+    }
+
+    // ---- 9-10: what the sweep must never touch ---------------------------------------------------
+
+    [Test]
+    public async Task a_task_whose_session_recovers_inside_the_grace_never_fails()
+    {
+        // The whole reason the grace exists: reconciliation re-adopting a wrongly-Failed session
+        // flips the row back to Running, and the burned grace must go with it.
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Failed);
+        var harness = scenario.Harness(task.SessionId);
+
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        harness.FirstSeen.IsTracking(task.Id).ShouldBeTrue("first observation recorded");
+
+        await scenario.SetSessionStatusAsync(task.SessionId, SessionStatus.Running);
+        harness.Runner.Gone.Clear();
+        harness.Clock.Advance(TimeSpan.FromMinutes(10));
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        harness.FirstSeen.IsTracking(task.Id).ShouldBeFalse("a recovered task is evicted from the clock");
+    }
+
+    [Test]
+    public async Task a_check_task_is_never_settled_by_this_sweep()
+    {
+        // A check's lifecycle belongs to AgentTaskCheckService, it is pinned to the standing
+        // interpreter, and a completion note about one would be noise in the caller's session.
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, role: AgentTaskRole.Check);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    // ---- 11: the lockstep ------------------------------------------------------------------------
+
+    /// <summary>
+    /// One definition of "dead", two consumers. The attention projection SURFACES the state and the
+    /// dispatcher's sweep ACTS on it; a row shown but never failed — or worse, failed but never
+    /// shown — would be a defect with no single place to fix it. This repo already carries three
+    /// lockstep implementations of the working/idle rule and every drift between them has cost a
+    /// real incident, so the shared predicate gets its own pin.
+    ///
+    /// <para>Read-only: it drives <c>AttentionService.GetAsync</c> and the pure predicate, never the
+    /// sweep, so nothing here writes to another suite's rows.</para>
+    /// </summary>
+    [Test]
+    public async Task the_predicate_and_the_attention_projection_agree_on_every_case()
+    {
+        await using var scenario = new Scenario();
+
+        (SessionStatus Status, int? EndedMinutesAgo, bool Dead, string Case)[] table =
+        [
+            (SessionStatus.Created, null, false, "Created — it has not started yet, not died"),
+            (SessionStatus.Starting, null, false, "Starting"),
+            (SessionStatus.Running, null, false, "Running"),
+            (SessionStatus.Stopping, null, false, "Stopping — on its way out, but a report may still land"),
+            (SessionStatus.Stopped, null, true, "Stopped — an operator ended it"),
+            (SessionStatus.Failed, null, true, "Failed"),
+            (SessionStatus.Running, 6, true, "ended while still marked Running"),
+        ];
+
+        var seeded = new List<(Guid TaskId, bool Dead, string Case)>();
+        foreach (var (status, ended, dead, name) in table)
+        {
+            var task = await scenario.AddTaskAsync(
+                AgentTaskStatus.Dispatched, status, endedMinutesAgo: ended);
+            var session = await scenario.ReadSessionSnapshotAsync(task.SessionId);
+
+            AgentTaskLiveness.IsDeadSession(task.SessionId, session).ShouldBe(dead, name);
+            seeded.Add((task.Id, dead, name));
+        }
+
+        // The two shapes with no session row to read.
+        var orphan = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Running);
+        await scenario.DeleteSessionRowAsync(orphan.SessionId);
+        AgentTaskLiveness.IsDeadSession(orphan.SessionId, null).ShouldBeTrue("the session row is gone");
+        seeded.Add((orphan.Id, true, "session row gone"));
+
+        var sessionless = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Running, detachSession: true);
+        AgentTaskLiveness.IsDeadSession(null, null).ShouldBeTrue("a dispatch always writes a session id");
+        seeded.Add((sessionless.Id, true, "no session at all"));
+
+        var items = await scenario.AttentionItemsAsync();
+        foreach (var (taskId, dead, name) in seeded)
+        {
+            items.Any(i => i.TaskId == taskId && i.Kind == AttentionKind.DeadSession)
+                .ShouldBe(dead, $"attention and AgentTaskLiveness must agree: {name}");
+        }
+    }
+
+    // ---- harness ---------------------------------------------------------------------------------
+
+    private sealed record SeededTask(Guid Id, Guid SessionId, Guid AgentId);
+
+    private sealed record Harness(
+        AgentTaskDispatcher Dispatcher,
+        FakeRunnerClient Runner,
+        RecordingSessionStopper Stopper,
+        DeadSessionFirstSeenState FirstSeen,
+        FakeTimeProvider Clock);
+
+    /// <summary>
+    /// Seeds rows, remembers their ids, and deletes exactly those on dispose — the shared-database
+    /// rule, mechanised the same way <c>AttentionServiceTests</c> does it.
+    /// </summary>
+    private sealed class Scenario : IAsyncDisposable
+    {
+        private readonly List<Guid> _tasks = [];
+        private readonly List<Guid> _sessions = [];
+        private readonly List<Guid> _agents = [];
+
+        /// <summary>The one parent session every seeded task replies into, so the note has a home.</summary>
+        public Guid ParentSessionId { get; } = Guid.NewGuid();
+
+        private bool _parentSeeded;
+
+        public Harness Harness(params Guid[] gone)
+        {
+            var stopper = new RecordingSessionStopper();
+            var runner = new FakeRunnerClient();
+            foreach (var id in gone)
+                runner.Gone.Add(id);
+            var firstSeen = new DeadSessionFirstSeenState();
+            var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddSingleton<IEventBus, MockEventBus>();
+            services.AddSingleton<TimeProvider>(clock);
+            services.AddSingleton(Options.Create(new SupervisionSettings()));
+            services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+            // Default settings on purpose: DeadSessionFailGraceMinutes = 3 is the shipped window.
+            services.AddSingleton(Options.Create(new DelegationSettings()));
+            services.AddOptions<AgentRegistrySettings>();
+            services.AddSingleton<AgentRegistry>();
+            services.AddSingleton<AgentSessionLaunchQueue>();
+            services.AddSingleton<AgentSessionRuntime>();
+            services.AddSingleton<SessionMessageQueueService>();
+            services.AddSingleton<IDelegateSessionStopper>(stopper);
+            services.AddSingleton<DelegationWorkspaceResolver>();
+            services.AddSingleton(Options.Create(new GitSettings
+            {
+                WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-deadsession-wt"),
+            }));
+            services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
+            services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+            services.AddScoped<DelegationWorktreeService>();
+            services.AddScoped<AgentTaskService>();
+            services.AddSingleton<ISessionRunnerClient>(runner);
+            services.AddSingleton(firstSeen);
+            services.AddScoped<AgentTaskDispatcher>();
+
+            var provider = services.BuildServiceProvider();
+            return new Harness(
+                provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(),
+                runner, stopper, firstSeen, clock);
+        }
+
+        /// <summary>Two sweeps with the grace elapsed between them: observe, wait, act.</summary>
+        public async Task PastGraceAsync(Harness harness)
+        {
+            await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+            harness.Clock.Advance(TimeSpan.FromMinutes(5));
+            await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        }
+
+        public async Task<SeededTask> AddTaskAsync(
+            AgentTaskStatus status,
+            SessionStatus sessionStatus,
+            string? failureReason = null,
+            int? endedMinutesAgo = null,
+            AgentTaskRole role = AgentTaskRole.Code,
+            bool detachSession = false)
+        {
+            await EnsureParentSessionAsync();
+
+            var sessionId = Guid.NewGuid();
+            var taskId = Guid.NewGuid();
+            var agentId = Guid.NewGuid();
+            var agentName = $"dead-{agentId:N}"[..16];
+            // Recent on purpose: the delivery watchdog's own 10-minute window must not be able to
+            // reach these rows, so a failure here can only ever have come from the sweep under test.
+            var dispatched = DateTime.UtcNow.AddMinutes(-1);
+
+            await using var db = CreateContext();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "dead-session-test",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = sessionStatus,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = dispatched,
+                StartedAt = dispatched,
+                LastSeenAt = dispatched,
+                EndedAt = endedMinutesAgo is { } ago ? DateTime.UtcNow.AddMinutes(-ago) : null,
+                FailureReason = failureReason,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId,
+                Name = agentName,
+                Slug = agentName,
+                WorkingDirectory = Path.GetTempPath(),
+                Details = "Dead-session reconciliation test delegate.",
+                Status = AgentStatus.Running,
+                ModelLevel = AgentModelLevel.High,
+                IsPoolDelegate = true,
+                PersistentSessionId = sessionId.ToString("D"),
+                CreatedAt = dispatched,
+                UpdatedAt = dispatched,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "Dead session reconciliation test",
+                Goal = "Do the thing.",
+                Kind = AgentTaskKind.Worker,
+                Role = role,
+                ModelLevel = AgentModelLevel.High,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = Path.GetTempPath(),
+                AgentId = agentId,
+                AgentName = agentName,
+                AgentSessionId = detachSession ? null : sessionId,
+                Status = status,
+                ReplyTo = AgentTaskReplyTo.Session,
+                ParentSessionId = ParentSessionId,
+                CreatedAt = dispatched,
+                DispatchedAt = dispatched,
+            });
+            await db.SaveChangesAsync();
+
+            _sessions.Add(sessionId);
+            _agents.Add(agentId);
+            _tasks.Add(taskId);
+            return new SeededTask(taskId, sessionId, agentId);
+        }
+
+        public async Task DeleteSessionRowAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+        }
+
+        public async Task SetSessionStatusAsync(Guid sessionId, SessionStatus status)
+        {
+            await using var db = CreateContext();
+            await db.AgentSessions.Where(s => s.Id == sessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, status));
+        }
+
+        public async Task<AgentTask> ReadTaskAsync(Guid taskId)
+        {
+            await using var db = CreateContext();
+            return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        }
+
+        public async Task<AgentTaskLiveness.SessionSnapshot?> ReadSessionSnapshotAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            var row = await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.Status, s.EndedAt, s.FailureReason })
+                .SingleOrDefaultAsync();
+            return row is null
+                ? null
+                : new AgentTaskLiveness.SessionSnapshot(row.Status, row.EndedAt, row.FailureReason);
+        }
+
+        /// <summary>Everything queued into THIS scenario's parent session, and nothing else.</summary>
+        public async Task<List<string>> ParentNoteBodiesAsync()
+        {
+            await using var db = CreateContext();
+            return await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == ParentSessionId)
+                .Select(m => m.Body)
+                .ToListAsync();
+        }
+
+        public async Task<List<AttentionItemDto>> AttentionItemsAsync()
+        {
+            var service = new AttentionService(
+                CreateContext(), new FakeRunnerClient(), Options.Create(new SupervisionSettings()),
+                TimeProvider.System, NullLogger<AttentionService>.Instance);
+            var result = await service.GetAsync(CancellationToken.None);
+            return result.Items.Where(i => i.TaskId is { } t && _tasks.Contains(t)).ToList();
+        }
+
+        private async Task EnsureParentSessionAsync()
+        {
+            if (_parentSeeded)
+                return;
+            _parentSeeded = true;
+
+            await using var db = CreateContext();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = ParentSessionId,
+                DefinitionName = "dead-session-test-parent",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = DateTime.UtcNow.AddHours(-1),
+                StartedAt = DateTime.UtcNow.AddHours(-1),
+                LastSeenAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            _sessions.Add(ParentSessionId);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var db = CreateContext();
+            await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+            await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
+            await db.SessionQueuedMessages
+                .Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
+            await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();
+            await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
+    /// The runner's view, faked. It reports every session the database knows about — plus every one
+    /// an open task names — as <c>Running</c>, EXCEPT the ids a test puts in <see cref="Gone"/>.
+    ///
+    /// <para>That is not laziness, it is the shared-database rule applied to a fleet-global sweep: a
+    /// fake that returned an empty list would tell the sweep that every other suite's session is
+    /// gone too, and it would dutifully fail their tasks. Here the only rows this sweep can reach are
+    /// the ones the test itself declared dead.</para>
+    /// </summary>
+    private sealed class FakeRunnerClient : ISessionRunnerClient
+    {
+        public HashSet<Guid> Gone { get; } = [];
+        public Exception? ListError { get; set; }
+        public List<Guid> Killed { get; } = [];
+
+        public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
+        {
+            if (ListError is not null)
+                throw ListError;
+
+            await using var db = CreateContext();
+            var rows = await db.AgentSessions.AsNoTracking().Select(s => s.Id).ToListAsync(ct);
+            var named = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.AgentSessionId != null)
+                .Select(t => t.AgentSessionId!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+
+            return rows.Concat(named).Distinct()
+                .Where(id => !Gone.Contains(id))
+                .Select(id => new SessionRunnerSessionDto(
+                    id, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                    Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                    LastSequence: 10, HostPid: 4243))
+                .ToList();
+        }
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+        {
+            Killed.Add(sessionId);
+            throw new NotSupportedException("nothing in this sweep may kill a session");
+        }
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerBufferDto(sessionId, "> ", 10));
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
+            throw new NotSupportedException();
+    }
+
+    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+}

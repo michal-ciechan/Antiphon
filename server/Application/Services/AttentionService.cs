@@ -213,7 +213,9 @@ public sealed class AttentionService
             .Where(s => sessionIds.Contains(s.Id))
             .Select(s => new { s.Id, s.Status, s.EndedAt, s.FailureReason })
             .ToListAsync(ct);
-        var sessionById = sessions.ToDictionary(s => s.Id);
+        var sessionById = sessions.ToDictionary(
+            s => s.Id,
+            s => new AgentTaskLiveness.SessionSnapshot(s.Status, s.EndedAt, s.FailureReason));
 
         // "Has the session written anything at all" — the FailNeverStartedAsync predicate, asked in
         // one query for the whole candidate set rather than once per task.
@@ -233,24 +235,19 @@ public sealed class AttentionService
 
         foreach (var task in open)
         {
-            var session = task.AgentSessionId is Guid sid ? sessionById.GetValueOrDefault(sid) : null;
+            AgentTaskLiveness.SessionSnapshot? session =
+                task.AgentSessionId is Guid sid && sessionById.TryGetValue(sid, out var row) ? row : null;
             var elapsed = task.DispatchedAt is { } dispatched ? now - dispatched : (TimeSpan?)null;
             var digest = checkDigests.GetValueOrDefault(task.Id);
             var cost = costs.GetValueOrDefault(task.Id);
 
-            // 3. DeadSession. A Dispatched task always gets an AgentSessionId written in the same
-            // save as its status, so a null one is as broken as a Stopped row and belongs here too.
-            if (task.AgentSessionId is null || session is null
-                || session.Status is SessionStatus.Stopped or SessionStatus.Failed
-                || session.EndedAt is not null)
+            // 3. DeadSession. The predicate and its wording are BOTH shared with the dispatcher's
+            // dead-session sweep (CARD-0021) — this projection surfaces the state and that sweep
+            // acts on it, so a row here the sweep would not fail (or the reverse) would be a defect
+            // with no single place to fix it. See AgentTaskLiveness.
+            if (AgentTaskLiveness.IsDeadSession(task.AgentSessionId, session))
             {
-                var what = task.AgentSessionId is null
-                    ? "the task has no session at all"
-                    : session is null
-                        ? "its session row is gone"
-                        : session.EndedAt is not null && session.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
-                            ? $"its session ended at {session.EndedAt:u} while still marked {session.Status}"
-                            : $"its session is {session.Status}";
+                var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
 
                 items.Add(new AttentionItemDto(
                     AttentionKind.DeadSession,

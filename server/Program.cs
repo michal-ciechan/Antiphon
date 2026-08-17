@@ -272,6 +272,9 @@ try
     // Singleton because SessionReconciliationService is scoped — a per-sweep flap counter would
     // reset every 15s and bound nothing (CARD-0056).
     builder.Services.AddSingleton<SessionReAdoptionState>();
+    // Same reason, for the dead-session sweep's grace clock: AgentTaskDispatcher is scoped, so a
+    // per-tick map would restart the window every 5s and never fire (CARD-0021).
+    builder.Services.AddSingleton<DeadSessionFirstSeenState>();
     builder.Services.AddSingleton<WorkflowDefinitionVersionGate>();
     builder.Services.AddScoped<WorkflowDefinitionLoader>();
     builder.Services.AddScoped<WorkflowEngine>();
