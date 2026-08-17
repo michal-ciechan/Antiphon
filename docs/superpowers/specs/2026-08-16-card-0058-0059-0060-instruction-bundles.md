@@ -1,6 +1,6 @@
 # Instruction bundles, the CLAUDE.md floor, and reply style — one mechanism, three cards
 
-- **Status**: Slices 1–5 shipped (2026-08-16/17). Slice 6 (per-agent attachments + drift badge) deferred as planned.
+- **Status**: All six slices shipped (2026-08-16/17). Slice 6 (per-agent attachments + drift badge) landed 2026-08-17 — see §7.6.
 - **Cards**: CARD-0058 (attachable instruction bundles), CARD-0059 (CLAUDE.md in every agent's cwd), CARD-0060 (reply style as a choice)
 - **Date**: 2026-08-16
 - **Relates to**: CARD-0047 slice 4 (the check-interpreter prototype), CARD-0037 (pty ceilings), CARD-0056 (concurrent — collision map in §7)
@@ -37,7 +37,7 @@ The pty ceiling decides less than the card expects, because `--append-system-pro
 
 There is no stored composed text to drift. The composer runs at launch time in both launch paths (`AgentControlService` for standing agents, `AgentTaskDispatcher.BuildSpec` for delegates), so **a changed bundle reaches every agent at its next launch** — AlwaysOn agents are guaranteed a next launch by supervision; delegates get it at next fresh dispatch; a warm pool delegate keeps its launch-time bundles until retirement (≤ 60 min idle, `PoolIdleRetireMinutes`) — an accepted, bounded staleness, stated here so nobody "fixes" it by typing bundles into live sessions. The check-interpreter's `CheckInterpretation.Contract` becomes bundle `check-interpreter` with zero behavior change (the provisioner keeps reconciling the row; the constant just moves).
 
-Silent drift visibility (small, optional slice 6): stamp the composed hash onto `AgentSession` at launch; `AgentDetailDto` exposes `BundlesOutOfDate` = live session's stamp ≠ current composition. UI shows a subtle "restarts with updated instructions" badge.
+Silent drift visibility (small, optional slice 6): stamp the composed hash onto `AgentSession` at launch; `AgentDetailDto` exposes `BundlesOutOfDate` = live session's stamp ≠ current composition. UI shows a subtle "restarts with updated instructions" badge. **Shipped** — the stored value is the composition's stamp LINE rather than a hash of it, and the badge is inert by construction (no button anywhere offers to force a restart; a client test asserts the absence of one).
 
 ## 3. D5 — What moves into the default `delegate-basics` bundle
 
@@ -55,7 +55,7 @@ NOT moved: the nine CS8604 warnings and today's known-red tests (ephemeral state
 ## 4. D4 — Scope: per-role defaults + per-agent attachments; the project's own files ARE the per-project bundle
 
 - **Per-role** (delegates): a code-level map `role → bundle keys` (Worker/Plan/Review/Test → `delegate-basics`; Orchestrator → `orchestrator` [the moved `OrchestratorContract`] + `delegate-basics`; Check → `check-interpreter` stays on the standing agent, not the role). Delegate agent rows are ephemeral (`task-<id>`), so role defaults, not attachments, drive them.
-- **Per-agent** (standing agents): `AgentBundleAttachment` join rows, editable in the settings modal (slice 6 — deferrable; v1 works with role defaults + style + SystemPromptAppend alone).
+- **Per-agent** (standing agents): `AgentBundleAttachment` join rows, editable in the settings modal (slice 6 — deferrable; v1 works with role defaults + style + SystemPromptAppend alone). **Shipped 2026-08-17**, and it reaches delegates too — not through their ephemeral `task-<id>` rows, which nobody can attach to, but through a task PINNED to a standing agent, whose attachments the dispatcher composes after the role's defaults.
 - **Per-project**: deliberately NOT a bundle entity. Repo conventions live in the repo's own `AGENTS.md`/`CLAUDE.md`, per-cwd by construction; the CARD-0059 floor tells scratch-dir agents to go read them.
 
 ## 5. CARD-0059 — the CLAUDE.md floor (`AgentWorkspaceProvisioner`)
@@ -85,6 +85,15 @@ New service generalizing `CheckInterpreterProvisioner.PrepareWorkspace`, called 
 5. **[0060, 0058 visibility] Client.** `AgentSettingsModal.tsx`: SegmentedControl for style + read-only "carries bundles: delegate-basics v3f9a…" list from a new `AgentDetailDto.ComposedBundles` field; style chip in the agents list. Tests co-located, via `renderWithProviders` from `client/src/test/utils.ts` (never a raw MantineProvider): style renders/submits, chip shows, bundle list renders, absent style defaults Normal.
    **Shipped 2026-08-17**, plus the SegmentedControl in `AgentCreateModal` (Create gained the field, so leaving it unreachable at create would have been a half-wired knob). The chip renders NOTHING for `Normal` — a chip for the absence of a setting would appear on every agent in the list and say nothing.
 6. **[0058, deferrable] Per-agent attachments + drift badge.** `AgentBundleAttachment` entity + migration, endpoints on `AgentEndpoints`, modal multi-select; `AgentSession` launch-time composition hash + `BundlesOutOfDate` on the DTO. Tests: attach/detach round-trip, dedup vs role default, stale badge flips after a bundle edit. Ship only if slices 1–5 prove out.
+   **Shipped 2026-08-17.** Six decisions the plan left open, each forced by something that would otherwise have been wrong:
+   - **The stamp is the composition's stamp LINE, not a new hash** — `"board-api v1a2b3c4d, style-terse v9f8e7d6c"` — so the drift check is a string match over versions that are already content hashes. A second hash-of-the-hashes would be a second versioning scheme, which the card exists to remove.
+   - **Null and `""` are different answers on `AgentSession.ComposedBundleStamp`, and the migration does not backfill.** Null is NO EVIDENCE (a pre-column session; a card spawn, which composes no bundles) and can never raise the badge; `""` is a launch that composed nothing, which attaching a first bundle then genuinely contradicts. Backfilling would both claim old sessions carried instructions they never saw and clear badges that should have been raised.
+   - **A stored key whose bundle file was renamed is DROPPED with a warning, not thrown on.** `InstructionBundles.Get` throws by design, but attachment state is data and outlives the code it names; on a launch path that throw is an always-on agent that cannot start because an optional block was renamed. The drop is a Warning naming agent and key, and the agent's "carries bundles" list stops showing it.
+   - **One write path, not two.** Attachments ride `UpdateAgentRequest.BundleKeys` (null = unchanged, `[]` = detach all) with the rest of the modal's Save, so a half-succeeded save cannot leave an agent in a state nobody chose. The new endpoint is the read-only catalog, `GET /api/agents/bundles`.
+   - **Style bundles are not attachable**, and are rejected by name rather than as unknown keys: `ReplyStyle` already picks one, and a second control that could contradict it would give an agent two voices with nothing to dedup against.
+   - **The Check carve-out does not reopen for attachments.** The check interpreter is the agent most likely to be pinned and so most likely to carry one; the carve-out is about what it can OBEY (no tools, deny-all hook), not which map the instruction arrived through.
+
+   The delegate path honours a resolved agent's attachments (role defaults first, attachments after, deduped) — that is what makes `board-api` reachable for a task pinned to a standing agent without widening the role map. Delegate sessions are deliberately NOT stamped: a pool delegate's row is ephemeral and nobody opens its settings, and stamping would mean restructuring the dispatcher's transactional block for a badge with no reader. Slice 1's byte-for-byte property is re-pinned from this side, because slice 6 added a parameter to the call every launch path makes.
 
 ## 8. Collision map (CARD-0056, agent e6d3b184 — slices 2–4 already on master as e9643f5/8458961/77065c3)
 

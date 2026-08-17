@@ -30,8 +30,27 @@ accidentally-embedded file fails a test instead of reaching an agent.
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:
 `orchestrator` + `delegate-basics`; other work: `delegate-basics`; `Check` tasks: none, the
-specialist's contract is its own). `board-api` is in the catalog but on no role by default — it goes
-to standing agents that touch the board, via per-agent attachments (plan slice 6).
+specialist's contract is its own — and an attachment does not reopen that, because the carve-out is
+about what the specialist can obey).
+
+Anything else is an **attachment**: an `AgentBundleAttachment` row naming this agent and this key,
+edited in the agent settings modal. That is how `board-api` reaches an agent — it is in the catalog
+but on no role, because widening the role map would hand it to every delegate of that role. Role
+defaults come first in the composition, attachments after, and a bundle reachable both ways is
+composed once.
+
+Attachments are the only bundle state in the database. The key is a plain string with no foreign
+key, so a bundle file **renamed or deleted** in a later PR leaves rows naming nothing: those are
+dropped from the composition with a warning rather than failing the launch, and stop appearing in
+the agent's "carries bundles" list. If you rename a bundle, detach the old key.
+
+### The drift badge
+
+`AgentSession.ComposedBundleStamp` records the stamp line a launch composed (`board-api v1a2b3c4d`
+— stamps, never text). The agent DTOs expose `BundlesOutOfDate` when that no longer matches a
+composition recomputed now, and the UI shows a quiet badge. It is informational: the agent picks the
+new instructions up at its next launch and nothing forces one. Editing a bundle here will therefore
+badge every agent carrying it until each next launches — that is the mechanism working, not a fault.
 
 A rule that earns standing status gets PR'd into a file here. Recorded anywhere else — a findings
 doc, a skill, one orchestrator's habit — it reaches nobody.
