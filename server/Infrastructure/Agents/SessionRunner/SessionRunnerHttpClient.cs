@@ -310,7 +310,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.InputTokens,
             e.OutputTokens,
             e.CacheReadTokens,
-            e.CacheCreationTokens);
+            e.CacheCreationTokens,
+            e.IsApiError,
+            e.ApiErrorClass,
+            e.ApiErrorStatus);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

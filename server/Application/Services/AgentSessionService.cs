@@ -832,7 +832,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .Select(t => new TranscriptEntryDto(
                 t.Sequence, t.Kind, t.Uuid, t.ParentUuid, t.Timestamp, t.Role, t.Text,
                 t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason,
-                t.ApiCallId, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheCreationTokens))
+                t.ApiCallId, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheCreationTokens,
+                t.IsApiError, t.ApiErrorClass, t.ApiErrorStatus))
             .ToListAsync(ct);
 
         var last = entries.Count > 0 ? entries[^1].Sequence : since;

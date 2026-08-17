@@ -95,7 +95,15 @@ public sealed record RunnerTranscriptEvent(
     int? InputTokens = null,
     int? OutputTokens = null,
     int? CacheReadTokens = null,
-    int? CacheCreationTokens = null);
+    int? CacheCreationTokens = null,
+    // API-error stub evidence (CARD-0072): a turn killed by the API is written by Claude Code as a
+    // synthetic assistant record carrying these top-level fields; the normalizer stamps them on the
+    // stub's AssistantText and TurnEnd parts. Additive-optional ON PURPOSE — old runner → new
+    // server deserializes nulls, new runner → old server ignores unknown members, so the detached
+    // pty-hosts' shadow-copied binaries can lag with no lockstep deploy.
+    bool? IsApiError = null,
+    string? ApiErrorClass = null,
+    int? ApiErrorStatus = null);
 
 /// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
 public sealed record RunnerTranscriptDto(
@@ -269,6 +277,28 @@ public static class TranscriptKinds
 
         return false;
     }
+
+    /// <summary>
+    /// True when a transcript entry is part of an API-error stub — the ONE synthetic assistant
+    /// record Claude Code writes when a turn is killed by the API itself (usage limit, 5xx,
+    /// auth-expired), after its own retry is exhausted. Measured shape (23 real occurrences,
+    /// CARD-0072 sweep; 2026-08-17 live misses: two limit-killed delegates settled their error text
+    /// as a completed report): <c>message.model == "&lt;synthetic&gt;"</c>, top-level
+    /// <c>error</c>/<c>isApiErrorMessage: true</c>/<c>apiErrorStatus</c>, the error string as an
+    /// ordinary text block, and an ordinary <c>stop_sequence</c> TurnEnd of its own.
+    ///
+    /// <para>STRUCTURAL, unlike the three text-matching siblings above, because for once the raw
+    /// record hands us real fields — and text matching is rejected outright: an agent legitimately
+    /// WRITING ABOUT these errors must never trip it. <c>StopReason == "stop_sequence"</c> is also
+    /// not a synonym (35 stored stop_sequence rows against 2 known stubs).</para>
+    ///
+    /// <para>NOT a working-rule input: the stub carries its own TurnEnd, so all three lockstep
+    /// working/idle implementations already read idle with zero changes. This predicate is a
+    /// consumer-side discriminator (settlement, reply dispatch, retry, display) only.</para>
+    /// </summary>
+    public static bool IsApiErrorStub(string? kind, bool? isApiError) =>
+        isApiError == true
+        && kind is AssistantText or TurnEnd;
 
     /// <summary>Claude Code's built-in subagent tool, as it appears in a ToolCall's tool name.</summary>
     public const string AgentToolName = "Agent";

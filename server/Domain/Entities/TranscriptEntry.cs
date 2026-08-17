@@ -53,6 +53,21 @@ public class TranscriptEntry
     public int? CacheReadTokens { get; set; }
     public int? CacheCreationTokens { get; set; }
 
+    /// <summary>
+    /// The raw <c>isApiErrorMessage</c> flag of an API-error stub — the synthetic assistant record
+    /// Claude Code writes when a turn is killed by the API itself (CARD-0072). Stamped on the
+    /// stub's AssistantText and TurnEnd rows; null on rows persisted before the fields were carried
+    /// (deliberately no backfill) and on records that never carried the flag. Detection is
+    /// <c>TranscriptKinds.IsApiErrorStub(Kind, IsApiError)</c> — structural, never text-matched.
+    /// </summary>
+    public bool? IsApiError { get; set; }
+
+    /// <summary>The stub's raw top-level <c>error</c> class (rate_limit / server_error / authentication_failed / model_not_found).</summary>
+    public string? ApiErrorClass { get; set; }
+
+    /// <summary>The stub's <c>apiErrorStatus</c> HTTP status, when present (429, 529, 404 — absent on auth/connection-drop).</summary>
+    public int? ApiErrorStatus { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public AgentSession AgentSession { get; set; } = null!;

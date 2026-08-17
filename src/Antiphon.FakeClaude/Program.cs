@@ -53,6 +53,15 @@ namespace Antiphon.FakeClaude;
 ///  * <b>JSONL transcript</b> (opt-in, <c>ANTIPHON_FAKE_TRANSCRIPT_PATH</c>) — <c>user</c> line on
 ///    submit, <c>assistant</c> (+<c>stop_reason:"end_turn"</c>, +<c>message.id</c>) line on turn end,
 ///    in the shapes <c>TranscriptNormalizer</c> parses, so tailer/normalizer tests can run file-driven.
+///  * <b>API-error stub</b> (OPT-IN, <c>ANTIPHON_FAKE_API_ERROR=rate_limit|server_error|authentication_failed</c>)
+///    — a turn killed by the API itself (usage limit, 529, auth-expired) is written to the JSONL as
+///    ONE synthetic assistant record: <c>model:"&lt;synthetic&gt;"</c>, top-level <c>error</c> +
+///    <c>isApiErrorMessage:true</c> (+ numeric <c>apiErrorStatus</c> when the real class carries
+///    one), <c>stop_reason:"stop_sequence"</c>, and the error string as an ordinary text block —
+///    so the stub carries its OWN TurnEnd and the session reads idle (CARD-0072; shapes verbatim
+///    from the measured records). <c>ANTIPHON_FAKE_API_ERROR_AFTER_TURNS=N</c> (default 1) kills
+///    the Nth submitted turn ONLY; later turns respond normally, modelling the measured revival —
+///    a typed "Continue" into exactly this state worked immediately, six times across the sweep.
 ///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
 ///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
 ///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
@@ -405,6 +414,14 @@ internal static class Program
     // they submit as real turns.
     private static readonly string[] LocalCommands = ["/clear", "/model", "/status", "/help", "/config"];
 
+    // OPT-IN API-error stub (CARD-0072): which class kills a turn, and which turn dies. Read once —
+    // the values never change mid-run, and SubmitTurn is called from two burst paths.
+    private static readonly string? ApiErrorMode =
+        Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR") is { Length: > 0 } m ? m : null;
+    private static readonly int ApiErrorAfterTurns =
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_API_ERROR_AFTER_TURNS"), out var n) && n > 0 ? n : 1;
+    private static int _apiTurnCount;
+
     private static void SubmitTurn(
         Action<string> write, string text, string? transcriptPath, bool splitFinal = false)
     {
@@ -438,6 +455,22 @@ internal static class Program
         // stall the drain loop past the burst gap (glueing a following body+CR into one paste).
         if (transcriptPath is not null)
             AppendTranscript(transcriptPath, JsonUserLine(text));
+
+        // The armed turn dies on an API-error stub INSTEAD of answering (CARD-0072): the prompt was
+        // recorded above (real Claude records it — the API call happened and failed), then the one
+        // synthetic assistant record lands and the composer returns to prompt. No done pattern —
+        // a dead turn renders the error text, not " for Ns".
+        _apiTurnCount++;
+        if (ApiErrorMode is not null && _apiTurnCount == ApiErrorAfterTurns)
+        {
+            var (errorText, status) = ApiErrorShape(ApiErrorMode);
+            write(errorText + "\r\n");
+            write(IdleTitle);
+            if (transcriptPath is not null)
+                AppendTranscript(transcriptPath, JsonApiErrorStubLine(ApiErrorMode, status, errorText));
+            return;
+        }
+
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
         // Turn-end signals: the " for Ns" done pattern (survives ConPTY) AND the idle title (usually consumed).
@@ -589,6 +622,53 @@ internal static class Program
         },
     });
 
+    // The measured text+status per error class — verbatim from the real records (CARD-0072 sweep):
+    // 22× rate_limit/429 wall stubs, server_error 529 + no-status connection drop, 2× auth. An
+    // unknown mode still emits a structurally valid stub (isApiErrorMessage:true, class verbatim,
+    // no status) so classifier fall-through paths can be driven end to end.
+    private static (string Text, int? Status) ApiErrorShape(string mode) => mode switch
+    {
+        "rate_limit" => ("You've hit your session limit · resets 6:10pm (Europe/London)", 429),
+        "server_error" => ("API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.", 529),
+        "authentication_failed" => ("Login expired · Please run /login", null),
+        _ => ($"API Error: {mode}", null),
+    };
+
+    /// <summary>
+    /// The ONE synthetic assistant record Claude Code writes when a turn is killed by the API
+    /// (CARD-0072, shape verbatim from the 23 measured stubs): <c>model:"&lt;synthetic&gt;"</c>,
+    /// top-level <c>error</c>/<c>isApiErrorMessage:true</c>/(optional) <c>apiErrorStatus</c>,
+    /// <c>stop_reason:"stop_sequence"</c>, zeroed usage, and the error string as an ordinary text
+    /// block. It carries its OWN TurnEnd — which is why detection is a consumer-side predicate
+    /// (<c>TranscriptKinds.IsApiErrorStub</c>), never a working-rule change.
+    /// </summary>
+    private static string JsonApiErrorStubLine(string errorClass, int? status, string text)
+    {
+        var record = new Dictionary<string, object?>
+        {
+            ["type"] = "assistant",
+            ["uuid"] = Guid.NewGuid().ToString(),
+            ["timestamp"] = DateTime.UtcNow.ToString("o"),
+            ["error"] = errorClass,
+            ["isApiErrorMessage"] = true,
+            ["message"] = new
+            {
+                id = Guid.NewGuid().ToString(),
+                model = "<synthetic>",
+                role = "assistant",
+                stop_reason = "stop_sequence",
+                stop_sequence = "",
+                usage = new { input_tokens = 0, output_tokens = 0, cache_creation_input_tokens = 0, cache_read_input_tokens = 0 },
+                content = new object[] { new { type = "text", text } },
+            },
+        };
+        // Real stubs OMIT apiErrorStatus when the class has none (auth, connection drop) — model
+        // the absence, not a null, so the normalizer's "field missing" path is what gets driven.
+        if (status is not null)
+            record["apiErrorStatus"] = status;
+        return JsonSerializer.Serialize(record);
+    }
+
     // isMeta:true user records (caveats, command output) are system-injected, not the user talking —
     // TranscriptNormalizer.FromUser drops them before any rule sees them.
     private static string JsonMetaUserLine(string text) => JsonSerializer.Serialize(new
@@ -626,8 +706,17 @@ internal static class Program
     private static void AppendTranscript(string? path, string jsonLine)
     {
         if (string.IsNullOrEmpty(path)) return;
-        try { File.AppendAllText(path, jsonLine + "\n"); }
-        catch { /* transcript emission is best-effort test plumbing */ }
+        // RETRIED, not fire-and-forget: tests poll the file with File.ReadAllLines, whose read
+        // handle (FileShare.Read) blocks a concurrent append — and a swallowed IOException here
+        // loses the record FOREVER, which was the "last transcript line missing after a 10s poll"
+        // flake shape in FakeClaudeContractTests. The real Claude never loses a JSONL line to our
+        // readers; a fake that silently could was modelling a failure nothing has.
+        for (var attempt = 0; ; attempt++)
+        {
+            try { File.AppendAllText(path, jsonLine + "\n"); return; }
+            catch (IOException) when (attempt < 100) { Thread.Sleep(10); }
+            catch { return; /* anything else stays best-effort test plumbing */ }
+        }
     }
 
     private static bool Contains(byte[] haystack, byte[] needle)

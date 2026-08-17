@@ -559,6 +559,9 @@ public sealed class AgentSessionRuntime
                     OutputTokens = e.OutputTokens,
                     CacheReadTokens = e.CacheReadTokens,
                     CacheCreationTokens = e.CacheCreationTokens,
+                    IsApiError = e.IsApiError,
+                    ApiErrorClass = e.ApiErrorClass,
+                    ApiErrorStatus = e.ApiErrorStatus,
                     CreatedAt = now,
                 });
                 added = true;
@@ -598,6 +601,9 @@ public sealed class AgentSessionRuntime
         outputTokens = e.OutputTokens,
         cacheReadTokens = e.CacheReadTokens,
         cacheCreationTokens = e.CacheCreationTokens,
+        isApiError = e.IsApiError,
+        apiErrorClass = e.ApiErrorClass,
+        apiErrorStatus = e.ApiErrorStatus,
     };
 
     public async Task<bool> WaitForFirstDeltaAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)
