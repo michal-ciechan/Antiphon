@@ -335,6 +335,29 @@ describe('HomePage', () => {
     await waitFor(() => expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument())
   })
 
+  it('below 48em the home surface is the three bands, not the desktop rail squeezed narrow', async () => {
+    const original = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(max-width: 48em)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    try {
+      seed({ tasks: [task({})] })
+      renderWithProviders(<HomePage />)
+
+      expect(await screen.findByTestId('mobile-home')).toBeInTheDocument()
+      expect(screen.queryByTestId('project-switcher')).not.toBeInTheDocument()
+    } finally {
+      window.matchMedia = original
+    }
+  })
+
   it('remembers the chosen project across mounts', async () => {
     seed({
       agents: [
