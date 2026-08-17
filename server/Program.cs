@@ -250,6 +250,9 @@ try
     builder.Services.AddScoped<ProjectService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
+    // One card's work gathered from the four places it is recorded, correlated by the identifier
+    // everything already cites. Read-only; scoped because it is one query burst per request.
+    builder.Services.AddScoped<CardThreadService>();
     builder.Services.AddScoped<CardWorkflowRunFactory>();
     builder.Services.AddScoped<AgentService>();
     builder.Services.AddScoped<AgentControlService>();

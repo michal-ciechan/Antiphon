@@ -216,9 +216,12 @@ public sealed class GitWorkspaceService
     {
         var (code, stdout, _) = await RunAsync(
             workingDirectory, ct, "log", $"-{limit}", "--format=%H%x00%h%x00%an%x00%aI%x00%s%x01");
-        if (code != 0)
-            return [];
+        return code != 0 ? [] : ParseCommits(stdout);
+    }
 
+    /// <summary>Records written by the shared <c>%H %h %an %aI %s</c> format above.</summary>
+    private static IReadOnlyList<GitCommit> ParseCommits(string stdout)
+    {
         var commits = new List<GitCommit>();
         foreach (var record in stdout.Split('\x01', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -230,6 +233,59 @@ public sealed class GitWorkspaceService
             commits.Add(new GitCommit(fields[0], fields[1], fields[2], date.UtcDateTime, fields[4]));
         }
         return commits;
+    }
+
+    /// <summary>
+    /// Commits whose message cites <paramref name="needle"/>, newest first. Null — never an empty
+    /// list — when git could not answer, so a caller can tell "nothing cites this card" apart from
+    /// "there was no repo to ask".
+    /// </summary>
+    /// <remarks>
+    /// The needle is a LITERAL (a card identifier), but the search is an anchored extended regex
+    /// rather than <c>--fixed-strings</c>, because a substring search for <c>CARD-0067</c> also
+    /// matches <c>CARD-00670</c> — and the correlation this feeds has no foreign key behind it to
+    /// catch the false positive. The literal is escaped into the pattern, so nothing a caller can
+    /// name is interpreted as syntax.
+    ///
+    /// <para>Git greps the WHOLE message, so a commit citing the card only in its body counts —
+    /// which is why the boundary has to live in the pattern rather than in a post-filter over
+    /// subjects.</para>
+    ///
+    /// <para>Read-only by construction — see <see cref="RunReadOnlyAsync"/>.</para>
+    /// </remarks>
+    public async Task<IReadOnlyList<GitCommit>?> ListCommitsByGrepAsync(
+        string workingDirectory, string needle, int limit, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(needle))
+            return [];
+
+        var pattern = $"(^|[^A-Za-z0-9]){EscapeForPosixRegex(needle.Trim())}([^0-9]|$)";
+        var (code, stdout, stderr) = await RunReadOnlyAsync(
+            workingDirectory, ct,
+            "log", $"-{Math.Max(1, limit)}", "--extended-regexp", "--regexp-ignore-case",
+            $"--grep={pattern}", "--format=%H%x00%h%x00%an%x00%aI%x00%s%x01");
+        if (code != 0)
+        {
+            _logger.LogDebug("git log --grep failed in {Dir}: {Err}", workingDirectory, stderr);
+            return null;
+        }
+        return ParseCommits(stdout);
+    }
+
+    /// <summary>
+    /// POSIX ERE metacharacters, escaped. A card identifier contains none of them today; this is
+    /// here so that stays true of whatever else is ever grepped for.
+    /// </summary>
+    private static string EscapeForPosixRegex(string literal)
+    {
+        var escaped = new StringBuilder(literal.Length + 8);
+        foreach (var c in literal)
+        {
+            if (@".[]\()*+?{}|^$".Contains(c))
+                escaped.Append('\\');
+            escaped.Append(c);
+        }
+        return escaped.ToString();
     }
 
     /// <summary>
