@@ -10,9 +10,8 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { TbCheck, TbChevronDown, TbChevronRight, TbMessagePlus } from 'react-icons/tb'
+import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
 import {
   useMarkSectionReviews,
   useSectionReviews,
@@ -205,7 +204,7 @@ export function RenderedMarkdownReview({
             ) : (
               <Group gap={4} wrap="nowrap" align="flex-start">
                 <Box style={{ flexGrow: 1, minWidth: 0 }} data-testid={`section-body-${section.key}`}>
-                  <Markdown remarkPlugins={[remarkGfm]}>{section.content}</Markdown>
+                  <RenderedMarkdown>{section.content}</RenderedMarkdown>
                 </Box>
                 {controls(index)}
               </Group>
@@ -240,7 +239,7 @@ export function RenderedMarkdownReview({
         textDecoration: 'line-through',
       }}
     >
-      <Markdown remarkPlugins={[remarkGfm]}>{section.content}</Markdown>
+      <RenderedMarkdown>{section.content}</RenderedMarkdown>
     </Box>
   )
 
@@ -271,7 +270,7 @@ export function RenderedMarkdownReview({
                   }
             }
           >
-            <Markdown remarkPlugins={[remarkGfm]}>{block.text}</Markdown>
+            <RenderedMarkdown>{block.text}</RenderedMarkdown>
           </Box>
         ))}
       </Box>
@@ -331,10 +330,10 @@ export function RenderedMarkdownReview({
                       : { background: TINT[block.status], borderRadius: 4, padding: '0 8px' }
                   }
                 >
-                  <Markdown remarkPlugins={[remarkGfm]}>{block.text}</Markdown>
+                  <RenderedMarkdown>{block.text}</RenderedMarkdown>
                 </Box>
               ))
-            : section && <Markdown remarkPlugins={[remarkGfm]}>{section.content}</Markdown>}
+            : section && <RenderedMarkdown>{section.content}</RenderedMarkdown>}
         </Box>
       )
       const workIndex = entry.work ? indexByKey.get(entry.key) : undefined
