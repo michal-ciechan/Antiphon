@@ -78,8 +78,22 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
-Pass `-Worktree` when several delegates will write the same files at once, or when you want the
-change reviewable before it lands.
+That default is only safe when it is the only write-capable worker in there. Decide explicitly, every
+dispatch, don't just accept the default:
+
+- **Nothing else is currently active in the shared directory** → shared is fine.
+- **Anything else (worker or sub-orchestrator) is still running there** → pass `-Worktree`, even if
+  the file scopes look unrelated. The collision isn't only "two agents touch the same file" — it's
+  shared commit boundaries (`git add -A` from one agent can sweep up another's uncommitted work),
+  shared build/test output, shared `git status`. Two Code workers editing disjoint files in the same
+  checkout at the same time is still a collision risk.
+- **You want the change reviewable before it lands, or several delegates will genuinely touch the
+  same files** → `-Worktree` regardless of the above.
+
+(Live miss 2026-08-18: CARD-0054 slice 1 landed in the shared directory; a second, unrelated Code
+worker was then queued while it was still running, without stopping to ask this question first. Caught
+before either wrote anything wrong — fixed by giving the second task `-Worktree`. The checklist above
+is the fix, so the next dispatch doesn't rely on catching it by luck.)
 
 **A sub-orchestrator defaults to its own worktree** (or just its own `-Dir` when you point it
 elsewhere) — it fans out writers, so it must own something. Its workers land on ITS branch and it
