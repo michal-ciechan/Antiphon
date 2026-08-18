@@ -422,7 +422,7 @@ public sealed class AgentTaskService
 
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
-            $"Retried at {ModelLevelAliases.ForClaude(task.ModelLevel)}.", ct);
+            $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct);
         return await SummaryOfAsync(task, ct);
     }
 
@@ -444,12 +444,13 @@ public sealed class AgentTaskService
         {
             throw new ConflictException(
                 $"Task {DelegationReportFormatter.Short(id)} is already at the top of the ladder "
-                + $"({EscalationAlias(task, from)}).");
+                + $"({ModelLevelAliases.For(task.AgentKind, from)}).");
         }
 
         task.EscalatedFrom = from;
         task.ModelLevel = target.Value;
-        var detail = $"Escalated {EscalationAlias(task, from)} -> {EscalationAlias(task, target.Value)}."
+        var detail = $"Escalated {ModelLevelAliases.For(task.AgentKind, from)} "
+            + $"-> {ModelLevelAliases.For(task.AgentKind, target.Value)}."
             + SameModelEscalationNote(task, from, target.Value)
             + (reason is null ? string.Empty : $" {reason}");
 
@@ -469,20 +470,6 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// The model-family alias to NAME in an escalation text, for the program the task actually runs
-    /// on (CARD-0084 S3). Deliberately private and confined to the two escalation messages rather
-    /// than a general <c>For(kind, level)</c> helper: replacing the ~12 display-only
-    /// <see cref="ModelLevelAliases.ForClaude"/> call sites is S4's mechanical sweep, and doing it
-    /// piecemeal here would leave the codebase with two half-migrated conventions. An escalation
-    /// text is in scope now because it is the one that would otherwise state something FALSE — it
-    /// promises a bigger model by name.
-    /// </summary>
-    private static string EscalationAlias(AgentTask task, AgentModelLevel level) =>
-        task.AgentKind == AgentKind.Grok
-            ? ModelLevelAliases.ForGrok(level)
-            : ModelLevelAliases.ForClaude(level);
-
-    /// <summary>
     /// What an escalation buys when both rungs map to the SAME model. Grok's ladder is shorter than
     /// the generic one — Frontier and High are both grok-4.6 — so a Debug escalation on Grok moves
     /// no model at all. That is still worth doing (a fresh context is most of what escalation buys
@@ -490,17 +477,21 @@ public sealed class AgentTaskService
     /// block rather than the dead end), but the event must SAY so. Silence here would read as a
     /// promise of a larger model that xAI does not currently offer, and the operator would spend
     /// the escalation expecting something the ladder cannot deliver.
+    ///
+    /// <para>The test is the ALIAS COMPARISON, not the kind (CARD-0084 S4): now that
+    /// <see cref="ModelLevelAliases.For"/> answers per kind, "both rungs are the same model" is
+    /// exactly what a short ladder looks like, whoever owns it — so a future kind that collapses
+    /// two rungs gets the note with no edit here. Claude's four aliases are all distinct and
+    /// <see cref="ResolveEscalationTarget"/> never returns the current rung, so a Claude escalation
+    /// can never take this arm and its event text is byte-identical to before.</para>
     /// </summary>
     private static string SameModelEscalationNote(AgentTask task, AgentModelLevel from, AgentModelLevel to)
     {
-        if (task.AgentKind != AgentKind.Grok)
+        var alias = ModelLevelAliases.For(task.AgentKind, to);
+        if (!string.Equals(ModelLevelAliases.For(task.AgentKind, from), alias, StringComparison.Ordinal))
             return string.Empty;
 
-        var alias = ModelLevelAliases.ForGrok(to);
-        if (!string.Equals(ModelLevelAliases.ForGrok(from), alias, StringComparison.Ordinal))
-            return string.Empty;
-
-        return $" On {AgentKind.Grok} the {from} and {to} tiers both map to {alias}, so this is a"
+        return $" On {task.AgentKind} the {from} and {to} tiers both map to {alias}, so this is a"
             + " FRESH CONTEXT at the same model, not a larger one.";
     }
 
@@ -569,7 +560,7 @@ public sealed class AgentTaskService
         _logger.LogInformation(
             "Task {ShortId} requeued as attempt {Attempt} at {Alias}: {Detail}",
             DelegationReportFormatter.Short(task.Id), task.Attempt,
-            ModelLevelAliases.ForClaude(task.ModelLevel), detail);
+            ModelLevelAliases.For(task.AgentKind, task.ModelLevel), detail);
     }
 
     /// <summary>

@@ -420,7 +420,90 @@ public class GrokDelegateDispatchTests
         detail.ShouldNotContain("grok");
     }
 
+    // ---- dispatch event text (CARD-0084 S4) ----------------------------------------------------
+
+    [Test]
+    public async Task a_cold_grok_dispatch_records_a_grok_model_in_its_event()
+    {
+        // The Dispatched event is the durable record of what was started. It outlives the ephemeral
+        // agent row it names, so "(sonnet)" on a Grok delegate is permanently wrong evidence — and
+        // this is the event the board renders and a later reader reconstructs the run from.
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateDispatchHarness();
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var detail = await LatestDispatchDetailAsync(task.Id);
+        detail.ShouldStartWith("Dispatched to agent ");
+        detail.ShouldContain("(grok-4.5)", customMessage: "the seeded task is Medium");
+        detail.ShouldNotContain("sonnet");
+    }
+
+    [Test]
+    public async Task a_cold_claude_dispatch_event_reads_exactly_as_it_did_before()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateDispatchHarness();
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.ClaudeCode);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var detail = await LatestDispatchDetailAsync(task.Id);
+        detail.ShouldContain("(sonnet) in " + workspace.Path);
+        // The alias, not the bare word: the harness's own temp directory is named after this
+        // card and appears in the same string.
+        detail.ShouldNotContain("grok-4");
+    }
+
+    [Test]
+    public async Task a_warm_grok_reuse_records_a_grok_model_in_its_event()
+    {
+        // The reuse path builds its own event text — a separate call site, and the one that fires
+        // on the cheap dispatches, so it is the text an operator sees most often.
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateDispatchHarness();
+        await SeedWarmAgentAsync(workspace.Path, AgentKind.Grok);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Grok);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var detail = await LatestDispatchDetailAsync(task.Id);
+        detail.ShouldStartWith("Reused warm delegate ");
+        detail.ShouldContain("(grok-4.5)");
+        detail.ShouldNotContain("sonnet");
+    }
+
+    [Test]
+    public async Task a_warm_claude_reuse_event_reads_exactly_as_it_did_before()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateDispatchHarness();
+        await SeedWarmAgentAsync(workspace.Path, AgentKind.ClaudeCode);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.ClaudeCode);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var detail = await LatestDispatchDetailAsync(task.Id);
+        detail.ShouldStartWith("Reused warm delegate ");
+        detail.ShouldContain("(sonnet) in " + workspace.Path + " — no cold start");
+        // The alias, not the bare word: the harness's own temp directory is named after this
+        // card and appears in the same string.
+        detail.ShouldNotContain("grok-4");
+    }
+
     // ---- helpers -------------------------------------------------------------------------------
+
+    private static async Task<string> LatestDispatchDetailAsync(Guid taskId)
+    {
+        await using var db = CreateContext();
+        var detail = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Dispatched)
+            .OrderByDescending(e => e.At)
+            .Select(e => e.Detail)
+            .FirstOrDefaultAsync();
+        return detail.ShouldNotBeNull();
+    }
 
     private static AgentLaunchSpec SpecOf(AgentTaskDispatcher dispatcher, AgentTask task)
     {

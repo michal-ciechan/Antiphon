@@ -75,8 +75,9 @@ public static class DelegationReportFormatter
             carried = carried[..max] + $"\n[... clipped — full text: /api/agent-tasks/{task.Id} ...]";
 
         var tier = task.EscalatedFrom is { } from
-            ? $"at {ModelLevelAliases.ForClaude(from)}, escalated to {ModelLevelAliases.ForClaude(task.ModelLevel)}"
-            : $"at {ModelLevelAliases.ForClaude(task.ModelLevel)}";
+            ? $"at {ModelLevelAliases.For(task.AgentKind, from)}, "
+                + $"escalated to {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}"
+            : $"at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}";
 
         return $"""
             --- previous attempt ---
@@ -176,7 +177,7 @@ public static class DelegationReportFormatter
 
         var bits = new List<string>();
         if (!string.IsNullOrWhiteSpace(task.Title)) bits.Add(task.Title.Trim());
-        bits.Add(ModelLevelAliases.ForClaude(task.ModelLevel));
+        bits.Add(ModelLevelAliases.For(task.AgentKind, task.ModelLevel));
         if (task.DispatchedAt is { } started && task.CompletedAt is { } finished)
             bits.Add(FormatDuration(finished - started));
         if (task.CostUsd > 0) bits.Add($"${task.CostUsd:0.000}");

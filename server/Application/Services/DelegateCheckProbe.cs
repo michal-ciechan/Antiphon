@@ -62,6 +62,13 @@ public sealed class DelegateCheckProbe
         string ShortId,
         string Title,
         AgentTaskKind Kind,
+        /// <summary>
+        /// WHICH AGENT PROGRAM is running the task — a different axis from <see cref="Kind"/>
+        /// (worker-vs-orchestrator). Carried so the digest can NAME the tier on the ladder the task
+        /// actually runs (CARD-0084 S4); a Grok delegate whose digest said <c>tier=fable</c> would
+        /// be handing the interpreter a false fact about the thing it is reasoning over.
+        /// </summary>
+        AgentKind AgentKind,
         AgentTaskRole Role,
         AgentModelLevel ModelLevel,
         AgentTaskStatus Status,
@@ -148,6 +155,7 @@ public sealed class DelegateCheckProbe
             DelegationReportFormatter.Short(task.Id),
             task.Title,
             task.Kind,
+            task.AgentKind,
             task.Role,
             task.ModelLevel,
             task.Status,
@@ -309,7 +317,7 @@ public sealed class DelegateCheckProbe
           .Append(task.Settled ? " (SETTLED)" : string.Empty)
           .Append(" kind=").Append(task.Kind)
           .Append(" role=").Append(task.Role)
-          .Append(" tier=").Append(ModelLevelAliases.ForClaude(task.ModelLevel))
+          .Append(" tier=").Append(ModelLevelAliases.For(task.AgentKind, task.ModelLevel))
           .Append(" attempt=").Append(task.Attempt).Append('/').Append(task.MaxAttempts)
           .AppendLine();
         sb.Append("  dispatched=")

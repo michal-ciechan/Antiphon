@@ -303,7 +303,7 @@ public sealed class AgentTaskDispatcher
                 var tracked = await _db.AgentTasks.FirstAsync(t => t.Id == task.Id, ct);
                 tracked.FailureReason =
                     $"Stalled: no transcript progress for {(int)(now - stalledSince).TotalMinutes} minutes "
-                    + $"at {ModelLevelAliases.ForClaude(task.ModelLevel)}.";
+                    + $"at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.";
                 await _tasks.EscalateAsync(
                     task.Id, policy.EscalateTo, ct,
                     reason: $"Auto: no progress for {(int)window.TotalMinutes}+ minutes.");
@@ -941,7 +941,8 @@ public sealed class AgentTaskDispatcher
             AgentTaskId = claimed.Id,
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
-            Detail = $"Dispatched to agent '{agent.Name}' ({ModelLevelAliases.ForClaude(claimed.ModelLevel)}) in {claimed.WorkingDirectory}",
+            Detail = $"Dispatched to agent '{agent.Name}' "
+                + $"({ModelLevelAliases.For(claimed.AgentKind, claimed.ModelLevel)}) in {claimed.WorkingDirectory}",
             At = now,
         });
 
@@ -984,7 +985,7 @@ public sealed class AgentTaskDispatcher
         _logger.LogInformation(
             "Dispatched task {ShortId} ({Kind}/{Role} at {Alias}) to session {SessionId} in {Dir}",
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
-            ModelLevelAliases.ForClaude(claimed.ModelLevel), session.Id, claimed.WorkingDirectory);
+            ModelLevelAliases.For(claimed.AgentKind, claimed.ModelLevel), session.Id, claimed.WorkingDirectory);
         return true;
     }
 
@@ -1410,7 +1411,8 @@ public sealed class AgentTaskDispatcher
             AgentTaskId = claimed.Id,
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
-            Detail = $"Reused warm delegate '{agent.Name}' ({ModelLevelAliases.ForClaude(claimed.ModelLevel)}) "
+            Detail = $"Reused warm delegate '{agent.Name}' "
+                + $"({ModelLevelAliases.For(claimed.AgentKind, claimed.ModelLevel)}) "
                 + $"in {claimed.WorkingDirectory} — no cold start"
                 + (previous is not null && previous.RootTaskId != claimed.RootTaskId
                     ? "; unrelated to its last task, focused /compact first"
