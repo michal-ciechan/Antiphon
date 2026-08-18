@@ -50,9 +50,18 @@ public class GrokDeliveryShapeTests
     };
 
     /// <summary>
-    /// Grok's join, applied to a body exactly as the measured composer applies it.
+    /// Grok's join, applied to the body the composer actually receives. The real delivery path
+    /// LF-normalizes every body before anything touches the pty
+    /// (<see cref="PtyInputEncoding.NormalizeBody"/>, called from
+    /// <c>SessionMessageQueueService.DeliverAsync</c>), so the drop has to be simulated over the
+    /// NORMALIZED form. Dropping LFs from raw text instead leaves a CR standing between the lines
+    /// on Windows, where this source file's own CRLF endings reach the un-flattened pointer through
+    /// <c>StringBuilder.AppendLine</c> and the raw string literals — an artefact of the build
+    /// machine's line endings, which the composer never sees and which made the join look
+    /// survivable here while it is not.
     /// </summary>
-    private static string AsGrokWouldReceive(string typed) => typed.Replace("\n", "");
+    private static string AsGrokWouldReceive(string typed) =>
+        PtyInputEncoding.NormalizeBody(typed).Replace("\n", "");
 
     // ---- the ceiling ---------------------------------------------------------------------------
 
