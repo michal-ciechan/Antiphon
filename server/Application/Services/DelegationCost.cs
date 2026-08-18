@@ -4,9 +4,14 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// What a delegated session's token counters cost, per tier. Claude Code does not report a price
-/// per turn, and the whole point of the tier ladder is that cheap work stays cheap — so the board
-/// and the per-root ceiling need SOME number.
+/// What a delegated session's token counters cost, per agent KIND and tier. Claude Code does not
+/// report a price per turn, and the whole point of the tier ladder is that cheap work stays cheap —
+/// so the board and the per-root ceiling need SOME number.
+///
+/// Kind matters because the tier is an abstraction over model families that are priced nothing
+/// alike: a Grok Frontier task run through the Claude-shaped ladder would be billed at fable's
+/// $10/$50 instead of grok-4.6's $2/$6, overstating it several-fold and throttling a run on spend
+/// that never happened (CARD-0084 S5). The kind parameter defaults to ClaudeCode everywhere.
 ///
 /// The four counters are priced at four different rates (CARD-0023). Collapsing them and applying
 /// the input rate to the total prices a cache READ — about a tenth of base input — as if it were
@@ -30,10 +35,16 @@ public static class DelegationCost
     /// is priced by the rates in force then, so a backfill of old rows can't reprice history and
     /// an introductory window closes on its own date rather than on the day someone re-runs this.
     /// </summary>
+    /// <param name="kind">
+    /// Which agent kind ran the work. Optional and defaulting to <see cref="AgentKind.ClaudeCode"/>
+    /// so every pre-CARD-0084 caller, and every stored row (the column's own default), prices
+    /// byte-for-byte as it did before kinds existed.
+    /// </param>
     public static decimal Estimate(
-        DelegationPricingSettings pricing, AgentModelLevel level, TokenSpend spend, DateTime atUtc)
+        DelegationPricingSettings pricing, AgentModelLevel level, TokenSpend spend, DateTime atUtc,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
-        var rates = RatesFor(pricing, level, atUtc);
+        var rates = RatesFor(pricing, level, atUtc, kind);
         var cost =
             (spend.InputTokens / 1_000_000m * rates.InputPerMillion)
             + (spend.CacheReadTokens / 1_000_000m * rates.CacheReadPerMillion)
@@ -42,10 +53,12 @@ public static class DelegationCost
         return Math.Round(cost, 6, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>The four per-million rates in force for a tier at a moment in time.</summary>
-    public static ModelRates RatesFor(DelegationPricingSettings pricing, AgentModelLevel level, DateTime atUtc)
+    /// <summary>The four per-million rates in force for a kind's tier at a moment in time.</summary>
+    public static ModelRates RatesFor(
+        DelegationPricingSettings pricing, AgentModelLevel level, DateTime atUtc,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
-        var entry = Lookup(pricing, level);
+        var entry = Lookup(pricing, level, kind);
         var promo = entry.PromoAppliesAt(atUtc);
         var input = promo ? entry.PromoInputPerMillion!.Value : entry.InputPerMillion;
         var output = promo ? entry.PromoOutputPerMillion!.Value : entry.OutputPerMillion;
@@ -59,8 +72,25 @@ public static class DelegationCost
             entry.CacheWritePerMillion ?? input * pricing.CacheWriteMultiplier);
     }
 
-    private static ModelRateSettings Lookup(DelegationPricingSettings pricing, AgentModelLevel level)
+    /// <summary>
+    /// (kind, level) → (kind, High) → (level) → (High) → the shipped High rate. The kind overlay
+    /// is consulted first and FALLS THROUGH rather than terminating: a kind whose overlay is
+    /// missing the tier, or absent entirely, lands on the Claude-shaped ladder exactly as it did
+    /// before the overlay existed — wrong for a non-Claude kind, but a real number, and the
+    /// alternative (zero) would put the per-root ceiling permanently out of reach.
+    /// </summary>
+    private static ModelRateSettings Lookup(
+        DelegationPricingSettings pricing, AgentModelLevel level, AgentKind kind)
     {
+        if (pricing.KindRates is { } kindRates && kindRates.TryGetValue(kind.ToString(), out var forKind)
+            && forKind is not null)
+        {
+            if (forKind.TryGetValue(level.ToString(), out var kindEntry))
+                return kindEntry;
+            if (forKind.TryGetValue(nameof(AgentModelLevel.High), out var kindHigh))
+                return kindHigh;
+        }
+
         if (pricing.Rates.TryGetValue(level.ToString(), out var entry))
             return entry;
         if (pricing.Rates.TryGetValue(nameof(AgentModelLevel.High), out var high))

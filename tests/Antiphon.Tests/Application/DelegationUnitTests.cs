@@ -757,6 +757,228 @@ public class DelegationCostTests
 }
 
 /// <summary>
+/// CARD-0084 S5 — the per-KIND rate overlay. The tier ladder is an abstraction over model families
+/// that are priced nothing alike, so before this existed a Grok task was billed at whatever Claude
+/// model shares its rung: a Grok Frontier delegate priced at fable's $10/$50 instead of grok-4.6's
+/// $2/$6, wrong by ~3.8x on a real cache-heavy session. That error runs in the CONSERVATIVE
+/// direction — the per-root ceiling gates dispatch on the sum of these figures, so an inflated one
+/// blocks work on spend that never happened.
+///
+/// Rates are xAI's published list prices (https://docs.x.ai/docs/models, retrieved 2026-08-18).
+/// Everything here also exists to pin the other half of the contract: with the overlay shipped,
+/// Claude prices IDENTICALLY to before, for every tier, promo window and fallback.
+/// </summary>
+[Category("Unit")]
+public class DelegationKindPricingTests
+{
+    private static readonly DelegationPricingSettings Pricing = new();
+
+    private static readonly DateTime DuringPromo = new(2026, 8, 10, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime AfterPromo = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private static readonly AgentModelLevel[] AllLevels =
+        [AgentModelLevel.Frontier, AgentModelLevel.High, AgentModelLevel.Medium, AgentModelLevel.Low];
+
+    /// <summary>A real Grok delegate's shape: mostly cache reads, which is where kind matters most.</summary>
+    private static readonly TokenSpend Session = new(18_400, 742_000, 61_500, 12_300);
+
+    [Test]
+    public void omitting_the_kind_prices_exactly_as_claude_code_at_every_tier_and_in_the_promo_window()
+    {
+        // The whole safety claim of this slice: every pre-existing caller passes no kind, and every
+        // stored row carries the column default. Neither may move by a cent.
+        foreach (var level in AllLevels)
+        {
+            foreach (var at in new[] { DuringPromo, AfterPromo })
+            {
+                DelegationCost.RatesFor(Pricing, level, at)
+                    .ShouldBe(DelegationCost.RatesFor(Pricing, level, at, AgentKind.ClaudeCode), $"{level} @ {at:d}");
+                DelegationCost.Estimate(Pricing, level, Session, at)
+                    .ShouldBe(DelegationCost.Estimate(Pricing, level, Session, at, AgentKind.ClaudeCode));
+            }
+        }
+    }
+
+    [Test]
+    public void the_claude_ladder_still_reads_its_published_list_price_with_the_overlay_shipped()
+    {
+        // Duplicated from DelegationCostTests deliberately: that test proves the table, this one
+        // proves the OVERLAY did not shadow it. Fable $10/$50, Opus $5/$25, Sonnet $3/$15, Haiku $1/$5.
+        var expected = new (AgentModelLevel Level, decimal In, decimal Out)[]
+        {
+            (AgentModelLevel.Frontier, 10m, 50m),
+            (AgentModelLevel.High, 5m, 25m),
+            (AgentModelLevel.Medium, 3m, 15m),
+            (AgentModelLevel.Low, 1m, 5m),
+        };
+
+        foreach (var (level, input, output) in expected)
+        {
+            var rates = DelegationCost.RatesFor(Pricing, level, AfterPromo, AgentKind.ClaudeCode);
+            rates.InputPerMillion.ShouldBe(input, $"{level} input rate");
+            rates.OutputPerMillion.ShouldBe(output, $"{level} output rate");
+        }
+    }
+
+    [Test]
+    public void the_shipped_grok_table_is_xais_published_list_price()
+    {
+        // https://docs.x.ai/docs/models, retrieved 2026-08-18, sub-200k tier:
+        //   grok-4.6  $2.00 in / $6.00 out / $0.50 cached input   (Frontier and High — ForGrok)
+        //   grok-4.5  $2.00 in / $6.00 out / $0.30 cached input   (Medium and Low)
+        // Cache WRITE is $2.00 on both: xAI publishes no cache-write price, so a cache write is
+        // ordinary input — Anthropic's 1.25x TTL premium does not exist here.
+        var expected = new (AgentModelLevel Level, decimal CachedIn)[]
+        {
+            (AgentModelLevel.Frontier, 0.50m),
+            (AgentModelLevel.High, 0.50m),
+            (AgentModelLevel.Medium, 0.30m),
+            (AgentModelLevel.Low, 0.30m),
+        };
+
+        foreach (var (level, cachedIn) in expected)
+        {
+            var rates = DelegationCost.RatesFor(Pricing, level, AfterPromo, AgentKind.Grok);
+            rates.InputPerMillion.ShouldBe(2m, $"{level} input rate");
+            rates.OutputPerMillion.ShouldBe(6m, $"{level} output rate");
+            rates.CacheReadPerMillion.ShouldBe(cachedIn, $"{level} cached-input rate");
+            rates.CacheWritePerMillion.ShouldBe(
+                2m, $"{level} cache-write rate — xAI publishes none, so it is billed as input");
+        }
+    }
+
+    [Test]
+    public void the_claude_cache_multipliers_do_not_leak_onto_grok()
+    {
+        // Both would be wrong, in opposite directions: 0.10x would price grok-4.6's cached input at
+        // $0.20 against a published $0.50, and 1.25x would invent a cache-write premium xAI does
+        // not charge. Pinned because the multipliers are what a rate entry falls back to when a
+        // future edit drops the explicit pins.
+        var rates = DelegationCost.RatesFor(Pricing, AgentModelLevel.High, AfterPromo, AgentKind.Grok);
+
+        rates.CacheReadPerMillion.ShouldNotBe(rates.InputPerMillion * Pricing.CacheReadMultiplier);
+        rates.CacheWritePerMillion.ShouldBe(rates.InputPerMillion, "no TTL premium is published");
+    }
+
+    [Test]
+    public void the_sonnet_introductory_window_does_not_reach_grok()
+    {
+        // The promo is a property of a Claude rate ENTRY, and Grok's entries carry none — so the
+        // Medium rung must read the same price inside the window as outside it.
+        DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, DuringPromo, AgentKind.Grok)
+            .ShouldBe(DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, AfterPromo, AgentKind.Grok));
+    }
+
+    [Test]
+    public void a_grok_escalation_from_high_to_frontier_costs_the_same_because_both_are_grok_4_6()
+    {
+        // ForGrok maps Frontier and High to the same model. The ladder still buys a fresh context;
+        // it does not buy a dearer one, and the price must say so rather than imply otherwise.
+        DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok)
+            .ShouldBe(DelegationCost.Estimate(Pricing, AgentModelLevel.High, Session, AfterPromo, AgentKind.Grok));
+
+        // ...and Medium/Low likewise share grok-4.5.
+        DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok)
+            .ShouldBe(DelegationCost.Estimate(Pricing, AgentModelLevel.Low, Session, AfterPromo, AgentKind.Grok));
+    }
+
+    /// <summary>
+    /// The worked example, priced by hand from the published rates. A Grok 4.6 delegate's
+    /// dispatch-to-settle window as <c>GrokTranscriptNormalizer</c> records it — one
+    /// <c>turn_completed.usage</c> per turn, four counters each, summed by
+    /// <see cref="DelegationUsageRollup"/>: 18,400 uncached input, 742,000 cached reads, 61,500
+    /// cache writes, 12,300 output.
+    /// </summary>
+    [Test]
+    public void a_grok_session_is_priced_from_grok_rates_not_from_the_claude_rung_it_shares()
+    {
+        //  18,400 / 1M x $2.00 = 0.036800
+        // 742,000 / 1M x $0.50 = 0.371000
+        //  61,500 / 1M x $2.00 = 0.123000
+        //  12,300 / 1M x $6.00 = 0.073800
+        var grok = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok);
+        grok.ShouldBe(0.604600m);
+
+        // grok-4.5 differs only in the cached-input rate ($0.30): 742,000 x $0.30 = 0.222600.
+        DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok)
+            .ShouldBe(0.456200m);
+
+        // What the same session cost before this slice — the fable rung it happens to share.
+        var asClaudeFrontier = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo);
+        asClaudeFrontier.ShouldBe(2.309750m);
+        asClaudeFrontier.ShouldBeGreaterThan(grok * 3m, "the miss this slice closes is roughly 3.8x");
+    }
+
+    [Test]
+    public void a_kind_with_no_overlay_prices_on_the_claude_ladder_rather_than_at_zero()
+    {
+        // Codex and OpenCode are not dispatchable kinds today (S2's allowlist) and have no rates.
+        // A wrong-but-real number keeps the per-root ceiling reachable; zero would not.
+        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        {
+            DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, AfterPromo, kind)
+                .ShouldBe(DelegationCost.RatesFor(Pricing, AgentModelLevel.Medium, AfterPromo), kind.ToString());
+        }
+    }
+
+    [Test]
+    public void a_tier_missing_from_a_kinds_overlay_falls_back_to_that_kinds_high_rate()
+    {
+        // NOT to Claude's rate for the tier — a partial overlay is still the right provider.
+        var partial = new DelegationPricingSettings
+        {
+            KindRates = new()
+            {
+                [nameof(AgentKind.Grok)] = new()
+                {
+                    [nameof(AgentModelLevel.High)] = new() { InputPerMillion = 2m, OutputPerMillion = 6m },
+                },
+            },
+        };
+
+        var medium = DelegationCost.RatesFor(partial, AgentModelLevel.Medium, AfterPromo, AgentKind.Grok);
+        medium.InputPerMillion.ShouldBe(2m, "the kind's own High rung, not Sonnet's $3");
+        medium.OutputPerMillion.ShouldBe(6m);
+    }
+
+    [Test]
+    public void an_overlay_with_nothing_usable_in_it_falls_through_to_the_tier_ladder()
+    {
+        // A config edit that leaves an empty (or wholly mistyped) kind block must land on the
+        // Claude ladder — wrong for the provider, but a real rate. Pricing at zero would make the
+        // per-root ceiling unreachable, which is the failure this fallback chain exists to prevent.
+        var emptyBlock = new DelegationPricingSettings
+        {
+            KindRates = new() { [nameof(AgentKind.Grok)] = new() },
+        };
+
+        DelegationCost.RatesFor(emptyBlock, AgentModelLevel.Medium, AfterPromo, AgentKind.Grok)
+            .ShouldBe(DelegationCost.RatesFor(emptyBlock, AgentModelLevel.Medium, AfterPromo));
+    }
+
+    [Test]
+    public void a_grok_task_with_every_table_emptied_still_costs_more_than_nothing()
+    {
+        // Both tables gone: the last resort is the built-in High rate, for a kind as for a tier.
+        var emptied = new DelegationPricingSettings { Rates = new(), KindRates = new() };
+
+        DelegationCost.Estimate(
+            emptied, AgentModelLevel.Medium, new TokenSpend(1_000_000, 0, 0, 0), AfterPromo, AgentKind.Grok)
+            .ShouldBeGreaterThan(0m);
+    }
+
+    [Test]
+    public void a_kind_key_is_matched_without_regard_to_case()
+    {
+        // The shipped table is OrdinalIgnoreCase, so a hand-written "grok" in appsettings.json
+        // overrides the shipped block instead of quietly sitting beside it.
+        Pricing.KindRates.ContainsKey("grok").ShouldBeTrue();
+        Pricing.KindRates.ContainsKey("GROK").ShouldBeTrue();
+        Pricing.KindRates[nameof(AgentKind.Grok)].ContainsKey("high").ShouldBeTrue();
+    }
+}
+
+/// <summary>
 /// CARD-0027. The transport boundary is ONE ~1024-byte read chunk: a body that fits in one arrives
 /// whole, a body that spans two or more is truncated to a whole number of chunks, unpredictably.
 /// Measured against the real Claude TUI — 810 and 972-byte bodies arrived whole 3/3, 1 026 and

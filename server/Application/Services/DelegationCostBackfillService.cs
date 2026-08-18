@@ -91,7 +91,11 @@ public sealed class DelegationCostBackfillService : BackgroundService
                 task.CacheReadTokens = spend.CacheReadTokens;
                 task.CacheCreationTokens = spend.CacheCreationTokens;
                 task.TokensOut = spend.OutputTokens;
-                task.CostUsd = DelegationCost.Estimate(_settings.Pricing, task.ModelLevel, spend, at);
+                // Kind-aware for the same reason the settle path is. Every row this sweep can
+                // reach predates AgentKind and therefore carries the column default, ClaudeCode —
+                // so a re-price cannot move a historical figure by passing it.
+                task.CostUsd = DelegationCost.Estimate(
+                    _settings.Pricing, task.ModelLevel, spend, at, task.AgentKind);
                 task.CostPricingVersion = DelegationCost.PricingVersion;
                 after += task.CostUsd;
                 repriced++;

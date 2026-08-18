@@ -828,6 +828,83 @@ public class AgentTaskReplyIntegrationTests
             DelegationCost.Estimate(pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value));
     }
 
+    /// <summary>
+    /// CARD-0084 S5, end to end through the settle path: the kind on the TASK row, not the tier
+    /// alone, picks the rate table. Before this, a Grok delegate was billed at whatever Claude
+    /// model shares its rung — Frontier means fable ($10/$50) and grok-4.6 ($2/$6) alike — so the
+    /// per-root ceiling saw ~3.8x the real spend and would throttle a run on money never spent.
+    ///
+    /// The counters are the Grok-shaped ones: <c>GrokTranscriptNormalizer</c> reads
+    /// <c>turn_completed.usage</c>'s inputTokens / cachedReadTokens / cacheCreationTokens /
+    /// outputTokens into the same four columns Claude's usage lands in, so the rollup needs no
+    /// per-kind work — only the price does.
+    /// </summary>
+    [Test]
+    public async Task a_grok_delegates_spend_is_priced_at_grok_rates_not_at_the_claude_rung_it_shares()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, configure: t =>
+        {
+            t.AgentKind = AgentKind.Grok;
+            t.ModelLevel = AgentModelLevel.Frontier;
+        });
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.",
+            inputTokens: 18_400, outputTokens: 12_300,
+            cacheReadTokens: 742_000, cacheCreationTokens: 61_500);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.CostPricingVersion.ShouldBe(
+            DelegationCost.PricingVersion, "the costing MODEL did not change — only the rate lookup widened");
+
+        var spend = new TokenSpend(
+            settled.TokensIn, settled.CacheReadTokens, settled.CacheCreationTokens, settled.TokensOut);
+        var pricing = new DelegationPricingSettings();
+
+        // xAI published list (docs.x.ai/docs/models, 2026-08-18), grok-4.6 sub-200k:
+        // 18,400 x $2 + 742,000 x $0.50 + 61,500 x $2 + 12,300 x $6, per million.
+        settled.CostUsd.ShouldBe(0.604600m);
+        settled.CostUsd.ShouldBe(
+            DelegationCost.Estimate(pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value, AgentKind.Grok));
+
+        var asClaude = DelegationCost.Estimate(pricing, settled.ModelLevel, spend, settled.CompletedAt!.Value);
+        asClaude.ShouldBe(2.309750m);
+        settled.CostUsd.ShouldBeLessThan(
+            asClaude / 3m, "pricing Grok on the fable rung is the overstatement this slice removes");
+    }
+
+    /// <summary>
+    /// The other half of the contract: a Claude task settles at exactly the figure it did before
+    /// the kind overlay existed. <see cref="AgentKind.ClaudeCode"/> is the column's default, so
+    /// this is also what every stored row written before S2 prices at.
+    /// </summary>
+    [Test]
+    public async Task a_claude_delegates_spend_is_unmoved_by_the_kind_overlay()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id), "Done.",
+            inputTokens: 18_400, outputTokens: 12_300,
+            cacheReadTokens: 742_000, cacheCreationTokens: 61_500);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.AgentKind.ShouldBe(AgentKind.ClaudeCode, "the seeded default — nothing opted this task in");
+
+        var spend = new TokenSpend(
+            settled.TokensIn, settled.CacheReadTokens, settled.CacheCreationTokens, settled.TokensOut);
+        // The kind-free overload IS the pre-CARD-0084 call. Same task, same number.
+        settled.CostUsd.ShouldBe(DelegationCost.Estimate(
+            new DelegationPricingSettings(), settled.ModelLevel, spend, settled.CompletedAt!.Value));
+    }
+
     [Test]
     public async Task usage_repeated_across_one_api_calls_entries_is_counted_once()
     {

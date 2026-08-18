@@ -33,6 +33,22 @@ public sealed class DelegationPricingSettings
     public Dictionary<string, ModelRateSettings> Rates { get; set; } = DefaultRates();
 
     /// <summary>
+    /// Per-KIND rate overlay, keyed by <see cref="AgentKind"/> name and then by
+    /// <see cref="AgentModelLevel"/> name. Consulted BEFORE <see cref="Rates"/>, which is a Claude
+    /// price ladder wearing a generic name: lookup runs (kind, level) → (kind, High) →
+    /// <see cref="Rates"/>. A kind with no entry here — every kind except Grok today, including
+    /// <see cref="AgentKind.ClaudeCode"/> itself — prices exactly as it did before this overlay
+    /// existed, so no stored row and no existing caller moves by a cent (CARD-0084 S5).
+    ///
+    /// An overlay rather than a replacement because the counters are the same four everywhere;
+    /// only the numbers differ. It is deliberately silent about who REPORTS the cost: Grok's
+    /// <c>turn_completed</c> carries a self-reported dollar figure that nothing here reads — where
+    /// provider-declared cost lives is CARD-0083's question, and this shape does not preclude it.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, ModelRateSettings>> KindRates { get; set; }
+        = DefaultKindRates();
+
+    /// <summary>
     /// The shipped snapshot, as of 2026-08-10. Frontier→fable, High→opus, Medium→sonnet, Low→haiku
     /// (see <see cref="AgentModelLevel"/>).
     /// </summary>
@@ -55,6 +71,56 @@ public sealed class DelegationPricingSettings
             // Claude Haiku 4.5
             [nameof(AgentModelLevel.Low)] = new() { InputPerMillion = 1m, OutputPerMillion = 5m },
         };
+
+    /// <summary>
+    /// The shipped per-kind overlay. Grok only, from xAI's published model pricing
+    /// (https://docs.x.ai/docs/models, retrieved 2026-08-18) — NOT from a model's memory of it,
+    /// which is exactly how a rate table acquires a plausible wrong number.
+    ///
+    /// Tier mapping follows <see cref="Services.ModelLevelAliases.ForGrok"/>: Frontier and High
+    /// both launch <c>grok-4.6</c>, Medium and Low both launch <c>grok-4.5</c>. The two share
+    /// input/output rates ($2/$6 per million) and differ only in the cached-input rate, so a
+    /// Grok escalation buys a fresh context at the same price, not a dearer model.
+    ///
+    /// Two documented caveats, both under-pricing rather than over-pricing (the safe direction for
+    /// a ceiling that gates dispatch):
+    ///
+    /// - xAI bills a request whose prompt reaches 200k tokens at DOUBLE for every token in that
+    ///   request. Our four counters are a per-task aggregate that carries no per-request prompt
+    ///   size, so the sub-200k tier is the only one we can honestly apply. Long-context Grok work
+    ///   therefore reads low; revisit if per-request sizes ever reach the rollup.
+    /// - Grok's own <c>turn_completed</c> reports a dollar figure per turn. Reading it would settle
+    ///   both caveats at once and is deliberately NOT done here — see <see cref="KindRates"/>.
+    /// </summary>
+    public static Dictionary<string, Dictionary<string, ModelRateSettings>> DefaultKindRates() =>
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [nameof(AgentKind.Grok)] = new(StringComparer.OrdinalIgnoreCase)
+            {
+                // grok-4.6 — $2.00 in / $6.00 out / $0.50 cached input, per million (< 200k).
+                [nameof(AgentModelLevel.Frontier)] = GrokTextRates(cachedInputPerMillion: 0.50m),
+                [nameof(AgentModelLevel.High)] = GrokTextRates(cachedInputPerMillion: 0.50m),
+                // grok-4.5 — same $2.00/$6.00, cached input $0.30.
+                [nameof(AgentModelLevel.Medium)] = GrokTextRates(cachedInputPerMillion: 0.30m),
+                [nameof(AgentModelLevel.Low)] = GrokTextRates(cachedInputPerMillion: 0.30m),
+            },
+        };
+
+    /// <summary>
+    /// One Grok text model's four counters. Both cache rates are PINNED rather than left to
+    /// <see cref="CacheReadMultiplier"/>/<see cref="CacheWriteMultiplier"/>, which are Anthropic's
+    /// shape and wrong here on both counts: 0.10x of $2.00 would price cached input at $0.20 where
+    /// xAI charges $0.30 (grok-4.5) and $0.50 (grok-4.6) — a SHALLOWER discount than Anthropic's —
+    /// and xAI publishes no cache-WRITE price at all, caching being automatic, so a cache write is
+    /// billed as ordinary input with no 1.25x TTL premium.
+    /// </summary>
+    private static ModelRateSettings GrokTextRates(decimal cachedInputPerMillion) => new()
+    {
+        InputPerMillion = 2m,
+        OutputPerMillion = 6m,
+        CacheReadPerMillion = cachedInputPerMillion,
+        CacheWritePerMillion = 2m,
+    };
 }
 
 /// <summary>

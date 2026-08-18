@@ -400,7 +400,12 @@ public sealed class AgentTaskReplyService
             task.CacheReadTokens = spend.CacheReadTokens;
             task.CacheCreationTokens = spend.CacheCreationTokens;
             task.TokensOut = spend.OutputTokens;
-            task.CostUsd = DelegationCost.Estimate(_settings.Pricing, task.ModelLevel, spend, now);
+            // Priced by KIND as well as tier: the tiers are an abstraction over model families
+            // that cost nothing alike, and a Grok delegate run through the Claude ladder reads
+            // several times its real spend (CARD-0084 S5). ClaudeCode is the column default, so
+            // every Claude task — and every row written before kinds existed — is unmoved.
+            task.CostUsd = DelegationCost.Estimate(
+                _settings.Pricing, task.ModelLevel, spend, now, task.AgentKind);
             task.CostPricingVersion = DelegationCost.PricingVersion;
         }
 
