@@ -12,6 +12,8 @@ import {
   isLegacyCostEstimate,
   laneOf,
   subtreeIds,
+  tierAlias,
+  tierTooltip,
   totalTokens,
 } from './taskVisuals'
 
@@ -23,6 +25,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTa
     title: overrides.id,
     kind: 'Worker',
     role: 'Custom',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     escalatedFrom: null,
     status: 'Queued',
@@ -76,6 +79,43 @@ describe('the tier axis', () => {
     expect(TIER_VISUALS.Frontier.rank).toBeLessThan(TIER_VISUALS.High.rank)
     expect(TIER_VISUALS.High.rank).toBeLessThan(TIER_VISUALS.Medium.rank)
     expect(TIER_VISUALS.Medium.rank).toBeLessThan(TIER_VISUALS.Low.rank)
+  })
+})
+
+describe('the tier alias', () => {
+  it('names a Claude task exactly what it named before AgentKind existed', () => {
+    // The whole kind-aware change is only safe if Claude's four chips are byte-identical: this is
+    // the control, and it is also what an omitted kind must fall back to (the server's own
+    // ModelLevelAliases.For does the same for anything that is not Grok).
+    expect(tierAlias('Frontier', 'ClaudeCode')).toBe('fable')
+    expect(tierAlias('High', 'ClaudeCode')).toBe('opus')
+    expect(tierAlias('Medium', 'ClaudeCode')).toBe('sonnet')
+    expect(tierAlias('Low', 'ClaudeCode')).toBe('haiku')
+    expect(tierAlias('Frontier')).toBe('fable')
+  })
+
+  it('names a Grok task the model it actually runs, not a Claude one', () => {
+    // A chip reading "fable" on a Grok delegate names a model nobody is paying for, on the one
+    // surface an operator scans to decide what to escalate.
+    expect(tierAlias('Frontier', 'Grok')).toBe('grok-4.6')
+    expect(tierAlias('High', 'Grok')).toBe('grok-4.6')
+    expect(tierAlias('Medium', 'Grok')).toBe('grok-4.5')
+    expect(tierAlias('Low', 'Grok')).toBe('grok-4.5')
+  })
+
+  it('lets Grok collapse two rungs to one name without collapsing the rungs', () => {
+    // xAI ships two models, so the ladder is shorter than the tier axis — but Frontier and High are
+    // still different rungs (different price, different escalation), which is why only the NAME
+    // repeats and the violet intensity does not.
+    expect(tierAlias('Frontier', 'Grok')).toBe(tierAlias('High', 'Grok'))
+    expect(TIER_VISUALS.Frontier.variant).not.toBe(TIER_VISUALS.High.variant)
+  })
+
+  it('keeps the vendor word only where the alias does not already carry it', () => {
+    expect(tierTooltip('High', 'ClaudeCode')).toBe('High tier — Claude opus')
+    expect(tierTooltip('High')).toBe('High tier — Claude opus')
+    // "Grok grok-4.6" would be a stutter — the alias already names the family.
+    expect(tierTooltip('High', 'Grok')).toBe('High tier — grok-4.6')
   })
 })
 

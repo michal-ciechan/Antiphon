@@ -18,6 +18,7 @@ function summary(overrides: Partial<AgentTaskSummaryDto> & { id: string }): Agen
     title: overrides.id,
     kind: 'Worker',
     role: 'Custom',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     escalatedFrom: null,
     status: 'Queued',
@@ -172,6 +173,42 @@ describe('DelegationsBoard', () => {
     // The chip and the tree row both carry it, hence getAllBy.
     expect((await screen.findAllByTestId('tier-Frontier')).length).toBeGreaterThan(0)
     expect(screen.getAllByTestId('tier-Low').length).toBeGreaterThan(0)
+  })
+
+  it('names the model a task actually runs, not the Claude one at that rung', async () => {
+    // CARD-0084: the chip on a Grok delegate used to read "fable" — a model nobody was paying for,
+    // on the one surface an operator scans to decide what to escalate. The Claude row is the
+    // control: its text must not move by a byte.
+    serveTasks([
+      summary({
+        id: '77777777-7777-7777-7777-777777777777',
+        title: 'Sweep the log noise',
+        agentKind: 'Grok',
+        modelLevel: 'Frontier',
+        escalatedFrom: 'Medium',
+        status: 'Working',
+        attempt: 2,
+        dispatchedAt: '2026-08-07T10:00:00Z',
+      }),
+      summary({
+        id: '88888888-8888-8888-8888-888888888888',
+        title: 'Sweep the same noise on Claude',
+        modelLevel: 'Frontier',
+        escalatedFrom: 'Medium',
+        status: 'Working',
+        attempt: 2,
+        dispatchedAt: '2026-08-07T10:00:00Z',
+      }),
+    ])
+    renderWithProviders(<DelegationsBoard />)
+
+    const grok = await screen.findByTestId(`task-chip-${shortId('77777777-7777-7777-7777-777777777777')}`)
+    expect(within(grok).getByTestId('tier-Frontier')).toHaveTextContent('grok-4.6')
+    expect(within(grok).getByText('grok-4.5 →')).toBeInTheDocument()
+
+    const claude = screen.getByTestId(`task-chip-${shortId('88888888-8888-8888-8888-888888888888')}`)
+    expect(within(claude).getByTestId('tier-Frontier')).toHaveTextContent('fable')
+    expect(within(claude).getByText('sonnet →')).toBeInTheDocument()
   })
 
   it('carries health and rank at the same time, on separate channels', async () => {

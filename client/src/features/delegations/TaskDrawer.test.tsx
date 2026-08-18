@@ -19,6 +19,7 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
     title: 'Find out why the suite hangs',
     kind: 'Worker',
     role: 'Debug',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     escalatedFrom: null,
     status: 'Failed',

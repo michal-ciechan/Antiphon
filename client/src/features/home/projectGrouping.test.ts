@@ -49,6 +49,7 @@ function task(overrides: Partial<AgentTaskSummaryDto>): AgentTaskSummaryDto {
     title: 'a task',
     kind: 'Worker',
     role: 'Code',
+    agentKind: 'ClaudeCode',
     modelLevel: 'Frontier',
     escalatedFrom: null,
     status: 'Working',

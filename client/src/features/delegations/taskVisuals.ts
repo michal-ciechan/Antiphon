@@ -1,5 +1,6 @@
 import type { AgentModelLevel } from '../../api/agents'
 import type { AgentTaskStatus, AgentTaskSummaryDto, WorkspaceMode } from '../../api/agentTasks'
+import type { AgentKind } from '../../api/boards'
 
 /**
  * Tier gets its OWN visual axis. It is a ladder, not a health signal, so it must never reuse
@@ -14,6 +15,44 @@ export const TIER_VISUALS: Record<
   High: { alias: 'opus', variant: 'light', color: 'violet', rank: 1 },
   Medium: { alias: 'sonnet', variant: 'outline', color: 'violet', rank: 2 },
   Low: { alias: 'haiku', variant: 'outline', color: 'gray', rank: 3 },
+}
+
+/**
+ * Grok's ladder is SHORTER than the tier axis — xAI ships two models, so Frontier and High are both
+ * grok-4.6 and Medium and Low are both grok-4.5. The rungs still differ (a Medium task is cheaper
+ * and gets a fresh context), which is why only the NAME collapses here and the violet intensity in
+ * TIER_VISUALS is left alone.
+ */
+const GROK_ALIASES: Record<AgentModelLevel, string> = {
+  Frontier: 'grok-4.6',
+  High: 'grok-4.6',
+  Medium: 'grok-4.5',
+  Low: 'grok-4.5',
+}
+
+/**
+ * The model-family alias for the program the task ACTUALLY runs on — the client mirror of the
+ * server's `ModelLevelAliases.For(kind, level)` (CARD-0084 S4). A Grok task whose chip read `fable`
+ * was naming a model nobody was paying for, on the one surface an operator scans to decide what to
+ * escalate.
+ *
+ * Anything that is not Grok takes the Claude ladder in TIER_VISUALS, exactly as the server does, so
+ * every pre-CARD-0084 chip is byte-identical. That fallback is only safe while ClaudeCode and Grok
+ * are the sole delegatable kinds — a third one must add its ladder HERE and on the server together,
+ * or its tasks silently read as Claude.
+ */
+export function tierAlias(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'): string {
+  return kind === 'Grok' ? GROK_ALIASES[level] : TIER_VISUALS[level].alias
+}
+
+/**
+ * What the tier badge's tooltip says. Claude's aliases are bare family words, so they need the
+ * vendor in front to mean anything ("Claude fable"); Grok's already carry it, and "Grok grok-4.6"
+ * is a stutter. Claude's text is unchanged, byte for byte.
+ */
+export function tierTooltip(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'): string {
+  const alias = tierAlias(level, kind)
+  return `${level} tier — ${kind === 'Grok' ? alias : `Claude ${alias}`}`
 }
 
 /** Health, on the app's semantic palette — deliberately disjoint from the tier axis above. */

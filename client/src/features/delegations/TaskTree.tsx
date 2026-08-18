@@ -131,7 +131,7 @@ function TaskTreeRow({
               {task.title}
             </Text>
             <Box style={{ flexShrink: 0 }}>
-              <TierBadge level={task.modelLevel} />
+              <TierBadge level={task.modelLevel} kind={task.agentKind} />
             </Box>
           </Group>
         </UnstyledButton>

@@ -16,6 +16,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> = {}): AgentTaskSummaryDto
     title: 'CARD-0056 - launch leak - slices 3+4',
     kind: 'Worker',
     role: 'Code',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     escalatedFrom: null,
     status: 'Working',
