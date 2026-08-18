@@ -182,6 +182,7 @@ public sealed class CardThreadService
                 m.Task.Title,
                 m.Task.Status,
                 m.Task.Kind,
+                m.Task.AgentKind,
                 m.Task.ModelLevel,
                 m.Task.AgentName,
                 m.Task.AgentSessionId,

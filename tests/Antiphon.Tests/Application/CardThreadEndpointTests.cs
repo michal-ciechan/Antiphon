@@ -99,6 +99,34 @@ public class CardThreadEndpointTests
     }
 
     [Test]
+    public async Task A_task_row_carries_its_agent_kind_on_the_wire()
+    {
+        // Read as RAW json, not through the DTO: the client mirrors the wire shape by hand, and a
+        // round trip through the same record it is being compared against cannot notice a missing
+        // property. The tier badge on this surface is rendered from it — without the kind, a Grok
+        // task reads `opus`, naming a model nobody was paying for (CARD-0084 S4).
+        var (_, identifier) = await SeedCardAsync();
+        var taskId = await AddGrokTaskAsync(identifier);
+        try
+        {
+            using var client = _factory.CreateClient();
+
+            var json = await client.GetStringAsync($"/api/cards/{identifier}/thread");
+
+            using var document = JsonDocument.Parse(json);
+            var row = document.RootElement.GetProperty("tasks").EnumerateArray()
+                .Single(t => Guid.Parse(t.GetProperty("id").GetString()!) == taskId);
+            row.GetProperty("agentKind").GetString().ShouldBe("Grok");
+        }
+        finally
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task Garbage_in_the_id_segment_is_a_422_on_the_thread_route_too()
     {
         await SeedCardAsync();
@@ -142,6 +170,32 @@ public class CardThreadEndpointTests
         var response = await client.GetAsync($"/api/plans/content?file={Uri.EscapeDataString(escape)}");
 
         ((int)response.StatusCode).ShouldBe(422, $"'{escape}' is not a plan");
+    }
+
+    private async Task<Guid> AddGrokTaskAsync(string identifier)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var id = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Depth = 0,
+            Title = $"{identifier} - the Grok half",
+            Goal = "work",
+            Kind = Server.Domain.Enums.AgentTaskKind.Worker,
+            Role = Server.Domain.Enums.AgentTaskRole.Code,
+            AgentKind = Server.Domain.Enums.AgentKind.Grok,
+            ModelLevel = Server.Domain.Enums.AgentModelLevel.High,
+            Workspace = Server.Domain.Enums.WorkspaceMode.Shared,
+            WorkingDirectory = Path.GetTempPath(),
+            Status = Server.Domain.Enums.AgentTaskStatus.Dispatched,
+            ReplyTo = Server.Domain.Enums.AgentTaskReplyTo.Session,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+        return id;
     }
 
     private async Task<(Guid CardId, string Identifier)> SeedCardAsync()

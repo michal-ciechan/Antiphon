@@ -1,5 +1,5 @@
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
-import { TIER_VISUALS, formatCost } from '../delegations/taskVisuals'
+import { formatCost, tierAlias } from '../delegations/taskVisuals'
 
 /**
  * The pure half of `WorkLine` (spec §D3 band 2): one live task as the orchestrator loop's own
@@ -47,7 +47,9 @@ export function taskWorkLine(
   task: AgentTaskSummaryDto,
   { formatTime = formatClockTime }: { formatTime?: (iso: string) => string } = {},
 ): WorkLineParts {
-  const line = `${citationHead(task.title)} · ${TIER_VISUALS[task.modelLevel].alias}`
+  // The alias names the model the task ACTUALLY runs on, not the Claude rung its tier maps to:
+  // a Grok task whose work line read `opus` named a model nobody was paying for (CARD-0084 S4).
+  const line = `${citationHead(task.title)} · ${tierAlias(task.modelLevel, task.agentKind)}`
   const watch =
     task.status === 'Blocked'
       ? 'blocked — answer it'

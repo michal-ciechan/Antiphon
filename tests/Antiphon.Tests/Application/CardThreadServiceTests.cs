@@ -163,6 +163,25 @@ public class CardThreadServiceTests
         row.Status.ShouldBe(AgentTaskStatus.Succeeded);
     }
 
+    [Test]
+    public async Task Each_row_says_which_agent_program_ran_it_so_the_tier_can_name_a_model()
+    {
+        // ModelLevel alone does not name a model: the same High rung is opus on Claude and
+        // grok-4.6 on Grok (CARD-0084 S4). Without the kind on the row, the thread's tier badge
+        // would name a model nobody was paying for on every Grok task.
+        await using var scenario = new Scenario("CARD-0713");
+        var grok = await scenario.AddTaskAsync(
+            title: "CARD-0713 - the Grok half", goal: "work", agentKind: AgentKind.Grok);
+        var claude = await scenario.AddTaskAsync(
+            title: "CARD-0713 - the Claude half", goal: "work");
+
+        var rows = scenario.Owned(await scenario.ThreadAsync());
+
+        rows.Single(r => r.Id == grok).AgentKind.ShouldBe(AgentKind.Grok);
+        rows.Single(r => r.Id == claude).AgentKind.ShouldBe(
+            AgentKind.ClaudeCode, "an unset kind is Claude, which is what every pre-CARD-0084 row is");
+    }
+
     // ---- 3. plans and commits, and degrading honestly when there is no repo ----------------------
 
     [Test]
@@ -302,7 +321,8 @@ public class CardThreadServiceTests
             AgentTaskStatus status = AgentTaskStatus.Dispatched,
             decimal costUsd = 0m,
             string? result = null,
-            Guid? parent = null)
+            Guid? parent = null,
+            AgentKind agentKind = AgentKind.ClaudeCode)
         {
             await SeedAsync();
             var id = Guid.NewGuid();
@@ -317,6 +337,7 @@ public class CardThreadServiceTests
                 Goal = goal,
                 Kind = AgentTaskKind.Worker,
                 Role = AgentTaskRole.Code,
+                AgentKind = agentKind,
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
                 WorkingDirectory = Path.GetTempPath(),

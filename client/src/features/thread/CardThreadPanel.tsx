@@ -37,7 +37,7 @@ import { BlockedReplyRow } from '../attention/BlockedReplyRow'
 import { ATTENTION_VISUALS } from '../attention/attentionVisuals'
 import { legalMoveTargets } from '../board/boardShapeModel'
 import { DelegateModal, type DelegatePrefill } from '../delegations/DelegateModal'
-import { STATUS_COLOR, TIER_VISUALS, formatCost } from '../delegations/taskVisuals'
+import { STATUS_COLOR, formatCost, tierAlias } from '../delegations/taskVisuals'
 import { formatClockTime } from '../home/workLineFormat'
 
 /**
@@ -498,7 +498,9 @@ function ThreadTaskRow({
               {task.status}
             </Badge>
             <Badge size="xs" color="violet" variant="outline">
-              {TIER_VISUALS[task.modelLevel].alias}
+              {/* The model the task ACTUALLY runs on: a Grok task badged `fable` would name a
+                  model nobody was paying for, on a surface read to decide what to escalate. */}
+              {tierAlias(task.modelLevel, task.agentKind)}
             </Badge>
             <Text size="xs" c="dimmed">{formatCost(task.subtreeCostUsd)}</Text>
             {task.nextCheckAt && (

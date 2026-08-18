@@ -68,6 +68,7 @@ function threadTask(overrides: Partial<CardThreadTaskDto> = {}): CardThreadTaskD
     title: 'CARD-0067 - reply durability - slice 4',
     status: 'Working',
     kind: 'Worker',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     agentName: null,
     agentSessionId: null,
@@ -184,6 +185,24 @@ describe('CardThreadPanel', () => {
     expect(mention).toHaveTextContent('mentions')
     // No Approve on a plan that is not about this card.
     expect(screen.getAllByTestId('thread-approve-plan')).toHaveLength(1)
+  })
+
+  it('the tier badge names the model the task runs on, not the Claude rung of its tier', async () => {
+    // A Grok task badged `fable` would name a model nobody was paying for, on the surface an
+    // operator reads to decide what a card cost and what to escalate (CARD-0084 S4).
+    seed(thread({ tasks: [threadTask({ agentKind: 'Grok', modelLevel: 'High' })] }))
+    renderWithProviders(<CardThreadPanel identifier="CARD-0067" />)
+
+    const row = await screen.findByTestId('thread-task-t1')
+    expect(row).toHaveTextContent('grok-4.6')
+    expect(row).not.toHaveTextContent('opus')
+  })
+
+  it('a Claude task badge is byte-identical to what it read before the kind was consulted', async () => {
+    seed(thread({ tasks: [threadTask({ agentKind: 'ClaudeCode', modelLevel: 'High' })] }))
+    renderWithProviders(<CardThreadPanel identifier="CARD-0067" />)
+
+    expect(await screen.findByTestId('thread-task-t1')).toHaveTextContent('opus')
   })
 
   it('a blocked task answers in place — the reply posts to the task endpoint', async () => {

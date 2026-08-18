@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from './client'
-import type { CardDto } from './boards'
+import type { AgentKind, CardDto } from './boards'
 import type { AgentModelLevel } from './agents'
 import type { AgentTaskKind, AgentTaskStatus } from './agentTasks'
 import type { PlanSummaryDto } from './plans'
@@ -35,6 +35,12 @@ export interface CardThreadTaskDto {
   title: string
   status: AgentTaskStatus
   kind: AgentTaskKind
+  /**
+   * Which agent program ran (or will run) it — `ClaudeCode` unless the caller chose Grok. The tier
+   * alone does not name a model: the same `Frontier` rung is `fable` on Claude and `grok-4.6` on
+   * Grok (CARD-0084 S4), so the thread reads its tier through `tierAlias(modelLevel, agentKind)`.
+   */
+  agentKind: AgentKind
   modelLevel: AgentModelLevel
   agentName: string | null
   agentSessionId: string | null

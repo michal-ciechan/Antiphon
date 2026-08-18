@@ -74,6 +74,27 @@ describe('taskWorkLine', () => {
     )
   })
 
+  it('a Grok task names the model it actually runs, not the Claude rung of its tier', () => {
+    // The line an operator scans to decide what to escalate: `fable` on a Grok task named a model
+    // nobody was paying for (CARD-0084 S4).
+    expect(taskWorkLine(task({ agentKind: 'Grok' }), { formatTime: utcTime }).line).toBe(
+      '#56 launch leak - slices 3+4 · grok-4.6',
+    )
+    // xAI ships two models, so the bottom half of the ladder collapses onto grok-4.5.
+    expect(
+      taskWorkLine(task({ agentKind: 'Grok', modelLevel: 'Medium' }), { formatTime: utcTime }).line,
+    ).toBe('#56 launch leak - slices 3+4 · grok-4.5')
+  })
+
+  it('every Claude tier still reads exactly as it did before the kind was consulted', () => {
+    const alias = (modelLevel: AgentTaskSummaryDto['modelLevel']) =>
+      taskWorkLine(task({ modelLevel, title: 'x' }), { formatTime: utcTime }).line
+    expect(alias('Frontier')).toBe('x · fable')
+    expect(alias('High')).toBe('x · opus')
+    expect(alias('Medium')).toBe('x · sonnet')
+    expect(alias('Low')).toBe('x · haiku')
+  })
+
   it('a title without a card citation renders verbatim', () => {
     const parts = taskWorkLine(task({ title: 'tighten the deploy doc', modelLevel: 'Medium' }), {
       formatTime: utcTime,
