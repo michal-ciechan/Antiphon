@@ -812,7 +812,7 @@ public sealed class SessionMessageQueueService
             await RecordOversizeAsync(sessionId, bodyBytes, ceilings, ct);
         }
 
-        var verify = _verification.Enabled && await IsClaudeCodeSessionAsync(sessionId, ct);
+        var verify = _verification.Enabled && await IsVerifiedDeliverySessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;
         if (verify && !_runtime.TryGetLiveSnapshot(sessionId, out before))
         {
@@ -1078,13 +1078,19 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private async Task<bool> IsClaudeCodeSessionAsync(Guid sessionId, CancellationToken ct)
+    private async Task<bool> IsVerifiedDeliverySessionAsync(Guid sessionId, CancellationToken ct)
     {
-        // The composer rendering contract is Claude-specific; Codex/Raw sessions deliver blind.
+        // Claude and Grok both echo the composer's content on the rendered screen (Grok measured
+        // 1.0.5, CARD-0080 S1: typed and pasted bodies render, no placeholder collapse at 4.4 KB)
+        // and both have a structured transcript for CARD-0055's confirm to poll — Grok's rows come
+        // from its ACP updates.jsonl (CARD-0080 S2). Codex/OpenCode/Raw sessions deliver blind.
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await db.AgentSessions.AsNoTracking()
-            .AnyAsync(s => s.Id == sessionId && s.AgentKind == AgentKind.ClaudeCode, ct);
+            .AnyAsync(
+                s => s.Id == sessionId
+                    && (s.AgentKind == AgentKind.ClaudeCode || s.AgentKind == AgentKind.Grok),
+                ct);
     }
 
     // Verification failed: return the message to the queue (never silently lose it), record an

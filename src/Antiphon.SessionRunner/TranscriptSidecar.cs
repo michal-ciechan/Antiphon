@@ -36,6 +36,13 @@ public sealed record TranscriptSidecar
     /// <summary>The bound transcript, or null while the session has not produced one yet.</summary>
     public string? TranscriptPath { get; init; }
 
+    /// <summary>
+    /// Which tailer reads this session's transcript (see <c>TranscriptFormats</c>). Null means
+    /// Claude — every sidecar written before Grok transcripts existed is a Claude one, so absence
+    /// keeps its old meaning and a restart re-tails with the right machinery.
+    /// </summary>
+    public string? Format { get; init; }
+
     /// <summary>How it was bound — see <c>TranscriptBindMethods</c>.</summary>
     public string? How { get; init; }
 

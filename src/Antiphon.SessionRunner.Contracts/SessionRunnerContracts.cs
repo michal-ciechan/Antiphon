@@ -9,9 +9,27 @@ public sealed record RunnerLaunchRequest(
     int Cols,
     int Rows,
     int MemoryLimitMb = 0,
-    // When true the runner tails the agent's Claude Code JSONL session transcript and emits
-    // structured SessionTranscript events. Only meaningful for ClaudeCode agents.
-    bool TranscriptEnabled = false);
+    // When true the runner tails the agent's own session transcript and emits structured
+    // SessionTranscript events. Which file and format is TranscriptFormat's job.
+    bool TranscriptEnabled = false,
+    // Which transcript the runner should tail (see TranscriptFormats). Null means Claude — the
+    // only format that existed before this field, so an old server's requests keep their meaning.
+    string? TranscriptFormat = null);
+
+/// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
+public static class TranscriptFormats
+{
+    /// <summary>Claude Code's per-cwd JSONL under <c>~/.claude/projects</c> (discovery + adoption rules apply).</summary>
+    public const string Claude = "claude";
+
+    /// <summary>
+    /// Grok Build's ACP update stream, persisted live to
+    /// <c>GROK_HOME/sessions/&lt;url-enc-cwd&gt;/&lt;session-id&gt;/updates.jsonl</c>. The path is
+    /// DETERMINISTIC — we pass <c>--session-id</c> and grok honours it (measured 1.0.5, CARD-0080
+    /// S1) — so none of the Claude discovery/claim/fork machinery applies.
+    /// </summary>
+    public const string Grok = "grok";
+}
 
 public sealed record RunnerInputRequest(string Input);
 
@@ -425,6 +443,12 @@ public static class TranscriptBindMethods
 
     /// <summary>Restart re-adopt of a session that predates sidecars (see the migration shim).</summary>
     public const string MigrationShim = "migration-shim";
+
+    /// <summary>
+    /// The path was computed, not discovered: Grok's session store is keyed by the
+    /// <c>--session-id</c> we chose, so the transcript's location is known before launch.
+    /// </summary>
+    public const string Deterministic = "deterministic";
 }
 
 /// <summary>

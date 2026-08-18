@@ -24,11 +24,21 @@ public sealed class GrokAdapterTests
     }
 
     [Test]
-    public void Session_runner_request_keeps_transcript_disabled_for_Grok()
+    public void Session_runner_request_enables_the_grok_transcript_for_Grok()
     {
-        var kind = AgentKind.Grok;
-        var transcriptEnabled = kind == AgentKind.ClaudeCode;
-        transcriptEnabled.ShouldBeFalse();
+        // CARD-0080 S2: Grok sessions tail their ACP updates.jsonl. The format travels with the
+        // request so the runner picks GrokTranscriptTailer instead of the Claude discovery tailer.
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Grok).ShouldBeTrue();
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Grok)
+            .ShouldBe(Antiphon.SessionRunner.Contracts.TranscriptFormats.Grok);
+
+        // Claude keeps its pre-Grok shape: enabled, NULL format — an old runner in front of a new
+        // server must keep doing exactly what it already did.
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.ClaudeCode).ShouldBeTrue();
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.ClaudeCode).ShouldBeNull();
+
+        // No structured transcript exists for the others.
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Codex).ShouldBeFalse();
     }
 
     private sealed class ThrowingSessionRunnerClient : ISessionRunnerClient

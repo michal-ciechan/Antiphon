@@ -181,6 +181,49 @@ public class PromptSubmissionMatchTests
         PromptSubmissionMatch.IsConfirmedBy(typed, recorded).ShouldBeTrue();
     }
 
+    // ---- CARD-0080 S2: the whitespace-free arm, for a TUI that keeps no whitespace at all --------
+
+    /// <summary>
+    /// Grok's composer drops EVERY newline from typed and pasted input with NO separator (measured
+    /// grok 1.0.5, CARD-0080 S1: 4450 chars sent → 4389 recorded, exactly the newline count). The
+    /// spaced normalization keeps a space where the newline was, so without the whitespace-free
+    /// second arm every multi-line delivery to Grok would fail to confirm — and CARD-0055 would
+    /// then park messages and kill healthy always-on sessions.
+    /// </summary>
+    [Test]
+    public void A_newline_dropped_join_still_confirms_the_multiline_body()
+    {
+        const string body = "line one of the channel reply\nline two of the channel reply\nline three";
+        const string grokRecord = "line one of the channel replyline two of the channel replyline three";
+
+        PromptSubmissionMatch.IsConfirmedBy(body, grokRecord).ShouldBeTrue();
+        // Framing around the joined record (batch envelope etc.) must not break it either.
+        PromptSubmissionMatch.IsConfirmedBy(body, "prefix " + grokRecord + " suffix").ShouldBeTrue();
+    }
+
+    // The widening must not weaken the 15c9150e protection: a record carrying DIFFERENT text still
+    // fails, whitespace-free or not.
+    [Test]
+    public void The_whitespace_free_arm_still_rejects_a_different_body()
+    {
+        PromptSubmissionMatch.IsConfirmedBy(
+                "the note that was lost in the composer\nsecond line",
+                "the stale note that Enter actuallysubmitted")
+            .ShouldBeFalse();
+    }
+
+    // A needle that is mostly whitespace shrinks below MinMatchChars when stripped — it may not
+    // take the whitespace-free arm, or a near-weak match would be reported at text-match strength.
+    [Test]
+    public void A_mostly_whitespace_needle_does_not_degrade_to_a_near_weak_match()
+    {
+        const string body = "a b c d e f g h"; // 15 chars spaced (identifiable), 8 stripped (not)
+        PromptSubmissionMatch.RequiresTextMatch(body).ShouldBeTrue();
+        PromptSubmissionMatch.IsConfirmedBy(body, "xxabcdefghxx").ShouldBeFalse();
+        // The spaced arm still works as before.
+        PromptSubmissionMatch.IsConfirmedBy(body, "a b c d e f g h").ShouldBeTrue();
+    }
+
     // ---- CARD-0056: a boot slash command confirms through its local-command wrapper ---------------
 
     /// <summary>

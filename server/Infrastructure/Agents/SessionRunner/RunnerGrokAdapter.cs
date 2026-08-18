@@ -3,6 +3,7 @@ using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -10,14 +11,32 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
 {
-    private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);
-    private const string IdleTitleSignal = "\x1b]0;✳";
+    // The measured turn-end lines (grok 1.0.5, CARD-0080 S1): "Worked for 1.7s" — DECIMAL seconds,
+    // which the old " for \d+s" integer regex never matched — and, for an Esc mid-turn,
+    // "Turn cancelled by user in 1.7s." ("in", not "for"). Both are FALLBACK signals only: the
+    // primary turn-end verdict is the tailed TurnEnd transcript row (CARD-0080 S2).
+    private static readonly Regex DonePattern = new(
+        @"Worked for \d+(?:\.\d+)?s|Turn cancelled by user", RegexOptions.Compiled);
+
+    // Grok's idle OSC title is plain "grok" (measured; it NEVER sets Claude's ✳, which is what the
+    // old check looked for). The BEL terminator keeps working titles ("Thinking - grok",
+    // "⠹ - Waiting for response… - grok") from matching; note a session that has generated a
+    // conversation title re-idles as "<title> - grok", which this exact form deliberately does not
+    // match — the done lines above and the transcript row carry that case.
+    private const string IdleTitleSignal = "\x1b]0;grok\x07";
+
+    // How long after a screen-level done signal to keep polling for the trailing TurnEnd row —
+    // measured ~90ms behind the done line, so this is generous.
+    private static readonly TimeSpan TranscriptGraceAfterScreenDone = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan TurnPollInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly RunnerTerminalSession _terminal;
+    private readonly ISessionRunnerClient _client;
     private readonly AgentRegistrySettings _settings;
     private readonly DeliveryVerificationSettings _verification;
     private readonly ILogger? _logger;
     private long _promptStartSequence;
+    private long _transcriptBaselineSequence;
     private string? _lastPrompt;
     private bool _started;
 
@@ -27,6 +46,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         IOptions<SupervisionSettings>? supervisionSettings = null,
         ILogger? logger = null)
     {
+        _client = client;
         _terminal = new RunnerTerminalSession(client);
         _settings = options.Value;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
@@ -60,6 +80,9 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         await _terminal.ClearLiveBufferAsync(ct);
         _lastPrompt = prompt;
         _promptStartSequence = await _terminal.GetLastSequenceAsync(ct);
+        // The confirmation floor for this turn: rows ingested past it are THIS prompt's. Captured
+        // before a byte is typed, same discipline as the queue's baseline (CARD-0055).
+        _transcriptBaselineSequence = (await TryGetTranscriptAsync(ct))?.LastSequence ?? 0;
 
         if (!_verification.Enabled)
         {
@@ -137,23 +160,117 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
         return true;
     }
 
+    /// <summary>
+    /// Primary signal: the tailed <c>TurnEnd</c> transcript row past this prompt's baseline —
+    /// Grok writes an explicit <c>turn_completed</c> for every turn, cancelled ones included
+    /// (CARD-0080 S1/S2), and the reply text comes from the same window's <c>AssistantText</c>
+    /// rows instead of screen-scraping. The screen heuristic (done line, idle title, quiet time)
+    /// stays as the FALLBACK for a session with no transcript rows — and until S1 corrected the
+    /// patterns it was entirely dead code, so quiet time is what production actually ran on.
+    /// </summary>
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var marked = await _terminal.WaitForOutputAsync(
-            text => text.Contains(IdleTitleSignal, StringComparison.Ordinal) || DonePattern.IsMatch(text),
-            TimeSpan.FromMilliseconds(_settings.GrokDoneQuietPeriodMs),
-            ct);
-        var done = marked || await _terminal.WaitForQuietAsync(
-            TimeSpan.FromMilliseconds(_settings.GrokDoneQuietPeriodMs),
-            TimeSpan.FromMilliseconds(_settings.GrokDoneMaxWaitMs),
-            ct);
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(_settings.GrokDoneMaxWaitMs);
+        var quietPeriod = TimeSpan.FromMilliseconds(_settings.GrokDoneQuietPeriodMs);
+        var lastSequence = await _terminal.GetLastSequenceAsync(ct);
+        var lastChange = DateTime.UtcNow;
+        var screenDone = false;
+        DateTime? screenDoneGraceDeadline = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await TryBuildTranscriptVerdictAsync(ct) is { } fromTranscript)
+                return fromTranscript;
+
+            if (!screenDone)
+            {
+                var rawText = await _terminal.SnapshotTextAsync(ct);
+                if (DonePattern.IsMatch(rawText) || rawText.Contains(IdleTitleSignal, StringComparison.Ordinal))
+                {
+                    screenDone = true;
+                }
+                else
+                {
+                    var sequence = await _terminal.GetLastSequenceAsync(ct);
+                    if (sequence != lastSequence)
+                    {
+                        lastSequence = sequence;
+                        lastChange = DateTime.UtcNow;
+                    }
+                    else if (DateTime.UtcNow - lastChange >= quietPeriod)
+                    {
+                        screenDone = true;
+                    }
+                }
+
+                // The screen says done ~90ms BEFORE the turn_completed row lands; give the row a
+                // short grace so the verdict (and the reply text) still come from the transcript
+                // whenever one exists at all.
+                if (screenDone)
+                    screenDoneGraceDeadline = DateTime.UtcNow + TranscriptGraceAfterScreenDone;
+            }
+            else if (DateTime.UtcNow >= screenDoneGraceDeadline)
+            {
+                break;
+            }
+
+            try { await Task.Delay(TurnPollInterval, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+
         var raw = await _terminal.SnapshotTextAsync(ct);
         return new AgentTurnResult(
-            TurnCompleted: done,
+            TurnCompleted: screenDone,
             ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
             IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
             RawSnapshot: raw);
+    }
+
+    /// <summary>
+    /// A completed verdict when the tailed transcript proves it: a TurnEnd row past this prompt's
+    /// baseline, with the reply assembled from the AssistantText rows of the same window. Null
+    /// while the turn is still running or no transcript is available.
+    /// </summary>
+    private async Task<AgentTurnResult?> TryBuildTranscriptVerdictAsync(CancellationToken ct)
+    {
+        var transcript = await TryGetTranscriptAsync(ct);
+        if (transcript is null)
+            return null;
+
+        var rows = transcript.Entries
+            .Where(e => e.Sequence > _transcriptBaselineSequence)
+            .ToList();
+        if (!rows.Any(e => e.Kind == TranscriptKinds.TurnEnd))
+            return null;
+
+        var reply = string.Join(
+            "\n\n",
+            rows.Where(e => e.Kind == TranscriptKinds.AssistantText && !string.IsNullOrWhiteSpace(e.Text))
+                .Select(e => e.Text));
+        var raw = await _terminal.SnapshotTextAsync(ct);
+        return new AgentTurnResult(
+            TurnCompleted: true,
+            ResponseText: reply.Length > 0 ? reply : CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
+            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
+            RawSnapshot: raw);
+    }
+
+    private async Task<SessionRunnerTranscriptDto?> TryGetTranscriptAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _client.GetTranscriptAsync(_terminal.SessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // No transcript endpoint / session not found / transient transport failure — the
+            // screen fallback carries the turn, exactly as it did before S2.
+            _logger?.LogDebug(
+                ex, "Session {SessionId}: transcript unavailable for turn-complete detection",
+                _terminal.SessionId);
+            return null;
+        }
     }
 
     public string SnapshotRawOutput()

@@ -403,7 +403,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime _startedAt;
         private TerminalScreen? _screen;
         private string? _ansiLogPath;
-        private TranscriptTailer? _tailer;
+        private ITranscriptTailer? _tailer;
         private TranscriptSidecar? _sidecar;
         private long _lastSequence;
         private string _status = "Starting";
@@ -497,7 +497,31 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     await _client.AttachAsync(resync.LastSeq, ct);
                 }
 
-                if (request.TranscriptEnabled)
+                if (request.TranscriptEnabled
+                    && string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Grok's transcript path is DETERMINISTIC (we pass --session-id and grok
+                    // honours it — measured 1.0.5, CARD-0080 S1), so the sidecar records the bound
+                    // path up front and none of the Claude discovery/claim machinery runs. A
+                    // restart re-tails this exact file via the sidecar's Format + TranscriptPath.
+                    var updatesPath = GrokTranscriptTailer.ResolveUpdatesPath(
+                        request.Env, request.Cwd, _sessionId);
+                    SaveSidecar(new TranscriptSidecar
+                    {
+                        SessionId = _sessionId,
+                        Cwd = request.Cwd,
+                        ChildStartUtc = _startedAt,
+                        ResumeLaunch = IsResumeLaunch(request.Args),
+                        TranscriptPath = updatesPath,
+                        How = TranscriptBindMethods.Deterministic,
+                        Format = TranscriptFormats.Grok,
+                    });
+
+                    _tailer = new GrokTranscriptTailer(
+                        _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
+                    _tailer.Start();
+                }
+                else if (request.TranscriptEnabled)
                 {
                     // The sidecar is written BEFORE the tailer runs, so even a session that never
                     // binds a transcript leaves behind the facts (cwd, agent name, child start) a
@@ -602,6 +626,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 var sidecar = TranscriptSidecar.TryLoad(
                     TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
                 var cwd = manifest.Cwd ?? sidecar?.Cwd ?? "";
+
+                // A Grok sidecar re-tails the same deterministic file — no discovery, no shim. The
+                // sidecar always exists for a Grok session (written before the tailer at launch);
+                // a missing TranscriptPath (hand-edited sidecar) recomputes it from cwd + id, with
+                // this process's GROK_HOME standing in for the launch env the manifest never keeps.
+                if (string.Equals(sidecar?.Format, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
+                {
+                    _sidecar = sidecar;
+                    var updatesPath = sidecar!.TranscriptPath
+                        ?? GrokTranscriptTailer.ResolveUpdatesPath(null, cwd, _sessionId);
+                    _tailer = new GrokTranscriptTailer(
+                        _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
+                    _tailer.Start();
+                    return true;
+                }
                 // A session that predates sidecars has none to load; seed one from the manifest so
                 // this restart is the last one that has to fall back to the migration shim.
                 _sidecar = sidecar ?? new TranscriptSidecar

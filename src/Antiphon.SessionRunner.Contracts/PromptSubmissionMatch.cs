@@ -159,6 +159,18 @@ public static class PromptSubmissionMatch
     /// Weak arm: a body too short to identify (<see cref="MinMatchChars"/>) — the auto-continue
     /// "Continue." and friends — is confirmed by the record's existence alone. Weaker than a text
     /// match, but strictly stronger than the screen-redraw signal it replaces.
+    ///
+    /// <para>The strong arm has a second, whitespace-free comparison behind the spaced one, because
+    /// a TUI may not preserve the body's whitespace AT ALL: Grok's composer drops every newline from
+    /// typed and pasted input with NO separator (measured grok 1.0.5, CARD-0080 S1 — 4450 chars
+    /// sent, 4389 recorded, exactly the newline count; "line one\nline two" is recorded as
+    /// "line oneline two"), so the space this normalization keeps where a newline was does not
+    /// exist in the record and the spaced compare falsely mismatches every multi-line body. Shared
+    /// rather than per-agent-kind on purpose: the callers don't know the kind at the match site,
+    /// <c>ComposerDeliveryEvidence</c> already strips all whitespace for the same reason (TUIs
+    /// re-wrap), deleting a character class from both sides preserves every match the spaced
+    /// compare finds, and the only NEW matches it admits are bodies differing solely in whitespace
+    /// placement — which the 15c9150e stale-body shape (different text) can never satisfy.</para>
     /// </summary>
     public static bool IsConfirmedBy(string? body, string? recordText)
     {
@@ -168,6 +180,16 @@ public static class PromptSubmissionMatch
         if (string.IsNullOrEmpty(recordText))
             return false;
 
-        return Normalize(recordText).Contains(needle, StringComparison.Ordinal);
+        var record = Normalize(recordText);
+        if (record.Contains(needle, StringComparison.Ordinal))
+            return true;
+
+        // Whitespace-free arm (see the doc comment). The stripped needle must still clear
+        // MinMatchChars on its own — a needle that was mostly spaces would otherwise degrade to a
+        // near-weak match while claiming text-match strength.
+        var strippedNeedle = needle.Replace(" ", "", StringComparison.Ordinal);
+        return strippedNeedle.Length >= MinMatchChars
+            && record.Replace(" ", "", StringComparison.Ordinal)
+                .Contains(strippedNeedle, StringComparison.Ordinal);
     }
 }

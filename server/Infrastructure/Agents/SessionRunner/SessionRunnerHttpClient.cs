@@ -48,13 +48,27 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             spec.Cols,
             spec.Rows,
             spec.MemoryLimitMb,
-            // Only Claude Code writes the JSONL transcript we tail.
-            TranscriptEnabled: spec.Kind == AgentKind.ClaudeCode);
+            // Claude writes the per-cwd JSONL we discover-and-tail; Grok persists its ACP update
+            // stream to a deterministic per-session path (CARD-0080 S2). Codex/OpenCode/Raw have
+            // no structured transcript, so their sessions stay screen-only.
+            TranscriptEnabled: TranscriptEnabledFor(spec.Kind),
+            TranscriptFormat: TranscriptFormatFor(spec.Kind));
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         response.EnsureSuccessStatusCode();
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty start response."));
     }
+
+    /// <summary>Which agent kinds get a runner-side transcript tailer (see StartAsync's mapping).</summary>
+    public static bool TranscriptEnabledFor(AgentKind kind) =>
+        kind is AgentKind.ClaudeCode or AgentKind.Grok;
+
+    /// <summary>
+    /// Which tailer the runner should use. Null for Claude on purpose — it is the pre-Grok default,
+    /// so a new server in front of an old runner asks for exactly what that runner already does.
+    /// </summary>
+    public static string? TranscriptFormatFor(AgentKind kind) =>
+        kind == AgentKind.Grok ? TranscriptFormats.Grok : null;
 
     /// <summary>
     /// Null on ANY failure — an old runner without the endpoint, an unreachable one, a malformed

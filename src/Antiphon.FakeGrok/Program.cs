@@ -280,6 +280,12 @@ internal static class Program
 
     private static void SubmitTurn(Action<string> write, string sessionDir, string sessionId, string text)
     {
+        // Real grok sets WORKING titles mid-turn ("⠹ - Waiting for response… - grok", "Thinking -
+        // grok", "Responding - grok" — measured 1.0.5) before re-idling to plain "grok". Modelled
+        // here for fidelity AND necessity: conhost only re-emits an OSC title that CHANGED, so
+        // without the working title the closing IdleTitle (same "grok" the session started with)
+        // dedups away and never reaches the pty output at all.
+        write("\x1b]0;Responding - grok\x07");
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");

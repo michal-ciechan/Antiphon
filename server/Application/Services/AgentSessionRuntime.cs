@@ -260,6 +260,12 @@ public sealed class AgentSessionRuntime
     /// <see cref="FlushQueueOnIdleAsync"/> for why the interrupt marker counts).</summary>
     private static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>
         (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "end_turn")
+        // Grok's Esc interrupt is an EXPLICIT turn_completed with stop_reason "cancelled"
+        // (measured 1.0.5, CARD-0080 S1) — the structured analog of Claude's "[Request
+        // interrupted…" marker below, and like it, the queue must flush on it or every WhenIdle
+        // delivery strands until some later turn completes. Claude's API never emits "cancelled"
+        // as a stop_reason, so this arm cannot change Claude behaviour.
+        || (entry.Kind == TranscriptKinds.TurnEnd && entry.StopReason == "cancelled")
         || TranscriptKinds.IsInterruptPrompt(entry.Kind, entry.Text);
 
     /// <summary>

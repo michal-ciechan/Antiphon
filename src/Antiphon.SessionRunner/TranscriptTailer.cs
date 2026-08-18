@@ -32,7 +32,7 @@ namespace Antiphon.SessionRunner;
 /// Nothing qualifying means the session runs WITHOUT a transcript and raises a visible fault —
 /// never a bind on cwd and recency alone.
 /// </summary>
-internal sealed class TranscriptTailer : IAsyncDisposable
+internal sealed class TranscriptTailer : ITranscriptTailer
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan LocatePollInterval = TimeSpan.FromMilliseconds(250);
