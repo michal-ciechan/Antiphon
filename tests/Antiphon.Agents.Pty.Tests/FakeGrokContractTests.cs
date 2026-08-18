@@ -57,7 +57,7 @@ public class FakeGrokContractTests
         var output = await process.StandardOutput.ReadToEndAsync();
         await process.WaitForExitAsync();
         process.ExitCode.ShouldBe(0);
-        output.Trim().ShouldBe("grok 1.0.4 (fakegrok) [stable]");
+        output.Trim().ShouldBe("grok 1.0.5 (fakegrok) [stable]");
     }
 
     [Test]
@@ -80,16 +80,19 @@ public class FakeGrokContractTests
     }
 
     [Test]
-    public async Task Text_and_CR_in_one_write_does_NOT_submit()
+    public async Task Text_and_CR_in_one_write_submits()
     {
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
 
         await runner.WriteAsync("queued message\r");
 
+        // Measured against real grok 1.0.5 (GrokCanaryTests): every \r is Enter — there is no
+        // Claude-style paste window on unbracketed input. This is the opposite of FakeClaude's
+        // contract, which this fake wrongly copied before the canaries.
         var submitted = await runner.WaitForOutputAsync(
-            s => s.Contains("SUBMITTED:queued message"), TimeSpan.FromSeconds(2));
-        submitted.ShouldBeFalse("text+CR in one write must be treated as a paste, not a submit");
+            s => s.Contains("SUBMITTED:queued message"), TimeSpan.FromSeconds(5));
+        submitted.ShouldBeTrue("text+CR in one write submits on real Grok");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
@@ -107,6 +110,17 @@ public class FakeGrokContractTests
         var submitted = await runner.WaitForOutputAsync(
             s => s.Contains("SUBMITTED:queued message"), TimeSpan.FromSeconds(5));
         submitted.ShouldBeTrue("body followed by a separate CR must submit");
+
+        // The measured turn-end signals (grok 1.0.5): "Worked for 1.7s" — DECIMAL seconds, which
+        // the " for \d+s" integer regex does not match — and an idle OSC title of plain "grok",
+        // never Claude's ✳.
+        (await runner.WaitForOutputAsync(
+            s => s.Contains("Worked for 1.7s"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("turn end prints the measured decimal-seconds line");
+        (await runner.WaitForOutputAsync(
+            s => s.Contains("\x1b]0;grok\x07"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("the idle OSC title is plain 'grok'");
+        runner.SnapshotText().ShouldNotContain("✳");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
@@ -132,7 +146,7 @@ public class FakeGrokContractTests
     }
 
     [Test]
-    public async Task Unbracketed_body_with_LF_line_endings_submits_as_one_intact_turn()
+    public async Task Unbracketed_body_with_LF_line_endings_submits_as_one_turn_with_newlines_dropped()
     {
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
@@ -153,6 +167,10 @@ public class FakeGrokContractTests
             },
             TimeSpan.FromSeconds(5));
         intact.ShouldBeTrue("LF endings must stay in the composer and submit as one turn");
+        // Measured 1.0.5: LFs are DROPPED — lines join with NO separator ("…big pasteline 1 …").
+        // The SUBMITTED echo escapes surviving newlines as \n, so their absence pins the drop.
+        runner.SnapshotText().ShouldContain("big pasteline 1");
+        runner.SnapshotText().ShouldNotContain("SUBMITTED:HEAD first line of a big paste\\n");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
@@ -198,6 +216,11 @@ public class FakeGrokContractTests
             updates.ShouldContain("user_message_chunk");
             updates.ShouldContain("remember this");
             updates.ShouldContain("agent_message_chunk");
+            // Measured 1.0.5: every turn ends with an explicit turn_completed row carrying a
+            // stop_reason — the structured signal S2's tailer runs on.
+            updates.ShouldContain("turn_completed");
+            updates.ShouldContain("\"stop_reason\":\"end_turn\"");
+            updates.ShouldContain("_x.ai/session/update");
 
             await runner.KillAsync(TimeSpan.FromSeconds(2));
         }

@@ -10,23 +10,36 @@ namespace Antiphon.FakeGrok;
 /// emulator. It models the behaviours Antiphon's PTY / session-runner stack depends on so tests can
 /// lock them in without launching the real <c>grok</c> executable.
 ///
-/// CLI modelled (real grok 1.0.4):
-///  * <c>--version</c> / <c>-v</c> / <c>version</c> — prints <c>grok 1.0.4 (fakegrok) [stable]</c>
+/// CLI modelled (real grok 1.0.5, measured by <c>GrokCanaryTests</c> 2026-08-18):
+///  * <c>--version</c> / <c>-v</c> / <c>version</c> — prints <c>grok 1.0.5 (fakegrok) [stable]</c>
 ///  * <c>models</c> — prints the measured prose catalogue (not one-id-per-line)
 ///  * <c>--session-id</c> / <c>-s</c>, <c>--resume</c> / <c>-r</c>, <c>--cwd</c>, <c>--model</c> / <c>-m</c>
 ///  * <c>--always-approve</c>, <c>--no-alt-screen</c>, <c>--permission-mode</c> accepted and ignored
 ///  * Session files under <c>GROK_HOME/sessions/&lt;encoded-cwd&gt;/&lt;session-id&gt;/</c>
 ///
-/// PTY contract modelled (same as FakeClaude — Antiphon's queue depends on it for every TUI):
-///  * Lone CR/LF burst submits; text+CR in one write is a paste
-///  * Mid-body <c>\r</c> fragments; <c>\n</c> is literal
-///  * Composer echo; opt-in clip / swallow-enter / paste-placeholder
-///  * Turn-end: <c>Crunched for 1s</c> + idle OSC title, then quiet
+/// PTY contract modelled — the MEASURED grok 1.0.5 contract, which is NOT FakeClaude's
+/// (the original "same as FakeClaude" assumption was wrong on every point the canaries checked):
+///  * EVERY <c>\r</c> is Enter — text+CR in one write SUBMITS (no Claude-style paste window);
+///    mid-body <c>\r</c> submits the fragment before it
+///  * <c>\n</c> is DROPPED from composer input, typed and pasted alike — lines join with NO
+///    separator (measured: 4450 sent → 4389 recorded, exactly the newline count)
+///  * Bracketed paste content lands intact; no placeholder collapse at 4.4 KB; no stdin clip at
+///    4.4 KB typed (the clip / swallow-enter / paste-placeholder models stay as opt-in harness
+///    tooling for worst-case drills, not as measured Grok behaviour)
+///  * Turn-end: <c>Worked for 1.7s</c> (decimal seconds — the <c> for \d+s</c> integer regex does
+///    NOT match it) + idle OSC title <c>grok</c> (never Claude's <c>✳</c>), then quiet
+///  * updates.jsonl per turn: user_message_chunk + agent_message_chunk (method
+///    <c>session/update</c>) and turn_completed with stop_reason (method
+///    <c>_x.ai/session/update</c>), flushed line-by-line as they happen
 /// </summary>
 internal static class Program
 {
-    private const string IdleTitle = "\x1b]0;✳\x07";
-    private const string VersionLine = "grok 1.0.4 (fakegrok) [stable]";
+    // Real grok's idle title is plain "grok" (spinner/status titles while working); it never
+    // sets Claude's ✳ — measured 1.0.5, and exactly why RunnerGrokAdapter's ✳ check never fires.
+    private const string IdleTitle = "\x1b]0;grok\x07";
+    private const string VersionLine = "grok 1.0.5 (fakegrok) [stable]";
+    private static int _eventCounter;
+    private static int _promptCounter;
     private static readonly byte[] PasteStartBytes = Encoding.ASCII.GetBytes("\x1b[200~");
 
     private static int Main(string[] args)
@@ -223,45 +236,45 @@ internal static class Program
 
             if (wasBracketedPaste)
             {
-                var pasted = text.Replace("\x1b[200~", "").Replace("\x1b[201~", "")
+                // Measured 1.0.5: pasted newlines are DROPPED — lines join with no separator.
+                // The raw (newline-bearing) text still feeds the opt-in placeholder model so its
+                // "+M lines" arithmetic stays meaningful as harness tooling.
+                var pastedRaw = text.Replace("\x1b[200~", "").Replace("\x1b[201~", "")
                     .Replace("\r\n", "\n").Replace('\r', '\n');
+                var pasted = pastedRaw.Replace("\n", "");
                 composer.Append(pasted);
                 if (placeholder is null)
                 {
-                    Write(pasted.Replace("\n", "\r\n"));
+                    Write(pasted);
                     return;
                 }
 
-                pasteBuffer.Append(pasted);
+                pasteBuffer.Append(pastedRaw);
                 if (inPaste) return;
                 Write(placeholder.Render(pasteBuffer.ToString()) + "\r\n");
                 pasteBuffer.Clear();
                 return;
             }
 
+            // Measured 1.0.5: every \r is Enter — including one trailing a text burst — and \n is
+            // dropped from typed input (no Claude-style paste window, no literal newline).
             var work = text.Replace("\r\n", "\r");
             var trailingCr = work.EndsWith('\r');
             if (trailingCr) work = work[..^1];
-            if (work.Contains('\r'))
+            var segments = work.Split('\r');
+            for (var s = 0; s < segments.Length; s++)
             {
-                var segments = work.Split('\r');
-                for (var s = 0; s < segments.Length - 1; s++)
-                {
-                    composer.Append(segments[s]);
-                    Write(segments[s].Replace("\n", "\r\n"));
-                    var fragment = composer.ToString().Trim();
-                    composer.Clear();
-                    Write("\r\n");
-                    if (fragment.Length > 0)
-                        SubmitTurn(Write, sessionDir, sessionId, fragment);
-                }
-
-                work = segments[^1];
+                var piece = segments[s].Replace("\n", "");
+                composer.Append(piece);
+                Write(piece);
+                var submitHere = s < segments.Length - 1 || trailingCr;
+                if (!submitHere) continue;
+                var fragment = composer.ToString().Trim();
+                composer.Clear();
+                Write("\r\n");
+                if (fragment.Length > 0)
+                    SubmitTurn(Write, sessionDir, sessionId, fragment);
             }
-
-            var composerText = work + (trailingCr ? "\n" : "");
-            composer.Append(composerText);
-            Write(composerText.Replace("\n", "\r\n"));
         }
     }
 
@@ -272,18 +285,30 @@ internal static class Program
         write($"SUBMITTED:{escaped}\r\n");
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
-        write("Crunched for 1s\r\n");
+        // The real turn-end line, measured 1.0.5: decimal seconds ("Worked for 1.7s"), which the
+        // integer " for \d+s" regex does NOT match — do not "fix" this to an integer.
+        write("Worked for 1.7s\r\n");
         write(IdleTitle);
         AppendSessionFiles(sessionDir, sessionId, text, $"FAKE response to: {echo}");
     }
 
+    /// <summary>
+    /// The measured per-turn updates.jsonl emission (grok 1.0.5): user_message_chunk and
+    /// agent_message_chunk as <c>session/update</c>, then turn_completed with a stop_reason as
+    /// <c>_x.ai/session/update</c>, each row flushed as it happens (the real file is line-buffered
+    /// — turn_completed landed ~1.5 s after Enter on a trivial turn, no Claude-style flush stall).
+    /// </summary>
     private static void AppendSessionFiles(string sessionDir, string sessionId, string user, string assistant)
     {
         try
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var promptId = Guid.NewGuid().ToString("D");
+            var promptIndex = _promptCounter++;
             var updates = Path.Combine(sessionDir, "updates.jsonl");
             var history = Path.Combine(sessionDir, "chat_history.jsonl");
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
             File.AppendAllText(updates,
                 JsonSerializer.Serialize(new
                 {
@@ -295,8 +320,10 @@ internal static class Program
                         update = new
                         {
                             sessionUpdate = "user_message_chunk",
-                            content = new { type = "text", text = user }
-                        }
+                            content = new { type = "text", text = user },
+                            _meta = new { modelId = "grok-4.6", promptIndex }
+                        },
+                        _meta = Meta()
                     }
                 }) + "\n");
             File.AppendAllText(updates,
@@ -311,7 +338,33 @@ internal static class Program
                         {
                             sessionUpdate = "agent_message_chunk",
                             content = new { type = "text", text = assistant }
-                        }
+                        },
+                        _meta = Meta()
+                    }
+                }) + "\n");
+            File.AppendAllText(updates,
+                JsonSerializer.Serialize(new
+                {
+                    timestamp = now,
+                    method = "_x.ai/session/update",
+                    @params = new
+                    {
+                        sessionId,
+                        update = new
+                        {
+                            sessionUpdate = "turn_completed",
+                            prompt_id = promptId,
+                            stop_reason = "end_turn",
+                            usage = new
+                            {
+                                inputTokens = 1,
+                                outputTokens = 1,
+                                totalTokens = 2,
+                                modelCalls = 1,
+                                numTurns = 1
+                            }
+                        },
+                        _meta = Meta()
                     }
                 }) + "\n");
             File.AppendAllText(history,
