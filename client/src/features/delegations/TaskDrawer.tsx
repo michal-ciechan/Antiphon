@@ -39,13 +39,13 @@ import {
 import { TierBadge } from './TaskChip'
 import {
   STATUS_COLOR,
-  TIER_VISUALS,
   WORKSPACE_LABEL,
   elapsedSeconds,
   formatCost,
   formatDuration,
   isLegacyCostEstimate,
   shortId,
+  tierAlias,
   totalTokens,
 } from './taskVisuals'
 
@@ -112,10 +112,10 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   return (
     <Stack gap="md">
       <Group gap="xs">
-        <TierBadge level={summary.modelLevel} size="sm" />
+        <TierBadge level={summary.modelLevel} kind={summary.agentKind} size="sm" />
         {summary.escalatedFrom && (
           <Badge size="sm" variant="light" color="warning" leftSection={<TbArrowBigUpLine size={12} />}>
-            escalated from {TIER_VISUALS[summary.escalatedFrom].alias}
+            escalated from {tierAlias(summary.escalatedFrom, summary.agentKind)}
           </Badge>
         )}
         <Badge size="sm" variant="default">

@@ -21,6 +21,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> = {}): AgentTaskSummaryDto
     title: 'CARD-0067 - reply durability',
     kind: 'Worker',
     role: 'Code',
+    agentKind: 'ClaudeCode',
     modelLevel: 'High',
     escalatedFrom: null,
     status: 'Succeeded',

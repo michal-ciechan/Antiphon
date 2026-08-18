@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from './client'
 import type { AgentModelLevel } from './agents'
+import type { AgentKind } from './boards'
 
 /**
  * Delegated agent tasks (feature 007). One task is one delegated unit of work — deliberately not a
@@ -70,6 +71,8 @@ export interface AgentTaskSummaryDto {
   title: string
   kind: AgentTaskKind
   role: AgentTaskRole
+  /** WHICH AGENT PROGRAM ran (or will run) it — ClaudeCode unless the caller chose Grok. */
+  agentKind: AgentKind
   modelLevel: AgentModelLevel
   /** Set when the task was bumped up a tier — the chip shows the ladder, not just the destination. */
   escalatedFrom: AgentModelLevel | null

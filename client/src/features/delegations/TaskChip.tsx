@@ -2,6 +2,7 @@ import { Badge, Group, Paper, Text, Tooltip } from '@mantine/core'
 import { TbArrowBigUpLine, TbGitBranch, TbLock, TbSitemap } from 'react-icons/tb'
 import type { AgentModelLevel } from '../../api/agents'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
+import type { AgentKind } from '../../api/boards'
 import {
   STATUS_COLOR,
   TIER_VISUALS,
@@ -10,15 +11,29 @@ import {
   formatCost,
   formatDuration,
   shortId,
+  tierAlias,
+  tierTooltip,
 } from './taskVisuals'
 
-/** The tier, on its own axis (see TIER_VISUALS) — solid fable down to grey haiku. */
-export function TierBadge({ level, size = 'xs' }: { level: AgentModelLevel; size?: string }) {
+/**
+ * The tier, on its own axis (see TIER_VISUALS) — solid fable down to grey haiku. The NAME follows
+ * the agent program the task runs on (CARD-0084 S4); the intensity deliberately does not, because
+ * Frontier is the same rung on the ladder whoever is on it.
+ */
+export function TierBadge({
+  level,
+  kind = 'ClaudeCode',
+  size = 'xs',
+}: {
+  level: AgentModelLevel
+  kind?: AgentKind
+  size?: string
+}) {
   const tier = TIER_VISUALS[level]
   return (
-    <Tooltip label={`${level} tier — Claude ${tier.alias}`} withArrow>
+    <Tooltip label={tierTooltip(level, kind)} withArrow>
       <Badge size={size} variant={tier.variant} color={tier.color} data-testid={`tier-${level}`}>
-        {tier.alias}
+        {tierAlias(level, kind)}
       </Badge>
     </Tooltip>
   )
@@ -75,15 +90,15 @@ export function TaskChip({
         {/* Reads left to right as the ladder it is: "opus → fable". */}
         {task.escalatedFrom && (
           <Tooltip
-            label={`Escalated from ${TIER_VISUALS[task.escalatedFrom].alias} — attempt ${task.attempt}`}
+            label={`Escalated from ${tierAlias(task.escalatedFrom, task.agentKind)} — attempt ${task.attempt}`}
             withArrow
           >
             <Badge size="xs" variant="light" color="warning" leftSection={<TbArrowBigUpLine size={11} />}>
-              {TIER_VISUALS[task.escalatedFrom].alias} →
+              {tierAlias(task.escalatedFrom, task.agentKind)} →
             </Badge>
           </Tooltip>
         )}
-        <TierBadge level={task.modelLevel} />
+        <TierBadge level={task.modelLevel} kind={task.agentKind} />
         <Badge size="xs" variant="default">
           {task.role.toLowerCase()}
         </Badge>
