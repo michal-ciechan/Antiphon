@@ -306,7 +306,13 @@ public sealed class AgentTaskReplyService
                 await db.SaveChangesAsync(ct);
 
                 var queue = scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
-                var body = FitRefinementForTyping(task, trimmed, now);
+                // Whose composer this is typed into decides whether it may be typed at all
+                // (CARD-0084 S1) — a Grok session joins every line, so its refinement spills.
+                var agentKind = await db.AgentSessions.AsNoTracking()
+                    .Where(s => s.Id == sessionId)
+                    .Select(s => (AgentKind?)s.AgentKind)
+                    .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
+                var body = FitRefinementForTyping(task, trimmed, now, agentKind);
                 await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
                 break;
 
@@ -334,10 +340,16 @@ public sealed class AgentTaskReplyService
     /// earlier refinement's) and a pointer is typed instead; if the file cannot be written the
     /// pointer names the task's event timeline, where the head of the text is on record.
     /// </summary>
-    private string FitRefinementForTyping(AgentTask task, string message, DateTime now)
+    /// <param name="agentKind">
+    /// See <see cref="AgentTaskDispatcher.FitBriefForTyping"/> — a kind whose composer joins the
+    /// lines we type has an inline ceiling of 0, so its refinement always travels as a file plus a
+    /// join-proof pointer (CARD-0084 S1).
+    /// </param>
+    private string FitRefinementForTyping(AgentTask task, string message, DateTime now, AgentKind agentKind)
     {
-        var ceilings = _ptyProfile?.Ceilings
-            ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+        var ceilings = (_ptyProfile?.Ceilings
+            ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
+            .ForAgentKind(agentKind);
         var body = DelegationReportFormatter.BuildRefinement(task, message);
         if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.BriefInlineMaxBytes)
             return body;
@@ -360,7 +372,8 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id));
         }
 
-        return DelegationReportFormatter.BuildRefinementPointer(task, _settings, spillPath, body.Length);
+        return DelegationReportFormatter.BuildRefinementPointer(
+            task, _settings, spillPath, body.Length, agentKind);
     }
 
     private async Task SettleAsync(

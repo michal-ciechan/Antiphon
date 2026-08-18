@@ -949,7 +949,10 @@ public sealed class AgentTaskDispatcher
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
         // that normalises line endings, wraps in a bracketed paste, and submits with a separate CR.
         // A raw multi-line write fragments into several turns (documented live miss).
-        var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger);
+        // session.AgentKind, not a constant: whose composer this brief is typed into decides whether
+        // it may be typed at all (CARD-0084 S1). It is ClaudeCode on every spawn today; reading it
+        // off the session is what makes a Grok delegate spill instead of arriving run-on.
+        var brief = FitBriefForTyping(claimed, _settings, _ptyProfile?.Ceilings, _logger, session.AgentKind);
         try
         {
             await _queue.EnqueueAsync(
@@ -1028,14 +1031,24 @@ public sealed class AgentTaskDispatcher
     /// caller that has no <see cref="PtyDeliveryProfile"/>, which is every test that predates it —
     /// means the inbox conhost and the ceilings that shipped with it. The gate is never widened by
     /// omission.</para>
+    ///
+    /// <para><paramref name="agentKind"/> is whose COMPOSER is on the other end (CARD-0084 S1), a
+    /// separate axis from the pseudoconsole. A kind that joins the lines we type — Grok drops every
+    /// LF and joins with no separator, measured — has an inline ceiling of 0, so its brief ALWAYS
+    /// takes the spill path below and reaches it as a file with its structure intact, rather than
+    /// as one run-on line whose paths and commands have grown the next line's first word. Every
+    /// production call site passes the session's own kind; the default keeps every test that
+    /// predates this rendering byte-identical.</para>
     /// </summary>
     internal static string FitBriefForTyping(
         AgentTask task,
         DelegationSettings settings,
         PtyDeliveryCeilings? ceilings = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        AgentKind agentKind = AgentKind.ClaudeCode)
     {
-        var limits = ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+        var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
+            .ForAgentKind(agentKind);
         var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars);
         // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
         // and an em-dash costs 3 of them (CARD-0027).
@@ -1063,11 +1076,11 @@ public sealed class AgentTaskDispatcher
         }
 
         logger?.LogInformation(
-            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0} on {Backend}); delivering a pointer to {Where}",
+            "Task {ShortId}: brief is {Bytes:N0} UTF-8 bytes (> {Ceiling:N0} — {Ceilings}); delivering a pointer to {Where}",
             DelegationReportFormatter.Short(task.Id), briefBytes, limits.BriefInlineMaxBytes,
-            limits.Backend, spillPath ?? "the API");
+            limits, spillPath ?? "the API");
 
-        return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length);
+        return DelegationReportFormatter.BuildBriefPointer(task, settings, spillPath, brief.Length, agentKind);
     }
 
     /// <summary>
@@ -1461,7 +1474,15 @@ public sealed class AgentTaskDispatcher
                     MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
             }
 
-            var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger);
+            // The live session's own kind (CARD-0084 S1). Unlike the spawn path this is NOT always
+            // ClaudeCode today: a task pinned to a STANDING agent is delivered into whatever that
+            // agent already is, and one of those is a Grok session.
+            var kind = await _db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == session)
+                .Select(s => (AgentKind?)s.AgentKind)
+                .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
+
+            var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, kind);
             await _queue.EnqueueAsync(
                 session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
         }

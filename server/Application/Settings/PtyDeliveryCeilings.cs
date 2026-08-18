@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Settings;
 
@@ -45,6 +46,47 @@ public sealed record PtyDeliveryCeilings(
     /// <see cref="DelegationSettings.ModernPtySingleWriteMaxBytes"/>).
     /// </summary>
     public bool IsPastePath => Backend == PtyBackend.ModernConPty;
+
+    /// <summary>
+    /// True when this agent kind's COMPOSER joins the lines we type into it instead of keeping
+    /// them. Measured for grok 1.0.5 (<c>GrokCanaryTests</c>, <c>FakeGrokContractTests</c>): a
+    /// 4 450-character body arrives as 4 389 characters — every one of its 61 newlines dropped and
+    /// the lines joined with NO separator. Nothing is lost; the structure is.
+    ///
+    /// <para>This is a property of the receiving TUI, NOT of the pseudoconsole, which is why it is
+    /// a separate axis from <see cref="Backend"/> and why it narrows only the inline ceiling below
+    /// (see <see cref="ForAgentKind"/>). Grok has no CARD-0027 one-chunk clip mode at all — a 4.4 KB
+    /// TYPED body also lands whole — so the transport numbers here are right for it as they
+    /// stand.</para>
+    /// </summary>
+    public static bool ComposerJoinsTypedLines(AgentKind kind) => kind == AgentKind.Grok;
+
+    /// <summary>
+    /// The same pseudoconsole ceilings, narrowed for a composer that joins typed lines
+    /// (CARD-0084 S1). For such a kind the inline ceiling is <b>0</b>: every brief and every
+    /// refinement takes the CARD-0025 spill path, so the structure survives in a FILE, and only a
+    /// pointer — flattened server-side so we choose the separator instead of the composer removing
+    /// it — is ever typed.
+    ///
+    /// <para>Why a joined brief is a correctness problem and not a cosmetic one: markdown headers
+    /// fuse into the preceding sentence, list items concatenate, and — the hazard for a Code or
+    /// Debug delegate specifically — a command, a test filter or a path merges with the next line's
+    /// first word (<c>…task-xxxx-brief.mdEverything you need is there</c>). Real briefs run 1.5-6 KB
+    /// and the modern backend's inline ceiling is 43 200 bytes, so without this EVERY brief to a
+    /// Grok delegate was typed inline and arrived as one run-on line.</para>
+    ///
+    /// <para><see cref="SingleWriteMaxBytes"/> and <see cref="ReplyInlineMaxChars"/> are deliberately
+    /// untouched: the tripwire is about what the TRANSPORT has been measured to carry whole, and the
+    /// report ceiling governs text travelling the other way, back to the caller.</para>
+    /// </summary>
+    public PtyDeliveryCeilings ForAgentKind(AgentKind kind) =>
+        ComposerJoinsTypedLines(kind)
+            ? this with
+            {
+                BriefInlineMaxBytes = 0,
+                Reason = $"{Reason}; {kind} joins typed lines, so briefs and refinements always spill (CARD-0084)",
+            }
+            : this;
 
     public override string ToString() =>
         $"{Backend}: brief {BriefInlineMaxBytes:N0}B, reply {ReplyInlineMaxChars:N0} chars, "

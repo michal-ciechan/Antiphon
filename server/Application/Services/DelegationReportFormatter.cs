@@ -263,12 +263,20 @@ public static class DelegationReportFormatter
     /// <paramref name="spillPath"/> is the file the caller managed to write, or null to fall back
     /// to the API (which needs no filesystem and is therefore always available).
     /// </summary>
+    /// <param name="agentKind">
+    /// Whose composer this will be typed into (CARD-0084 S1). A kind that JOINS typed lines
+    /// (<see cref="PtyDeliveryCeilings.ComposerJoinsTypedLines"/>) gets the same words rendered as
+    /// ONE line, with the spill path quoted — see <see cref="FlattenForJoiningComposer"/>. Default
+    /// <see cref="AgentKind.ClaudeCode"/>, so every existing caller renders byte-identically.
+    /// </param>
     public static string BuildBriefPointer(
-        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength)
+        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
+        AgentKind agentKind = AgentKind.ClaudeCode)
     {
+        var joins = PtyDeliveryCeilings.ComposerJoinsTypedLines(agentKind);
         var where = string.IsNullOrWhiteSpace(spillPath)
             ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the \"goal\" field"
-            : spillPath;
+            : joins ? $"'{spillPath}'" : spillPath;
 
         var sb = new StringBuilder();
         sb.Append(TaskMarker(task.Id))
@@ -306,6 +314,39 @@ public static class DelegationReportFormatter
             """).AppendLine();
 
         sb.Append(TaskMarker(task.Id));
+        return joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
+    }
+
+    /// <summary>
+    /// The same words, rendered for a composer that will DROP every newline and join the lines with
+    /// no separator (CARD-0084 S1; measured for grok 1.0.5). We do the join ourselves, with a single
+    /// space, so the separator is one we chose: the alternative is
+    /// <c>…task-7f3a2b91-brief.mdEverything you need is there</c>, where a path — or a command, or a
+    /// test filter — has silently grown the next line's first word.
+    ///
+    /// <para>Blank lines collapse and leading indentation goes, because after the join neither
+    /// exists anyway. What survives is exactly what has to: the <c>[antiphon-task:id]</c> markers
+    /// (bracketed, so they are unambiguous with a space either side of them and are the ONE thing
+    /// correlation depends on), the quoted spill path, and the closing marker LAST — the fragment
+    /// measured to survive every pty loss.</para>
+    ///
+    /// <para>Only pointer text goes through here, never a brief or a refinement body: those spill to
+    /// a file for this kind (<see cref="PtyDeliveryCeilings.ForAgentKind"/>) precisely because
+    /// flattening a 6 KB brief would destroy the structure this preserves in a pointer.</para>
+    /// </summary>
+    internal static string FlattenForJoiningComposer(string text)
+    {
+        var sb = new StringBuilder(text.Length);
+        foreach (var line in text.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0)
+                continue;
+            if (sb.Length > 0)
+                sb.Append(' ');
+            sb.Append(trimmed);
+        }
+
         return sb.ToString();
     }
 
@@ -343,15 +384,18 @@ public static class DelegationReportFormatter
     /// like it the pointer never grows a body of its own. <paramref name="spillPath"/> null falls
     /// back to the task's event timeline via the API, where the refinement's head is on record.
     /// </summary>
+    /// <param name="agentKind">See <see cref="BuildBriefPointer"/> — the same join-safe rendering.</param>
     public static string BuildRefinementPointer(
-        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength)
+        AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
+        AgentKind agentKind = AgentKind.ClaudeCode)
     {
+        var joins = PtyDeliveryCeilings.ComposerJoinsTypedLines(agentKind);
         var marker = TaskMarker(task.Id);
         var where = string.IsNullOrWhiteSpace(spillPath)
             ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the newest \"Refined\" event"
-            : spillPath;
+            : joins ? $"'{spillPath}'" : spillPath;
 
-        return $"""
+        var pointer = $"""
             {marker} REFINEMENT
 
             Your caller refined this task while you are working, but the refinement is
@@ -366,6 +410,8 @@ public static class DelegationReportFormatter
 
             {marker}
             """.ReplaceLineEndings("\n");
+
+        return joins ? FlattenForJoiningComposer(pointer) : pointer;
     }
 
     private static string StatusWord(AgentTaskStatus status) => status switch
