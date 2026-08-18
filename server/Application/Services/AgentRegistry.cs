@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
@@ -45,6 +45,58 @@ public sealed class AgentRegistry
             throw new NotFoundException(nameof(AgentDefinition), definitionName);
 
         return def;
+    }
+
+    /// <summary>
+    /// Which configured definition runs a given <see cref="AgentKind"/> (CARD-0084 S3). The
+    /// delegation path used to hard-code <see cref="AgentRegistrySettings.DefaultDefinition"/>,
+    /// which is only correct while every delegate is a Claude.
+    ///
+    /// <para>The default definition wins whenever it ALREADY IS the wanted kind, so a ClaudeCode
+    /// dispatch resolves to exactly the definition it resolved to before this method existed — the
+    /// search below never gets a chance to pick a differently-named Claude entry out from under it.
+    /// Otherwise the kind is matched against the configured definitions, ordered by name so the
+    /// answer is stable rather than dictionary-order.</para>
+    ///
+    /// <para>No match THROWS. A delegate dispatched onto a kind this installation cannot launch must
+    /// fail loudly and stay failed: silently falling back to the default definition would run a
+    /// Claude for a caller who explicitly asked for Grok, and the only evidence would be a report
+    /// that reads slightly wrong (CARD-0084 §4 — an explicit kind is never substituted).</para>
+    /// </summary>
+    public string DefinitionNameForKind(AgentKind kind)
+    {
+        var settings = _options.CurrentValue;
+
+        if (!string.IsNullOrWhiteSpace(settings.DefaultDefinition)
+            && settings.Definitions.TryGetValue(settings.DefaultDefinition, out var preferred)
+            && Enum.TryParse<AgentKind>(preferred.Kind, ignoreCase: true, out var preferredKind)
+            && preferredKind == kind)
+        {
+            return settings.DefaultDefinition;
+        }
+
+        var match = settings.Definitions
+            .Where(d => Enum.TryParse<AgentKind>(d.Value.Kind, ignoreCase: true, out var k) && k == kind)
+            .OrderBy(d => d.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(d => d.Key)
+            .FirstOrDefault();
+
+        if (match is null)
+        {
+            var configured = settings.Definitions.Count == 0
+                ? "none are configured"
+                : $"configured: {string.Join(", ", settings.Definitions.Select(d => $"{d.Key} ({d.Value.Kind})").OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}";
+            // InvalidOperationException, not NotFoundException: this is a CONFIGURATION gap, and
+            // the dispatcher stores the message verbatim as the task's failure reason — where the
+            // 404 wrapper's "AgentDefinition with id '...' was not found" would bury the fix.
+            throw new InvalidOperationException(
+                $"No agent definition is configured for kind '{kind}' ({configured}). "
+                + "Add one to Agents:Definitions before dispatching work onto that kind; nothing "
+                + "falls back to the default definition, because running a different program than "
+                + "the caller asked for is a silent wrong answer.");
+        }
+
+        return match;
     }
 
     public AgentLaunchSpec Resolve(string definitionName, AgentLaunchOptions options)

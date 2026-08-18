@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Entities;
+﻿using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -738,6 +738,11 @@ public class AppDbContext : DbContext
             // HasDefaultValue would make EF omit every explicitly-chosen Normal from the INSERT.
             // The migration's column default backfills existing rows; the model never relies on it.
             entity.Property(a => a.ReplyStyle).IsRequired();
+            // Unlike the two above, a default IS wanted here — ClaudeCode is 1, not 0, so the EF
+            // sentinel (default(AgentKind) == Raw) can never collide with a legitimately chosen
+            // value, and the column default is what states the FACT that every pre-CARD-0084 agent
+            // row ran Claude. Same shape as AgentTasks.AgentKind, one slice earlier.
+            entity.Property(a => a.Kind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);
             entity.Property(a => a.ModelId).HasMaxLength(500);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
             entity.Property(a => a.CreatedAt).IsRequired();

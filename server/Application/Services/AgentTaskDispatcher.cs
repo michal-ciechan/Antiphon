@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -867,6 +867,13 @@ public sealed class AgentTaskDispatcher
             }
         }
 
+        // Resolved BEFORE anything with a side effect — no worktree is cut and no session row is
+        // written for a kind this installation cannot launch (CARD-0084 S3). The reuse paths above
+        // are deliberately outside it: they launch nothing, so a definition they would never use
+        // must not be able to fail them. The outer tick catches the throw and fails the task with
+        // the configuration gap named.
+        var definitionName = _agentRegistry.DefinitionNameForKind(claimed.AgentKind);
+
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
         // target keeps the eventual rebase-back linear.
@@ -899,8 +906,11 @@ public sealed class AgentTaskDispatcher
             Id = Guid.NewGuid(),
             CardId = null,
             WorktreeId = null,
-            DefinitionName = _agentRegistry.Settings.DefaultDefinition,
-            AgentKind = AgentKind.ClaudeCode,
+            DefinitionName = definitionName,
+            // The task's kind, not a constant. This one assignment is what makes every downstream
+            // reader — the brief's spill gate, the launch args, delivery, the tailer — agree about
+            // whose composer is on the other end.
+            AgentKind = claimed.AgentKind,
             Status = SessionStatus.Starting,
             Cwd = cwd,
             Cols = _settings.DefaultCols,
@@ -1102,12 +1112,25 @@ public sealed class AgentTaskDispatcher
         AgentSession session,
         IReadOnlyList<string>? attachedBundleKeys = null)
     {
-        var extraArgs = new List<string>
-        {
-            "--name", agent.Name,
-            // Family alias, never a pinned version — every launch picks up the family's current model.
-            "--model", ModelLevelAliases.ForClaude(task.ModelLevel),
-        };
+        // WHICH PROGRAM is being launched, read off the session row the dispatch just wrote — the
+        // same value BuildEnv, the brief's spill gate and the pool claim all key on, so there is one
+        // answer to "what is on the other end of this pty" rather than four (CARD-0084 S3).
+        var kind = session.AgentKind;
+        var isGrok = kind == AgentKind.Grok;
+
+        var extraArgs = new List<string>();
+        // --name is a Claude-only flag; grok.exe rejects it, so a Grok delegate is nameless on its
+        // command line and identified the way everything else already identifies it — the task
+        // marker in its brief and ANTIPHON_TASK_ID in its environment.
+        if (!isGrok)
+            extraArgs.AddRange(["--name", agent.Name]);
+        // Family alias, never a pinned version — every launch picks up the family's current model.
+        extraArgs.AddRange([
+            "--model",
+            isGrok
+                ? ModelLevelAliases.ForGrok(task.ModelLevel)
+                : ModelLevelAliases.ForClaude(task.ModelLevel),
+        ]);
 
         // The role's standing instructions, composed from the repo's bundle files at LAUNCH
         // (CARD-0058). Two properties make this the right channel and neither is about size: the
@@ -1131,7 +1154,10 @@ public sealed class AgentTaskDispatcher
             composed, extraArgs, _settings.CommandLineBudgetChars, subject);
         if (!composed.IsEmpty)
         {
-            extraArgs.AddRange(["--append-system-prompt", composed.Text]);
+            // Grok's system-prompt channel is --rules; the flag differs but the contract does not —
+            // it is an ARGUMENT either way, so it survives compaction and no pty ceiling applies.
+            // Same branch AgentControlService already makes for a named Grok agent.
+            extraArgs.AddRange([isGrok ? "--rules" : "--append-system-prompt", composed.Text]);
             // Logged because a composition is otherwise invisible from everywhere else: the args are
             // not stored, and the agent row of a pool delegate is deleted when its task settles.
             _logger.LogInformation(
@@ -1140,7 +1166,9 @@ public sealed class AgentTaskDispatcher
         }
 
         return _agentRegistry.Resolve(
-            _agentRegistry.Settings.DefaultDefinition,
+            // By KIND, not the default definition: the default is only the right answer while every
+            // delegate is a Claude, and a missing definition throws rather than substituting one.
+            _agentRegistry.DefinitionNameForKind(kind),
             new AgentLaunchOptions(
                 // A Worktree task lives in its worktree — launching in the shared directory would
                 // silently defeat the isolation the caller opted into.
@@ -1180,7 +1208,15 @@ public sealed class AgentTaskDispatcher
         {
             var existing = await _db.Agents.FirstOrDefaultAsync(a => a.Id == pinned, ct);
             if (existing is not null)
+            {
+                // Reaching here means the reuse path declined this pin and a NEW session is about
+                // to be launched on the row — including the one case that lands here on purpose, a
+                // pinned pool delegate of the wrong kind (see TryReuseWarmAgentAsync). The row must
+                // follow the session it is about to own, or the pool would go on offering it as
+                // the kind it used to be.
+                existing.Kind = task.AgentKind;
                 return existing;
+            }
         }
 
         // A fresh delegate when no warm one fits: clean context, and --model is a launch arg so a
@@ -1197,6 +1233,10 @@ public sealed class AgentTaskDispatcher
             Details = $"Pool delegate for {task.Kind}/{task.Role} task {shortId}.",
             Status = AgentStatus.Idle,
             ModelLevel = task.ModelLevel,
+            // Which program this delegate IS, for as long as it lives in the pool. A warm row with
+            // the wrong kind here is worse than no row: the next task of that kind would claim it,
+            // skip the cold start, and type its brief into a program that cannot read it.
+            Kind = task.AgentKind,
             AlwaysOn = false,
             RemoteControlEnabled = false,
             IsPoolDelegate = true,
@@ -1287,6 +1327,18 @@ public sealed class AgentTaskDispatcher
             if (await LiveSessionIdOfAsync(pinned, ct) is null)
                 return ReuseOutcome.SpawnFresh;
 
+            // A warm delegate of the wrong PROGRAM cannot run this task at all, so waiting for it
+            // to free up would wait forever. The spawn path takes it instead — which relaunches
+            // this same row on a session of the right kind (ResolveAgentAsync restamps
+            // Agent.Kind), rather than typing a Grok brief into a live Claude.
+            if (pinned.Kind != claimed.AgentKind)
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to '{Agent}' but wants {Wanted} and the agent is {Actual} — relaunching it",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name, claimed.AgentKind, pinned.Kind);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             if (pinned.Status != AgentStatus.Idle || pinned.PoolIdleSince is null)
                 return ReuseOutcome.WaitForAgent;
 
@@ -1299,7 +1351,11 @@ public sealed class AgentTaskDispatcher
                 .Where(a => a.IsPoolDelegate
                     && a.Status == AgentStatus.Idle
                     && a.PoolIdleSince != null
-                    && a.ModelLevel == claimed.ModelLevel)
+                    && a.ModelLevel == claimed.ModelLevel
+                    // Kind is as hard a match as the tier, and for a stronger reason: a tier
+                    // mismatch would merely run the work on the wrong model, a kind mismatch would
+                    // deliver the brief to a program that is not the one the caller chose.
+                    && a.Kind == claimed.AgentKind)
                 .ToListAsync(ct);
 
             agent = warm
@@ -1394,6 +1450,27 @@ public sealed class AgentTaskDispatcher
     {
         if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
             return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
+
+        // The standing agent's own row is not the evidence here — nothing but the dispatcher writes
+        // Agent.Kind, so a user's Grok agent still reads ClaudeCode. Its LIVE SESSION is, and only
+        // when that session names a delegate kind: a legacy or hand-seeded row carries the enum's
+        // zero (Raw), which is absence of evidence and must not refuse a dispatch (CARD-0084 S3).
+        var sessionKind = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == session)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct);
+        if (sessionKind is { } running
+            && running != claimed.AgentKind
+            && AgentTaskService.DelegatableKinds.Contains(running))
+        {
+            // Loud, not queued: the pin names an agent that runs a different program, and no amount
+            // of waiting changes that. Delivering anyway would type the brief into the wrong TUI.
+            throw new InvalidOperationException(
+                $"Task {DelegationReportFormatter.Short(claimed.Id)} runs on {claimed.AgentKind}, but "
+                + $"it is pinned to agent '{standing.Name}' whose live session {session:D} is "
+                + $"{running}. Pin it to a {claimed.AgentKind} agent, or create the task without a "
+                + "kind so it runs on a fresh delegate.");
+        }
 
         // One task at a time on one agent. A brief delivered while the agent is mid-task lands
         // BETWEEN the running task's turns and corrupts both correlations — the same invariant the
@@ -1513,8 +1590,15 @@ public sealed class AgentTaskDispatcher
         var cutoff = now.AddMinutes(-Math.Max(1, _settings.PoolIdleRetireMinutes));
         var retire = new HashSet<Agent>(warm.Where(a => !_settings.PoolEnabled || a.PoolIdleSince <= cutoff));
 
+        // Per (directory, KIND), not per directory: the cap bounds how many warm processes of one
+        // program sit in one place, and two programs are two pools. Counting them together would
+        // let three warm Claudes evict the only warm Grok in that directory — retiring the delegate
+        // no Claude task could ever have used, and leaving the cap spent on rows the Grok tasks
+        // there cannot claim.
         foreach (var surplus in warm
-            .GroupBy(a => DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant())
+            .GroupBy(a => (
+                Directory: DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant(),
+                a.Kind))
             .SelectMany(g => g.OrderByDescending(a => a.PoolIdleSince)
                 .Skip(Math.Max(0, _settings.PoolMaxIdlePerDirectory))))
         {

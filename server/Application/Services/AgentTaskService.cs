@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -444,12 +444,13 @@ public sealed class AgentTaskService
         {
             throw new ConflictException(
                 $"Task {DelegationReportFormatter.Short(id)} is already at the top of the ladder "
-                + $"({ModelLevelAliases.ForClaude(from)}).");
+                + $"({EscalationAlias(task, from)}).");
         }
 
         task.EscalatedFrom = from;
         task.ModelLevel = target.Value;
-        var detail = $"Escalated {ModelLevelAliases.ForClaude(from)} -> {ModelLevelAliases.ForClaude(target.Value)}."
+        var detail = $"Escalated {EscalationAlias(task, from)} -> {EscalationAlias(task, target.Value)}."
+            + SameModelEscalationNote(task, from, target.Value)
             + (reason is null ? string.Empty : $" {reason}");
 
         // A task that has not started yet only needs the new tier — there is nothing to requeue.
@@ -465,6 +466,42 @@ public sealed class AgentTaskService
 
         await RequeueAsync(task, AgentTaskEventType.Escalated, target.Value, detail, ct);
         return await SummaryOfAsync(task, ct);
+    }
+
+    /// <summary>
+    /// The model-family alias to NAME in an escalation text, for the program the task actually runs
+    /// on (CARD-0084 S3). Deliberately private and confined to the two escalation messages rather
+    /// than a general <c>For(kind, level)</c> helper: replacing the ~12 display-only
+    /// <see cref="ModelLevelAliases.ForClaude"/> call sites is S4's mechanical sweep, and doing it
+    /// piecemeal here would leave the codebase with two half-migrated conventions. An escalation
+    /// text is in scope now because it is the one that would otherwise state something FALSE — it
+    /// promises a bigger model by name.
+    /// </summary>
+    private static string EscalationAlias(AgentTask task, AgentModelLevel level) =>
+        task.AgentKind == AgentKind.Grok
+            ? ModelLevelAliases.ForGrok(level)
+            : ModelLevelAliases.ForClaude(level);
+
+    /// <summary>
+    /// What an escalation buys when both rungs map to the SAME model. Grok's ladder is shorter than
+    /// the generic one — Frontier and High are both grok-4.6 — so a Debug escalation on Grok moves
+    /// no model at all. That is still worth doing (a fresh context is most of what escalation buys
+    /// in practice: the stalled session is killed and the next attempt starts from the handoff
+    /// block rather than the dead end), but the event must SAY so. Silence here would read as a
+    /// promise of a larger model that xAI does not currently offer, and the operator would spend
+    /// the escalation expecting something the ladder cannot deliver.
+    /// </summary>
+    private static string SameModelEscalationNote(AgentTask task, AgentModelLevel from, AgentModelLevel to)
+    {
+        if (task.AgentKind != AgentKind.Grok)
+            return string.Empty;
+
+        var alias = ModelLevelAliases.ForGrok(to);
+        if (!string.Equals(ModelLevelAliases.ForGrok(from), alias, StringComparison.Ordinal))
+            return string.Empty;
+
+        return $" On {AgentKind.Grok} the {from} and {to} tiers both map to {alias}, so this is a"
+            + " FRESH CONTEXT at the same model, not a larger one.";
     }
 
     /// <summary>
