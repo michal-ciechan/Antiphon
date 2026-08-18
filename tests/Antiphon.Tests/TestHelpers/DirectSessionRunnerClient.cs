@@ -183,10 +183,21 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         return null;
     }
 
+    /// <summary>
+    /// Every field the runner produced, including the API-call attribution and the four usage
+    /// counters. Those five were dropped here until CARD-0084 S6, and the loss was silent in exactly
+    /// the way that matters: a task settled through this client rolled up ZERO tokens, so its cost
+    /// came out 0.00 and every price assertion downstream passed by agreeing about nothing. Usage
+    /// rides the TurnEnd row for Grok and the assistant rows for Claude, and
+    /// <see cref="Antiphon.Server.Application.Services.DelegationUsageRollup"/> groups by ApiCallId —
+    /// so dropping either half is enough to zero the bill.
+    /// </summary>
     private static SessionRunnerTranscriptEvent MapTranscript(RunnerTranscriptEvent e) =>
         new(
             e.SessionId, e.Sequence, e.Kind, e.Uuid, e.ParentUuid, e.Timestamp,
-            e.Role, e.Text, e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason);
+            e.Role, e.Text, e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason,
+            e.ApiCallId, e.InputTokens, e.OutputTokens, e.CacheReadTokens, e.CacheCreationTokens,
+            e.IsApiError, e.ApiErrorClass, e.ApiErrorStatus);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

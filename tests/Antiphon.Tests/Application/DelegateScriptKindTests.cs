@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -84,41 +83,11 @@ public sealed class DelegateScriptKindTests
 
     // ---- harness -------------------------------------------------------------------------------
 
-    private static async Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args)
-    {
-        var scriptPath = Path.Combine(FindRepoRoot(), "scripts", "delegate.ps1");
-        var startInfo = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(scriptPath);
-        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
-        startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
-        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
-
-        using var process = Process.Start(startInfo);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        await process.WaitForExitAsync(timeout.Token);
-
-        return (process.ExitCode, await stdout + await stderr);
-    }
-
-    private static string FindRepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
-            directory = directory.Parent;
-
-        return directory?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the Antiphon repository root.");
-    }
+    // The script runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes
+    // delegate.ps1 exactly the way this one does — same host flags, same environment, same
+    // argument-list quoting.
+    private static Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args) =>
+        DelegateScriptRunner.RunAsync(server.BaseUrl, args);
 
     /// <summary>
     /// The smallest thing that can answer POST /api/agent-tasks and keep what it was sent.
