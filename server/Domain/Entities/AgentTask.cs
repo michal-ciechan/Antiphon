@@ -35,6 +35,17 @@ public class AgentTask
     public AgentTaskKind Kind { get; set; } = AgentTaskKind.Worker;
     public AgentTaskRole Role { get; set; } = AgentTaskRole.Custom;
 
+    /// <summary>
+    /// WHICH AGENT PROGRAM runs this task — a different axis from <see cref="Kind"/> (which is
+    /// worker-vs-orchestrator). Defaults to <see cref="AgentKind.ClaudeCode"/>, which is what every
+    /// row created before CARD-0084 carries, so nothing about an existing task changes.
+    ///
+    /// <para>Only <c>ClaudeCode</c> and <c>Grok</c> are delegatable today (CARD-0084 S2's
+    /// allowlist), and only a Worker may be Grok: an orchestrator's contract — the deny hook,
+    /// delegate.ps1 usage, the check interpreter — has only ever been exercised on Claude.</para>
+    /// </summary>
+    public AgentKind AgentKind { get; set; } = AgentKind.ClaudeCode;
+
     /// <summary>Resolved from the role policy at creation; an explicit override is recorded in the events.</summary>
     public AgentModelLevel ModelLevel { get; set; } = AgentModelLevel.High;
 

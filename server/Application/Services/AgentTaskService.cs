@@ -123,11 +123,23 @@ public sealed class AgentTaskService
                     $"The agent that ran task {DelegationReportFormatter.Short(priorId)} has been retired "
                     + "from the pool — delegate normally instead; the report is still on the task.");
 
+            // The agent is already running, as whatever program it was launched as. A follow-up
+            // keeps that context, so the kind is not a choice any more: unset inherits the prior
+            // task's, and an explicit mismatch is refused rather than silently reinterpreted.
+            if (request.AgentKind is { } wantedKind && wantedKind != prior.AgentKind)
+            {
+                throw new ConflictException(
+                    $"Task {DelegationReportFormatter.Short(priorId)} ran on {prior.AgentKind}, so a "
+                    + $"follow-up on its agent cannot run on {wantedKind} — that agent's context lives "
+                    + "in the session that is already running. Delegate normally to change kind.");
+            }
+
             request = request with
             {
                 WorkingDirectory = request.WorkingDirectory ?? followAgent.WorkingDirectory,
                 Workspace = WorkspaceMode.Shared,
                 ModelLevel = followAgent.ModelLevel,
+                AgentKind = prior.AgentKind,
                 AgentId = followAgent.Id,
             };
         }
@@ -187,6 +199,7 @@ public sealed class AgentTaskService
 
         var id = Guid.NewGuid();
         var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+        var agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
@@ -203,6 +216,7 @@ public sealed class AgentTaskService
             Goal = request.Goal.Trim(),
             Kind = request.Kind,
             Role = request.Role,
+            AgentKind = agentKind,
             ModelLevel = level,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
@@ -236,9 +250,14 @@ public sealed class AgentTaskService
             AgentTaskId = id,
             Type = AgentTaskEventType.Created,
             ModelLevel = level,
-            Detail = request.ModelLevel is { } explicitLevel
-                ? $"{request.Kind}/{request.Role} at {explicitLevel} (explicit override) in {resolved.WorkingDirectory}"
-                : $"{request.Kind}/{request.Role} at {level} (role policy) in {resolved.WorkingDirectory}",
+            Detail = (request.ModelLevel is { } explicitLevel
+                    ? $"{request.Kind}/{request.Role} at {explicitLevel} (explicit override) in {resolved.WorkingDirectory}"
+                    : $"{request.Kind}/{request.Role} at {level} (role policy) in {resolved.WorkingDirectory}")
+                // Only when it is NOT the default: an event line that says "on ClaudeCode" on every
+                // task teaches nobody anything, and the one that says "on Grok" is the whole point.
+                + (agentKind == AgentKind.ClaudeCode
+                    ? string.Empty
+                    : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}"),
             At = now,
         });
         if (warning is not null)
@@ -247,13 +266,15 @@ public sealed class AgentTaskService
 
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
         _logger.LogInformation(
-            "Delegated task {ShortId} ({Kind}/{Role}, {Level}) created in {Dir} at depth {Depth}",
-            DelegationReportFormatter.Short(id), task.Kind, task.Role, level, task.WorkingDirectory, depth);
+            "Delegated task {ShortId} ({Kind}/{Role}, {Level}, {AgentKind}) created in {Dir} at depth {Depth}",
+            DelegationReportFormatter.Short(id), task.Kind, task.Role, level, agentKind,
+            task.WorkingDirectory, depth);
 
         // The raw token is returned ONCE, to be injected into the delegate's environment. It is
         // never persisted and never readable again.
         RawTokens[id] = token;
-        return new AgentTaskCreatedDto(id, DelegationReportFormatter.Short(id), task.Status, level, warning);
+        return new AgentTaskCreatedDto(
+            id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind);
     }
 
     /// <summary>
@@ -690,6 +711,67 @@ public sealed class AgentTaskService
         return level;
     }
 
+    /// <summary>
+    /// Kinds a delegated task may run on TODAY (CARD-0084 S2). Deliberately an allowlist and not a
+    /// capability query: what a delegate needs of its program — a model argument, permission bypass,
+    /// structured activity to compute working/idle from, and a channel for the instruction bundle —
+    /// is exactly the contract CARD-0083 is designing. This one method is what CARD-0083 replaces;
+    /// until then a kind is on the list because it has been measured, not because it exists.
+    /// </summary>
+    public static readonly IReadOnlyList<AgentKind> DelegatableKinds = [AgentKind.ClaudeCode, AgentKind.Grok];
+
+    /// <summary>
+    /// Resolve WHICH AGENT PROGRAM runs the task: an explicit request wins, else the role policy's
+    /// <c>Kind</c> (unset everywhere as shipped), else ClaudeCode. The mirror of
+    /// <see cref="ResolveLevel"/>, and the same shape of decision.
+    ///
+    /// <para>Two refusals, both loud. A kind outside <see cref="DelegatableKinds"/> is rejected with
+    /// its reason — nothing has been exercised on Codex/OpenCode/Raw as a DELEGATE, and quietly
+    /// substituting Claude for what the caller asked for is worse than failing. And an orchestrator
+    /// is ClaudeCode only: its contract (the PreToolUse deny hook, delegate.ps1 usage, the check
+    /// interpreter) has only ever run on Claude, so Grok starts as a worker kind. Unlike the tier
+    /// floor, which silently clamps, an EXPLICIT orchestrator kind is rejected rather than
+    /// reinterpreted — a caller who typed it deserves to know it did not happen.</para>
+    /// </summary>
+    public AgentKind ResolveAgentKind(AgentTaskKind kind, AgentTaskRole role, AgentKind? explicitKind)
+    {
+        var fromPolicy = _settings.RolePolicy.TryGetValue(role.ToString(), out var policy) ? policy.Kind : null;
+        var resolved = explicitKind ?? fromPolicy ?? AgentKind.ClaudeCode;
+        var explicitlyAsked = explicitKind is not null;
+
+        if (!DelegatableKinds.Contains(resolved))
+        {
+            var source = explicitlyAsked
+                ? "is not a delegate kind"
+                : $"is configured as the '{role}' role's kind, but is not a delegate kind";
+            throw new ValidationException(
+                nameof(CreateAgentTaskRequest.AgentKind),
+                $"{resolved} {source}. Delegated work runs on "
+                + $"{string.Join(" or ", DelegatableKinds)} (CARD-0084); the others have never been "
+                + "exercised as delegates and CARD-0083 replaces this allowlist with a capability "
+                + "contract that can answer for them.");
+        }
+
+        if (kind == AgentTaskKind.Orchestrator && resolved != AgentKind.ClaudeCode)
+        {
+            if (explicitlyAsked)
+            {
+                throw new ValidationException(
+                    nameof(CreateAgentTaskRequest.AgentKind),
+                    $"An orchestrator cannot run on {resolved}. Its contract — the PreToolUse deny "
+                    + "hook, delegate.ps1, the check interpreter — has only ever been exercised on "
+                    + $"{AgentKind.ClaudeCode}, so {resolved} is a WORKER kind for now (CARD-0084). "
+                    + "Delegate the workers on it and keep the orchestrator on Claude.");
+            }
+
+            // Policy-derived: promoting a role in config must not silently make orchestrators
+            // unrunnable, so it clamps the way the tier floor does.
+            resolved = AgentKind.ClaudeCode;
+        }
+
+        return resolved;
+    }
+
     /// <summary>Project a loaded task to its DTO. <paramref name="family"/> is the whole run — it
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
     public Task<AgentTaskSummaryDto> GetSummaryAsync(
@@ -731,6 +813,7 @@ public sealed class AgentTaskService
 
         return new AgentTaskSummaryDto(
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
+            task.AgentKind,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
             task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.ScopeGlob, task.AgentId,
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.

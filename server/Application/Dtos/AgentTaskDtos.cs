@@ -15,6 +15,13 @@ public sealed record CreateAgentTaskRequest(
     /// <summary>Explicit tier override; null takes the role policy's tier.</summary>
     AgentModelLevel? ModelLevel = null,
     /// <summary>
+    /// WHICH AGENT PROGRAM runs it (CARD-0084). Null takes the role policy's <c>Kind</c>, which
+    /// ships unset — so an omitted value is <see cref="AgentKind.ClaudeCode"/> and nothing about an
+    /// existing caller changes. Only <c>ClaudeCode</c> and <c>Grok</c> are accepted, and only a
+    /// Worker may be <c>Grok</c>.
+    /// </summary>
+    AgentKind? AgentKind = null,
+    /// <summary>
     /// Null = let the server decide: workers run Shared; an orchestrator gets its own worktree
     /// unless it already has its own location. An explicit value is always honoured — with a
     /// warning when it puts an orchestrator in its caller's directory.
@@ -52,6 +59,8 @@ public sealed record AgentTaskSummaryDto(
     string Title,
     AgentTaskKind Kind,
     AgentTaskRole Role,
+    /// <summary>Which agent program ran (or will run) it — ClaudeCode unless the caller chose Grok.</summary>
+    AgentKind AgentKind,
     AgentModelLevel ModelLevel,
     AgentModelLevel? EscalatedFrom,
     AgentTaskStatus Status,
@@ -118,7 +127,9 @@ public sealed record AgentTaskEventDto(
 /// before the collision happens.
 /// </summary>
 public sealed record AgentTaskCreatedDto(
-    Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel, string? Warning = null);
+    Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel, string? Warning = null,
+    /// <summary>The resolved agent kind — the script echoes it so a Grok delegate is never a surprise.</summary>
+    AgentKind AgentKind = Domain.Enums.AgentKind.ClaudeCode);
 
 public sealed record ReplyToAgentTaskRequest(string Message);
 

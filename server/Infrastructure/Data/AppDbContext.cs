@@ -1243,6 +1243,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Goal).IsRequired().HasMaxLength(20000);
             entity.Property(t => t.Kind).IsRequired();
             entity.Property(t => t.Role).IsRequired();
+            // CARD-0084 S2. ClaudeCode on every pre-existing row, which is what they actually ran —
+            // the default is a backfill, not a guess.
+            entity.Property(t => t.AgentKind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);
             entity.Property(t => t.ModelLevel).IsRequired();
             entity.Property(t => t.Workspace).IsRequired().HasDefaultValue(WorkspaceMode.Shared);
             entity.Property(t => t.WorkingDirectory).IsRequired().HasMaxLength(1000);

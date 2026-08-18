@@ -24,6 +24,13 @@ param(
     [ValidateSet('Frontier', 'High', 'Medium', 'Low')]
     [string]$Level,
 
+    # Which agent program runs it. Omitted means ClaudeCode, exactly as before. Grok is opt-in and
+    # WORKERS ONLY (CARD-0084): its delegate mileage is zero, and live-typed follow-up messages to
+    # it arrive with their line breaks joined - briefs and refinements travel by file and are safe.
+    [Parameter(ParameterSetName = 'Create')]
+    [ValidateSet('ClaudeCode', 'Grok')]
+    [string]$Kind,
+
     # Run somewhere else - another repo, another checkout. Defaults to the caller's directory.
     [Parameter(ParameterSetName = 'Create')]
     [string]$Dir,
@@ -169,14 +176,21 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($OnAgent) { $body['followUpOnTask'] = $OnAgent }
         if ($Title) { $body['title'] = $Title }
         if ($Level) { $body['modelLevel'] = $Level }
+        # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which
+        # ships unset and therefore resolves to ClaudeCode.
+        if ($Kind) { $body['agentKind'] = $Kind }
         if ($Dir) { $body['workingDirectory'] = $Dir }
         if ($Scope) { $body['scopeGlob'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
 
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
-        Write-Output ("queued task {0} ({1} {2} on {3}) - its report will arrive in your session" -f `
-                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel)
+        # The RESOLVED kind is echoed, not the requested one - a role policy promoted to Grok in
+        # config is exactly the case where the caller asked for nothing and should still see it.
+        $kindNote = ''
+        if ($created.agentKind -and $created.agentKind -ne 'ClaudeCode') { $kindNote = " [$($created.agentKind)]" }
+        Write-Output ("queued task {0} ({1} {2} on {3}{4}) - its report will arrive in your session" -f `
+                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
         return

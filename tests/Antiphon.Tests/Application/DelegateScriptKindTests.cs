@@ -1,0 +1,197 @@
+using System.Diagnostics;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-0084 S2's caller-facing half: <c>scripts/delegate.ps1 -Kind</c>. The script is what an
+/// agent actually runs, so these drive the REAL script under pwsh against a stub server and assert
+/// on the JSON body it posts — a string-match on the source would pass just as happily if the flag
+/// never reached the request.
+///
+/// <para>The one thing that must not regress is the omitted case: a caller who never heard of
+/// -Kind must produce byte-for-byte the request they produced before the flag existed, because the
+/// server would then resolve a kind from the role policy that the caller did not choose.</para>
+/// </summary>
+[Category("Integration")]
+public sealed class DelegateScriptKindTests
+{
+    [Test]
+    public async Task Kind_Grok_is_posted_as_agentKind()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Grok");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("agentKind").GetString().ShouldBe("Grok");
+        body.RootElement.GetProperty("kind").GetString().ShouldBe("Worker", "-Kind is a different axis from worker/orchestrator");
+    }
+
+    [Test]
+    public async Task an_omitted_Kind_sends_no_agentKind_at_all()
+    {
+        // Absent, not "ClaudeCode": the field being missing is what lets the role policy decide,
+        // and it is the difference between "the caller chose Claude" and "the caller said nothing".
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("agentKind", out _)
+            .ShouldBeFalse("an omitted -Kind must leave the request exactly as it was before the flag existed");
+    }
+
+    [Test]
+    public async Task an_undelegatable_Kind_is_refused_by_the_script_before_any_request()
+    {
+        // ValidateSet is the cheap half of the allowlist: a typo costs nothing, and the caller
+        // finds out at the prompt rather than through a 422 the server had to compose.
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex");
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("Codex");
+        server.RequestCount.ShouldBe(0, "a rejected flag must not reach the server");
+    }
+
+    [Test]
+    public async Task the_resolved_kind_is_echoed_back_to_the_caller()
+    {
+        // The caller may have chosen nothing and still be running on Grok (a role promoted in
+        // config), so the ECHO comes from the server's answer, not from the flag.
+        using var server = new StubApi(agentKind: "Grok");
+        var run = await RunDelegateAsync(server, "-Role", "Code", "-Goal", "write it");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("Grok");
+    }
+
+    [Test]
+    public async Task a_ClaudeCode_task_is_announced_exactly_as_it_always_was()
+    {
+        using var server = new StubApi(agentKind: "ClaudeCode");
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("queued task");
+        run.Output.ShouldNotContain("ClaudeCode", customMessage: "the default kind is not news");
+    }
+
+    // ---- harness -------------------------------------------------------------------------------
+
+    private static async Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args)
+    {
+        var scriptPath = Path.Combine(FindRepoRoot(), "scripts", "delegate.ps1");
+        var startInfo = new ProcessStartInfo("pwsh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        foreach (var arg in args) startInfo.ArgumentList.Add(arg);
+        startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
+        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
+
+        using var process = Process.Start(startInfo);
+        process.ShouldNotBeNull();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await process.WaitForExitAsync(timeout.Token);
+
+        return (process.ExitCode, await stdout + await stderr);
+    }
+
+    private static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+
+        return directory?.FullName
+            ?? throw new DirectoryNotFoundException("Could not locate the Antiphon repository root.");
+    }
+
+    /// <summary>
+    /// The smallest thing that can answer POST /api/agent-tasks and keep what it was sent.
+    /// HttpListener rather than a test host: the point is to exercise the SCRIPT, over real HTTP,
+    /// exactly as an agent runs it.
+    /// </summary>
+    private sealed class StubApi : IDisposable
+    {
+        private readonly HttpListener _listener = new();
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Task _pump;
+        private readonly string _agentKind;
+
+        public StubApi(string agentKind = "ClaudeCode")
+        {
+            _agentKind = agentKind;
+            var port = FreePort();
+            BaseUrl = $"http://localhost:{port}/";
+            _listener.Prefixes.Add(BaseUrl);
+            _listener.Start();
+            _pump = Task.Run(PumpAsync);
+        }
+
+        public string BaseUrl { get; }
+
+        public JsonDocument? LastBody { get; private set; }
+
+        public int RequestCount { get; private set; }
+
+        private async Task PumpAsync()
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                HttpListenerContext context;
+                try { context = await _listener.GetContextAsync(); }
+                catch (Exception) { return; /* stopped */ }
+
+                RequestCount++;
+                using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+                {
+                    var raw = await reader.ReadToEndAsync();
+                    if (!string.IsNullOrWhiteSpace(raw)) LastBody = JsonDocument.Parse(raw);
+                }
+
+                var payload = Encoding.UTF8.GetBytes(
+                    $$"""
+                    {"id":"11111111-1111-1111-1111-111111111111","shortId":"11111111",
+                     "status":"Queued","modelLevel":"High","warning":null,"agentKind":"{{_agentKind}}"}
+                    """);
+                context.Response.StatusCode = 201;
+                context.Response.ContentType = "application/json";
+                await context.Response.OutputStream.WriteAsync(payload);
+                context.Response.Close();
+            }
+        }
+
+        private static int FreePort()
+        {
+            var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            return port;
+        }
+
+        public void Dispose()
+        {
+            _cts.Cancel();
+            try { _listener.Stop(); } catch (Exception) { /* already stopped */ }
+            try { _pump.Wait(TimeSpan.FromSeconds(5)); } catch (Exception) { /* pump is best-effort */ }
+            _listener.Close();
+            LastBody?.Dispose();
+            _cts.Dispose();
+        }
+    }
+}

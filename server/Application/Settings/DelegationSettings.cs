@@ -451,5 +451,16 @@ public sealed class DelegationSettings
         public AgentModelLevel? EscalateTo { get; set; }
         public int? EscalateAfterMinutes { get; set; }
         public int TimeoutMinutes { get; set; } = 60;
+
+        /// <summary>
+        /// Which agent program this role's tasks run on. UNSET everywhere on purpose (CARD-0084 S2):
+        /// unset means <see cref="AgentKind.ClaudeCode"/>, so every role behaves exactly as it did.
+        ///
+        /// <para>It exists so that PROMOTING a role to Grok — after the real mileage §4 of the plan
+        /// asks for — is a config edit and a restart, reversible the same way, rather than a code
+        /// change. Same allowlist as an explicit request: a role configured to a kind that is not
+        /// delegatable fails the task's creation loudly rather than silently running Claude.</para>
+        /// </summary>
+        public AgentKind? Kind { get; set; }
     }
 }
