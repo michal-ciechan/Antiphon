@@ -242,6 +242,9 @@ export interface CreateAgentRequest {
   modelId?: string | null
   /** Omit = Normal. Create deliberately still cannot set systemPromptAppend. */
   replyStyle?: AgentReplyStyle
+  /** Supervised from birth: auto-started at boot, auto-restarted on crash. */
+  alwaysOn?: boolean
+  remoteControlEnabled?: boolean
 }
 
 export interface UpdateAgentRequest {

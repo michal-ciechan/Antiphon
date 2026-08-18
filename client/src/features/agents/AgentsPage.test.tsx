@@ -571,6 +571,51 @@ describe('AgentsPage', () => {
         modelId: null,
         // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
+        // CARD-0008: supervision flags ride create; untouched switches stay off.
+        alwaysOn: false,
+        remoteControlEnabled: false,
+      }),
+    )
+  })
+
+  it('creates a supervised agent when the always-on and remote-control switches are on', async () => {
+    const createSpy = vi.fn()
+    server.use(
+      ...agentHandlers([]),
+      browseHandler(),
+      http.post('/api/agents', async ({ request }) => {
+        createSpy(await request.json())
+        return HttpResponse.json({ ...agentDetail, id: 'agent-created', queueLength: 0 }, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
+    await userEvent.type(await screen.findByLabelText('Name'), 'Supervised Claude')
+    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
+
+    const alwaysOn = await screen.findByRole('switch', { name: /Always on/i })
+    const remoteControl = screen.getByRole('switch', { name: /Remote control/i })
+    expect(alwaysOn).not.toBeChecked()
+    expect(remoteControl).not.toBeChecked()
+
+    await userEvent.click(alwaysOn)
+    await userEvent.click(remoteControl)
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() =>
+      expect(createSpy).toHaveBeenCalledWith({
+        name: 'Supervised Claude',
+        workingDirectory: 'D:/src/app',
+        details: null,
+        assignmentPolicy: 'AutoPick',
+        createWorkingDirectory: false,
+        tuiProfileId: 'tui-profile-1',
+        modelId: null,
+        replyStyle: 'Normal',
+        alwaysOn: true,
+        remoteControlEnabled: true,
       }),
     )
   })
@@ -637,6 +682,9 @@ describe('AgentsPage', () => {
         modelId: null,
         // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
+        // CARD-0008: draft path does not guess these; they stay off until toggled.
+        alwaysOn: false,
+        remoteControlEnabled: false,
       }),
     )
   })

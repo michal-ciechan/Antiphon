@@ -245,6 +245,8 @@ public sealed class AgentService
                 Status = AgentStatus.Idle,
                 ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
                 ReplyStyle = request.ReplyStyle,
+                AlwaysOn = request.AlwaysOn,
+                RemoteControlEnabled = request.RemoteControlEnabled,
                 BoardId = board.Id,
                 CreatedAt = now,
                 UpdatedAt = now

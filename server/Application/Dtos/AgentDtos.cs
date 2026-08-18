@@ -166,7 +166,11 @@ public sealed record CreateAgentRequest(
     string? ModelId = null,
     // CARD-0060. Create finally gains a composition-relevant field; SystemPromptAppend deliberately
     // still is NOT one of them (update-only, out of scope here).
-    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal);
+    AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // CARD-0008: supervision is part of the agent's identity, not an afterthought — an agent
+    // meant to be always-on must never exist unsupervised between a create and a PATCH.
+    bool AlwaysOn = false,
+    bool RemoteControlEnabled = false);
 
 public sealed record DraftAgentRequest(string Description);
 

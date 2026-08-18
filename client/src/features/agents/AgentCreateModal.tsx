@@ -7,6 +7,7 @@ import {
   SegmentedControl,
   Select,
   Stack,
+  Switch,
   TextInput,
   Textarea,
 } from '@mantine/core'
@@ -44,6 +45,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
+  const [alwaysOn, setAlwaysOn] = useState(false)
+  const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
   const { data: profiles } = useAgentTuiProfiles()
 
   const reset = () => {
@@ -57,6 +60,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setTuiProfileId(null)
     setModelId(null)
     setReplyStyle('Normal')
+    setAlwaysOn(false)
+    setRemoteControlEnabled(false)
     draftAgent.reset()
   }
 
@@ -85,6 +90,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         tuiProfileId: profileId,
         modelId,
         replyStyle,
+        alwaysOn,
+        remoteControlEnabled,
       },
       {
         onSuccess: () => {
@@ -195,6 +202,18 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
             onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
           />
         </Input.Wrapper>
+        <Switch
+          label="Always on"
+          description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."
+          checked={alwaysOn}
+          onChange={(event) => setAlwaysOn(event.currentTarget.checked)}
+        />
+        <Switch
+          label="Remote control"
+          description="Every start arms /remote-control so the session can be driven from claude.ai."
+          checked={remoteControlEnabled}
+          onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
+        />
         <Group justify="flex-end">
           <Button variant="subtle" onClick={handleClose}>
             Cancel
