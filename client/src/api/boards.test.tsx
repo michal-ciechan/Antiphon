@@ -5,9 +5,11 @@ import { server } from '../test/mocks/server'
 import {
   boardKeys,
   CARD_LIMITS,
+  reopenCard,
   useArchiveCard,
   useBoard,
   useCardRevisions,
+  useReopenCard,
   useUnarchiveCard,
   useUpdateCardContent,
   type BoardDetailDto,
@@ -147,6 +149,72 @@ describe('useArchiveCard / useUnarchiveCard', () => {
   })
 })
 
+describe('reopenCard', () => {
+  it('POSTs /cards/{id}/reopen with the reopen request shape', async () => {
+    const reopenSpy = vi.fn()
+    server.use(
+      http.post('/api/cards/card-1/reopen', async ({ request }) => {
+        reopenSpy(await request.json())
+        return HttpResponse.json({ ...cardStub, status: 'Backlog' })
+      }),
+    )
+
+    await reopenCard('card-1', {
+      concurrencyToken: 'token-1',
+      reason: 'The close was wrong.',
+      reopenedBy: 'operator',
+    })
+
+    expect(reopenSpy).toHaveBeenCalledWith({
+      concurrencyToken: 'token-1',
+      reason: 'The close was wrong.',
+      reopenedBy: 'operator',
+    })
+  })
+
+  it('sends an optional target column when one is chosen', async () => {
+    const reopenSpy = vi.fn()
+    server.use(
+      http.post('/api/cards/card-1/reopen', async ({ request }) => {
+        reopenSpy(await request.json())
+        return HttpResponse.json({ ...cardStub, status: 'InProgress' })
+      }),
+    )
+
+    await reopenCard('card-1', {
+      concurrencyToken: 'token-1',
+      reason: 'Still in progress.',
+      boardColumnId: 'column-active',
+    })
+
+    expect(reopenSpy).toHaveBeenCalledWith({
+      concurrencyToken: 'token-1',
+      reason: 'Still in progress.',
+      boardColumnId: 'column-active',
+    })
+  })
+
+  it('invalidates the board and that card\'s revisions through the hook', async () => {
+    server.use(
+      http.post('/api/cards/card-1/reopen', () =>
+        HttpResponse.json({ ...cardStub, status: 'Backlog' })),
+    )
+
+    const { result, queryClient } = renderHookWithProviders(() => useReopenCard('board-1'))
+    queryClient.setQueryData(boardKeys.detail('board-1'), boardStub)
+    queryClient.setQueryData(boardKeys.cardRevisions('card-1'), [])
+
+    result.current.mutate({
+      cardId: 'card-1',
+      request: { concurrencyToken: 'token-1', reason: 'The close was wrong.' },
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(queryClient.getQueryState(boardKeys.cardRevisions('card-1'))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(boardKeys.detail('board-1'))?.isInvalidated).toBe(true)
+  })
+})
+
 describe('useCardRevisions', () => {
   const revisions: CardRevisionDto[] = [
     {
@@ -154,12 +222,14 @@ describe('useCardRevisions', () => {
       title: null, description: null, priority: null, labels: null,
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'archived by mistake', editedBy: 'operator', createdAt: '2026-08-14T00:00:00Z',
+      terminalReason: null, completedAt: null,
     },
     {
       id: 'rev-3', cardId: 'card-1', revisionNumber: 3, kind: 'Archive',
       title: null, description: null, priority: null, labels: null,
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'duplicate', editedBy: 'operator', createdAt: '2026-08-13T00:00:00Z',
+      terminalReason: null, completedAt: null,
     },
     {
       id: 'rev-2', cardId: 'card-1', revisionNumber: 2, kind: 'Move',
@@ -167,12 +237,14 @@ describe('useCardRevisions', () => {
       fromColumnId: 'column-backlog', toColumnId: 'column-review',
       fromStatus: 'Backlog', toStatus: 'Review',
       reason: 'ready for eyes', editedBy: null, createdAt: '2026-08-12T00:00:00Z',
+      terminalReason: null, completedAt: null,
     },
     {
       id: 'rev-1', cardId: 'card-1', revisionNumber: 1, kind: 'ContentEdit',
       title: 'The old title', description: 'the old description', priority: 2, labels: ['old'],
       fromColumnId: null, toColumnId: null, fromStatus: null, toStatus: null,
       reason: 'title named the wrong file', editedBy: 'operator', createdAt: '2026-08-11T00:00:00Z',
+      terminalReason: null, completedAt: null,
     },
   ]
 

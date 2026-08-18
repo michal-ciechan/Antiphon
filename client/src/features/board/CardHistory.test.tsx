@@ -44,6 +44,8 @@ function revision(overrides: Partial<CardRevisionDto> & { id: string; revisionNu
     reason: null,
     editedBy: null,
     createdAt: '2026-08-13T09:15:00Z',
+    terminalReason: null,
+    completedAt: null,
     ...overrides,
   }
 }
@@ -149,6 +151,27 @@ describe('CardHistory', () => {
     expect(screen.getByTestId('superseded-title-2')).toHaveTextContent('Cards cannot be edited')
     expect(screen.getByTestId('superseded-description-2'))
       .toHaveTextContent('the old body, which can run to twenty thousand characters')
+  })
+
+  it('renders a reopen with the transition and the superseded close', async () => {
+    renderHistory([
+      revision({
+        id: 'r6', revisionNumber: 6, kind: 'Reopen',
+        fromColumnId: 'column-done', toColumnId: 'column-backlog',
+        fromStatus: 'Done', toStatus: 'Backlog',
+        reason: 'The close was wrong.',
+        completedAt: '2026-08-16T14:22:00Z',
+        terminalReason: 'Shipped in the parent card.',
+        createdAt: '2026-08-17T09:00:00Z',
+      }),
+    ])
+
+    const reopened = await screen.findByTestId('revision-6')
+    expect(reopened).toHaveTextContent('Reopened')
+    expect(reopened).toHaveTextContent('Done → Backlog')
+    expect(reopened).toHaveTextContent('The close was wrong.')
+    expect(screen.getByTestId('superseded-close-6'))
+      .toHaveTextContent('was closed 2026-08-16 14:22Z: Shipped in the parent card.')
   })
 
   it('says so when a card has never moved, been edited or archived', async () => {

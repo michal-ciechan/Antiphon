@@ -1,17 +1,18 @@
 import { ActionIcon, Alert, Button, Group, Menu, Modal, Stack, Text, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
-import { TbAlertTriangle, TbArchive, TbArchiveOff, TbCopy, TbDots } from 'react-icons/tb'
+import { TbAlertTriangle, TbArchive, TbArchiveOff, TbCopy, TbDots, TbRestore } from 'react-icons/tb'
 import {
   type BoardColumnDto,
   type CardDto,
   useArchiveCard,
   useMoveCard,
+  useReopenCard,
   useUnarchiveCard,
 } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
-import { hasLiveSession, legalMoveTargets } from './boardShapeModel'
+import { canReopenFrom, hasLiveSession, legalMoveTargets } from './boardShapeModel'
 
 interface MoveMenuProps {
   boardId: string
@@ -34,16 +35,18 @@ interface MoveMenuProps {
  * a card into an ACTIVE column spawns an agent session. So a move is now explicit, reasoned, and
  * says out loud when it will start an agent.
  *
- * Archive lives here rather than behind an overflow of its own: this IS the card's overflow, on
- * every row and in the modal header, so archive is reachable everywhere a card is.
+ * Archive and reopen live here rather than behind an overflow of their own: this IS the card's
+ * overflow, on every row and in the modal header, so both are reachable everywhere a card is.
  */
 export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived }: MoveMenuProps) {
   const [target, setTarget] = useState<BoardColumnDto | null>(null)
   const [archiveAction, setArchiveAction] = useState<'archive' | 'unarchive' | null>(null)
+  const [reopening, setReopening] = useState(false)
   const [reason, setReason] = useState('')
   const moveCard = useMoveCard(boardId)
   const archiveCard = useArchiveCard(boardId)
   const unarchiveCard = useUnarchiveCard(boardId)
+  const reopenCard = useReopenCard(boardId)
   const archived = !!card.archivedAt
   // An archived card cannot move — the server refuses with "unarchive it before…", so offering
   // targets would only produce a 409 the operator has to read to understand.
@@ -52,6 +55,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
   const close = () => {
     setTarget(null)
     setArchiveAction(null)
+    setReopening(false)
     setReason('')
   }
 
@@ -125,6 +129,32 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
     close()
   }
 
+  const submitReopen = () => {
+    if (!reason.trim()) return
+    reopenCard.mutate(
+      {
+        cardId: card.id,
+        request: {
+          concurrencyToken: card.concurrencyToken,
+          reason: reason.trim(),
+          reopenedBy: 'operator',
+        },
+      },
+      {
+        onSuccess: () => {
+          notifications.show({ color: 'green', message: `${card.identifier} reopened` })
+        },
+        onError: (error) => {
+          notifications.show({
+            color: 'red',
+            message: getApiErrorMessage(error, 'Reopen failed'),
+          })
+        },
+      },
+    )
+    close()
+  }
+
   const copyIdentifier = () => {
     // The COPIED form stays canonical: it lands in commit messages and docs where a grep against
     // history has to keep working. `#41` is a rendering, never the thing you paste.
@@ -175,6 +205,18 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
                 </Menu.Item>
               ))}
               <Menu.Divider />
+              {canReopenFrom(card.status) && (
+                <Menu.Item
+                  data-testid="reopen-card"
+                  leftSection={<TbRestore size={14} />}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setReopening(true)
+                  }}
+                >
+                  Reopen…
+                </Menu.Item>
+              )}
               <Menu.Item
                 color="red"
                 data-testid="archive-card"
@@ -293,6 +335,39 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
               disabled={!reason.trim()}
             >
               {archiveAction === 'unarchive' ? 'Unarchive' : 'Archive'}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={reopening}
+        onClose={close}
+        title={`Reopen ${displayIdentifier(card.identifier)}`}
+        zIndex={400}
+      >
+        <Stack>
+          <Textarea
+            label="Reason"
+            placeholder="Why this card is being reopened"
+            withAsterisk
+            autosize
+            minRows={2}
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+          />
+          <Text size="xs" c="dimmed">
+            Reopening is a correction, not a move. The card returns to the board's Backlog and
+            the superseded close stays on its history.
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={close}>Cancel</Button>
+            <Button
+              onClick={submitReopen}
+              loading={reopenCard.isPending}
+              disabled={!reason.trim()}
+            >
+              Reopen
             </Button>
           </Group>
         </Stack>

@@ -264,6 +264,62 @@ describe('archiving from the card actions menu', () => {
   })
 })
 
+describe('reopening a closed card', () => {
+  it('offers Reopen on a Done card and still refuses every move target', async () => {
+    renderRow({ status: 'Done', boardColumnId: 'column-done', completedAt: '2026-08-16T14:22:00Z' })
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+
+    expect(await screen.findByTestId('reopen-card')).toBeInTheDocument()
+    expect(screen.getByTestId('no-move-target')).toBeInTheDocument()
+    expect(screen.queryByTestId('move-to-in-progress')).not.toBeInTheDocument()
+  })
+
+  it('does not offer Reopen on a live card', async () => {
+    renderRow()
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+
+    expect(await screen.findByTestId('archive-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('reopen-card')).not.toBeInTheDocument()
+  })
+
+  it('does not offer Reopen on an archived closed card — unarchive first', async () => {
+    renderRow({
+      ...ARCHIVED,
+      status: 'Done',
+      boardColumnId: 'column-done',
+      completedAt: '2026-08-16T14:22:00Z',
+    })
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+
+    expect(await screen.findByTestId('unarchive-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('reopen-card')).not.toBeInTheDocument()
+  })
+
+  it('requires a reason and POSTs it with the token to /reopen', async () => {
+    const reopenSpy = vi.fn()
+    server.use(http.post('/api/cards/card-1/reopen', async ({ request }) => {
+      reopenSpy(await request.json())
+      return HttpResponse.json(card({ status: 'Backlog' }))
+    }))
+    renderRow({ status: 'Done', boardColumnId: 'column-done', completedAt: '2026-08-16T14:22:00Z' })
+
+    await userEvent.click(screen.getByLabelText('Actions for CARD-0041'))
+    await userEvent.click(await screen.findByTestId('reopen-card'))
+
+    const submit = await screen.findByRole('button', { name: 'Reopen' })
+    expect(submit).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText(/^Reason/), 'The close was wrong.')
+    await userEvent.click(submit)
+
+    await waitFor(() => expect(reopenSpy).toHaveBeenCalledWith({
+      concurrencyToken: 'token-1',
+      reason: 'The close was wrong.',
+      reopenedBy: 'operator',
+    }))
+  })
+})
+
 describe('StateNode', () => {
   function nodeFor(cards: CardDto[], overrides: Partial<BoardColumnDto> = {}) {
     const shape = buildBoardShape(

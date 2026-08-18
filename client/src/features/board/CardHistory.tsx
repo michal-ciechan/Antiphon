@@ -64,6 +64,7 @@ const KIND_LABEL: Record<CardRevisionDto['kind'], string> = {
   Move: 'Moved',
   Archive: 'Archived',
   Unarchive: 'Unarchived',
+  Reopen: 'Reopened',
 }
 
 const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
@@ -71,6 +72,7 @@ const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
   Move: 'gray',
   Archive: 'red',
   Unarchive: 'green',
+  Reopen: 'orange',
 }
 
 function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns: BoardColumnDto[] }) {
@@ -80,7 +82,7 @@ function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns
         <Badge size="xs" variant="light" color={KIND_COLOR[revision.kind]}>
           {KIND_LABEL[revision.kind]}
         </Badge>
-        {revision.kind === 'Move' && (
+        {(revision.kind === 'Move' || revision.kind === 'Reopen') && (
           <Text size="sm" fw={600}>
             {describeMove(revision, columns)}
           </Text>
@@ -98,6 +100,7 @@ function RevisionRow({ revision, columns }: { revision: CardRevisionDto; columns
           <Text size="xs" c="dimmed">by {revision.editedBy} (self-reported)</Text>
         )}
         {revision.kind === 'ContentEdit' && <SupersededContent revision={revision} />}
+        {revision.kind === 'Reopen' && <SupersededClose revision={revision} />}
       </Stack>
     </Paper>
   )
@@ -111,6 +114,17 @@ function describeMove(revision: CardRevisionDto, columns: BoardColumnDto[]): str
   const name = (columnId: string | null, status: string | null) =>
     columns.find((column) => column.id === columnId)?.name ?? status ?? '?'
   return `${name(revision.fromColumnId, revision.fromStatus)} → ${name(revision.toColumnId, revision.toStatus)}`
+}
+
+/** The close this reopen undid — timestamp and the reason that was on the card. */
+function SupersededClose({ revision }: { revision: CardRevisionDto }) {
+  const when = revision.completedAt ? formatStamp(revision.completedAt) : '?'
+  const why = revision.terminalReason ?? '?'
+  return (
+    <Text size="xs" c="dimmed" data-testid={`superseded-close-${revision.revisionNumber}`}>
+      was closed {when}: {why}
+    </Text>
+  )
 }
 
 /**

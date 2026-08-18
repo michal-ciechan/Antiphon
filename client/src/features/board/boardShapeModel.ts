@@ -269,8 +269,9 @@ export function defaultExpandedState(states: StateShape[]): string | null {
  * Legal move targets for a card.
  *
  * LOCKSTEP PAIR with `server/Domain/StateMachine/CardStateMachine.cs`: any live state reaches any
- * other directly, and terminal states (Done, Canceled) have no way out until CARD-0019's history
- * can record a reopen as a correction. Change one side and change this one.
+ * other directly, and terminal states (Done, Canceled) stay terminal for the MOVE verb. Reopen
+ * is a distinct verb (`canReopenFrom` here, `CardStateMachine.CanReopenFrom` on the server) —
+ * not a new `canMoveTo` edge. Change one side and change this one.
  */
 export function canMoveTo(from: CardStatus, to: CardStatus): boolean {
   // A self-move is not a transition. The server builds every row via `Without(self)`, so
@@ -280,6 +281,15 @@ export function canMoveTo(from: CardStatus, to: CardStatus): boolean {
   // passes and the server still says no. Answer it here, where the lockstep claim is made.
   if (from === to) return false
   return from !== 'Done' && from !== 'Canceled'
+}
+
+/**
+ * Reopen is a dedicated verb, not a move-table edge. True only for Done/Canceled; every live
+ * status is refused so a reopen cannot be used as a silent move.
+ * LOCKSTEP PAIR with `server/Domain/StateMachine/CardStateMachine.cs` CanReopenFrom.
+ */
+export function canReopenFrom(status: CardStatus): boolean {
+  return status === 'Done' || status === 'Canceled'
 }
 
 export function legalMoveTargets(card: CardDto, columns: BoardColumnDto[]): BoardColumnDto[] {

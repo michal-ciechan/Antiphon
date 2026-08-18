@@ -6,6 +6,7 @@ import {
   EMPTY_FILTER,
   buildBoardShape,
   canMoveTo,
+  canReopenFrom,
   cardMatchesFilter,
   defaultExpandedState,
   describeSignal,
@@ -238,6 +239,15 @@ describe('legal move targets (lockstep with CardStateMachine)', () => {
   // row (`Without(self)`), so a same-status move is NOT legal. This board hides it - each column
   // carries a distinct status, so `legalMoveTargets`' column filter removes the only candidate -
   // hence the direct assertions, and a two-column board to prove the filter is not the guard.
+  it('reopens only from Done or Canceled — every live status is refused', () => {
+    expect(canReopenFrom('Done')).toBe(true)
+    expect(canReopenFrom('Canceled')).toBe(true)
+    expect(canReopenFrom('Backlog')).toBe(false)
+    expect(canReopenFrom('InProgress')).toBe(false)
+    expect(canReopenFrom('Review')).toBe(false)
+    expect(canReopenFrom('Blocked')).toBe(false)
+  })
+
   it('refuses a self-move, even between two columns sharing one status', () => {
     expect(canMoveTo('Backlog', 'Backlog')).toBe(false)
     expect(canMoveTo('InProgress', 'InProgress')).toBe(false)

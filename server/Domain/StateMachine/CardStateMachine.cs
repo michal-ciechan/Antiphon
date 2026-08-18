@@ -57,6 +57,7 @@ public static class CardStateMachine
     /// <summary>
     /// Reopen is a dedicated verb, not a move-table edge. True only for the two terminal
     /// statuses; every live status is refused so a reopen cannot be used as a silent move.
+    /// LOCKSTEP PAIR with client/src/features/board/boardShapeModel.ts canReopenFrom.
     /// </summary>
     public static bool CanReopenFrom(CardStatus from) =>
         from is CardStatus.Done or CardStatus.Canceled;

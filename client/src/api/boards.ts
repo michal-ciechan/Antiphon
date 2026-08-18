@@ -85,15 +85,17 @@ export interface CardDto {
  * What a history entry records. Lockstep with `server/Domain/Enums/CardRevisionKind.cs`; the API
  * serializes enums as strings.
  */
-export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive'
+export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' | 'Reopen'
 
 /**
  * One entry of a card's immutable history. `revisionNumber` is a single monotonic sequence across
- * ALL kinds, so the four kinds interleave into one timeline; the server serves it newest first.
+ * ALL kinds, so the five kinds interleave into one timeline; the server serves it newest first.
  *
  * Which fields are populated depends on `kind`: a `ContentEdit` carries the values it SUPERSEDED
  * (entry n plus the current card is the whole history), a `Move` carries the transition and no
- * text, `Archive`/`Unarchive` carry only their reason.
+ * text, a `Reopen` carries the transition AND the superseded `terminalReason`/`completedAt`
+ * (those fields exist on every row and are null except on Reopen), `Archive`/`Unarchive` carry
+ * only their reason.
  */
 export interface CardRevisionDto {
   id: string
@@ -111,6 +113,10 @@ export interface CardRevisionDto {
   reason: string | null
   editedBy: string | null
   createdAt: string
+  /** Populated only on Reopen rows — the terminal reason the close had stamped. */
+  terminalReason: string | null
+  /** Populated only on Reopen rows — when the superseded close happened. */
+  completedAt: string | null
 }
 
 /**
@@ -214,6 +220,21 @@ export interface UnarchiveCardRequest {
   concurrencyToken: string
   reason: string
   unarchivedBy?: string | null
+}
+
+/**
+ * Undo a terminal close. Dedicated verb, not a move: Done/Canceled stay unreachable via
+ * PATCH /cards/{id}. Reopen never spawns — want an agent afterwards, POST /spawn.
+ */
+export interface ReopenCardRequest {
+  concurrencyToken: string
+  reason: string
+  boardColumnId?: string | null
+  reopenedBy?: string | null
+}
+
+export function reopenCard(cardId: string, body: ReopenCardRequest) {
+  return apiPost<CardDto>(`/cards/${cardId}/reopen`, body)
 }
 
 export interface SpawnCardRequest {
@@ -446,6 +467,15 @@ export function useUnarchiveCard(boardId: string) {
   return useMutation({
     mutationFn: ({ cardId, request }: { cardId: string; request: UnarchiveCardRequest }) =>
       apiPost<CardDto>(`/cards/${cardId}/unarchive`, request),
+    onSuccess: (_card, { cardId }) => invalidateAfterCardWrite(queryClient, boardId, cardId),
+  })
+}
+
+export function useReopenCard(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ cardId, request }: { cardId: string; request: ReopenCardRequest }) =>
+      reopenCard(cardId, request),
     onSuccess: (_card, { cardId }) => invalidateAfterCardWrite(queryClient, boardId, cardId),
   })
 }
