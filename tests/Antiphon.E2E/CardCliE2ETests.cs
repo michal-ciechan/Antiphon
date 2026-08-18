@@ -162,6 +162,61 @@ public class CardCliE2ETests
     }
 
     [Test]
+    public async Task The_cli_reopens_a_closed_card_by_its_identifier()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var projectId = await CreateProjectAsync($"Card CLI Reopen Project {suffix}");
+        var boardName = $"Card CLI Reopen Board {suffix}";
+        await CreateBoardAsync(projectId, boardName);
+        RunCard("new", "-Board", boardName, "-Title", "Closed too soon").ExitCode.ShouldBe(0);
+
+        RunCard("close", "CARD-0001", "-Reason", "Shipped, or so we thought.").ExitCode.ShouldBe(0);
+
+        // No -To: the server picks Backlog. The script does not re-implement that fallback.
+        var reopened = RunCard("reopen", "CARD-0001", "-Reason", "The close was premature.", "-By", "cli-e2e");
+        reopened.ExitCode.ShouldBe(0, reopened.All);
+        reopened.Stdout.ShouldContain("CARD-0001");
+        reopened.Stdout.ShouldContain("Backlog");
+        reopened.Stdout.ShouldContain("reopened to");
+
+        var live = RunCard("get", "CARD-0001", "-Json");
+        live.ExitCode.ShouldBe(0, live.All);
+        var liveCard = JsonDocument.Parse(live.Stdout).RootElement;
+        liveCard.GetProperty("status").GetString().ShouldBe("Backlog");
+        liveCard.GetProperty("terminalReason").ValueKind.ShouldBe(JsonValueKind.Null);
+        liveCard.GetProperty("completedAt").ValueKind.ShouldBe(JsonValueKind.Null);
+
+        RunCard("close", "CARD-0001", "-Reason", "Closing again to aim the reopen.").ExitCode.ShouldBe(0);
+
+        // Named column + file-backed reason, same plumbing the other verbs already pin.
+        var reasonFile = NewTempFile("Still open, and this body has `backticks` and $(Get-Date).");
+        var aimed = RunCard("reopen", "card-1", "-To", "Review", "-ReasonFile", reasonFile, "-By", "cli-e2e");
+        aimed.ExitCode.ShouldBe(0, aimed.All);
+        aimed.Stdout.ShouldContain("reopened to Review");
+
+        var reviewed = RunCard("get", "1", "-Json");
+        reviewed.ExitCode.ShouldBe(0, reviewed.All);
+        JsonDocument.Parse(reviewed.Stdout).RootElement
+            .GetProperty("status").GetString().ShouldBe("Review");
+
+        var history = RunCard("history", "CARD-0001");
+        history.ExitCode.ShouldBe(0, history.All);
+        history.Stdout.ShouldContain("Reopen");
+        history.Stdout.ShouldContain("The close was premature.");
+        history.Stdout.ShouldContain("Still open, and this body has `backticks` and $(Get-Date).");
+
+        // Fail fast locally: no reason, no round trip.
+        var noReason = RunCard("reopen", "CARD-0001");
+        noReason.ExitCode.ShouldNotBe(0);
+        noReason.All.ShouldContain("-Reason");
+
+        // Live card: the server's 409 names the fact; the script surfaces it.
+        var stillLive = RunCard("reopen", "CARD-0001", "-Reason", "Already live.");
+        stillLive.ExitCode.ShouldNotBe(0);
+        stillLive.All.ShouldContain("not closed");
+    }
+
+    [Test]
     public async Task An_unknown_card_and_an_unknown_column_both_fail_with_the_servers_own_words()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -183,6 +238,11 @@ public class CardCliE2ETests
         wrongColumn.ExitCode.ShouldNotBe(0);
         wrongColumn.All.ShouldContain("Backlog");
         wrongColumn.All.ShouldContain("Done");
+
+        var wrongReopenColumn = RunCard("reopen", "CARD-0001", "-To", "Nowhere", "-Reason", "Would not land.");
+        wrongReopenColumn.ExitCode.ShouldNotBe(0);
+        wrongReopenColumn.All.ShouldContain("Backlog");
+        wrongReopenColumn.All.ShouldContain("Done");
     }
 
     private CliResult RunCard(params string[] arguments)

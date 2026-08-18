@@ -18,7 +18,7 @@ text. Its header comment is the full reference; this is the synopsis.
 
 - **A card is addressed the way it's *named*.** `CARD-0051`, `card-51`, `#51`, `51`, or its guid —
   every verb takes any of those. There is no separate "look up the id first" step.
-- **Verbs:** `get`, `history`, `new`, `edit`, `move`, `close`, `archive`, `unarchive`, and `-Limits`
+- **Verbs:** `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, and `-Limits`
   (prints the current title/description/reason/actor length ceilings).
 - **All long text comes from a file** — `-DescriptionFile` / `-ReasonFile` (`Get-Content -Raw`), not
   `-Description` / `-Reason` typed inline. This is not a nicety: hand-quoting a multi-line

@@ -33,16 +33,18 @@
 #                      [-By name] [-Token g]
 #   card.ps1 move      CARD-0051 -To <column name|guid> [-Reason r | -ReasonFile p] [-Spawn] [-Token g]
 #   card.ps1 close     CARD-0051 -Reason r | -ReasonFile p
+#   card.ps1 reopen    CARD-0051 -Reason r | -ReasonFile p [-To column] [-By name] [-Token g]
 #   card.ps1 archive   CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
 #   card.ps1 unarchive CARD-0051 -Reason r | -ReasonFile p [-By name] [-Token g]
 #   card.ps1 -Limits
 #
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
 # When it would have, the script says so instead of leaving you to find out later.
+# A reopen never starts an agent, even into an active column. Spawn separately if you want one.
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'archive', 'unarchive')]
+    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -69,7 +71,7 @@ param(
     [Parameter(ParameterSetName = 'Verb')]
     [string]$ReasonFile,
 
-    # Target column for 'move': its name (case-insensitive), its state key, or its guid.
+    # Target column for 'move' and 'reopen': its name (case-insensitive), its state key, or its guid.
     [Parameter(ParameterSetName = 'Verb')]
     [string]$To,
 
@@ -382,6 +384,45 @@ switch ($Verb) {
         }
         elseif ($result.spawnSuppressed) {
             Write-Output 'moved into an active column; NO agent was started - re-run with -Spawn to start one'
+        }
+        return
+    }
+
+    'reopen' {
+        $theCard = Get-CardOrFail
+        $reasonText = Get-RequiredReason
+        Assert-WithinLimit -Field 'By' -Value $By -Limit (Get-CardLimits).maxActorLength
+
+        # -To is optional: omit it and the server picks Backlog (then lowest-order live column).
+        # Do not re-implement that fallback here - just resolve a name the caller DID give.
+        $target = $null
+        if (-not [string]::IsNullOrWhiteSpace($To)) {
+            $columns = Get-BoardColumns -BoardId $theCard.boardId
+            $needle = $To.Trim().ToLowerInvariant()
+            $target = @($columns | Where-Object {
+                    $_.id -eq $To -or $_.name.ToLowerInvariant() -eq $needle -or $_.stateKey.ToLowerInvariant() -eq $needle
+                })[0]
+            if ($null -eq $target) {
+                Write-Error ("No column '{0}' on this board. It has: {1}" -f $To, `
+                    (($columns | ForEach-Object { $_.name }) -join ', '))
+                exit 1
+            }
+        }
+
+        $body = @{
+            concurrencyToken = Resolve-Token $theCard
+            reason           = $reasonText
+        }
+        if ($null -ne $target) { $body['boardColumnId'] = $target.id }
+        if (-not [string]::IsNullOrWhiteSpace($By)) { $body['reopenedBy'] = $By }
+
+        $updated = Invoke-Antiphon -Method POST -Path ("/api/cards/{0}/reopen" -f $theCard.id) -Body $body
+        Write-CardLine $updated
+        if ($null -ne $target) {
+            Write-Output ("reopened to {0}" -f $target.name)
+        }
+        else {
+            Write-Output ("reopened to {0}" -f $updated.status)
         }
         return
     }
