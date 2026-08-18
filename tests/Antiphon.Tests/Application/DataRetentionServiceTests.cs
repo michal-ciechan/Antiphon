@@ -14,8 +14,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0044 slice 1: transcript deletion is per-session all-or-nothing, and settled queue rows
-/// are pruned independently of session liveness. The sweep is global, so this class is
+/// CARD-0044 slices 1-2: transcript deletion is per-session all-or-nothing, settled queue rows
+/// are pruned independently of session liveness, and terminal AgentSession rows past 90d are
+/// deleted when nothing still names them. The sweep is global, so this class is
 /// <see cref="NotInParallelAttribute"/> with no group key (serialise against everything, not just
 /// itself) and every assertion is scoped to ids this test created.
 /// </summary>
@@ -248,6 +249,153 @@ public class DataRetentionServiceTests
         }
     }
 
+    [Test]
+    public async Task A_terminal_session_past_the_window_with_no_referencers_is_deleted()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+
+            await using var db = CreateContext();
+            var removed = await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+            removed.ShouldBeGreaterThanOrEqualTo(1);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_session_referenced_via_AgentTask_AgentSessionId_survives_past_the_window()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Failed, DaysAgo(100));
+            await SeedTaskAsync(marker, agentSessionId: sessionId, parentSessionId: null);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_session_referenced_via_AgentTask_ParentSessionId_survives_past_the_window()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            await SeedTaskAsync(marker, agentSessionId: null, parentSessionId: sessionId);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_session_that_is_an_agents_PersistentSessionId_survives_session_prune()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+            await SeedAgentPointingAtAsync(marker, sessionId);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_non_terminal_session_survives_session_prune_regardless_of_age()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Running, DaysAgo(100));
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Deleting_a_session_cascades_its_transcripts_and_queued_messages()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(100);
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Failed, stale);
+            var transcriptId = await SeedTranscriptAsync(sessionId, 1, TranscriptKinds.UserPrompt, stale);
+            var queuedId = await SeedQueuedAsync(
+                sessionId, 1, QueuedMessageStatus.Sent, QueuedMessageOrigin.Ui, stale);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneSessionsAsync(CancellationToken.None);
+
+            (await SessionExistsAsync(sessionId)).ShouldBeFalse();
+            (await ExistsAsync(transcriptId)).ShouldBeFalse();
+            (await QueueExistsAsync(queuedId)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_zero_session_window_skips_sessions()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Stopped, DaysAgo(100));
+
+            await using var db = CreateContext();
+            var result = await CreateService(db, new RetentionSettings
+            {
+                SessionRetentionDays = 0,
+            }).RunOnceAsync(CancellationToken.None);
+
+            result.Sessions.ShouldBe(0);
+            (await SessionExistsAsync(sessionId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     // ---------- helpers ----------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -306,6 +454,30 @@ public class DataRetentionServiceTests
         await db.SaveChangesAsync();
     }
 
+    private static async Task<Guid> SeedTaskAsync(string marker, Guid? agentSessionId, Guid? parentSessionId)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = marker,
+            Goal = "retention session-ref",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code,
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
+            AgentSessionId = agentSessionId,
+            ParentSessionId = parentSessionId,
+            Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = DaysAgo(100),
+            CompletedAt = DaysAgo(99),
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     private static async Task<Guid> SeedTranscriptAsync(
         Guid sessionId, long sequence, string kind, DateTime createdAt)
     {
@@ -354,6 +526,12 @@ public class DataRetentionServiceTests
         return id;
     }
 
+    private static async Task<bool> SessionExistsAsync(Guid sessionId)
+    {
+        await using var db = CreateContext();
+        return await db.AgentSessions.AnyAsync(s => s.Id == sessionId);
+    }
+
     private static async Task<bool> ExistsAsync(Guid transcriptId)
     {
         await using var db = CreateContext();
@@ -378,6 +556,7 @@ public class DataRetentionServiceTests
             await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         }
+        await db.AgentTasks.Where(t => t.Title == marker).ExecuteDeleteAsync();
         await db.Agents.Where(a => a.Name == marker).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).ExecuteDeleteAsync();
     }

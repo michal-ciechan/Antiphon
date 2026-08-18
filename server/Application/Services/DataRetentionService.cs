@@ -32,14 +32,57 @@ public sealed class DataRetentionService
 
     /// <summary>
     /// Runs the implemented table passes in the planned order (tasks → sessions → transcripts →
-    /// queued messages → audit). Slice 1 owns transcripts and queued messages; later slices fill
-    /// the earlier/later slots.
+    /// queued messages → audit). Slice 2 owns sessions; slice 1 owns transcripts and queued
+    /// messages; later slices fill the remaining slots.
     /// </summary>
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
     {
+        var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
-        return new DataRetentionSweepResult(transcripts, queued);
+        return new DataRetentionSweepResult(transcripts, queued, sessions);
+    }
+
+    /// <summary>
+    /// Deletes a terminal AgentSession row past
+    /// <see cref="RetentionSettings.SessionRetentionDays"/> when nothing still names it: not any
+    /// agent's <c>PersistentSessionId</c>, and no surviving AgentTask via
+    /// <c>AgentSessionId</c> or <c>ParentSessionId</c>. Those two loose Guids have no FK, so the
+    /// exclusion is what keeps the 90d/180d windows self-sequencing — a session outlives its
+    /// tasks automatically. <c>ExecuteDeleteAsync</c> on the session row is enough: Postgres
+    /// cascades <c>TranscriptEntries</c> and <c>SessionQueuedMessages</c>, and nulls
+    /// <c>RunAttempts.AgentSessionId</c> / <c>Cards.OwnerSessionId</c>.
+    /// </summary>
+    public async Task<int> PruneSessionsAsync(CancellationToken ct)
+    {
+        if (_settings.SessionRetentionDays <= 0)
+            return 0;
+
+        var cutoff = UtcNow().AddDays(-_settings.SessionRetentionDays);
+        var protectedIds = await LoadPersistentSessionIdsAsync(ct);
+
+        // Terminal + stale LastSeenAt + not a PersistentSessionId + no surviving task
+        // names this row via AgentSessionId OR ParentSessionId.
+        var query = _db.AgentSessions.Where(s =>
+            (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
+            && s.LastSeenAt < cutoff
+            && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id || t.ParentSessionId == s.Id));
+
+        if (protectedIds.Count > 0)
+        {
+            var protectedList = protectedIds.ToList();
+            query = query.Where(s => !protectedList.Contains(s.Id));
+        }
+
+        var removed = await query.ExecuteDeleteAsync(ct);
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} session row(s) past retention",
+                removed);
+        }
+
+        return removed;
     }
 
     /// <summary>
@@ -55,19 +98,7 @@ public sealed class DataRetentionService
 
         var cutoff = UtcNow().AddDays(-_settings.TranscriptRetentionDays);
 
-        // PersistentSessionId is a loose string (no FK). Parse with the same Guid.TryParse
-        // semantics AgentSupervisorService.FindPersistentSessionAsync uses so a Failed row that
-        // CARD-0056 may re-adopt is never emptied.
-        var protectedIds = new HashSet<Guid>();
-        var rawIds = await _db.Agents
-            .Where(a => a.PersistentSessionId != null)
-            .Select(a => a.PersistentSessionId!)
-            .ToListAsync(ct);
-        foreach (var raw in rawIds)
-        {
-            if (Guid.TryParse(raw, out var id))
-                protectedIds.Add(id);
-        }
+        var protectedIds = await LoadPersistentSessionIdsAsync(ct);
 
         var candidates = await _db.AgentSessions
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
@@ -134,7 +165,28 @@ public sealed class DataRetentionService
         return removed;
     }
 
+    /// <summary>
+    /// PersistentSessionId is a loose string (no FK). Parse with the same Guid.TryParse
+    /// semantics AgentSupervisorService.FindPersistentSessionAsync uses so a Failed row that
+    /// CARD-0056 may re-adopt is never emptied or deleted.
+    /// </summary>
+    private async Task<HashSet<Guid>> LoadPersistentSessionIdsAsync(CancellationToken ct)
+    {
+        var protectedIds = new HashSet<Guid>();
+        var rawIds = await _db.Agents
+            .Where(a => a.PersistentSessionId != null)
+            .Select(a => a.PersistentSessionId!)
+            .ToListAsync(ct);
+        foreach (var raw in rawIds)
+        {
+            if (Guid.TryParse(raw, out var id))
+                protectedIds.Add(id);
+        }
+
+        return protectedIds;
+    }
+
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
 
-public sealed record DataRetentionSweepResult(int Transcripts, int QueuedMessages);
+public sealed record DataRetentionSweepResult(int Transcripts, int QueuedMessages, int Sessions);
