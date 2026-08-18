@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Enums;
+﻿using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Domain.Entities;
 
@@ -55,6 +55,21 @@ public class Agent
     public Guid? BoardId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>
+    /// WHICH AGENT PROGRAM this delegate's session runs (CARD-0084 S3). Stored on the row rather
+    /// than derived from the latest session for two reasons the pool depends on: derivation is racy
+    /// against a session that is still starting, and a pool row can legitimately have no session at
+    /// all for a moment. A warm delegate is claimable only by a task of the SAME kind — a Claude
+    /// process cannot run a Grok task's brief, and reusing one for it would look like a successful
+    /// dispatch right up until the report never came.
+    ///
+    /// <para>Defaults to <see cref="AgentKind.ClaudeCode"/>, which every agent row that existed
+    /// before this column really was; only the dispatcher writes it today, so a user-created agent
+    /// keeps the default and the pool keeps ignoring it (<see cref="IsPoolDelegate"/> is what makes
+    /// a row pool furniture, not this).</para>
+    /// </summary>
+    public AgentKind Kind { get; set; } = AgentKind.ClaudeCode;
 
     /// <summary>
     /// A delegate spawned by the task dispatcher, eligible for the warm pool: after its task
