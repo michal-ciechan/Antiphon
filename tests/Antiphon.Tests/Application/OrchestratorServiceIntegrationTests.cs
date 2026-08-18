@@ -20,7 +20,15 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[NotInParallel("Orchestrator")]
+// Ungrouped on purpose: PollTickAsync sweeps the assembly-wide test database — the tempRoot
+// prefix scope (InternalTrackerRepositoryPathPrefix) pins Internal boards to this test, but
+// every NON-Internal board anywhere in the DB passes the scope filter, for the candidate,
+// reconcile AND external-tracker-sync sweeps. Five tests here create GitHubIssues/Linear
+// boards; a foreign one would inflate the tick counters, steal the single queued fake
+// adapter, and let this class's reconcile/sync mutate the other suite's rows. The DB-row
+// assertions are already scoped; the tick counters are unscopable ints, so exclusive
+// execution is what makes their exact values honest (same lesson as AgentSupervisionTests).
+[NotInParallel]
 public class OrchestratorServiceIntegrationTests
 {
     [Test]
