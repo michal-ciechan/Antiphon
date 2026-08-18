@@ -186,6 +186,47 @@ public class CardCorrectionApiTests
         limits.MaxActorLength.ShouldBe(CardService.MaxActorLength);
     }
 
+    [Test]
+    public async Task Reopen_over_http_returns_the_card_live_again_with_history()
+    {
+        var (board, card) = await SeedAsync("Api reopen board", "Closed too soon", "Still work to do.");
+        using var client = _factory.CreateClient();
+        var columns = await client.GetFromJsonAsync<List<BoardColumnDto>>(
+            $"/api/boards/{board.Id}/columns", Json);
+        var doneColumn = columns!.Single(c => c.StateKey == "done");
+        var backlogColumn = columns.Single(c => c.StateKey == "backlog");
+
+        var closed = await client.PatchAsJsonAsync(
+            $"/api/cards/{card.Id}",
+            new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Filed by mistake."));
+        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var closedCard = (await closed.Content.ReadFromJsonAsync<MoveCardResult>(Json))!.Card;
+        closedCard.Status.ShouldBe(CardStatus.Done);
+        closedCard.CompletedAt.ShouldNotBeNull();
+        closedCard.TerminalReason.ShouldBe("Filed by mistake.");
+
+        var reopen = await client.PostAsJsonAsync(
+            $"/api/cards/{card.Id}/reopen",
+            new ReopenCardRequest(closedCard.ConcurrencyToken, "Still open.", ReopenedBy: "operator"));
+        reopen.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var live = (await reopen.Content.ReadFromJsonAsync<CardDto>(Json))!;
+        live.Status.ShouldBe(CardStatus.Backlog);
+        live.BoardColumnId.ShouldBe(backlogColumn.Id);
+        live.CompletedAt.ShouldBeNull();
+        live.TerminalReason.ShouldBeNull();
+
+        var history = await client.GetFromJsonAsync<List<CardRevisionDto>>(
+            $"/api/cards/{card.Id}/revisions", Json);
+        var reopenRow = history!.Single(r => r.Kind == CardRevisionKind.Reopen);
+        reopenRow.FromStatus.ShouldBe(CardStatus.Done);
+        reopenRow.ToStatus.ShouldBe(CardStatus.Backlog);
+        reopenRow.TerminalReason.ShouldBe("Filed by mistake.");
+        reopenRow.CompletedAt.ShouldNotBeNull();
+        reopenRow.Reason.ShouldBe("Still open.");
+        reopenRow.EditedBy.ShouldBe("operator");
+        history.Count(r => r.Kind == CardRevisionKind.Move).ShouldBe(1);
+    }
+
     // A regression here comes back as a 422 "not a card identifier", because /{id} would have
     // swallowed the literal segment.
     [Test]

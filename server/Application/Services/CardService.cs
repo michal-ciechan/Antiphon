@@ -394,6 +394,76 @@ public sealed class CardService
         return await SaveArchiveChangeAsync(card, now, ct);
     }
 
+    /// <summary>
+    /// Undoes a terminal close. Dedicated verb, not a move-table edge: <c>Done</c>/<c>Canceled</c>
+    /// stay unreachable via <see cref="MoveAsync"/>. Calls <see cref="ApplyColumnMove"/> directly
+    /// so a reopen is structurally incapable of spawning (CARD-0051's opt-in lives only in
+    /// <see cref="MoveAsync"/>).
+    /// </summary>
+    public async Task<CardDto> ReopenAsync(Guid id, ReopenCardRequest request, CancellationToken ct)
+    {
+        ValidateArchiveRequest(
+            request.Reason, nameof(request.Reason), request.ReopenedBy, nameof(request.ReopenedBy));
+
+        var card = await LoadCardForUpdateAsync(id, ct);
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException(nameof(request.ConcurrencyToken), "Card concurrency token is required.");
+        if (request.ConcurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+
+        if (card.ArchivedAt is not null)
+            throw new ConflictException($"Card '{card.Identifier}' is archived; unarchive it before reopening it.");
+
+        if (!CardStateMachine.CanReopenFrom(card.Status))
+            throw new ConflictException($"Card '{card.Identifier}' is not closed.");
+
+        var target = ResolveReopenTarget(card, request.BoardColumnId);
+
+        // Snapshot BEFORE ApplyColumnMove clears CompletedAt/TerminalReason on the non-terminal landing.
+        CardRevisionLog.AppendReopen(card, target, request.Reason, request.ReopenedBy, UtcNow());
+        ApplyColumnMove(
+            card,
+            target,
+            enforceStateMachine: false,
+            recordRevision: false,
+            reason: request.Reason,
+            movedBy: request.ReopenedBy);
+
+        await SaveCardWriteAsync(card, ct);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    private static BoardColumn ResolveReopenTarget(Card card, Guid? requestedColumnId)
+    {
+        if (requestedColumnId is Guid columnId)
+        {
+            var column = card.Board.Columns.FirstOrDefault(c => c.Id == columnId)
+                ?? throw new ValidationException(
+                    nameof(ReopenCardRequest.BoardColumnId),
+                    "Target column belongs to a different board.");
+            if (column.IsTerminal)
+            {
+                throw new ValidationException(
+                    nameof(ReopenCardRequest.BoardColumnId),
+                    "A closed card cannot be reopened into a terminal column.");
+            }
+
+            return column;
+        }
+
+        return card.Board.Columns
+                .Where(c => c.CardStatus == CardStatus.Backlog)
+                .OrderBy(c => c.ColumnOrder)
+                .FirstOrDefault()
+            ?? card.Board.Columns
+                .Where(c => !c.IsTerminal)
+                .OrderBy(c => c.ColumnOrder)
+                .FirstOrDefault()
+            ?? throw new ConflictException(
+                $"Board '{card.Board.Name}' has no live column to reopen into.");
+    }
+
     private async Task<Card> LoadCardForArchiveAsync(Guid id, Guid concurrencyToken, CancellationToken ct)
     {
         var card = await LoadCardForUpdateAsync(id, ct);
@@ -620,10 +690,16 @@ public sealed class CardService
     /// keeps stamping <see cref="Card.TerminalReason"/>, which stays as the cheap-to-read summary
     /// it is today.
     /// </param>
+    /// <param name="recordRevision">
+    /// When false, skip the automatic <c>Move</c> row. Reopen writes its own <c>Kind.Reopen</c>
+    /// row first (the transition AND the superseded terminal facts) and must not also get a
+    /// sibling Move. Every other caller keeps the default.
+    /// </param>
     private void ApplyColumnMove(
         Card card,
         BoardColumn targetColumn,
         bool enforceStateMachine = true,
+        bool recordRevision = true,
         string? reason = null,
         string? movedBy = null)
     {
@@ -634,14 +710,18 @@ public sealed class CardService
             && card.Status != targetColumn.CardStatus
             && !CardStateMachine.CanTransition(card.Status, targetColumn.CardStatus))
         {
-            throw new ValidationException(
-                nameof(targetColumn.CardStatus),
-                $"Cannot move card from {card.Status} to {targetColumn.CardStatus}.");
+            var detail = $"Cannot move card from {card.Status} to {targetColumn.CardStatus}";
+            if (CardStateMachine.CanReopenFrom(card.Status))
+                detail += ", a closed card is reopened via POST /cards/{id}/reopen";
+            throw new ValidationException(nameof(targetColumn.CardStatus), detail + ".");
         }
 
         var now = UtcNow();
-        CardRevisionLog.AppendMove(
-            card, card.BoardColumnId, card.Status, targetColumn, reason, movedBy, now);
+        if (recordRevision)
+        {
+            CardRevisionLog.AppendMove(
+                card, card.BoardColumnId, card.Status, targetColumn, reason, movedBy, now);
+        }
         card.BoardColumnId = targetColumn.Id;
         card.BoardColumn = targetColumn;
         card.Status = targetColumn.CardStatus;

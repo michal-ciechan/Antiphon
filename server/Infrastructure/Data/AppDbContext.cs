@@ -878,6 +878,9 @@ public class AppDbContext : DbContext
             entity.Property(r => r.Description).HasColumnType("text");
             entity.Property(r => r.LabelsJson).HasColumnType("jsonb");
             entity.Property(r => r.Reason).HasColumnType("text");
+            // Matches Cards.TerminalReason: text, not varchar — a reopen snapshots the same value
+            // the card held, and a tighter column here would 500 on the close-out it records.
+            entity.Property(r => r.TerminalReason).HasColumnType("text");
             entity.Property(r => r.EditedBy).HasMaxLength(200);
             entity.Property(r => r.CreatedAt).IsRequired();
 

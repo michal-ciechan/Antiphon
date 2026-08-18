@@ -18,5 +18,11 @@ public enum CardRevisionKind
     Archive = 2,
 
     /// <summary>An archive was undone; the row carries why.</summary>
-    Unarchive = 3
+    Unarchive = 3,
+
+    /// <summary>
+    /// A terminal close was undone: the row carries the transition AND the superseded
+    /// <c>TerminalReason</c>/<c>CompletedAt</c>. Always has a reason.
+    /// </summary>
+    Reopen = 4
 }

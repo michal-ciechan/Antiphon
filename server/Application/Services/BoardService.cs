@@ -267,7 +267,9 @@ public sealed class BoardService
             revision.ToStatus,
             revision.Reason,
             revision.EditedBy,
-            revision.CreatedAt);
+            revision.CreatedAt,
+            revision.TerminalReason,
+            revision.CompletedAt);
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)

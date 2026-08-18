@@ -991,6 +991,544 @@ public class CardCorrectionIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Reopen_writes_one_revision_with_the_superseded_terminal_facts_and_clears_them()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reopen facts board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Closed too soon"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var backlogColumn = board.Columns.Single(c => c.StateKey == "backlog");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Fixed as part of CARD-0041."),
+                CancellationToken.None);
+            closed.Card.CompletedAt.ShouldNotBeNull();
+            var originalCompletedAt = closed.Card.CompletedAt!.Value;
+
+            var reopened = await harness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(closed.Card.ConcurrencyToken, "The close was wrong.", ReopenedBy: "operator"),
+                CancellationToken.None);
+
+            reopened.Status.ShouldBe(CardStatus.Backlog);
+            reopened.BoardColumnId.ShouldBe(backlogColumn.Id);
+            reopened.CompletedAt.ShouldBeNull();
+            reopened.TerminalReason.ShouldBeNull();
+            reopened.ConcurrencyToken.ShouldNotBe(closed.Card.ConcurrencyToken);
+            reopened.RevisionCount.ShouldBe(2);
+
+            await using var verify = CreateContext();
+            var revisions = await verify.CardRevisions
+                .Where(r => r.CardId == card.Id)
+                .OrderBy(r => r.RevisionNumber)
+                .ToListAsync();
+            revisions.Count.ShouldBe(2);
+            revisions[0].Kind.ShouldBe(CardRevisionKind.Move);
+            var reopen = revisions[1];
+            reopen.Kind.ShouldBe(CardRevisionKind.Reopen);
+            reopen.FromStatus.ShouldBe(CardStatus.Done);
+            reopen.ToStatus.ShouldBe(CardStatus.Backlog);
+            reopen.FromColumnId.ShouldBe(doneColumn.Id);
+            reopen.ToColumnId.ShouldBe(backlogColumn.Id);
+            reopen.TerminalReason.ShouldBe("Fixed as part of CARD-0041.");
+            reopen.CompletedAt.ShouldBe(originalCompletedAt);
+            reopen.Reason.ShouldBe("The close was wrong.");
+            reopen.EditedBy.ShouldBe("operator");
+            revisions.Count(r => r.Kind == CardRevisionKind.Move).ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_defaults_to_the_backlog_column_and_never_spawns()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reopen spawn board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Do not start me"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var backlogColumn = board.Columns.Single(c => c.StateKey == "backlog");
+            var activeColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Parked."),
+                CancellationToken.None);
+            var defaulted = await harness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(closed.Card.ConcurrencyToken, "Back to the pile."),
+                CancellationToken.None);
+            defaulted.BoardColumnId.ShouldBe(backlogColumn.Id);
+            defaulted.OwnerSessionId.ShouldBeNull();
+
+            var closedAgain = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, defaulted.ConcurrencyToken, "Parked again."),
+                CancellationToken.None);
+            var intoActive = await harness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(
+                    closedAgain.Card.ConcurrencyToken,
+                    "Into the active column, still do not start.",
+                    BoardColumnId: activeColumn.Id),
+                CancellationToken.None);
+
+            intoActive.Status.ShouldBe(CardStatus.InProgress);
+            intoActive.BoardColumnId.ShouldBe(activeColumn.Id);
+            intoActive.OwnerSessionId.ShouldBeNull();
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_of_a_card_closed_before_revisions_existed_still_keeps_its_terminal_facts()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Pre-history reopen board"), CancellationToken.None);
+            var created = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Closed before CARD-0019"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            // Postgres timestamptz stores microseconds; DateTime.UtcNow has 100ns ticks.
+            var utc = DateTime.UtcNow.AddDays(-40);
+            var completedAt = new DateTime(utc.Ticks - (utc.Ticks % 10), DateTimeKind.Utc);
+
+            await using (var seed = CreateContext())
+            {
+                var row = await seed.Cards.SingleAsync(c => c.Id == created.Id);
+                row.BoardColumnId = doneColumn.Id;
+                row.Status = CardStatus.Done;
+                row.CompletedAt = completedAt;
+                row.TerminalReason = "Closed before revisions existed.";
+                row.RevisionCount = 0;
+                await seed.SaveChangesAsync();
+            }
+
+            await using var reopenHarness = BuildHarness(tempRoot);
+            var token = (await reopenHarness.CardService.GetByIdAsync(created.Id, CancellationToken.None))
+                .ConcurrencyToken;
+            var reopened = await reopenHarness.CardService.ReopenAsync(
+                created.Id,
+                new ReopenCardRequest(token, "The record still has to keep those facts."),
+                CancellationToken.None);
+
+            reopened.Status.ShouldBe(CardStatus.Backlog);
+            reopened.CompletedAt.ShouldBeNull();
+            reopened.TerminalReason.ShouldBeNull();
+            reopened.RevisionCount.ShouldBe(1);
+
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions.SingleAsync(r => r.CardId == created.Id);
+            revision.Kind.ShouldBe(CardRevisionKind.Reopen);
+            revision.TerminalReason.ShouldBe("Closed before revisions existed.");
+            revision.CompletedAt.ShouldBe(completedAt);
+            (await verify.CardRevisions.CountAsync(r => r.CardId == created.Id && r.Kind == CardRevisionKind.Move))
+                .ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task A_reopened_card_recloses_with_a_fresh_completion()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reclose board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Will close twice"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+
+            var firstClose = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "First verdict."),
+                CancellationToken.None);
+            var firstCompletedAt = firstClose.Card.CompletedAt;
+            firstCompletedAt.ShouldNotBeNull();
+
+            var reopened = await harness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(firstClose.Card.ConcurrencyToken, "Not actually done."),
+                CancellationToken.None);
+
+            // A later timestamp so ??= cannot accidentally keep the original by equality.
+            await Task.Delay(20);
+            var secondClose = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, reopened.ConcurrencyToken, "Second verdict."),
+                CancellationToken.None);
+
+            secondClose.Card.TerminalReason.ShouldBe("Second verdict.");
+            secondClose.Card.CompletedAt.ShouldNotBeNull();
+            secondClose.Card.CompletedAt.ShouldNotBe(firstCompletedAt);
+            secondClose.Card.RevisionCount.ShouldBe(3);
+
+            var history = await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None);
+            history.Select(r => r.RevisionNumber).ShouldBe([3, 2, 1]);
+            history.Select(r => r.Kind).ShouldBe(
+                [CardRevisionKind.Move, CardRevisionKind.Reopen, CardRevisionKind.Move]);
+            history[1].TerminalReason.ShouldBe("First verdict.");
+            history[1].CompletedAt.ShouldBe(firstCompletedAt);
+            history[0].Reason.ShouldBe("Second verdict.");
+            history[2].Reason.ShouldBe("First verdict.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_with_a_stale_token_is_a_conflict_and_writes_no_revision()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Stale reopen board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Token race"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Closed."),
+                CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(Guid.NewGuid(), "Someone else got there first."),
+                    CancellationToken.None));
+
+            ex.Message.ShouldContain("modified by another operation");
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id && r.Kind == CardRevisionKind.Reopen))
+                .ShouldBe(0);
+            var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            stored.Status.ShouldBe(CardStatus.Done);
+            stored.CompletedAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_of_a_live_card_or_into_a_terminal_column_or_without_a_reason_is_rejected()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reopen reject board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Still live"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+
+            var live = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(card.ConcurrencyToken, "Not closed."),
+                    CancellationToken.None));
+            live.Message.ShouldContain("is not closed");
+
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Now closed."),
+                CancellationToken.None);
+
+            var intoTerminal = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(
+                        closed.Card.ConcurrencyToken, "Back into Done.", BoardColumnId: doneColumn.Id),
+                    CancellationToken.None));
+            intoTerminal.Errors.ShouldContainKey(nameof(ReopenCardRequest.BoardColumnId));
+
+            var noReason = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(closed.Card.ConcurrencyToken, "   "),
+                    CancellationToken.None));
+            noReason.Errors.ShouldContainKey(nameof(ReopenCardRequest.Reason));
+
+            await using var verify = CreateContext();
+            (await verify.CardRevisions.CountAsync(r => r.CardId == card.Id && r.Kind == CardRevisionKind.Reopen))
+                .ShouldBe(0);
+            (await verify.Cards.SingleAsync(c => c.Id == card.Id)).Status.ShouldBe(CardStatus.Done);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_of_an_archived_card_is_refused_until_unarchive()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Archived reopen board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Closed and shelved"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Done."),
+                CancellationToken.None);
+            var archived = await harness.CardService.ArchiveAsync(
+                card.Id,
+                new ArchiveCardRequest(closed.Card.ConcurrencyToken, "Off the board."),
+                CancellationToken.None);
+
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(archived.ConcurrencyToken, "Want it live again."),
+                    CancellationToken.None));
+            refused.Message.ShouldContain("unarchive it before reopening");
+
+            var restored = await harness.CardService.UnarchiveAsync(
+                card.Id,
+                new UnarchiveCardRequest(archived.ConcurrencyToken, "Back on the board."),
+                CancellationToken.None);
+            var reopened = await harness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(restored.ConcurrencyToken, "And back to live."),
+                CancellationToken.None);
+            reopened.Status.ShouldBe(CardStatus.Backlog);
+            reopened.ArchivedAt.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_deletes_no_review_checkpoint()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            var now = DateTime.UtcNow;
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Reopen checkpoint {Guid.NewGuid():N}",
+                Slug = $"reopen-cp-{Guid.NewGuid():N}",
+                WorkingDirectory = tempRoot,
+                Details = "checkpoint pin",
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            var checkpoint = new AgentReviewCheckpoint
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agent.Id,
+                Reason = "Card completed (seeded)",
+                CreatedAt = now
+            };
+            db.Agents.Add(agent);
+            db.AgentReviewCheckpoints.Add(checkpoint);
+            await db.SaveChangesAsync();
+
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Checkpoint reopen board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Signed off then reopened"), CancellationToken.None);
+
+            await using (var assign = CreateContext())
+            {
+                var row = await assign.Cards.SingleAsync(c => c.Id == card.Id);
+                row.AssignedAgentId = agent.Id;
+                await assign.SaveChangesAsync();
+            }
+
+            await using var closeHarness = BuildHarness(tempRoot);
+            var fresh = await closeHarness.CardService.GetByIdAsync(card.Id, CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var closed = await closeHarness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, fresh.ConcurrencyToken, "Signed off."),
+                CancellationToken.None);
+            var reopened = await closeHarness.CardService.ReopenAsync(
+                card.Id,
+                new ReopenCardRequest(closed.Card.ConcurrencyToken, "Need another pass."),
+                CancellationToken.None);
+            reopened.Status.ShouldBe(CardStatus.Backlog);
+
+            await using var verify = CreateContext();
+            (await verify.AgentReviewCheckpoints.AnyAsync(c => c.Id == checkpoint.Id)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task A_terminal_move_rejection_names_the_reopen_endpoint()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Courtesy message board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Stuck in Done"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var backlogColumn = board.Columns.Single(c => c.StateKey == "backlog");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Closed."),
+                CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ValidationException>(() =>
+                harness.CardService.MoveAsync(
+                    card.Id,
+                    new MoveCardRequest(backlogColumn.Id, closed.Card.ConcurrencyToken, "Try to drag it out."),
+                    CancellationToken.None));
+
+            var message = ex.Errors[nameof(BoardColumn.CardStatus)].Single();
+            message.ShouldContain("POST /cards/{id}/reopen");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Reopen_when_no_live_column_exists_is_a_conflict()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "No live column board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Nowhere to go"), CancellationToken.None);
+            var doneColumn = board.Columns.Single(c => c.StateKey == "done");
+            var closed = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(doneColumn.Id, card.ConcurrencyToken, "Closed."),
+                CancellationToken.None);
+
+            await using (var mutate = CreateContext())
+            {
+                var live = await mutate.BoardColumns
+                    .Where(c => c.BoardId == board.Id && !c.IsTerminal)
+                    .ToListAsync();
+                foreach (var column in live)
+                {
+                    column.IsTerminal = true;
+                    column.CardStatus = CardStatus.Done;
+                }
+
+                await mutate.SaveChangesAsync();
+            }
+
+            await using var reopenHarness = BuildHarness(tempRoot);
+            var token = (await reopenHarness.CardService.GetByIdAsync(card.Id, CancellationToken.None))
+                .ConcurrencyToken;
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                reopenHarness.CardService.ReopenAsync(
+                    card.Id,
+                    new ReopenCardRequest(token, "Need a live column."),
+                    CancellationToken.None));
+            ex.Message.ShouldContain("no live column");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task<MoveOutcome> CaptureAsync(Func<Task<MoveCardResult>> move)
     {
         try
@@ -1128,6 +1666,11 @@ public class CardCorrectionIntegrationTests
             .Select(a => a.Id)
             .ToListAsync();
 
+        var agentIds = await db.Agents
+            .Where(a => a.WorkingDirectory.StartsWith(tempRoot))
+            .Select(a => a.Id)
+            .ToListAsync();
+
         await db.Cards
             .Where(c => cardIds.Contains(c.Id))
             .ExecuteUpdateAsync(updates => updates
@@ -1135,6 +1678,11 @@ public class CardCorrectionIntegrationTests
                 .SetProperty(c => c.CurrentWorktreeId, (Guid?)null)
                 .SetProperty(c => c.AssignedAgentId, (Guid?)null)
                 .SetProperty(c => c.ActiveWorkflowRunId, (Guid?)null));
+        if (agentIds.Count > 0)
+        {
+            await db.AgentReviewCheckpoints.Where(c => agentIds.Contains(c.AgentId)).ExecuteDeleteAsync();
+            await db.Agents.Where(a => agentIds.Contains(a.Id)).ExecuteDeleteAsync();
+        }
         await db.TokenUsages.Where(t => attemptIds.Contains(t.RunAttemptId)).ExecuteDeleteAsync();
         await db.RunAttempts.Where(a => attemptIds.Contains(a.Id)).ExecuteDeleteAsync();
         await db.RetrySchedules.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();

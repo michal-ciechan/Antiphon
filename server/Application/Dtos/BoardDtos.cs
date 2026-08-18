@@ -168,9 +168,21 @@ public sealed record UnarchiveCardRequest(
     Guid ConcurrencyToken, string Reason, string? UnarchivedBy = null);
 
 /// <summary>
+/// Undo a terminal close. Dedicated verb, not a move: <c>Done</c>/<c>Canceled</c> stay
+/// unreachable via <c>PATCH /cards/{id}</c>. Reopen never spawns — want an agent afterwards,
+/// <c>POST /spawn</c>.
+/// </summary>
+public sealed record ReopenCardRequest(
+    Guid ConcurrencyToken,
+    string Reason,
+    Guid? BoardColumnId = null,
+    string? ReopenedBy = null);
+
+/// <summary>
 /// One entry of a card's immutable history, newest first. A <c>ContentEdit</c> carries the values
 /// it SUPERSEDED (so entry n plus the current card is the whole history); a <c>Move</c> carries the
-/// transition and no text; <c>Archive</c>/<c>Unarchive</c> carry only their reason.
+/// transition and no text; a <c>Reopen</c> carries the transition AND the superseded
+/// <c>TerminalReason</c>/<c>CompletedAt</c>; <c>Archive</c>/<c>Unarchive</c> carry only their reason.
 /// </summary>
 public sealed record CardRevisionDto(
     Guid Id,
@@ -187,7 +199,9 @@ public sealed record CardRevisionDto(
     CardStatus? ToStatus,
     string? Reason,
     string? EditedBy,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? TerminalReason = null,
+    DateTime? CompletedAt = null);
 
 /// <summary>
 /// What a card's text may weigh, in characters, straight from the <c>CardService</c> constants that

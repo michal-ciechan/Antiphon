@@ -53,6 +53,21 @@ machine further than asked is a decision for the operator, not an inference.
 
 ---
 
+## 2026-08-18 — Reopen is a dedicated verb; terminal stays terminal for moves
+
+**Shipped (CARD-0054 slice 1).** A closed card (`Done`/`Canceled`) cannot be dragged or `PATCH`ed
+out of its column. `CardStateMachine.Transitions` for those two statuses stays `[]` — that is the
+move verb, and it stays a wall. The exit is `POST /api/cards/{id}/reopen`: required reason, optional
+target live column (Backlog by default), one `Kind.Reopen` revision that carries the transition AND
+the superseded `TerminalReason`/`CompletedAt`. The card surface is live again; the record keeps
+both facts.
+
+Reopen calls `ApplyColumnMove` directly, never `MoveAsync`, so it is structurally incapable of
+spawning an agent. Want one on the reopened card? `POST /spawn`. Review checkpoints captured on
+the original close are left untouched; a later re-close captures a fresh one.
+
+---
+
 *(Two entries formerly here, both hard constraints on CARD-0040 — "Moving a card into In Progress
 SPAWNS AN AGENT" and "Auto-transition stops at Review, conditionally" — were trimmed out; see the
 note at the top of this file.)*

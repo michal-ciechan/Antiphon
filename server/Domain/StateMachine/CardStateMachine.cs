@@ -35,11 +35,12 @@ public static class CardStateMachine
         [CardStatus.InProgress] = Without(CardStatus.InProgress),
         [CardStatus.Review] = Without(CardStatus.Review),
         [CardStatus.Blocked] = Without(CardStatus.Blocked),
-        // Terminal states stay terminal. Reopening a closed card is a different question from
-        // reaching a state directly, and it is not answered here: CompletedAt, TerminalReason and
-        // the review checkpoint captured on completion all mean something once set. Reopen belongs
-        // with CARD-0019's card history, where undoing a close can be recorded as a correction
-        // rather than by quietly rewriting the row.
+        // Terminal states stay terminal for the MOVE verb. Reopening a closed card is a different
+        // verb (CardService.ReopenAsync / POST /cards/{id}/reopen), not a transition: CompletedAt,
+        // TerminalReason and the review checkpoint captured on completion all mean something once
+        // set. CanReopenFrom is the reopen rule; these empty rows keep drag-out-of-Done refused.
+        // LOCKSTEP PAIR with client/src/features/board/boardShapeModel.ts canMoveTo — reopen is
+        // canReopenFrom on that side, not a new canMoveTo edge.
         [CardStatus.Done] = [],
         [CardStatus.Canceled] = [],
     };
@@ -52,4 +53,11 @@ public static class CardStateMachine
 
     public static IReadOnlyList<CardStatus> GetAvailableTransitions(CardStatus currentStatus) =>
         Transitions.TryGetValue(currentStatus, out var targets) ? targets : [];
+
+    /// <summary>
+    /// Reopen is a dedicated verb, not a move-table edge. True only for the two terminal
+    /// statuses; every live status is refused so a reopen cannot be used as a silent move.
+    /// </summary>
+    public static bool CanReopenFrom(CardStatus from) =>
+        from is CardStatus.Done or CardStatus.Canceled;
 }

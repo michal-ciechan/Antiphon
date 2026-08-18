@@ -68,6 +68,29 @@ internal static class CardRevisionLog
         });
     }
 
+    /// <summary>
+    /// Records a reopen. Call BEFORE mutating the card: the row is the move record for that
+    /// transition AND the home of the superseded <see cref="Card.TerminalReason"/> /
+    /// <see cref="Card.CompletedAt"/>. Reason is required at the call site.
+    /// </summary>
+    public static CardRevision AppendReopen(
+        Card card, BoardColumn toColumn, string reason, string? reopenedBy, DateTime utcNow)
+    {
+        return Append(card, new CardRevision
+        {
+            Kind = CardRevisionKind.Reopen,
+            FromColumnId = card.BoardColumnId,
+            ToColumnId = toColumn.Id,
+            FromStatus = card.Status,
+            ToStatus = toColumn.CardStatus,
+            TerminalReason = card.TerminalReason,
+            CompletedAt = card.CompletedAt,
+            Reason = Trimmed(reason),
+            EditedBy = Trimmed(reopenedBy),
+            CreatedAt = utcNow
+        });
+    }
+
     /// <summary>Records an archive or unarchive, so neither the act nor its reason is lost.</summary>
     public static CardRevision AppendArchiveChange(
         Card card, CardRevisionKind kind, string reason, string? actedBy, DateTime utcNow)

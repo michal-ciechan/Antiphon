@@ -4,7 +4,7 @@ Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the
 unless the script genuinely can't do it. These are the shapes that bite either way:
 
 - A CARD IS ADDRESSED THE WAY IT'S NAMED. `CARD-0051`, `card-51`, `#51`, `51`, or its guid — every
-  card route (`GET /api/cards/{id}`, both PATCHes, `/revisions`, `/archive`, `/unarchive`, `/spawn`)
+  card route (`GET /api/cards/{id}`, both PATCHes, `/revisions`, `/archive`, `/unarchive`, `/reopen`, `/spawn`)
   resolves whichever form you give it. There is no look-up-the-id-first step.
 
 - `GET /api/cards/limits` returns the current title/description/reason/actor length ceilings
@@ -42,3 +42,9 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 
 - ARCHIVE IS WHAT DELETE MEANS HERE (`POST /api/cards/{id}/archive` with token and reason). The row
   stays so references never dangle and the identifier is never handed out again.
+
+- A CLOSED CARD IS REOPENED VIA `POST /api/cards/{id}/reopen`, NOT A MOVE. `Done`/`Canceled` stay
+  unreachable through `PATCH /api/cards/{id}`. Body: `concurrencyToken`, required `reason`, optional
+  `boardColumnId` (defaults to the board's Backlog, then the lowest-order live column), optional
+  `reopenedBy`. The Reopen revision keeps the superseded `terminalReason`/`completedAt`; the card
+  surface is live again. Reopen never spawns — want an agent on the reopened card, `POST /spawn`.

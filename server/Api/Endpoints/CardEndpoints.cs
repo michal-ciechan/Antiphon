@@ -118,6 +118,18 @@ public static class CardEndpoints
             return Results.Ok(await service.UnarchiveAsync(cardId, request, cancellationToken));
         });
 
+        // Dedicated verb, not a move: Done/Canceled stay unreachable via PATCH /{id}.
+        // Reopen never spawns — ApplyColumnMove has no spawn path.
+        cards.MapPost("/{id}/reopen", async (
+            string id,
+            ReopenCardRequest request,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await service.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.ReopenAsync(cardId, request, cancellationToken));
+        });
+
         cards.MapGet("/{id}/diff", async (
             string id,
             CardService cardService,

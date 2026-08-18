@@ -47,12 +47,20 @@ public class CardRevision
     /// <summary>The SUPERSEDED labels, same jsonb shape as <see cref="Card.LabelsJson"/>.</summary>
     public string? LabelsJson { get; set; }
 
-    // ---- Move only (null on every other kind) ----
+    // ---- Move and Reopen (null on every other kind) ----
 
     public Guid? FromColumnId { get; set; }
     public Guid? ToColumnId { get; set; }
     public CardStatus? FromStatus { get; set; }
     public CardStatus? ToStatus { get; set; }
+
+    // ---- Reopen only (null on every other kind) ----
+
+    /// <summary>The SUPERSEDED terminal reason, snapshotted before the card is made live again.</summary>
+    public string? TerminalReason { get; set; }
+
+    /// <summary>The SUPERSEDED completion timestamp, snapshotted before it is cleared on the card.</summary>
+    public DateTime? CompletedAt { get; set; }
 
     // ---- Every kind ----
 

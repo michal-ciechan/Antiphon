@@ -66,4 +66,16 @@ public class CardStateMachineTests
             }
         }
     }
+
+    [Test]
+    [Arguments(CardStatus.Done, true)]
+    [Arguments(CardStatus.Canceled, true)]
+    [Arguments(CardStatus.Backlog, false)]
+    [Arguments(CardStatus.InProgress, false)]
+    [Arguments(CardStatus.Review, false)]
+    [Arguments(CardStatus.Blocked, false)]
+    public void CanReopenFrom_is_true_for_exactly_the_terminal_statuses(CardStatus from, bool expected)
+    {
+        CardStateMachine.CanReopenFrom(from).ShouldBe(expected);
+    }
 }
