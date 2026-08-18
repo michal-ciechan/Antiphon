@@ -129,6 +129,7 @@ try
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<AlertsSettings>(builder.Configuration.GetSection("Alerts"));
+    builder.Services.Configure<RetentionSettings>(builder.Configuration.GetSection("Retention"));
     builder.Services.AddSingleton<IValidateOptions<AgentTuiSettings>, AgentTuiSettingsValidator>();
     builder.Services.AddOptions<AgentTuiSettings>()
         .Bind(builder.Configuration.GetSection("AgentTui"))
@@ -268,6 +269,7 @@ try
     builder.Services.AddScoped<WatchdogService>();
     builder.Services.AddScoped<SessionReconciliationService>();
     builder.Services.AddScoped<AgentSupervisorService>();
+    builder.Services.AddScoped<DataRetentionService>();
     builder.Services.AddScoped<SessionHealthService>();
     builder.Services.AddScoped<Antiphon.Server.Application.Interfaces.ISessionHealthActions,
         Antiphon.Server.Infrastructure.Supervision.SessionHealthActions>();
@@ -378,6 +380,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<AgentTaskCheckHostedService>();

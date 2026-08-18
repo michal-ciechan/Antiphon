@@ -39,6 +39,13 @@
     "EnableFullContent": true,
     "EnableIpLogging": true
   },
+  "Retention": {
+    "TranscriptRetentionDays": 30,
+    "QueuedMessageRetentionDays": 30,
+    "SessionRetentionDays": 90,
+    "TaskRetentionDays": 180,
+    "SweepHours": 6
+  },
   "GitHub": {
     "Enabled": false,
     "PersonalAccessToken": "<your-pat>",

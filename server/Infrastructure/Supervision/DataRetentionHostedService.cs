@@ -1,0 +1,70 @@
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
+
+namespace Antiphon.Server.Infrastructure.Supervision;
+
+/// <summary>
+/// Drives <see cref="DataRetentionService"/> on a fixed interval. One hosted service covers
+/// every table the retention settings name; slice 1 only deletes transcripts and queued messages.
+/// </summary>
+public sealed class DataRetentionHostedService : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly RetentionSettings _settings;
+    private readonly ILogger<DataRetentionHostedService> _logger;
+
+    public DataRetentionHostedService(
+        IServiceScopeFactory scopeFactory,
+        IOptions<RetentionSettings> settings,
+        ILogger<DataRetentionHostedService> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _settings = settings.Value;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (_settings.SweepHours <= 0)
+        {
+            _logger.LogInformation("Data retention sweep disabled (SweepHours <= 0)");
+            return;
+        }
+
+        try
+        {
+            // First pass on start so a deploy does not wait SweepHours to take effect.
+            await SweepAsync(stoppingToken);
+
+            using var timer = new PeriodicTimer(TimeSpan.FromHours(_settings.SweepHours));
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                await SweepAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Shutting down.
+        }
+    }
+
+    private async Task SweepAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var retention = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
+            var result = await retention.RunOnceAsync(stoppingToken);
+            _logger.LogInformation(
+                "Retention sweep deleted {Transcripts} transcript row(s), {QueuedMessages} queued message(s)",
+                result.Transcripts, result.QueuedMessages);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Data retention sweep failed");
+        }
+    }
+}
