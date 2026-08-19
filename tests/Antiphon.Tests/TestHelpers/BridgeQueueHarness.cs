@@ -259,6 +259,40 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     }
 
     /// <summary>
+    /// PersistTranscriptAsync's batch: consecutive sequences, one CreatedAt, one SaveChanges.
+    /// Do not use <see cref="InsertTranscriptEntryAsync"/> here — that saves per row and would
+    /// invent a gap the production catch-up path does not have.
+    /// </summary>
+    public async Task InsertTranscriptEntriesInOneBatchAsync(
+        params (string Kind, string? Text, string? StopReason)[] entries)
+    {
+        if (entries.Length == 0)
+            return;
+
+        var sessionId = SessionId;
+        await using var db = CreateContext();
+        var baseSeq = ((await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence)) ?? 0);
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var (kind, text, stopReason) = entries[i];
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Sequence = baseSeq + i + 1,
+                Kind = kind,
+                Text = text,
+                StopReason = stopReason,
+                CreatedAt = now,
+            });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// The measured API-error stub shape (CARD-0072 S1): the error string as ordinary AssistantText
     /// plus a stop_sequence TurnEnd, both stamped IsApiError. Inserted after a UserPrompt this makes
     /// a turn that was killed by the API rather than answered.

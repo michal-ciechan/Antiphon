@@ -176,6 +176,47 @@ public class ChannelBridgeTests
         h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next prompt must not be sent as a follow-up");
     }
 
+    // CARD-0068 / live miss 2026-08-17: PersistTranscriptAsync (catch-up / reconnect) commits
+    // trailing AssistantText and a newer UserPrompt in ONE SaveChanges with identical CreatedAt.
+    // DispatchFollowUpAsync used to ask "is PromptSeq still the latest UserPrompt in the session?"
+    // and drop the watermark without sending — after that batch there is no later moment at which
+    // the text exists without the next prompt. The question it must ask is ExtractTurnResponseAsync's
+    // sequence window: PromptSeq < seq < nextPromptSeq, lower-bounded at MaxTextSeq.
+    [Test]
+    public async Task Trailing_text_still_follow_ups_when_the_next_prompt_landed_in_the_same_batch()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "who is coming to the wedding?", title: "Family");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertEntryAsync(TranscriptKinds.UserPrompt, h.Adapter.Inputs[0]);
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Transcribed. Let me save it properly first.");
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text
+            .ShouldBe("Transcribed. Let me save it properly first.");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+
+        const string realAnswer = "The guest list: Alice, Bob, Carol — 42 people.";
+        await h.InsertTranscriptEntriesInOneBatchAsync(
+            (TranscriptKinds.AssistantText, realAnswer, null),
+            (TranscriptKinds.UserPrompt, "run the tests please", null));
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(2,
+            "in-window trailing text must follow-up even though a newer prompt shares the batch");
+        h.Messaging.SentReplies[1].Text.ShouldBe(realAnswer);
+        h.Messaging.SentReplies[1].ConversationId.ShouldBe(h.ChatId);
+
+        // Text after the newer prompt still must not go out as a follow-up of the settled turn.
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(2, "text after the next prompt must not be sent as a follow-up");
+    }
+
     [Test]
     public async Task A_response_ending_in_a_question_is_typed_as_question()
     {
@@ -713,6 +754,40 @@ public class ChannelBridgeTests
                 Id = Guid.NewGuid(), AgentSessionId = SessionId, Sequence = baseSeq + 1,
                 Kind = kind, Text = text, StopReason = stopReason, CreatedAt = DateTime.UtcNow,
             });
+            await db.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// PersistTranscriptAsync's batch: consecutive sequences, one CreatedAt, one SaveChanges.
+        /// Do not use <see cref="InsertEntryAsync"/> here — that saves per row and would invent a
+        /// gap the production catch-up path does not have.
+        /// </summary>
+        public async Task InsertTranscriptEntriesInOneBatchAsync(
+            params (string Kind, string? Text, string? StopReason)[] entries)
+        {
+            if (entries.Length == 0)
+                return;
+
+            await using var scope = Provider.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var baseSeq = (await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == SessionId)
+                .MaxAsync(t => (long?)t.Sequence)) ?? 0;
+            var now = DateTime.UtcNow;
+            for (var i = 0; i < entries.Length; i++)
+            {
+                var (kind, text, stopReason) = entries[i];
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = SessionId,
+                    Sequence = baseSeq + i + 1,
+                    Kind = kind,
+                    Text = text,
+                    StopReason = stopReason,
+                    CreatedAt = now,
+                });
+            }
             await db.SaveChangesAsync();
         }
 

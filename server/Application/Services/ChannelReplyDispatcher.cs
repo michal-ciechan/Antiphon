@@ -595,10 +595,11 @@ public sealed class ChannelReplyDispatcher
     // costs at most a trailing fragment, never the answer — and a durable version would have to decide
     // what "already sent" means for text a dead process may or may not have produced.
     //
-    // NOT FIXED HERE, still open: the bail at the latestPromptSeq check below. Seq 469 on 2026-08-17
-    // (the guest list) was doomed by it independently of the restart — the newer prompt landed in the
-    // SAME persistence batch as the text it concerns, so there is no window in which the trailing text
-    // exists and the next prompt does not. That is CARD-0055 slice 7 / CARD-0067 slice 2.
+    // Trailing text is attributed by the same sequence window ExtractTurnResponseAsync uses
+    // (PromptSeq < seq < nextPromptSeq), lower-bounded at MaxTextSeq. A newer prompt is the
+    // window's upper bound, not a reason to drop in-window text — CARD-0068, seq 469 on 2026-08-17
+    // (the guest list) landed in the same PersistTranscriptAsync batch as seq 471 (the next
+    // UserPrompt) and was discarded by the old "is PromptSeq still the latest UserPrompt?" bail.
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
         if (!_dispatched.TryGetValue(sessionId, out var turn))
@@ -607,41 +608,36 @@ public sealed class ChannelReplyDispatcher
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        // A newer prompt means the dispatched turn is over — anything after it belongs to the next
-        // turn's dispatch, so the record is done.
-        var latestPromptSeq = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
-            .MaxAsync(t => (long?)t.Sequence, ct);
-        if (latestPromptSeq != turn.PromptSeq)
-        {
-            _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
-            return;
-        }
-
-        var late = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.AssistantText
-                && t.Sequence > turn.MaxTextSeq)
-            .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Text, t.Kind, t.IsApiError })
-            .ToListAsync(ct);
+        var (nextPromptSeq, late) = await QueryTurnWindowAsync(
+            db, sessionId, promptSeq: turn.PromptSeq, afterSeq: turn.MaxTextSeq, ct);
 
         // S2 (CARD-0071), same rule as the main path: an API-error stub in the trailing window
         // withholds the whole follow-up — the turn died mid-stream and its error string must not
         // reach the chat, not even beside real trailing text. The watermark is NOT advanced, which
-        // is deliberate: nothing was sent, and the next turn's prompt drops this record anyway.
+        // is deliberate: nothing was sent, and a later prompt already capping the window drops
+        // this record below (no future row can land in a sequence gap that already has a later
+        // prompt).
         if (late.Any(l => TranscriptKinds.IsApiErrorStub(l.Kind, l.IsApiError)))
         {
             _logger.LogWarning(
                 "Trailing text on session {SessionId} (dispatched prompt seq {PromptSeq}) contains an API-error "
                 + "stub; withholding the follow-up reply.",
                 sessionId, turn.PromptSeq);
+            if (nextPromptSeq is not null)
+                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
             return;
         }
 
         var texts = late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).ToList();
         if (texts.Count == 0)
+        {
+            // Window drained: a later prompt means no future row can land in this gap, so the
+            // record is done. No next prompt: keep the watermark so a later fragment of the
+            // same turn still follow-ups.
+            if (nextPromptSeq is not null)
+                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
             return;
+        }
 
         // Claim the trailing entries before sending; the loser of a race sees the moved watermark.
         var claimed = turn with { MaxTextSeq = late[^1].Sequence };
@@ -650,7 +646,11 @@ public sealed class ChannelReplyDispatcher
 
         var joined = string.Join("\n\n", texts.Select(l => l.Text!)).Trim();
         if (ChannelContracts.IsNoReply(joined))
+        {
+            if (nextPromptSeq is not null)
+                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
             return;
+        }
 
         var (bodyText, attachments) = PrepareReplyBody(joined, sessionId);
         var text = Truncate(bodyText);
@@ -671,6 +671,11 @@ public sealed class ChannelReplyDispatcher
                 "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
                 reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
         }
+
+        // After the window is drained: a next prompt already caps it, so drop. Otherwise keep
+        // the advanced watermark for a later fragment of the same turn.
+        if (nextPromptSeq is not null)
+            _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
     }
 
     private string Truncate(string responseText) =>
@@ -689,6 +694,27 @@ public sealed class ChannelReplyDispatcher
     private static async Task<(string? Text, long MaxSeq, bool ContainsApiErrorStub)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
+        var (_, entries) = await QueryTurnWindowAsync(db, sessionId, promptSeq, afterSeq: promptSeq, ct);
+
+        var maxSeq = entries.Count > 0 ? entries[^1].Sequence : promptSeq;
+        var containsStub = entries.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError));
+        var joined = string.Join("\n\n", entries
+            .Where(t => !TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError))
+            .Select(t => t.Text)
+            .Where(t => !string.IsNullOrWhiteSpace(t)));
+        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), maxSeq, containsStub);
+    }
+
+    private readonly record struct TurnWindowRow(long Sequence, string? Text, string Kind, bool? IsApiError);
+
+    /// <summary>
+    /// Assistant text belonging to <paramref name="promptSeq"/>'s turn: after
+    /// <paramref name="afterSeq"/>, before the next UserPrompt (uncapped if none). Main-path
+    /// extraction uses <c>afterSeq == promptSeq</c>; follow-up uses the already-sent watermark.
+    /// </summary>
+    private static async Task<(long? NextPromptSeq, IReadOnlyList<TurnWindowRow> Entries)> QueryTurnWindowAsync(
+        AppDbContext db, Guid sessionId, long promptSeq, long afterSeq, CancellationToken ct)
+    {
         var nextPromptSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind == TranscriptKinds.UserPrompt
@@ -698,22 +724,15 @@ public sealed class ChannelReplyDispatcher
         var query = db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Kind == TranscriptKinds.AssistantText
-                && t.Sequence > promptSeq);
+                && t.Sequence > afterSeq);
         if (nextPromptSeq is long cap)
             query = query.Where(t => t.Sequence < cap);
 
         var entries = await query
             .OrderBy(t => t.Sequence)
-            .Select(t => new { t.Sequence, t.Text, t.Kind, t.IsApiError })
+            .Select(t => new TurnWindowRow(t.Sequence, t.Text, t.Kind, t.IsApiError))
             .ToListAsync(ct);
-
-        var maxSeq = entries.Count > 0 ? entries[^1].Sequence : promptSeq;
-        var containsStub = entries.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError));
-        var joined = string.Join("\n\n", entries
-            .Where(t => !TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError))
-            .Select(t => t.Text)
-            .Where(t => !string.IsNullOrWhiteSpace(t)));
-        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), maxSeq, containsStub);
+        return (nextPromptSeq, entries);
     }
 
     // The delivered prompt and the transcript's UserPrompt should be byte-identical, but hooks can
