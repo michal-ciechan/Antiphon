@@ -43,8 +43,13 @@ public class ClaudeSubmitContractTests
     {
         await using var runner = await LaunchReadyAsync(backend);
 
-        // SendLineAsync IS the two-write shape (body, 20ms, "\r") that DeliverAsync mirrors.
-        await runner.SendLineAsync(PromptFor(backend));
+        // Two-write submit: body, then CR after the composer echo (CARD-0050 S3). SendLineAsync's
+        // fixed 20ms gap is the production shape, but under load it compresses below fakeclaude's
+        // 12ms burst threshold; EchoGatedSubmit is the evidence-gated equivalent.
+        if (backend == "fakeclaude")
+            await EchoGatedSubmit.SendAsync(runner, PromptFor(backend));
+        else
+            await runner.SendLineAsync(PromptFor(backend));
 
         var done = await runner.WaitForOutputAsync(
             text => DonePattern.IsMatch(text), DoneWaitFor(backend));
@@ -54,7 +59,9 @@ public class ClaudeSubmitContractTests
     }
 
     // Text and the CR in a SINGLE write is a paste — it must NOT complete a turn. This is the exact
-    // behaviour that stranded queued messages. FAKE BACKEND ONLY (2026-07-21): ConPTY does not
+    // behaviour that stranded queued messages. CARD-0050 S3: this one-write arm stays time-based
+    // (a single write can only be split, never merged) — do not move it onto EchoGatedSubmit.
+    // FAKE BACKEND ONLY (2026-07-21): ConPTY does not
     // preserve write boundaries, so on the real CLI one write can surface to Claude as two reads
     // with a typed-Enter-sized gap and legitimately submit — observed failing 2 of 3 runs. The
     // no-submit direction is therefore untestable through this transport against real Claude; the
@@ -102,7 +109,9 @@ public class ClaudeSubmitContractTests
                 throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
 
             await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30);
-            var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15));
+            // CARD-0050 S3: runaway bound — success returns on the banner. Under the concurrent
+            // double-suite load a cold fakeclaude launch was measured >15s.
+            var ready = await runner.WaitForOutputAsync(s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(45));
             ready.ShouldBeTrue("fake Claude should print its readiness banner");
         }
         else // "claude" — real CLI, opt-in headed

@@ -56,9 +56,11 @@ public class FakeClaudeContractTests
         var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
         ShouldBeInbox(runner);
+        // CARD-0050 S3: runaway bound — success returns on the banner. Under the concurrent
+        // double-suite load a cold fakeclaude launch was measured >15s.
         var ready = await runner.WaitForOutputAsync(
             s => s.Contains("Fake Claude ready") && (alsoAwaitBanner is null || s.Contains(alsoAwaitBanner)),
-            TimeSpan.FromSeconds(15));
+            TimeSpan.FromSeconds(45));
         ready.ShouldBeTrue(
             "fake Claude should print its readiness banner"
             + (alsoAwaitBanner is null ? "" : $" and announce {alsoAwaitBanner}: " + runner.SnapshotText()));
@@ -76,6 +78,8 @@ public class FakeClaudeContractTests
     // The BUG path: text and the submitting CR in a SINGLE write. The TUI reads it as a paste — the CR
     // collapses to a literal newline and the line is NOT submitted. This is exactly what the old
     // DeliverAsync did (`body.TrimEnd() + "\r"` in one SendInputAsync), so the message was stranded.
+    // CARD-0050 S3: the one-write (paste) arm stays time-based — a single write can only be split,
+    // never merged, so it does not have the body→CR burst-gap race the echo-gated helper fixes.
     [Test]
     public async Task Text_and_CR_in_one_write_does_NOT_submit()
     {
@@ -99,9 +103,7 @@ public class FakeClaudeContractTests
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
 
-        await runner.WriteAsync("queued message");
-        await Task.Delay(25);
-        await runner.WriteAsync("\r");
+        await EchoGatedSubmit.SendAsync(runner, "queued message");
 
         var submitted = await runner.WaitForOutputAsync(
             s => s.Contains("SUBMITTED:queued message"), TimeSpan.FromSeconds(5));
@@ -149,9 +151,7 @@ public class FakeClaudeContractTests
         var body = "HEAD first line of a big paste\n"
             + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
             + "\nTAIL last line";
-        await runner.WriteAsync(body);
-        await Task.Delay(25);
-        await runner.WriteAsync("\r");
+        await EchoGatedSubmit.SendAsync(runner, body);
 
         var intact = await runner.WaitForOutputAsync(
             s =>
@@ -177,9 +177,7 @@ public class FakeClaudeContractTests
         var body = "HEAD first line of a big paste\n"
             + string.Join("\n", Enumerable.Range(1, 10).Select(i => $"line {i} " + new string('x', 60)))
             + "\nTAIL last line";
-        await runner.WriteAsync("\x1b[200~" + body + "\x1b[201~");
-        await Task.Delay(25);
-        await runner.WriteAsync("\r");
+        await EchoGatedSubmit.SendAsync(runner, "\x1b[200~" + body + "\x1b[201~");
 
         // One SUBMITTED marker carrying head AND tail (newlines escaped into the single marker line).
         var intact = await runner.WaitForOutputAsync(
@@ -229,9 +227,7 @@ public class FakeClaudeContractTests
         await using var runner = await LaunchReadyFakeAsync();
 
         var body = "[context]\nfirst message\nsecond message\n\n[current]\nthird message respond now";
-        await runner.WriteAsync(body);
-        await Task.Delay(40);
-        await runner.WriteAsync("\r");
+        await EchoGatedSubmit.SendAsync(runner, body);
 
         var escaped = body.Replace("\n", "\\n");
         var submitted = await runner.WaitForOutputAsync(
@@ -259,7 +255,7 @@ public class FakeClaudeContractTests
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
 
-        await runner.SendLineAsync("/compact");
+        await EchoGatedSubmit.SendAsync(runner, "/compact");
 
         var compacted = await runner.WaitForOutputAsync(
             s => s.Contains("Compacted (ctrl+o to see full summary)"), TimeSpan.FromSeconds(5));
@@ -280,7 +276,7 @@ public class FakeClaudeContractTests
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
 
-        await runner.SendLineAsync("/compact");
+        await EchoGatedSubmit.SendAsync(runner, "/compact");
 
         var detected = await new ClaudeCompactedDetector { MaxWait = TimeSpan.FromSeconds(5) }
             .WaitAsync(runner);
@@ -296,13 +292,13 @@ public class FakeClaudeContractTests
         await using var runner = await LaunchReadyFakeAsync(
             new Dictionary<string, string> { ["ANTIPHON_FAKE_COMPACT_AFTER_TURNS"] = "2" });
 
-        await runner.SendLineAsync("first");
+        await EchoGatedSubmit.SendAsync(runner, "first");
         (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:first"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue();
         runner.SnapshotText().ShouldNotContain("Compacted (",
             customMessage: "auto-compaction must not fire before the configured turn count");
 
-        await runner.SendLineAsync("second");
+        await EchoGatedSubmit.SendAsync(runner, "second");
         var compacted = await runner.WaitForOutputAsync(
             s => s.Contains("Compacted (ctrl+o to see full summary)"), TimeSpan.FromSeconds(5));
         compacted.ShouldBeTrue("auto-compaction must fire after the Nth turn");
@@ -320,10 +316,10 @@ public class FakeClaudeContractTests
             await using var runner = await LaunchReadyFakeAsync(
                 new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
 
-            await runner.SendLineAsync("hello transcript");
+            await EchoGatedSubmit.SendAsync(runner, "hello transcript");
             (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:hello transcript"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
-            await runner.SendLineAsync("/compact");
+            await EchoGatedSubmit.SendAsync(runner, "/compact");
             (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
 
@@ -360,7 +356,7 @@ public class FakeClaudeContractTests
             await using var runner = await LaunchReadyFakeAsync(
                 new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
 
-            await runner.SendLineAsync("/compact keep the API contract notes");
+            await EchoGatedSubmit.SendAsync(runner, "/compact keep the API contract notes");
             (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue("/compact WITH ARGUMENTS must still compact — the live shape had args");
             // The screen line is written BEFORE the records — and this is the fake's first JSON
@@ -420,7 +416,7 @@ public class FakeClaudeContractTests
                 ["ANTIPHON_FAKE_COMPACT_AFTER_TURNS"] = "1",
             });
 
-            await runner.SendLineAsync("do the big thing");
+            await EchoGatedSubmit.SendAsync(runner, "do the big thing");
             (await runner.WaitForOutputAsync(s => s.Contains("Compacted ("), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
             var lines = await WaitForTranscriptLinesAsync(path, 4);
@@ -461,7 +457,7 @@ public class FakeClaudeContractTests
                 ["ANTIPHON_FAKE_API_ERROR"] = "rate_limit",
             });
 
-            await runner.SendLineAsync("doomed turn");
+            await EchoGatedSubmit.SendAsync(runner, "doomed turn");
             (await runner.WaitForOutputAsync(
                     s => s.Contains("You've hit your session limit"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue("the dead turn renders the error text, not a response");
@@ -487,7 +483,7 @@ public class FakeClaudeContractTests
             }
 
             // The revival: the very next turn answers normally, with no stub fields.
-            await runner.SendLineAsync("Continue");
+            await EchoGatedSubmit.SendAsync(runner, "Continue");
             (await runner.WaitForOutputAsync(s => s.Contains("FAKE response to: Continue"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue("a turn after the armed one must answer normally — the measured revival");
             var after = await WaitForTranscriptLinesAsync(path, 4);
@@ -518,7 +514,7 @@ public class FakeClaudeContractTests
                 ["ANTIPHON_FAKE_API_ERROR"] = "authentication_failed",
             });
 
-            await runner.SendLineAsync("doomed");
+            await EchoGatedSubmit.SendAsync(runner, "doomed");
             (await runner.WaitForOutputAsync(s => s.Contains("Login expired"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
             var lines = await WaitForTranscriptLinesAsync(path, 2);
@@ -627,7 +623,7 @@ public class FakeClaudeContractTests
             await using var runner = await LaunchReadyFakeAsync(
                 new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
 
-            await runner.SendLineAsync("/model opus");
+            await EchoGatedSubmit.SendAsync(runner, "/model opus");
             (await runner.WaitForOutputAsync(s => s.Contains("FAKE local command: /model"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
             await runner.KillAsync(TimeSpan.FromSeconds(2));
@@ -675,7 +671,7 @@ public class FakeClaudeContractTests
                 ["ANTIPHON_FAKE_SPLIT_FINAL"] = "1",
             });
 
-            await runner.SendLineAsync("report the verdict");
+            await EchoGatedSubmit.SendAsync(runner, "report the verdict");
             (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:report the verdict"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
 
@@ -723,7 +719,7 @@ public class FakeClaudeContractTests
             await using var runner = await LaunchReadyFakeAsync(
                 new Dictionary<string, string> { ["ANTIPHON_FAKE_TRANSCRIPT_PATH"] = path });
 
-            await runner.SendLineAsync("report the verdict");
+            await EchoGatedSubmit.SendAsync(runner, "report the verdict");
             var lines = await WaitForTranscriptLinesAsync(path, 2);
             await runner.KillAsync(TimeSpan.FromSeconds(2));
 
@@ -764,7 +760,7 @@ public class FakeClaudeContractTests
 
             // One real submit first, so the composer is empty the way it is after a SUCCESSFUL
             // delivery — which is the state the retry Enters actually land in.
-            await runner.SendLineAsync("the body that did submit");
+            await EchoGatedSubmit.SendAsync(runner, "the body that did submit");
             (await runner.WaitForOutputAsync(
                 s => s.Contains("SUBMITTED:the body that did submit"), TimeSpan.FromSeconds(5)))
                 .ShouldBeTrue();
@@ -1387,11 +1383,11 @@ public class FakeClaudeContractTests
         SkipIfUnavailable();
         await using var runner = await LaunchReadyFakeAsync();
 
-        await runner.SendLineAsync("first");
+        await EchoGatedSubmit.SendAsync(runner, "first");
         (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:first"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue();
 
-        await runner.SendLineAsync("second");
+        await EchoGatedSubmit.SendAsync(runner, "second");
         (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:second"), TimeSpan.FromSeconds(5)))
             .ShouldBeTrue();
 

@@ -1,6 +1,6 @@
 # CARD-0050 — the .NET flake cast: diagnosis, first fixes, remaining slices
 
-**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slice 1 shipped (this commit); slices 2–5 open.
+**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slices 1 and 3 shipped; slices 2, 4, 5 open.
 
 ## The scoping answer the card asked for
 
@@ -99,16 +99,14 @@ lands.
   file's wait-window inventory the way slice 1 did for the probe file; separate "runaway bound"
   windows (widen freely) from "scenario needs the deadline" windows (gate or measure). Ship with
   a load-run before/after count.
-- **S3 — the submit-contract timing margin** (FakeClaude/ClaudeSubmit/PtyAgentRunner/FakeGrok
-  members): the honest fix mirrors what production already does — `VerifiedPromptSubmitter` never
-  presses Enter until the rendered screen shows the body (evidence-gated, not time-gated). Add an
-  echo-gated send helper to the pty test suite (write body → wait for the composer echo → CR) and
-  move the submit-shape tests onto it. This is deterministic: the fake's burst grouping is by
-  arrival stamps, and an echo implies the body burst was already consumed, so the CR cannot join
-  it. The one-write (paste) arm stays time-based by necessity and is unaffected — a single write
-  can only be split, never merged. Keep `ANTIPHON_FAKE_BURST_MS` at 12ms; do NOT tune it (the
-  window [15,19]ms between read jitter 14ms and writer spacing 20ms is too thin to be a fix).
-  FakeGrok's file wait needs the same poll-with-deadline shape the fakeclaude transcript wait has.
+- **S3 — SHIPPED (echo-gated submit helper)**: `EchoGatedSubmit` writes the body, waits for
+  `ComposerDeliveryEvidence` on the rendered screen, then sends CR. Two-write FakeClaude /
+  ClaudeSubmit tests moved onto it; the one-write paste arm is untouched (time-based — a single
+  write can only be split). Ready-banner wait 15s→45s (runaway bound; launch measured >15s).
+  FakeGrok `updates.jsonl` now polls with `FileShare.ReadWrite` and a `.timing` sidecar (S1's
+  transcript-wait shape). `ANTIPHON_FAKE_BURST_MS` left at 12ms. Concurrent double-run 17→8;
+  every named S3 member green. The remaining 8 rotate (S2 CodexAdapter, AgentTui windows, two
+  PtyInputChunking/large-write tests).
 - **S4 — AgentChannelServiceIntegrationTests**: mechanism still unestablished (0 reproductions in
   2 load runs). Static analysis this pass ruled OUT the CLAUDE.md global-count class: the mention
   target lookup is scoped to the per-harness runtime's live-session ids and the test's own board,

@@ -35,9 +35,11 @@ public class FakeGrokContractTests
         var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeGrokExe, args ?? [], cols: 120, rows: 30, env: env);
         runner.Backend!.Backend.ShouldBe(PtyBackend.InboxConhost);
+        // CARD-0050 S3: runaway bound — success returns on the banner. Same spawn-latency
+        // class as fakeclaude's 15s miss under the concurrent double-suite load.
         var ready = await runner.WaitForOutputAsync(
             s => s.Contains("Fake Grok ready"),
-            TimeSpan.FromSeconds(15));
+            TimeSpan.FromSeconds(45));
         ready.ShouldBeTrue("fake Grok should print its readiness banner: " + runner.SnapshotText());
         runner.ClearLiveBuffer();
         return runner;
@@ -212,15 +214,15 @@ public class FakeGrokContractTests
 
             var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
             File.Exists(Path.Combine(sessionDir, "summary.json")).ShouldBeTrue();
-            var updates = await File.ReadAllTextAsync(Path.Combine(sessionDir, "updates.jsonl"));
-            updates.ShouldContain("user_message_chunk");
-            updates.ShouldContain("remember this");
-            updates.ShouldContain("agent_message_chunk");
-            // Measured 1.0.5: every turn ends with an explicit turn_completed row carrying a
-            // stop_reason — the structured signal S2's tailer runs on.
-            updates.ShouldContain("turn_completed");
-            updates.ShouldContain("\"stop_reason\":\"end_turn\"");
-            updates.ShouldContain("_x.ai/session/update");
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            await WaitForUpdatesAsync(
+                updatesPath,
+                "user_message_chunk",
+                "remember this",
+                "agent_message_chunk",
+                "turn_completed",
+                "\"stop_reason\":\"end_turn\"",
+                "_x.ai/session/update");
 
             await runner.KillAsync(TimeSpan.FromSeconds(2));
         }
@@ -255,6 +257,69 @@ public class FakeGrokContractTests
         finally
         {
             try { Directory.Delete(home, true); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0050 S3: poll-with-deadline + <see cref="FileShare.ReadWrite"/>, the same shape
+    /// FakeClaude's transcript wait gained in slice 1. A single <c>File.ReadAllTextAsync</c>
+    /// the instant SUBMITTED appears loses the race against the writer's append; the sidecar
+    /// attached on deadline miss tells late-vs-lost-vs-starved.
+    /// </summary>
+    private static async Task<string> WaitForUpdatesAsync(string path, params string[] needles)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var text = "";
+        while (DateTime.UtcNow < deadline)
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    text = await ReadSharedTextAsync(path);
+                    if (needles.All(n => text.Contains(n)))
+                        return text;
+                }
+                catch (IOException)
+                {
+                    // Mid-append; try again.
+                }
+            }
+            await Task.Delay(50);
+        }
+
+        var missing = string.Join(", ", needles.Where(n => !text.Contains(n)));
+        text.Length.ShouldBeGreaterThan(
+            0,
+            $"updates.jsonl at {path} was still missing [{missing}] at the 10s deadline. "
+            + $"Timing sidecar (process-start → per-record stamps):\n{ReadTimingSidecar(path)}");
+        foreach (var needle in needles)
+            text.ShouldContain(needle, customMessage:
+                $"updates.jsonl at {path} was still missing [{needle}] at the 10s deadline. "
+                + $"Timing sidecar:\n{ReadTimingSidecar(path)}\nContents:\n{text}");
+        return text;
+    }
+
+    private static async Task<string> ReadSharedTextAsync(string path)
+    {
+        await using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return await reader.ReadToEndAsync();
+    }
+
+    private static string ReadTimingSidecar(string path)
+    {
+        try
+        {
+            var sidecar = path + ".timing";
+            return File.Exists(sidecar)
+                ? string.Join("\n", File.ReadAllLines(sidecar))
+                : "(no sidecar written — the fake never reached its first append)";
+        }
+        catch (Exception ex)
+        {
+            return $"(sidecar unreadable: {ex.Message})";
         }
     }
 }

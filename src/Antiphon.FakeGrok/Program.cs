@@ -105,6 +105,9 @@ internal static class Program
         var sessionDir = SessionDirectory(grokHome, cwd, sessionId);
         Directory.CreateDirectory(sessionDir);
         WriteSummary(sessionDir, sessionId, cwd, model);
+        // CARD-0050 S3: stamp process start into the updates.jsonl timing sidecar so a
+        // captured flake can tell late-vs-lost-vs-starved (same trail FakeClaude gained in S1).
+        AppendTiming(Path.Combine(sessionDir, "updates.jsonl"), 0, "\"process-start\"", gaveUp: false);
 
         var stdout = Console.OpenStandardOutput();
         void Write(string s)
@@ -315,64 +318,61 @@ internal static class Program
             var updates = Path.Combine(sessionDir, "updates.jsonl");
             var history = Path.Combine(sessionDir, "chat_history.jsonl");
             object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
-            File.AppendAllText(updates,
-                JsonSerializer.Serialize(new
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
                 {
-                    timestamp = now,
-                    method = "session/update",
-                    @params = new
+                    sessionId,
+                    update = new
                     {
-                        sessionId,
-                        update = new
-                        {
-                            sessionUpdate = "user_message_chunk",
-                            content = new { type = "text", text = user },
-                            _meta = new { modelId = "grok-4.6", promptIndex }
-                        },
-                        _meta = Meta()
-                    }
-                }) + "\n");
-            File.AppendAllText(updates,
-                JsonSerializer.Serialize(new
+                        sessionUpdate = "user_message_chunk",
+                        content = new { type = "text", text = user },
+                        _meta = new { modelId = "grok-4.6", promptIndex }
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "session/update",
+                @params = new
                 {
-                    timestamp = now,
-                    method = "session/update",
-                    @params = new
+                    sessionId,
+                    update = new
                     {
-                        sessionId,
-                        update = new
-                        {
-                            sessionUpdate = "agent_message_chunk",
-                            content = new { type = "text", text = assistant }
-                        },
-                        _meta = Meta()
-                    }
-                }) + "\n");
-            File.AppendAllText(updates,
-                JsonSerializer.Serialize(new
+                        sessionUpdate = "agent_message_chunk",
+                        content = new { type = "text", text = assistant }
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
                 {
-                    timestamp = now,
-                    method = "_x.ai/session/update",
-                    @params = new
+                    sessionId,
+                    update = new
                     {
-                        sessionId,
-                        update = new
+                        sessionUpdate = "turn_completed",
+                        prompt_id = promptId,
+                        stop_reason = "end_turn",
+                        usage = new
                         {
-                            sessionUpdate = "turn_completed",
-                            prompt_id = promptId,
-                            stop_reason = "end_turn",
-                            usage = new
-                            {
-                                inputTokens = 1,
-                                outputTokens = 1,
-                                totalTokens = 2,
-                                modelCalls = 1,
-                                numTurns = 1
-                            }
-                        },
-                        _meta = Meta()
-                    }
-                }) + "\n");
+                            inputTokens = 1,
+                            outputTokens = 1,
+                            totalTokens = 2,
+                            modelCalls = 1,
+                            numTurns = 1
+                        }
+                    },
+                    _meta = Meta()
+                }
+            }));
             File.AppendAllText(history,
                 JsonSerializer.Serialize(new { role = "user", content = user }) + "\n");
             File.AppendAllText(history,
@@ -381,6 +381,52 @@ internal static class Program
         catch
         {
             // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    /// <summary>
+    /// RETRIED, not fire-and-forget: a test poll that opens with <c>FileShare.Read</c> blocks a
+    /// concurrent append, and a swallowed <see cref="IOException"/> here loses the row forever —
+    /// the "updates.jsonl not yet written" flake in CARD-0050. Same shape as FakeClaude's
+    /// transcript append (slice 1).
+    /// </summary>
+    private static void AppendShared(string path, string jsonLine)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.AppendAllText(path, jsonLine + "\n");
+                AppendTiming(path, attempt, jsonLine, gaveUp: false);
+                return;
+            }
+            catch (IOException) when (attempt < 100) { Thread.Sleep(10); }
+            catch
+            {
+                AppendTiming(path, attempt, jsonLine, gaveUp: true);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0050 evidence trail: every updates.jsonl append also stamps a sidecar line
+    /// (<c>&lt;path&gt;.timing</c>) with wall-clock time, retry count, and the record's head, so a
+    /// captured flake shows whether a missing row was written late, starved by share-mode
+    /// retries, or dropped entirely. Best-effort by design — the sidecar must never fail a test.
+    /// </summary>
+    private static void AppendTiming(string path, int retries, string jsonLine, bool gaveUp)
+    {
+        try
+        {
+            var head = jsonLine.Length > 80 ? jsonLine[..80] : jsonLine;
+            File.AppendAllText(
+                path + ".timing",
+                $"{DateTime.UtcNow:O} retries={retries}{(gaveUp ? " GAVE-UP" : "")} {head}\n");
+        }
+        catch
+        {
+            // Never let diagnostics interfere with the record path.
         }
     }
 
