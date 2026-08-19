@@ -1,0 +1,278 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-0083 S2: every <see cref="AgentKind"/> declares every axis, and the declarations lockstep
+/// with today's gates so S3's migration cannot drift from reality (or from this catalog) silently.
+/// </summary>
+[Category("Unit")]
+public sealed class ProviderContractCatalogTests
+{
+    private static readonly AgentKind[] AllKinds = Enum.GetValues<AgentKind>();
+
+    [Test]
+    public void Every_AgentKind_has_a_catalog_entry()
+    {
+        AllKinds.ShouldNotBeEmpty();
+        foreach (var kind in AllKinds)
+        {
+            var contract = ProviderContractCatalog.For(kind);
+            contract.Kind.ShouldBe(kind);
+        }
+    }
+
+    [Test]
+    public void An_undefined_kind_throws_rather_than_defaulting()
+    {
+        Should.Throw<ArgumentOutOfRangeException>(() => ProviderContractCatalog.For((AgentKind)int.MaxValue));
+    }
+
+    [Test]
+    public void Every_axis_is_declared_with_a_reason()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var c = ProviderContractCatalog.For(kind);
+            Axis(c.Transcript.State, c.Transcript.Reason, $"{kind}.Transcript");
+            Axis(c.TurnCompletion.State, c.TurnCompletion.Reason, $"{kind}.TurnCompletion");
+            Axis(c.DeliveryVerification.State, c.DeliveryVerification.Reason, $"{kind}.DeliveryVerification");
+            Axis(c.SessionResume.State, c.SessionResume.Reason, $"{kind}.SessionResume");
+            Axis(c.ContextWindowUsage.State, c.ContextWindowUsage.Reason, $"{kind}.ContextWindowUsage");
+            Axis(c.UsageLimitSignal.State, c.UsageLimitSignal.Reason, $"{kind}.UsageLimitSignal");
+            Axis(c.Compaction.State, c.Compaction.Reason, $"{kind}.Compaction");
+            Axis(c.BlockingStartupModal.State, c.BlockingStartupModal.Reason, $"{kind}.BlockingStartupModal");
+        }
+    }
+
+    [Test]
+    public void Nothing_defaults_to_Supported_via_an_empty_reason()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var c = ProviderContractCatalog.For(kind);
+            if (c.Transcript.State == AgentTuiCapabilityState.Supported)
+                c.Transcript.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.TurnCompletion.State == AgentTuiCapabilityState.Supported)
+                c.TurnCompletion.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.DeliveryVerification.State == AgentTuiCapabilityState.Supported)
+                c.DeliveryVerification.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.SessionResume.State == AgentTuiCapabilityState.Supported)
+                c.SessionResume.Reason.ShouldNotBeNullOrWhiteSpace();
+        }
+    }
+
+    [Test]
+    public void Degraded_reasons_name_the_weakness()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var c = ProviderContractCatalog.For(kind);
+            if (c.TurnCompletion.State == AgentTuiCapabilityState.Degraded)
+            {
+                c.TurnCompletion.Reason.ShouldContain("weaker", Case.Insensitive);
+                c.TurnCompletion.Signal.ShouldBe(TurnCompletionSignal.QuietTimeOnly);
+            }
+
+            if (c.ContextWindowUsage.State == AgentTuiCapabilityState.Degraded)
+                c.ContextWindowUsage.Reason.ShouldContain("Weaker guarantee");
+        }
+    }
+
+    // ---- lockstep with today's gates --------------------------------------------------------
+
+    [Test]
+    public void Transcript_Supported_locksteps_TranscriptEnabledFor()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var supported = ProviderContractCatalog.For(kind).Transcript.State
+                == AgentTuiCapabilityState.Supported;
+            SessionRunnerHttpClient.TranscriptEnabledFor(kind)
+                .ShouldBe(supported, $"{kind}: catalog Transcript.State vs TranscriptEnabledFor");
+        }
+    }
+
+    [Test]
+    public void Transcript_format_and_discovery_match_the_runner_mapping()
+    {
+        var claude = ProviderContractCatalog.For(AgentKind.ClaudeCode).Transcript;
+        claude.Format.ShouldBe(TranscriptFormats.Claude);
+        claude.Discovery.ShouldBe(TranscriptDiscovery.DiscoveryWithClaims);
+        // Transport still sends null for Claude so an old runner keeps its pre-Grok default.
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.ClaudeCode).ShouldBeNull();
+
+        var grok = ProviderContractCatalog.For(AgentKind.Grok).Transcript;
+        grok.Format.ShouldBe(TranscriptFormats.Grok);
+        grok.Discovery.ShouldBe(TranscriptDiscovery.DeterministicPath);
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Grok).ShouldBe(grok.Format);
+
+        foreach (var kind in AllKinds.Where(k => k is not AgentKind.ClaudeCode and not AgentKind.Grok))
+        {
+            var t = ProviderContractCatalog.For(kind).Transcript;
+            t.State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+            t.Format.ShouldBeNull();
+            t.Discovery.ShouldBe(TranscriptDiscovery.None);
+            SessionRunnerHttpClient.TranscriptEnabledFor(kind).ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public void DeliveryVerification_Supported_locksteps_the_queue_kind_list()
+    {
+        // SessionMessageQueueService.IsVerifiedDeliverySessionAsync: Claude|Grok.
+        foreach (var kind in AllKinds)
+        {
+            var supported = ProviderContractCatalog.For(kind).DeliveryVerification.State
+                == AgentTuiCapabilityState.Supported;
+            var queueVerifies = kind is AgentKind.ClaudeCode or AgentKind.Grok;
+            supported.ShouldBe(queueVerifies, $"{kind}: DeliveryVerification vs IsVerifiedDeliverySessionAsync");
+        }
+    }
+
+    [Test]
+    public void SessionResume_Supported_locksteps_the_resume_and_identity_arg_gates()
+    {
+        // AgentSessionService resume gate (:695) and UsesSessionIdentityArgs: Claude|Grok.
+        foreach (var kind in AllKinds)
+        {
+            var supported = ProviderContractCatalog.For(kind).SessionResume.State
+                == AgentTuiCapabilityState.Supported;
+            var resumeGatedOn = kind is AgentKind.ClaudeCode or AgentKind.Grok;
+            supported.ShouldBe(resumeGatedOn, $"{kind}: SessionResume vs resume/identity-args gates");
+        }
+    }
+
+    [Test]
+    public void TurnCompletion_Claude_is_structured_matching_ActivityModeFor_Structured()
+    {
+        // AgentTuiLaunchResolver.ActivityModeFor maps Claude → Structured today. Grok is still
+        // QuietTime there (stale since CARD-0080 S2); S3 flips that. This pin is the Claude
+        // half that must stay identical across the migration.
+        var turn = ProviderContractCatalog.For(AgentKind.ClaudeCode).TurnCompletion;
+        turn.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        turn.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
+        turn.HasScreenFallback.ShouldBeTrue();
+    }
+
+    [Test]
+    public void TurnCompletion_Grok_is_structured_with_screen_fallback()
+    {
+        // Catalog truth (CARD-0080 S2). ActivityModeFor(Grok) is still QuietTime — S3's
+        // deliberate fix, not a lockstep pin.
+        var turn = ProviderContractCatalog.For(AgentKind.Grok).TurnCompletion;
+        turn.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        turn.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
+        turn.HasScreenFallback.ShouldBeTrue();
+    }
+
+    [Test]
+    public void TurnCompletion_without_a_transcript_is_quiet_time_Degraded()
+    {
+        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        {
+            var turn = ProviderContractCatalog.For(kind).TurnCompletion;
+            turn.State.ShouldBe(AgentTuiCapabilityState.Degraded);
+            turn.Signal.ShouldBe(TurnCompletionSignal.QuietTimeOnly);
+            turn.HasScreenFallback.ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public void UsageLimitSignal_unsurveyed_kinds_stay_Unknown_pending_S1()
+    {
+        foreach (var kind in new[] { AgentKind.Grok, AgentKind.Codex, AgentKind.OpenCode })
+        {
+            var axis = ProviderContractCatalog.For(kind).UsageLimitSignal;
+            axis.State.ShouldBe(AgentTuiCapabilityState.Unknown);
+            axis.Form.ShouldBe(UsageLimitSignalForm.Unknown);
+            axis.StatesResetTime.ShouldBeNull();
+            axis.Reason.ShouldBe("pending CARD-0083 S1 survey");
+        }
+    }
+
+    [Test]
+    public void Claude_usage_limit_is_structural_and_states_reset_time()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.ClaudeCode).UsageLimitSignal;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        axis.Form.ShouldBe(UsageLimitSignalForm.StructuralField);
+        axis.StatesResetTime.ShouldBe(true);
+    }
+
+    [Test]
+    public void Grok_compaction_is_marked_checkpoint_rows_not_session_recap()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.Grok).Compaction;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        axis.Marking.ShouldBe(CompactionMarking.Marked);
+        axis.Reason.ShouldContain("compaction_checkpoint");
+        axis.Reason.ShouldContain("session_recap is a recap");
+    }
+
+    [Test]
+    public void Claude_compaction_records_the_unmarked_auto_hazard()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.ClaudeCode).Compaction;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        axis.Marking.ShouldBe(CompactionMarking.UnmarkedAuto);
+    }
+
+    [Test]
+    public void BlockingStartupModal_matches_the_adapter_handlers()
+    {
+        var claude = ProviderContractCatalog.For(AgentKind.ClaudeCode).BlockingStartupModal;
+        claude.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        claude.Kind.ShouldBe(BlockingStartupModalKind.AutoAnswerable);
+        claude.PerScope.ShouldBe(BlockingStartupModalScope.Cwd);
+
+        var grok = ProviderContractCatalog.For(AgentKind.Grok).BlockingStartupModal;
+        grok.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        grok.Kind.ShouldBe(BlockingStartupModalKind.FailFast);
+        grok.PerScope.ShouldBe(BlockingStartupModalScope.Global);
+
+        var codex = ProviderContractCatalog.For(AgentKind.Codex).BlockingStartupModal;
+        codex.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        codex.Kind.ShouldBe(BlockingStartupModalKind.AutoAnswerable);
+        codex.PerScope.ShouldBe(BlockingStartupModalScope.Cwd);
+    }
+
+    [Test]
+    public void ContextWindowUsage_ceiling_sources()
+    {
+        var claude = ProviderContractCatalog.For(AgentKind.ClaudeCode).ContextWindowUsage;
+        claude.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        claude.CeilingSource.ShouldBe(ContextWindowCeilingSource.Configured);
+
+        var grok = ProviderContractCatalog.For(AgentKind.Grok).ContextWindowUsage;
+        grok.State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        grok.CeilingSource.ShouldBe(ContextWindowCeilingSource.SelfReported);
+    }
+
+    [Test]
+    public void Tui_sessionResume_Supported_kinds_match_the_contract()
+    {
+        // Cheap cross-check against the existing TUI catalog's sessionResume row. Codex/OpenCode
+        // are Unknown on both; Raw is Unsupported here (no identity args) vs Unknown on the TUI
+        // display list — different axis family, settled fact vs unprobed.
+        var tui = new AgentTuiRunnerCatalog();
+        foreach (var kind in new[] { AgentKind.ClaudeCode, AgentKind.Grok })
+        {
+            var row = tui.Get(kind).Capabilities.Single(c => c.Name == "sessionResume");
+            row.State.ShouldBe(AgentTuiCapabilityState.Supported);
+            ProviderContractCatalog.For(kind).SessionResume.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        }
+    }
+
+    private static void Axis(AgentTuiCapabilityState state, string reason, string name)
+    {
+        Enum.IsDefined(state).ShouldBeTrue(name);
+        reason.ShouldNotBeNullOrWhiteSpace(name);
+    }
+}
