@@ -79,7 +79,7 @@ public static class ProviderContractCatalog
             "Sessions resume by conversation identity (--session-id); AgentSessionService allows resume."),
         ContextWindowUsage: new ContextWindowUsageContract(
             AgentTuiCapabilityState.Degraded,
-            "ACP modelState self-reports context sizes (500k) but that initialize payload is not consumed; turn_completed usage is already stored. Weaker guarantee: fullness cannot be computed until the ceiling is wired (CARD-0083 S5).",
+            "ACP modelState self-reports context sizes (500k) but that initialize payload is not consumed; turn_completed usage is already stored. Weaker guarantee: fullness cannot be computed until the ceiling is wired (CARD-0083 S5 opened the eligibility gate; wiring the ceiling/modelState is separate, unscoped follow-up work).",
             ContextWindowCeilingSource.SelfReported),
         UsageLimitSignal: new UsageLimitSignalContract(
             AgentTuiCapabilityState.Unknown,
