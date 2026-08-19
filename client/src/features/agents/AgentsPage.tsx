@@ -48,6 +48,7 @@ import {
 } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentActivityBadge } from './AgentActivityBadge'
+import { SessionContextBadge } from './SessionContextBadge'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { FilesReviewPanel } from './FilesReviewPanel'
 import { AgentCliModal } from './AgentCliModal'
@@ -140,6 +141,9 @@ export function AgentsPage() {
                         <ReplyStyleBadge agent={agent} />
                         <BundleDriftBadge agent={agent} />
                         <SupervisionBadge agent={agent} compact />
+                        {agent.liveSession?.agentKind === 'ClaudeCode' && (
+                          <SessionContextBadge fullness={agent.liveSession.contextFullness} size="xs" />
+                        )}
                         <AgentActivityBadge agent={agent} />
                       </Group>
                     </Group>
@@ -237,6 +241,9 @@ export function AgentsPage() {
                 <Group gap="xs">
                   <Title order={3}>{selected.data.name}</Title>
                   <AgentActivityBadge agent={selected.data} />
+                  {selected.data.liveSession?.agentKind === 'ClaudeCode' && (
+                    <SessionContextBadge fullness={selected.data.liveSession.contextFullness} />
+                  )}
                   <SupervisionBadge agent={selected.data} />
                   <ReplyStyleBadge agent={selected.data} />
                   <BundleDriftBadge agent={selected.data} />

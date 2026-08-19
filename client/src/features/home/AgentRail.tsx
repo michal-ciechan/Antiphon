@@ -2,6 +2,7 @@ import { Anchor, Badge, Box, Group, Loader, Stack, Text, Tooltip, UnstyledButton
 import { TbTerminal2 } from 'react-icons/tb'
 import { Link } from 'react-router'
 import type { AgentSummaryDto } from '../../api/agents'
+import { SessionContextBadge } from '../agents/SessionContextBadge'
 
 /**
  * The project's agents, one compact row each — pool delegates included, they are ordinary agent
@@ -74,6 +75,9 @@ export function AgentRail({
             <Text size="sm" fw={500} truncate style={{ flexGrow: 1, minWidth: 0 }}>
               {agent.name}
             </Text>
+            {agent.liveSession?.agentKind === 'ClaudeCode' && (
+              <SessionContextBadge fullness={agent.liveSession.contextFullness} size="xs" />
+            )}
             <ActivityBadge agent={agent} />
             {agent.queueLength > 0 && (
               <Tooltip label={`${agent.queueLength} queued card${agent.queueLength === 1 ? '' : 's'}`}>

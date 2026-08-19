@@ -6,6 +6,7 @@ import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import type { AgentSessionResumeMode } from '../../api/sessions'
 import { useResumeSession, useStopSession } from '../../api/sessions'
+import { SessionContextBadge } from '../agents/SessionContextBadge'
 import { SessionTerminal } from './SessionTerminal'
 
 interface SessionTabsProps {
@@ -95,6 +96,9 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
             <Badge size="sm" color={STATUS_COLOR[selectedSession.status] ?? 'gray'} variant="light">
               {selectedSession.status}
             </Badge>
+            {selectedSession.agentKind === 'ClaudeCode' && (
+              <SessionContextBadge fullness={selectedSession.contextFullness} />
+            )}
             <CopyButton value={selectedSession.id}>
               {({ copied, copy }) => (
                 <Tooltip label={copied ? 'Copied session id' : 'Copy session id'} withArrow>

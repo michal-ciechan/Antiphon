@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router'
 import { TbArrowLeft, TbLayoutBottombar, TbLayoutSidebarRight } from 'react-icons/tb'
 import { useAgent } from '../../api/agents'
 import { AgentActivityBadge } from './AgentActivityBadge'
+import { SessionContextBadge } from './SessionContextBadge'
 import { FilesReviewPanel, type FilesPanelHeights } from './FilesReviewPanel'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 import { useFilesViewUrlState } from './useFilesViewUrlState'
@@ -59,6 +60,9 @@ export function AgentFilesPage() {
           <Title order={4}>{agent.data?.name ?? 'Agent'} — files</Title>
           {/* showIdle: this header has no terminal icon, so the badge is the only status here. */}
           {agent.data && <AgentActivityBadge agent={agent.data} showIdle />}
+          {agent.data?.liveSession?.agentKind === 'ClaudeCode' && (
+            <SessionContextBadge fullness={agent.data.liveSession.contextFullness} />
+          )}
           <Text size="xs" c="dimmed" truncate style={{ maxWidth: 420 }}>
             {agent.data?.workingDirectory}
           </Text>

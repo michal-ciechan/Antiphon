@@ -6,6 +6,7 @@ import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { SessionTerminal } from '../board/SessionTerminal'
 import { SessionMessageQueue } from './SessionMessageQueue'
+import { SessionContextBadge } from './SessionContextBadge'
 import { SessionWorkingBadge } from './SessionWorkingBadge'
 import { SmartComposer } from './SmartComposer'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
@@ -52,6 +53,9 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
             {source.name} terminal
           </Text>
           {liveSession && <SessionWorkingBadge sessionId={liveSession.id} />}
+          {liveSession?.agentKind === 'ClaudeCode' && (
+            <SessionContextBadge fullness={liveSession.contextFullness} />
+          )}
         </Group>
       }
     >

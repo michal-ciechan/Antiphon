@@ -145,6 +145,11 @@ export interface AgentSessionSummaryDto {
   endedAt: string | null
   exitCode: number | null
   failureReason: string | null
+  /**
+   * Newest-usage-row fullness (tokens / ceiling), 0.0–1.0+. Null/omitted = unknown: no usage
+   * yet, or a CompactBoundary / /clear landed after the last usage-bearing row (CARD-0082).
+   */
+  contextFullness?: number | null
 }
 
 export interface CreateBoardRequest {
