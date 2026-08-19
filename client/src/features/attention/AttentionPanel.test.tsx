@@ -5,10 +5,8 @@ import { renderWithProviders, screen, userEvent, waitFor, within } from '../../t
 import { server } from '../../test/mocks/server'
 import { AttentionPanel } from './AttentionPanel'
 
-// Mantine tooltips and collapses on a loaded machine overrun the 5s default.
 import { vi } from 'vitest'
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
   return {

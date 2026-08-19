@@ -7,9 +7,6 @@ import { DelegationsBoard } from './DelegationsBoard'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
-// Mantine portals (drawer, modal) plus jsdom typing overrun the 5s default on a loaded machine.
-vi.setConfig({ testTimeout: 20_000 })
-
 function summary(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTaskSummaryDto {
   return {
     rootTaskId: overrides.rootTaskId ?? overrides.id,

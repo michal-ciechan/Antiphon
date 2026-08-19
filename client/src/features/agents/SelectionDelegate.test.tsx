@@ -6,7 +6,6 @@ import { SelectionComposer } from './SelectionDelegate'
 import { buildSelectionGoal } from './selectionGoal'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 interface CreateBody {
   goal: string

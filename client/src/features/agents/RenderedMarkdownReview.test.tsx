@@ -6,7 +6,6 @@ import { RenderedMarkdownReview } from './RenderedMarkdownReview'
 import { sectionHash } from './markdownSections'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 const AGENT = 'a0000000-0000-0000-0000-000000000001'
 const PATH = 'docs/plan.md'

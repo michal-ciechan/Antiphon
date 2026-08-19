@@ -6,7 +6,6 @@ import { server } from '../../test/mocks/server'
 import { OrchestratorPage } from './OrchestratorPage'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 function stuck(overrides: Partial<AttentionItemDto>): AttentionItemDto {
   return {

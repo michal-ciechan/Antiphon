@@ -5,7 +5,6 @@ import { server } from '../../test/mocks/server'
 import { BlockedReplyRow } from './BlockedReplyRow'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 const TASK = '11111111-1111-1111-1111-111111111111'
 

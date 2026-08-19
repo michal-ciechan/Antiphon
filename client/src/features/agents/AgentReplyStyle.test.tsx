@@ -10,8 +10,6 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }))
 
-vi.setConfig({ testTimeout: 20_000 })
-
 /**
  * CARD-0060 slice 5 — the style is visible, changeable, and submitted; the bundles it composes are
  * shown read-only. The chip's most important behaviour is the one it does NOT have: `Normal` shows

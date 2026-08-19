@@ -5,7 +5,6 @@ import { server } from '../../test/mocks/server'
 import { SessionMessageQueue } from './SessionMessageQueue'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 // The live half is SignalR; this file is about what the HTTP shape RENDERS, so the hub is stubbed
 // to a connection that never connects and never pushes.

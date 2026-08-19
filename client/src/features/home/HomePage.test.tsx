@@ -5,7 +5,6 @@ import { server } from '../../test/mocks/server'
 import { HomePage } from './HomePage'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 // The heavy panes are integration-tested on their own; here they only need to prove they were
 // composed with the right identity.

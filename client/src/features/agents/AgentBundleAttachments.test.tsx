@@ -15,8 +15,6 @@ vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn() },
 }))
 
-vi.setConfig({ testTimeout: 20_000 })
-
 /**
  * CARD-0058 slice 6 — attaching a bundle to one agent, and the badge that says a running session is
  * carrying older instructions.

@@ -6,7 +6,6 @@ import { server } from '../../test/mocks/server'
 import { TaskDrawer } from './TaskDrawer'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 const TASK_ID = '77777777-7777-7777-7777-777777777777'
 

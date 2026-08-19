@@ -5,7 +5,6 @@ import { server } from '../../test/mocks/server'
 import { DelegateModal } from './DelegateModal'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 interface CreateBody {
   goal: string

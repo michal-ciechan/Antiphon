@@ -8,7 +8,6 @@ import { MobileHomePage } from './MobileHomePage'
 import { formatClockTime } from './workLineFormat'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
-vi.setConfig({ testTimeout: 20_000 })
 
 beforeEach(() => window.localStorage.clear())
 
