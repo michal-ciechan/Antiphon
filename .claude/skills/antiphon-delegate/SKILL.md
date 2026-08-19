@@ -51,6 +51,7 @@ Pick by what the work IS. The role sets the model tier, and that is the cost dec
 | `Review` | judge whether logic is correct | fable |
 | `Debug` | find out why something is broken | opus |
 | `Coverage` | check what a change missed | opus |
+| `Merge` | resolve a conflict left by a worktree task (auto-spawned after TryMergeBackAsync fails; rarely by hand) | opus |
 | `Docs` | prose, markdown, comments | sonnet |
 | `Commit` | git add/commit/push/branch, PRs | sonnet |
 | `Test` | run a suite or build and report what failed | haiku |
@@ -58,6 +59,9 @@ Pick by what the work IS. The role sets the model tier, and that is the cost dec
 
 `Test` and `Deploy` are cheap because they RUN things and report what happened. Interpreting a
 failure is a separate `Debug` task — don't ask haiku to work out why the build broke.
+
+A clean fast-forward plus deploy is `Deploy` (and `Test` for the suites). `-Role Merge` is the
+conflict specialist the server already spawns; sending it a clean merge pays opus for haiku work.
 
 A sub-orchestrator defaults to `Plan` and never runs below opus.
 

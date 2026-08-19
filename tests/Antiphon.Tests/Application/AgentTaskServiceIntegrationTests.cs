@@ -31,6 +31,7 @@ public class AgentTaskServiceIntegrationTests
     [Arguments(AgentTaskRole.Review, AgentModelLevel.Frontier)]
     [Arguments(AgentTaskRole.Debug, AgentModelLevel.High)]
     [Arguments(AgentTaskRole.Coverage, AgentModelLevel.High)]
+    [Arguments(AgentTaskRole.Merge, AgentModelLevel.High)]
     [Arguments(AgentTaskRole.Docs, AgentModelLevel.Medium)]
     [Arguments(AgentTaskRole.Commit, AgentModelLevel.Medium)]
     [Arguments(AgentTaskRole.Test, AgentModelLevel.Low)]

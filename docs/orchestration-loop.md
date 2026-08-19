@@ -70,6 +70,7 @@ The role sets the model. Do not override without a reason stated in the goal.
 | `Code` | write or change code | opus (override `-Level High`) |
 | `Review` | judge whether logic is correct | fable |
 | `Debug` | find out why something is broken | opus |
+| `Merge` | resolving a conflict left behind by a worktree task (auto-spawned after TryMergeBackAsync fails, rarely dispatched by hand) | opus |
 | `Docs` | prose, markdown, comments | sonnet |
 | `Commit` | git plumbing, branches, PRs | sonnet |
 | `Test` / `Deploy` | RUN a thing and report what happened | haiku |

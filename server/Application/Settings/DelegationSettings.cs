@@ -254,6 +254,9 @@ public sealed class DelegationSettings
         ["Review"] = new() { Level = AgentModelLevel.Frontier },
         ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, EscalateAfterMinutes = 25 },
         ["Coverage"] = new() { Level = AgentModelLevel.High },
+        // High: this role is the conflict resolver CreateMergeTaskAsync spawns after
+        // TryMergeBackAsync already failed. Clean fast-forwards never reach it
+        // (in-process git). A verify-merge-deploy is Test/Deploy/Commit, not Merge.
         ["Merge"] = new() { Level = AgentModelLevel.High },
         ["Docs"] = new() { Level = AgentModelLevel.Medium },
         ["Commit"] = new() { Level = AgentModelLevel.Medium },
