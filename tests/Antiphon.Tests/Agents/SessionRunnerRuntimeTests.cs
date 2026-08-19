@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -106,6 +107,181 @@ public class SessionRunnerRuntimeTests
         finally
         {
             DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0086: a cancelled StartAsync still runs Process.Start (not ct-gated) and used to
+    /// detach from the empty host in the outer catch. The host must be gone in a few seconds —
+    /// not after the 30s launch-timeout backstop.
+    /// </summary>
+    [Test]
+    public async Task Cancelled_StartAsync_after_the_host_exists_leaves_no_pty_host()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-cancel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(tempRoot, "logs")
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        var sessionId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                runtime.StartAsync(CmdRequest(sessionId, tempRoot), cts.Token));
+
+            var leftover = await WaitUntilNoHostsUnderAsync(tempRoot, TimeSpan.FromSeconds(5));
+            leftover.ShouldBeEmpty(
+                "cancelled StartAsync leaked Antiphon.PtyHost pid(s) "
+                + string.Join(", ", leftover));
+            sw.Elapsed.ShouldBeLessThan(
+                TimeSpan.FromSeconds(10),
+                "cleanup must not wait out the 30s host launch timeout");
+        }
+        finally
+        {
+            foreach (var pid in HostPidsUnder(tempRoot))
+                TryKill(pid);
+            await runtime.DisposeAsync();
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0086 / CARD-0056 pin: once the host is connected, a Launch the child rejects must
+    /// still kill the host. The inner catch already does this; the test is the lock so a later
+    /// edit cannot drop it.
+    /// </summary>
+    [Test]
+    public async Task StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-badexe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(tempRoot, "logs")
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        var sessionId = Guid.NewGuid();
+        var missingExe = Path.Combine(tempRoot, "no-such-exe-card0086.exe");
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            // Missing exe: PtyAgentRunner.StartAsync throws, the host RequestExit's, and the
+            // client may see either "Host launch failed" or EndOfStream if the pipe drops first.
+            // Either way StartAsync must fail — the pin is that the host is gone, not the
+            // exception type.
+            await Should.ThrowAsync<Exception>(() =>
+                runtime.StartAsync(
+                    new RunnerLaunchRequest(
+                        sessionId,
+                        missingExe,
+                        [],
+                        new Dictionary<string, string>(),
+                        tempRoot,
+                        120,
+                        30),
+                    CancellationToken.None));
+
+            var leftover = await WaitUntilNoHostsUnderAsync(tempRoot, TimeSpan.FromSeconds(5));
+            leftover.ShouldBeEmpty(
+                "failed StartAsync leaked Antiphon.PtyHost pid(s) "
+                + string.Join(", ", leftover));
+            sw.Elapsed.ShouldBeLessThan(
+                TimeSpan.FromSeconds(10),
+                "cleanup must not wait out the 30s host launch timeout");
+        }
+        finally
+        {
+            foreach (var pid in HostPidsUnder(tempRoot))
+                TryKill(pid);
+            await runtime.DisposeAsync();
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static RunnerLaunchRequest CmdRequest(Guid sessionId, string tempRoot) => new(
+        sessionId,
+        Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        ["/d", "/q", "/k", "@echo off & prompt $G"],
+        new Dictionary<string, string>(),
+        tempRoot,
+        120,
+        30);
+
+    private static int[] HostPidsUnder(string root)
+    {
+        if (string.IsNullOrEmpty(root))
+            return [];
+
+        var found = new List<int>();
+        foreach (var process in Process.GetProcessesByName("Antiphon.PtyHost"))
+        {
+            try
+            {
+                var path = process.MainModule?.FileName;
+                if (path is not null && path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    found.Add(process.Id);
+            }
+            catch
+            {
+                // Access denied / exited mid-scan.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        return found.ToArray();
+    }
+
+    private static async Task<int[]> WaitUntilNoHostsUnderAsync(string root, TimeSpan bound)
+    {
+        var appearUntil = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+        int[] leftover;
+        do
+        {
+            leftover = HostPidsUnder(root);
+            if (leftover.Length > 0)
+                break;
+            await Task.Delay(50);
+        } while (DateTime.UtcNow < appearUntil);
+
+        if (leftover.Length == 0)
+            return leftover;
+
+        var deadline = DateTime.UtcNow + bound;
+        do
+        {
+            leftover = HostPidsUnder(root);
+            if (leftover.Length == 0)
+                return leftover;
+            await Task.Delay(100);
+        } while (DateTime.UtcNow < deadline);
+
+        return leftover;
+    }
+
+    private static void TryKill(int pid)
+    {
+        if (pid <= 0)
+            return;
+        try
+        {
+            Process.GetProcessById(pid).Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Already gone.
         }
     }
 

@@ -66,15 +66,83 @@ public sealed class PtyHostLauncher(ShadowCopyStore store, string hostSourceDir)
         using var intermediary = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start pty-host spawn intermediary.");
 
-        var stdout = await intermediary.StandardOutput.ReadToEndAsync(ct);
-        var stderr = await intermediary.StandardError.ReadToEndAsync(ct);
-        await intermediary.WaitForExitAsync(ct);
+        // Reads are not ct-gated: an already-cancelled token used to throw before stdout was
+        // consumed, which is how the detached host pid was lost (CARD-0086). WaitAsync(ct) is
+        // the cancel point; the drain below uses CancellationToken.None so we can still parse
+        // the pid and kill it.
+        var stdoutTask = intermediary.StandardOutput.ReadToEndAsync();
+        var stderrTask = intermediary.StandardError.ReadToEndAsync();
+        var exitTask = intermediary.WaitForExitAsync();
+        var stdout = "";
+        var stderr = "";
 
-        if (intermediary.ExitCode != 0 || !int.TryParse(stdout.Trim(), out var hostPid))
-            throw new InvalidOperationException(
-                $"pty-host spawn intermediary failed (exit {intermediary.ExitCode}): {stderr} {stdout}".Trim());
+        try
+        {
+            await Task.WhenAll(stdoutTask, stderrTask, exitTask).WaitAsync(ct);
+            stdout = stdoutTask.Result;
+            stderr = stderrTask.Result;
 
-        return hostPid;
+            if (intermediary.ExitCode != 0 || !int.TryParse(stdout.Trim(), out var hostPid))
+                throw new InvalidOperationException(
+                    $"pty-host spawn intermediary failed (exit {intermediary.ExitCode}): {stderr} {stdout}".Trim());
+
+            return hostPid;
+        }
+        catch
+        {
+            await TryKillSpawnedHostAsync(intermediary, stdoutTask, stderrTask, exitTask, stdout);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// CARD-0086: if the intermediary has started and this method is about to throw, drain
+    /// stdout/stderr and WaitForExit on <see cref="CancellationToken.None"/> (the caller's
+    /// token may already be cancelled), parse the host pid if present, and kill it. A kill
+    /// failure is swallowed so it never replaces the launch exception.
+    /// </summary>
+    private static async Task TryKillSpawnedHostAsync(
+        Process intermediary,
+        Task<string> stdoutTask,
+        Task<string> stderrTask,
+        Task exitTask,
+        string stdoutAlready)
+    {
+        try
+        {
+            try
+            {
+                await Task.WhenAll(stdoutTask, stderrTask, exitTask)
+                    .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+            }
+            catch
+            {
+                // Drain timed out or the cancelled read left a stream unreadable — still try
+                // whatever pid we already have.
+            }
+
+            var stdout = stdoutAlready;
+            if (string.IsNullOrEmpty(stdout) && stdoutTask.IsCompletedSuccessfully)
+                stdout = stdoutTask.Result;
+
+            if (int.TryParse(stdout.Trim(), out var hostPid) && hostPid > 0)
+            {
+                try
+                {
+                    using var host = Process.GetProcessById(hostPid);
+                    if (!host.HasExited)
+                        host.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Already gone, pid reuse, or access denied.
+                }
+            }
+        }
+        catch
+        {
+            // Kill failure is swallowed so it never replaces the launch exception.
+        }
     }
 
     private static IEnumerable<string> BuildHostArgs(

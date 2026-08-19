@@ -14,6 +14,8 @@ namespace Antiphon.PtyHost.Tests;
 /// shadow dir - never from build output - and is fully serviceable over the pipe.
 /// </summary>
 [Category("PtyHost")]
+[NotInParallel("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyHostLauncherTests
 {
     private static void SkipIfNotWindows()
@@ -126,6 +128,50 @@ public class PtyHostLauncherTests
         }
     }
 
+    /// <summary>
+    /// CARD-0086: Process.Start is not cancellation-gated, so an already-cancelled token still
+    /// spawns the detached host and then throws on ReadToEndAsync(ct). The host must not leak.
+    /// Bound well under the 30s launch-timeout backstop — passing by waiting that out would hide
+    /// a missed kill.
+    /// </summary>
+    [Test]
+    public async Task Cancelled_LaunchDetachedAsync_after_the_intermediary_starts_does_not_leave_a_host()
+    {
+        SkipIfNotWindows();
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), "antiphon-launcher-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var store = new ShadowCopyStore(Path.Combine(tempRoot, "bin"));
+        var launcher = new PtyHostLauncher(store, AppContext.BaseDirectory);
+        var sessionId = Guid.NewGuid();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        try
+        {
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                launcher.LaunchDetachedAsync(
+                    sessionId,
+                    Path.Combine(tempRoot, "manifests"),
+                    hostLogFile: Path.Combine(tempRoot, "host.log"),
+                    launchTimeout: TimeSpan.FromSeconds(60),
+                    ct: cts.Token));
+
+            var leftover = await WaitUntilNoHostsUnderAsync(launcher.CurrentShadowDir, TimeSpan.FromSeconds(5));
+            leftover.ShouldBeEmpty(
+                "cancelled LaunchDetachedAsync leaked Antiphon.PtyHost pid(s) "
+                + string.Join(", ", leftover)
+                + " — a kill that waited out the 30s host launch timeout is not this test passing");
+        }
+        finally
+        {
+            foreach (var pid in HostPidsUnder(launcher.CurrentShadowDir))
+                TryKill(pid);
+            try { Directory.Delete(tempRoot, recursive: true); } catch { }
+        }
+    }
+
     private static async Task WaitForProcessExitAsync(int pid, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -143,6 +189,67 @@ public class PtyHostLauncherTests
         }
 
         throw new System.TimeoutException($"Process {pid} did not exit within {timeout}.");
+    }
+
+    /// <summary>
+    /// Hosts this test spawned run from the launcher's shadow dir, never from the always-on
+    /// daemon's copy — scoping by path so a live session-runner cannot fail this assertion.
+    /// </summary>
+    private static int[] HostPidsUnder(string root)
+    {
+        if (string.IsNullOrEmpty(root))
+            return [];
+
+        var found = new List<int>();
+        foreach (var process in Process.GetProcessesByName("Antiphon.PtyHost"))
+        {
+            try
+            {
+                var path = process.MainModule?.FileName;
+                if (path is not null && path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    found.Add(process.Id);
+            }
+            catch
+            {
+                // Access denied / exited mid-scan.
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }
+
+        return found.ToArray();
+    }
+
+    private static async Task<int[]> WaitUntilNoHostsUnderAsync(string root, TimeSpan bound)
+    {
+        // A leaked host may not be visible the instant LaunchDetachedAsync throws (the
+        // intermediary is still spawning). Wait up to 1s for one to appear, then demand it is
+        // gone well before the 30s launch-timeout backstop. Never-appeared = no leak.
+        var appearUntil = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+        int[] leftover;
+        do
+        {
+            leftover = HostPidsUnder(root);
+            if (leftover.Length > 0)
+                break;
+            await Task.Delay(50);
+        } while (DateTime.UtcNow < appearUntil);
+
+        if (leftover.Length == 0)
+            return leftover;
+
+        var deadline = DateTime.UtcNow + bound;
+        do
+        {
+            leftover = HostPidsUnder(root);
+            if (leftover.Length == 0)
+                return leftover;
+            await Task.Delay(100);
+        } while (DateTime.UtcNow < deadline);
+
+        return leftover;
     }
 
     private static void TryKill(int pid)
