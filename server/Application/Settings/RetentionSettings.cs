@@ -4,7 +4,7 @@ namespace Antiphon.Server.Application.Settings;
 /// Per-table data-retention windows (CARD-0044). A value <c>&lt;= 0</c> disables that table's
 /// pass — an explicit off-switch, unlike the audit knob that used to be read by nothing.
 /// Session/task/audit windows are bound here so later slices share one settings object; slices
-/// 1-2 act on transcripts, queued messages, and sessions.
+/// 1-3 act on transcripts, queued messages, sessions, and task trees.
 /// </summary>
 public sealed class RetentionSettings
 {

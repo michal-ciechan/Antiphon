@@ -31,16 +31,20 @@ public sealed class DataRetentionService
     }
 
     /// <summary>
-    /// Runs the implemented table passes in the planned order (tasks → sessions → transcripts →
-    /// queued messages → audit). Slice 2 owns sessions; slice 1 owns transcripts and queued
-    /// messages; later slices fill the remaining slots.
+    /// Runs the implemented table passes: sessions → transcripts → queued messages → tasks.
+    /// Slice 2 owns sessions; slice 1 owns transcripts and queued messages; slice 3 owns tasks.
+    /// Tasks run last so the session pass still sees surviving task-session references (the
+    /// windows self-sequence: a session outlives its tasks, then becomes eligible next sweep).
+    /// There is no FK either way between AgentTask and AgentSession, so this is not a
+    /// constraint hazard — only an eligibility delay of one sweep.
     /// </summary>
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
     {
         var sessions = await PruneSessionsAsync(ct);
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
-        return new DataRetentionSweepResult(transcripts, queued, sessions);
+        var tasks = await PruneTasksAsync(ct);
+        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks);
     }
 
     /// <summary>
@@ -166,6 +170,69 @@ public sealed class DataRetentionService
     }
 
     /// <summary>
+    /// Deletes a whole AgentTask tree past <see cref="RetentionSettings.TaskRetentionDays"/>
+    /// when every row sharing that <c>RootTaskId</c> is terminal
+    /// (<see cref="AgentTaskStatus.Succeeded"/> / <see cref="AgentTaskStatus.Failed"/> /
+    /// <see cref="AgentTaskStatus.Canceled"/>) and the tree's newest
+    /// <c>COALESCE(CompletedAt, CreatedAt)</c> is older than the cutoff. Never a partial tree:
+    /// <c>ParentTaskId</c> is Restrict on purpose, so deletes go children-first (Depth
+    /// descending) inside one transaction. <c>AgentTaskEvents</c> cascade.
+    /// </summary>
+    public async Task<int> PruneTasksAsync(CancellationToken ct)
+    {
+        if (_settings.TaskRetentionDays <= 0)
+            return 0;
+
+        var cutoff = UtcNow().AddDays(-_settings.TaskRetentionDays);
+
+        // A root is ineligible if ANY row in its tree is still live (Queued/Dispatched/Working/Blocked).
+        var liveRootIds = _db.AgentTasks
+            .Where(t => t.Status != AgentTaskStatus.Succeeded
+                && t.Status != AgentTaskStatus.Failed
+                && t.Status != AgentTaskStatus.Canceled)
+            .Select(t => t.RootTaskId);
+
+        var eligibleRootIds = await _db.AgentTasks
+            .Where(t => !liveRootIds.Contains(t.RootTaskId))
+            .GroupBy(t => t.RootTaskId)
+            .Where(g => g.Max(t => t.CompletedAt ?? t.CreatedAt) < cutoff)
+            .Select(g => g.Key)
+            .ToListAsync(ct);
+
+        if (eligibleRootIds.Count == 0)
+            return 0;
+
+        // Children-first so Restrict on ParentTaskId never fires. One transaction so a
+        // mid-loop failure cannot leave a half-deleted tree.
+        var depths = await _db.AgentTasks
+            .Where(t => eligibleRootIds.Contains(t.RootTaskId))
+            .Select(t => t.Depth)
+            .Distinct()
+            .OrderByDescending(d => d)
+            .ToListAsync(ct);
+
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var removed = 0;
+        foreach (var depth in depths)
+        {
+            removed += await _db.AgentTasks
+                .Where(t => eligibleRootIds.Contains(t.RootTaskId) && t.Depth == depth)
+                .ExecuteDeleteAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} task row(s) in {Trees} tree(s) past retention",
+                removed, eligibleRootIds.Count);
+        }
+
+        return removed;
+    }
+
+    /// <summary>
     /// PersistentSessionId is a loose string (no FK). Parse with the same Guid.TryParse
     /// semantics AgentSupervisorService.FindPersistentSessionAsync uses so a Failed row that
     /// CARD-0056 may re-adopt is never emptied or deleted.
@@ -189,4 +256,4 @@ public sealed class DataRetentionService
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
 
-public sealed record DataRetentionSweepResult(int Transcripts, int QueuedMessages, int Sessions);
+public sealed record DataRetentionSweepResult(int Transcripts, int QueuedMessages, int Sessions, int Tasks);

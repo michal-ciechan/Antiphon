@@ -14,9 +14,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0044 slices 1-2: transcript deletion is per-session all-or-nothing, settled queue rows
-/// are pruned independently of session liveness, and terminal AgentSession rows past 90d are
-/// deleted when nothing still names them. The sweep is global, so this class is
+/// CARD-0044 slices 1-3: transcript deletion is per-session all-or-nothing, settled queue rows
+/// are pruned independently of session liveness, terminal AgentSession rows past 90d are
+/// deleted when nothing still names them, and AgentTask trees past 180d are deleted whole or
+/// not at all. The sweep is global, so this class is
 /// <see cref="NotInParallelAttribute"/> with no group key (serialise against everything, not just
 /// itself) and every assertion is scoped to ids this test created.
 /// </summary>
@@ -396,6 +397,120 @@ public class DataRetentionServiceTests
         }
     }
 
+    [Test]
+    public async Task A_fully_terminal_stale_tree_loses_every_row_and_its_events()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var rootId = Guid.NewGuid();
+            var parentId = Guid.NewGuid();
+            var childId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await SeedTaskRowAsync(marker, parentId, rootId, rootId, depth: 1,
+                AgentTaskStatus.Failed, stale, stale.AddHours(2));
+            await SeedTaskRowAsync(marker, childId, rootId, parentId, depth: 2,
+                AgentTaskStatus.Canceled, stale, stale.AddHours(3));
+            var rootEvent = await SeedTaskEventAsync(rootId, stale.AddHours(1));
+            var parentEvent = await SeedTaskEventAsync(parentId, stale.AddHours(2));
+            var childEvent = await SeedTaskEventAsync(childId, stale.AddHours(3));
+
+            await using var db = CreateContext();
+            var removed = await CreateService(db).PruneTasksAsync(CancellationToken.None);
+            removed.ShouldBeGreaterThanOrEqualTo(3);
+
+            (await TaskExistsAsync(rootId)).ShouldBeFalse();
+            (await TaskExistsAsync(parentId)).ShouldBeFalse();
+            (await TaskExistsAsync(childId)).ShouldBeFalse();
+            (await TaskEventExistsAsync(rootEvent)).ShouldBeFalse();
+            (await TaskEventExistsAsync(parentEvent)).ShouldBeFalse();
+            (await TaskEventExistsAsync(childEvent)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_tree_with_one_live_member_survives_entirely()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var rootId = Guid.NewGuid();
+            var childId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale.AddHours(1));
+            await SeedTaskRowAsync(marker, childId, rootId, rootId, depth: 1,
+                AgentTaskStatus.Working, stale, completedAt: null);
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneTasksAsync(CancellationToken.None);
+
+            (await TaskExistsAsync(rootId)).ShouldBeTrue("a partial tree delete is forbidden");
+            (await TaskExistsAsync(childId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_tree_whose_newest_row_is_within_the_window_survives_entirely()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var rootId = Guid.NewGuid();
+            var childId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, DaysAgo(200), DaysAgo(199));
+            await SeedTaskRowAsync(marker, childId, rootId, rootId, depth: 1,
+                AgentTaskStatus.Succeeded, DaysAgo(2), DaysAgo(1));
+
+            await using var db = CreateContext();
+            await CreateService(db).PruneTasksAsync(CancellationToken.None);
+
+            (await TaskExistsAsync(rootId)).ShouldBeTrue("a stale leaf of a fresh tree survives");
+            (await TaskExistsAsync(childId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_zero_task_window_skips_tasks()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var stale = DaysAgo(200);
+            var rootId = Guid.NewGuid();
+            await SeedTaskRowAsync(marker, rootId, rootId, parentTaskId: null, depth: 0,
+                AgentTaskStatus.Succeeded, stale, stale);
+
+            await using var db = CreateContext();
+            var result = await CreateService(db, new RetentionSettings
+            {
+                TaskRetentionDays = 0,
+            }).RunOnceAsync(CancellationToken.None);
+
+            result.Tasks.ShouldBe(0);
+            (await TaskExistsAsync(rootId)).ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     // ---------- helpers ----------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -478,6 +593,53 @@ public class DataRetentionServiceTests
         return id;
     }
 
+    private static async Task<Guid> SeedTaskRowAsync(
+        string marker,
+        Guid id,
+        Guid rootTaskId,
+        Guid? parentTaskId,
+        int depth,
+        AgentTaskStatus status,
+        DateTime createdAt,
+        DateTime? completedAt)
+    {
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = rootTaskId,
+            ParentTaskId = parentTaskId,
+            Depth = depth,
+            Title = marker,
+            Goal = "retention task-tree",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Code,
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
+            Status = status,
+            ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = createdAt,
+            CompletedAt = completedAt,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<Guid> SeedTaskEventAsync(Guid taskId, DateTime at)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = id,
+            AgentTaskId = taskId,
+            Type = AgentTaskEventType.Completed,
+            Detail = "retention event",
+            At = at,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
     private static async Task<Guid> SeedTranscriptAsync(
         Guid sessionId, long sequence, string kind, DateTime createdAt)
     {
@@ -544,6 +706,18 @@ public class DataRetentionServiceTests
         return await db.SessionQueuedMessages.AnyAsync(m => m.Id == messageId);
     }
 
+    private static async Task<bool> TaskExistsAsync(Guid taskId)
+    {
+        await using var db = CreateContext();
+        return await db.AgentTasks.AnyAsync(t => t.Id == taskId);
+    }
+
+    private static async Task<bool> TaskEventExistsAsync(Guid eventId)
+    {
+        await using var db = CreateContext();
+        return await db.AgentTaskEvents.AnyAsync(e => e.Id == eventId);
+    }
+
     private static async Task CleanupAsync(string marker)
     {
         await using var db = CreateContext();
@@ -556,7 +730,21 @@ public class DataRetentionServiceTests
             await db.TranscriptEntries.Where(t => sessionIds.Contains(t.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => sessionIds.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
         }
-        await db.AgentTasks.Where(t => t.Title == marker).ExecuteDeleteAsync();
+
+        var taskIds = await db.AgentTasks.Where(t => t.Title == marker).Select(t => t.Id).ToListAsync();
+        if (taskIds.Count > 0)
+        {
+            await db.AgentTaskEvents.Where(e => taskIds.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+            var depths = await db.AgentTasks
+                .Where(t => t.Title == marker)
+                .Select(t => t.Depth)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .ToListAsync();
+            foreach (var depth in depths)
+                await db.AgentTasks.Where(t => t.Title == marker && t.Depth == depth).ExecuteDeleteAsync();
+        }
+
         await db.Agents.Where(a => a.Name == marker).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).ExecuteDeleteAsync();
     }
