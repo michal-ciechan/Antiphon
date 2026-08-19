@@ -540,10 +540,9 @@ Departures from §1–§10, all deliberate:
    while rendering `#41`. Spoken and grepped forms stay citable; E2E keeps its selector.
 5. **Priority bands are keyed off the state's own card count (>20), not off node selection**, so a
    30-card group banded inside the default all-states list too.
-6. **CARD-0005 is fixed but not closed.** Max-suffix+1 stops the collision (delete a middle card and
-   the next create no longer duplicates a live identifier). Deleting the *current highest* card
-   still frees its number — the row is the only record that it was taken. Closing that needs
-   CARD-0019's archive-instead-of-delete.
+6. **CARD-0005 closed.** Max-suffix+1 shipped in this feature (`ce48f504`); archive-instead-of-
+   delete shipped in CARD-0019 and occupies the number so the highest-card hole is unreachable
+   via any normal path. Docs close-out 2026-08-19.
 7. **The mobile chrome collapses** (icon-only actions, filters behind a popover). Not in the design;
    the labelled header cost ~60% of a 390px screen before the pager began.
 

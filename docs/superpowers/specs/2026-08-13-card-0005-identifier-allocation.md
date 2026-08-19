@@ -1,8 +1,16 @@
 # CARD-0005: Card identifier allocation — parse-max+1, retry on the unique index
 
-**Status:** planned, not implemented. **Card:** CARD-0005. **Date:** 2026-08-13.
+**Status:** **Implemented** (`ce48f504` parse-max+1 as CARD-0042's server-scope item; CARD-0019
+archive occupies the number). **Card:** CARD-0005. **Date:** 2026-08-13; closed 2026-08-19.
 **Prerequisite for:** feature 011 (board state graph, CARD-0042) and interacts with CARD-0019
 (card correction) — see § Interactions.
+
+**Close-out notes (2026-08-19):** the § Slices "hard-delete the highest, create again → not
+reused" pin was withdrawn — incompatible with parse-max+1 (the row is the only record the
+number was taken; archive is the production pin instead:
+`Archiving_the_highest_card_does_not_free_its_identifier`). Unique-index retry in `CreateAsync`,
+rollover/unparseable-identifier tests, and dropping the unused `Include(b => b.Cards)` were
+not done and are not required to close this card (concurrent-create 500 is a different bug).
 
 ## The mechanism, verified in code
 

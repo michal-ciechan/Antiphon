@@ -18,13 +18,6 @@ integration tests. One-way, project repo only, no UI.
 
 ## Bugs
 
-### Card identifiers are reused after a delete
-`CardService.NextIdentifierAsync` (`server/Application/Services/CardService.cs:253-257`) is
-count-based: `CARD-{count+1}`. Delete a card and the next one created takes the identifier that just
-freed up, so `CARD-0007` can refer to two different cards over time. Anything keyed on the
-identifier rather than the id — links, comments, task files, agent prompts — silently points at the
-wrong card. Fix is max+1 over existing identifiers (parse and take the highest), not count+1.
-
 ### A session can adopt ANOTHER session's transcript — including a human's own conversation
 Observed live 2026-08-09. `session-runner.log`:
 
