@@ -40,42 +40,38 @@ text. Its header comment is the full reference; this is the synopsis.
 
 ### Prerequisites
 
-- .NET 9 SDK
+- .NET SDK matching [`global.json`](global.json) (currently 10.0.204,
+  `rollForward: latestMinor`). Projects target `net9.0`.
 - Node.js 20+
-- Docker (for PostgreSQL)
+- Docker Desktop (PostgreSQL is the always-on `antiphon-postgres` container on port 17280)
+- pwsh 7 via `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`
 
 ### First-time setup
 
-1. Copy `appsettings.json.example` to `server/appsettings.json` and fill in your LLM API key(s).
-
-2. Start PostgreSQL:
-   ```
-   docker compose -f docker-compose.dev.yml up -d
-   ```
+Follow [docs/bootstrap.md](docs/bootstrap.md). Canonical path is the Aspire
+stack (API 17202, Vite 17203, session-runner 17204; Postgres already on 17280).
+Do **not** copy `appsettings.json.example` over the tracked
+`server/appsettings.json` — that file is already in git. Put LLM keys in
+`dotnet user-secrets` against id `antiphon-server`, or in the Settings UI after
+first start. The root `appsettings.json.example` is a shape reference only.
 
 ### Canonical local restart
 
-Use the repo restart script so Aspire, the backend, and the Vite proxy agree on
-the fixed dev ports:
+Aspire is the default. If an AppHost may already be running:
 
 ```
-.\restart.ps1
+pwsh -File scripts/restart-apphost.ps1
 ```
 
-The script restarts server and client resources, checks that stale processes are
-not occupying the fixed dev ports, and runs a smoke check against:
+Never launch a second bare `dev-aspire.ps1` — it collides with the old process
+and the new code never goes live. Smoke: `http://localhost:17202/health`,
+client at `http://localhost:17203`, session-runner at `http://localhost:17204`,
+dashboard pinned at `http://localhost:17205`.
+`pwsh -File verify-dev-stack.ps1 -SkipBrowser` is the health check.
 
-- Backend health: `http://localhost:17281/health`
-- Frontend/API proxy: `http://localhost:17282/api/projects`
-- SignalR negotiate: `http://localhost:17282/hubs/antiphon/negotiate`
-- Browser render: `http://localhost:17282` showing `Workflows`
-
-If a stale process owns a dev port, the script prints the PID/process name and
-aborts. To intentionally stop the listed port owners, rerun:
-
-```
-.\restart.ps1 -StopPortOwners
-```
+Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
+17281 (API) / 17282 (Vite) / 17283 (session-runner). Postgres is still 17280.
+`pwsh -File verify-dev-stack.ps1 -SimpleMode`.
 
 ### Manual backend fallback (ASP.NET Core — port 17281)
 

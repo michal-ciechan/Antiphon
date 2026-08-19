@@ -9,25 +9,23 @@ Start the Antiphon dev stack via the Aspire AppHost, verify all services are up,
 
 ## Port map (Aspire mode)
 
+First-time setup is [docs/bootstrap.md](../../../docs/bootstrap.md). Postgres is
+the always-on `antiphon-postgres` container on **17280** (not Aspire-managed).
+Dashboard is pinned at **http://localhost:17205**.
+
 | Port    | Service                  |
 |---------|--------------------------|
 | 17200   | AppHost resource service |
-| 17201   | PostgreSQL               |
+| 17280   | PostgreSQL (`antiphon-postgres`) |
 | 17202   | .NET server (API)        |
 | 17203   | Vite dev client          |
 | 17204   | Session runner           |
-| dynamic | Aspire dashboard UI      |
+| 17205   | Aspire dashboard UI (pinned) |
 | 17206   | OTLP telemetry           |
 | 17207   | Control API              |
 
-**Dashboard URL is dynamic** — Aspire assigns it. `dev-aspire.ps1` finds it automatically and saves it to `logs/apphost-dashboard-url.txt`. To get it manually:
-```powershell
-Get-Content C:\src\antiphon\logs\apphost-dashboard-url.txt
-# or: find the Aspire.Dashboard process port
-$dash = Get-Process 'Aspire.Dashboard' -ErrorAction SilentlyContinue | Select-Object -First 1
-Get-NetTCPConnection -State Listen -OwningProcess $dash.Id | Where-Object { $_.LocalPort -ne 17206 }
-```
-Log file: `C:\src\antiphon\logs\apphost.log`
+`dev-aspire.ps1` also writes the URL to `logs/apphost-dashboard-url.txt`. Log
+file: `logs/apphost.log`.
 
 ---
 
@@ -39,7 +37,7 @@ Run these in parallel:
 # A) Docker running?
 docker info 2>&1 | Select-String "Server Version|error" | Select-Object -First 1
 
-# B) appsettings.json present?
+# B) tracked server/appsettings.json present? (it is in git — do not copy an example over it)
 Test-Path "C:\src\antiphon\server\appsettings.json"
 
 # C) Stale processes?
@@ -77,6 +75,15 @@ Daemon processes (session-runner, server, client) survive AppHost exit and **loc
 
 ## Step 2 — Launch
 
+If an AppHost may already exist (including the logon Scheduled Task), restart
+instead of launching a second copy:
+
+```powershell
+pwsh -File C:\src\antiphon\scripts\restart-apphost.ps1
+```
+
+First launch only, when nothing is listening:
+
 ```powershell
 Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspire.ps1') -WindowStyle Normal
 ```
@@ -102,9 +109,9 @@ pwsh -File C:\src\antiphon\verify-dev-stack.ps1 -SkipBrowser   # faster, no Play
 
 Exit 0 = healthy; exit 1 = it lists exactly which checks failed and the fix hint. **Always prefer this over manual `Get-NetTCPConnection` / `Test-NetConnection` loops** — that's what it's for.
 
-Expected healthy state: ports 17200, 17202, 17203, 17204, 17205, 17206 listening; Postgres container "Up"; all health endpoints HTTP 200.
+Expected healthy state: ports 17200, 17202, 17203, 17204, 17205, 17206 listening; `antiphon-postgres` on 17280 "Up"; all health endpoints HTTP 200.
 
-Port 17201 (Postgres) is Aspire-managed and won't always appear in `Get-NetTCPConnection` — the script checks the container status instead.
+Postgres is the always-on `antiphon-postgres` container on 17280 (compose, not Aspire-managed). The verify script checks the container status.
 
 ---
 
@@ -130,10 +137,11 @@ Open it: `Start-Process "http://localhost:17205"`
 **Escalation if `docker-desktop` skill can't fix it:** if `docker version` shows the *client* but the server stays unreachable, and `wsl --shutdown` itself hangs (WSL2 VM wedged), the only reliable fix is a full PC restart: run `restart.cmd` (in repo root and `~\.local\bin`, just `shutdown /f /r /t 0`). After reboot, Docker + HNS come up clean.
 
 ### appsettings.json missing
-```powershell
-Copy-Item "C:\src\antiphon\server\appsettings.json.example" "C:\src\antiphon\server\appsettings.json"
-# Then add API keys manually — do not run until configured
-```
+`server/appsettings.json` is tracked. If it is missing the clone is broken —
+restore it from git. Do **not** copy `appsettings.json.example` over it (that
+example is a shape reference at the repo root). Put LLM keys in
+`dotnet user-secrets set … --id antiphon-server` or the Settings UI after first
+start. See [docs/bootstrap.md](../../../docs/bootstrap.md).
 
 ### Stale dcpctrl / dashboard from previous run
 ```powershell
@@ -155,7 +163,7 @@ Usually non-fatal — DCP reconciler tries to re-create a network already in its
 
 **Diagnose**:
 ```powershell
-docker ps -a --filter name=DefaultConnection --format "table {{.Names}}\t{{.Status}}"
+docker ps -a --filter name=antiphon-postgres --format "table {{.Names}}\t{{.Status}}"
 # Shows "Created" but never "Up" → Docker networking is broken
 
 # Confirm: test network creation (should complete in <2s)

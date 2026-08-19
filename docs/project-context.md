@@ -6,7 +6,7 @@ This document is the project constitution. All AI coding agents and human develo
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Backend runtime | .NET / ASP.NET Core | 10.0 LTS |
+| Backend runtime | .NET / ASP.NET Core | runtime target `net9.0`; SDK pinned by `global.json` (currently 10.0.204) |
 | Backend API pattern | Minimal APIs (REST) | — |
 | Database | PostgreSQL | 16 |
 | ORM | EF Core (code-first) | — |

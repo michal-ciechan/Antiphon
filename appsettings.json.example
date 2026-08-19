@@ -1,32 +1,30 @@
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Database=antiphon;Username=antiphon;Password=antiphon_dev"
+    "DefaultConnection": "Host=localhost;Port=17280;Database=antiphon;Username=antiphon;Password=antiphon_dev"
   },
   "Git": {
     "WorkspacePath": "",
-    "DefaultBranch": "main",
+    "DefaultBranch": "master",
     "PollIntervalSeconds": 30,
-    "WorktreeBasePath": "/tmp/antiphon-worktrees",
+    "WorktreeBasePath": "C:\\Antiphon\\worktrees",
     "WorktreeStaleAfterDays": 7,
     "WorktreeJanitorIntervalHours": 24
   },
   "Llm": {
-    "DefaultProvider": "anthropic",
-    "DefaultModel": "",
-    "Providers": [
-      {
-        "Name": "anthropic",
-        "ApiKey": "<your-api-key>",
-        "BaseUrl": "https://api.anthropic.com",
-        "Models": ["claude-sonnet-4-20250514"]
-      },
-      {
-        "Name": "openai",
-        "ApiKey": "<your-api-key>",
+    "DefaultProvider": "openai",
+    "DefaultModel": "claude-sonnet-4-6",
+    "Providers": {
+      "openai": {
+        "ApiKey": "",
         "BaseUrl": "https://api.openai.com",
-        "Models": ["gpt-4o"]
+        "Models": ["gpt-5.2", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"]
+      },
+      "anthropic": {
+        "ApiKey": "",
+        "BaseUrl": "https://api.anthropic.com",
+        "Models": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
       }
-    ]
+    }
   },
   "SignalR": {
     "HubPath": "/hubs/workflow",
@@ -39,42 +37,31 @@
     "EnableFullContent": true,
     "EnableIpLogging": true
   },
-  "ContextWindow": {
-    "DefaultContextTokens": 200000,
-    "ModelOverrides": {}
-  },
-  "ContextCompaction": {
-    "Enabled": true,
-    "IdleMinutes": 480,
-    "ContextPercent": 50,
-    "CooldownHours": 24,
-    "BoundaryTimeoutMinutes": 10
-  },
-  "Retention": {
-    "TranscriptRetentionDays": 30,
-    "QueuedMessageRetentionDays": 30,
-    "SessionRetentionDays": 90,
-    "TaskRetentionDays": 180,
-    "SweepHours": 6
-  },
   "GitHub": {
     "Enabled": false,
-    "PersonalAccessToken": "<your-pat>",
+    "PersonalAccessToken": "",
     "BaseUrl": "https://api.github.com"
+  },
+  "SessionRunner": {
+    "BaseUrl": "http://localhost:17283",
+    "Enabled": true,
+    "EventReconnectDelayMs": 1000,
+    "RequestTimeoutSeconds": 100,
+    "EventStreamIdleTimeoutSeconds": 90
   },
   "Agents": {
     "DefaultDefinition": "claude",
     "Definitions": {
       "claude": {
         "Kind": "ClaudeCode",
-        "Exe": "cl.bat",
-        "ArgsTemplate": [],
+        "Exe": "claude.exe",
+        "ArgsTemplate": ["--dangerously-skip-permissions"],
         "Env": {}
       },
       "codex": {
         "Kind": "Codex",
         "Exe": "pwsh.exe",
-        "ArgsTemplate": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\<you>\\.local\\bin\\cx.ps1", "--no-alt-screen"],
+        "ArgsTemplate": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "cx.ps1 --no-alt-screen --dangerously-bypass-approvals-and-sandbox"],
         "Env": {}
       },
       "raw-pwsh": {
@@ -97,22 +84,85 @@
     "CodexReadyMaxWaitMs": 60000,
     "CodexDoneQuietPeriodMs": 3000,
     "CodexDoneMaxWaitMs": 300000,
-    "OpenCodeReadyQuietPeriodMs": 1000,
-    "OpenCodeReadyMaxWaitMs": 60000,
-    "OpenCodeDoneQuietPeriodMs": 3000,
-    "OpenCodeDoneMaxWaitMs": 300000,
     "GrokReadyQuietPeriodMs": 1000,
     "GrokReadyMaxWaitMs": 60000,
     "GrokReadyMinTotalWaitMs": 2000,
     "GrokDoneQuietPeriodMs": 3000,
     "GrokDoneMaxWaitMs": 300000
   },
+  "AgentSessions": {
+    "SessionLogPath": "logs/sessions"
+  },
   "AgentTui": {
     "ProbeTimeoutSeconds": 30,
     "MaxProbeOutputBytes": 65536,
     "KeyRingPath": "",
     "KeyProtection": {
-      "Mode": "Auto"
+      "Mode": "Auto",
+      "CertificatePath": "",
+      "CertificatePrivateKeyPath": "",
+      "CertificateThumbprint": "",
+      "CertificateStoreName": "My",
+      "CertificateStoreLocation": "CurrentUser"
+    }
+  },
+  "SessionReconciliation": {
+    "Enabled": true,
+    "IntervalMs": 15000,
+    "StartingGraceMs": 90000,
+    "AgentGraceMs": 120000
+  },
+  "ContextWindow": {
+    "DefaultContextTokens": 200000,
+    "ModelOverrides": {}
+  },
+  "Retention": {
+    "TranscriptRetentionDays": 30,
+    "QueuedMessageRetentionDays": 30,
+    "SessionRetentionDays": 90,
+    "TaskRetentionDays": 180,
+    "SweepHours": 6
+  },
+  "ContextCompaction": {
+    "Enabled": true,
+    "IdleMinutes": 480,
+    "ContextPercent": 50,
+    "CooldownHours": 24,
+    "BoundaryTimeoutMinutes": 10
+  },
+  "Delegation": {
+    "MaxCostUsdPerRoot": 200.00,
+    "CheckInterpreterWorkingDirectory": "C:\\logs\\antiphon\\check-interpreter"
+  },
+  "ChannelBridge": {
+    "Enabled": false,
+    "AgentStartTimeoutSeconds": 90,
+    "AgentReadyDelaySeconds": 12,
+    "MaxReplyChars": 4000,
+    "PendingReplyTtlMinutes": 30,
+    "DebounceWindowMs": 500,
+    "DebounceMaxMs": 2000,
+    "BatchingEnabled": true
+  },
+  "AntiphonMessaging": {
+    "BootstrapServers": "localhost:19092",
+    "InboundTopic": "channels.inbound",
+    "OutboundTopic": "channels.outbound",
+    "ConsumerGroup": "antiphon-server-bridge"
+  },
+  "Serilog": {
+    "LogPath": "logs",
+    "FileSizeLimitMb": 100,
+    "RetainedFileCountLimit": 14,
+    "RetainedFileTimeLimitDays": 5,
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Antiphon": "Information",
+        "Microsoft.AspNetCore.Hosting.Diagnostics": "Warning",
+        "Microsoft.EntityFrameworkCore.Database.Command": "Warning",
+        "System.Net.Http.HttpClient": "Warning"
+      }
     }
   },
   "Logging": {
