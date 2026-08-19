@@ -85,7 +85,29 @@ public sealed class ReviewReplyDispatcher
 
         // Extract BEFORE consuming (the stop-marker-before-text lesson from the channel dispatcher):
         // no text yet → correlations stay pending; the text's own arrival re-triggers us.
-        var responseText = await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+        var (responseText, containsApiErrorStub) =
+            await ExtractTurnResponseAsync(db, sessionId, userPrompt.Sequence, ct);
+
+        // S8 (CARD-0071): a turn killed by the API must never be posted as a review-thread reply.
+        // The stub's error string is ordinary AssistantText, so without this check "API Error: 529
+        // Overloaded" would be authored as the Agent on the thread — and TakeAllMatching would
+        // CONSUME the in-memory correlation, flipping the thread to AwaitingHuman on garbage with
+        // nothing left to re-answer. The whole turn is withheld, not just the stub line stripped:
+        // a multi-call turn can produce real text before a later API call dies, and posting the
+        // fragment would settle the correlation against half an answer. Correlations stay pending
+        // — a resumed turn's real answer routes by the same [Review #id] tag match, and if nothing
+        // ever answers, EvictStale's TTL drop is the designed backstop (no incident in this slice:
+        // the thread stays visibly stuck at its prior status).
+        if (containsApiErrorStub)
+        {
+            _logger.LogWarning(
+                "Turn on session {SessionId} (prompt seq {PromptSeq}) was killed by an API error; withholding "
+                + "the review-thread reply for the whole turn. {Count} correlation(s) stay pending for a resumed turn, "
+                + "with the TTL eviction as the backstop.",
+                sessionId, userPrompt.Sequence, queue.Count);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(responseText))
             return;
 
@@ -138,7 +160,10 @@ public sealed class ReviewReplyDispatcher
 
     // Turn response = assistant text from the prompt to the NEXT prompt (open upper bound — the
     // stop marker can precede the text; see ChannelReplyDispatcher for the live misses behind this).
-    private static async Task<string?> ExtractTurnResponseAsync(
+    // Also returns whether the window contains an API-error stub (CARD-0071 S8), which the caller
+    // withholds the whole turn on. Stub rows are additionally excluded from the join so no refactor
+    // of the withhold can ever let the error string ride out inside a review comment.
+    private static async Task<(string? Text, bool ContainsApiErrorStub)> ExtractTurnResponseAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
         var nextPromptSeq = await db.TranscriptEntries
@@ -154,9 +179,17 @@ public sealed class ReviewReplyDispatcher
         if (nextPromptSeq is long cap)
             query = query.Where(t => t.Sequence < cap);
 
-        var texts = await query.OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync(ct);
-        var joined = string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t)));
-        return string.IsNullOrWhiteSpace(joined) ? null : joined.Trim();
+        var entries = await query
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Text, t.Kind, t.IsApiError })
+            .ToListAsync(ct);
+
+        var containsStub = entries.Any(t => TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError));
+        var joined = string.Join("\n\n", entries
+            .Where(t => !TranscriptKinds.IsApiErrorStub(t.Kind, t.IsApiError))
+            .Select(t => t.Text)
+            .Where(t => !string.IsNullOrWhiteSpace(t)));
+        return (string.IsNullOrWhiteSpace(joined) ? null : joined.Trim(), containsStub);
     }
 
     private static List<PendingThreadReply> TakeAllMatching(
