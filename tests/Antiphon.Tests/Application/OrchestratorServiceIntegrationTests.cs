@@ -74,6 +74,40 @@ public class OrchestratorServiceIntegrationTests
         }
     }
 
+    // CARD-0087: a declined spawn is a durable hold. Seeding AutoDispatchHeldAt on the entity
+    // is enough here — the write path is BoardServiceIntegrationTests. Do not assert
+    // result.Dispatched == 0; that counter is assembly-global.
+    [Test]
+    public async Task PollTick_skips_a_card_whose_auto_dispatch_is_held()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot, boardMaxConcurrent: 2);
+            graph.Card.AutoDispatchHeldAt = DateTime.UtcNow;
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "SHOULD_NOT_RUN" };
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+
+            await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.CountAsync(s => s.CardId == graph.Card.Id)).ShouldBe(0);
+            var stored = await verify.Cards.SingleAsync(c => c.Id == graph.Card.Id);
+            stored.OwnerSessionId.ShouldBeNull();
+            stored.AutoDispatchHeldAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task PollTick_syncs_external_tracker_issue_into_card_and_dispatches_it()
     {

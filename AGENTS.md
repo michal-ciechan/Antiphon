@@ -35,6 +35,7 @@ text. Its header comment is the full reference; this is the synopsis.
 - **A move into an active column no longer starts an agent unless you pass `-Spawn`.** Before
   CARD-0051 it always did, silently — that cost two dead sessions and a stray worktree from one
   bookkeeping PATCH. If you have muscle memory from before, assume nothing starts unless you ask.
+  The tick will not pick that card up either (CARD-0087); `-Spawn` or `POST /spawn` starts it.
 
 ## Running Locally
 

@@ -492,6 +492,8 @@ public sealed class OrchestratorService
             .Where(c => c.BoardColumn.IsActive && !c.BoardColumn.IsTerminal)
             // An archived card is off the board; auto-dispatch must not pick it back up.
             .Where(c => c.ArchivedAt == null)
+            // A declined spawn is a hold, not a race against the next tick (CARD-0087).
+            .Where(c => c.AutoDispatchHeldAt == null)
             .Where(c => c.OwnerSessionId == null)
             .Where(c => !c.AgentSessions.Any(s => activeStatuses.Contains(s.Status)))
             .Where(c => c.RetrySchedule == null

@@ -67,7 +67,8 @@ public sealed record CardDto(
     int RevisionCount = 0,
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
-    string? ArchivedBy = null);
+    string? ArchivedBy = null,
+    DateTime? AutoDispatchHeldAt = null);
 
 public sealed record AgentSessionSummaryDto(
     Guid Id,

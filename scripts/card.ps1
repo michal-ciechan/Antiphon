@@ -39,6 +39,7 @@
 #   card.ps1 -Limits
 #
 # A move into an ACTIVE column does NOT start an agent unless you pass -Spawn (CARD-0051 slice 3).
+# The tick will not pick that card up either (CARD-0087); -Spawn or POST /spawn starts it.
 # When it would have, the script says so instead of leaving you to find out later.
 # A reopen never starts an agent, even into an active column. Spawn separately if you want one.
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
@@ -383,7 +384,7 @@ switch ($Verb) {
             Write-Output ("started     session {0}" -f $result.spawnedSessionId)
         }
         elseif ($result.spawnSuppressed) {
-            Write-Output 'moved into an active column; NO agent was started - re-run with -Spawn to start one'
+            Write-Output 'moved into an active column; NO agent was started - the tick will not pick it up either; re-run with -Spawn (or POST /spawn) to start one'
         }
         return
     }

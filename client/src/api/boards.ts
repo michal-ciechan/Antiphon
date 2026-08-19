@@ -79,6 +79,12 @@ export interface CardDto {
   archivedAt: string | null
   archivedReason: string | null
   archivedBy: string | null
+  /**
+   * Set when the card sits in an active column with spawn declined; auto-dispatch skips it.
+   * Cleared by POST /spawn or by a move off the active column. Omitted/null on cards the tick
+   * may pick up.
+   */
+  autoDispatchHeldAt?: string | null
 }
 
 /**

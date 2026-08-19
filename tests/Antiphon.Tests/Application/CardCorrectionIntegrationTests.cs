@@ -1098,8 +1098,12 @@ public class CardCorrectionIntegrationTests
             intoActive.Status.ShouldBe(CardStatus.InProgress);
             intoActive.BoardColumnId.ShouldBe(activeColumn.Id);
             intoActive.OwnerSessionId.ShouldBeNull();
+            intoActive.AutoDispatchHeldAt.ShouldNotBeNull();
+            defaulted.AutoDispatchHeldAt.ShouldBeNull();
             await using var verify = CreateContext();
             (await verify.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
+            var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            stored.AutoDispatchHeldAt.ShouldNotBeNull();
         }
         finally
         {

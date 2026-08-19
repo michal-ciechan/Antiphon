@@ -260,7 +260,8 @@ public sealed class BoardService
             card.RevisionCount,
             card.ArchivedAt,
             card.ArchivedReason,
-            card.ArchivedBy);
+            card.ArchivedBy,
+            card.AutoDispatchHeldAt);
     }
 
     internal static CardRevisionDto ToRevisionDto(CardRevision revision)

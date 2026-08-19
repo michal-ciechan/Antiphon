@@ -818,6 +818,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.TerminalReason).HasColumnType("text");
             entity.Property(c => c.ArchivedReason).HasColumnType("text");
             entity.Property(c => c.ArchivedBy).HasMaxLength(200);
+            entity.Property(c => c.AutoDispatchHeldAt);
             entity.Property(c => c.RevisionCount).IsRequired();
 
             entity.HasIndex(c => c.BoardId).HasDatabaseName("IX_Cards_BoardId");

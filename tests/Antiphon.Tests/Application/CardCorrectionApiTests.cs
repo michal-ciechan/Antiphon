@@ -167,6 +167,7 @@ public class CardCorrectionApiTests
         result.Card.OwnerSessionId.ShouldBeNull();
         result.SpawnedSessionId.ShouldBeNull();
         result.SpawnSuppressed.ShouldBeTrue();
+        result.Card.AutoDispatchHeldAt.ShouldNotBeNull();
     }
 
     // The fields assert against the CONSTANTS, never against 300/20000/4000/200: an endpoint that

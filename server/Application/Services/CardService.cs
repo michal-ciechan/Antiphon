@@ -264,6 +264,14 @@ public sealed class CardService
         var assignedAgentId = card.AssignedAgentId;
         ApplyColumnMove(card, targetColumn, reason: request.Reason);
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
+
+        // Hold/clear in the SAME write as the move. A tick between two saves can still claim
+        // (CARD-0087). Spawn knowledge stays here, not in ApplyColumnMove (CARD-0051).
+        if (!targetColumn.IsActive)
+            card.AutoDispatchHeldAt = null;
+        else if (card.OwnerSessionId is null && !request.Spawn)
+            card.AutoDispatchHeldAt = UtcNow();
+
         await SaveCardWriteAsync(card, ct);
 
         // Completing a card is the "work is done" sign-off — checkpoint the assigned agent's
@@ -439,6 +447,11 @@ public sealed class CardService
             reason: request.Reason,
             movedBy: request.ReopenedBy);
 
+        // Same hole as a Spawn=false move: reopen cannot spawn (CARD-0054), so land in an
+        // active column and the tick would otherwise pick the card up (CARD-0087).
+        if (target.IsActive && card.OwnerSessionId is null)
+            card.AutoDispatchHeldAt = UtcNow();
+
         await SaveCardWriteAsync(card, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return await GetByIdAsync(card.Id, ct);
@@ -525,6 +538,11 @@ public sealed class CardService
         if (card.BoardColumn.IsTerminal)
             throw new ConflictException($"Card '{card.Identifier}' is already in a terminal column.");
 
+        // Explicit start always lifts the hold, including the backlog path that moves into
+        // active itself. Persist before TryClaimCardAsync so a later tick does not still see it.
+        var hadHold = card.AutoDispatchHeldAt is not null;
+        card.AutoDispatchHeldAt = null;
+
         if (!card.BoardColumn.IsActive)
         {
             var activeColumn = card.Board.Columns
@@ -537,6 +555,10 @@ public sealed class CardService
                 enforceStateMachine: false,
                 reason: "Moved into an active column to spawn an agent session.",
                 movedBy: SystemActor);
+            await SaveCardWriteAsync(card, ct);
+        }
+        else if (hadHold)
+        {
             await SaveCardWriteAsync(card, ct);
         }
 

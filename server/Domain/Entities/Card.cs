@@ -38,6 +38,14 @@ public class Card
     public string? ArchivedBy { get; set; }
 
     /// <summary>
+    /// Set when a card is placed in an active column and work was declined. Auto-dispatch skips
+    /// any card where this is set. Cleared by an explicit spawn and by a move off an active
+    /// column. Null is the fail-closed default: seeded and tracker-synced cards stay in the tick
+    /// queue.
+    /// </summary>
+    public DateTime? AutoDispatchHeldAt { get; set; }
+
+    /// <summary>
     /// How many revisions this card has, and the allocator for the next
     /// <see cref="CardRevision.RevisionNumber"/>. Stored on the card rather than counted so that
     /// (a) the board GET can surface an "edited" affordance without a second query or a windowed

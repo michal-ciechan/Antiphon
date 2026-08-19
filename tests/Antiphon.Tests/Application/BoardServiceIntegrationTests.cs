@@ -294,6 +294,78 @@ public class BoardServiceIntegrationTests
             var storedCard = await verify.Cards.Include(c => c.BoardColumn).SingleAsync(c => c.Id == card.Id);
             storedCard.BoardColumn.StateKey.ShouldBe("in-progress");
             storedCard.OwnerSessionId.ShouldBeNull();
+            storedCard.AutoDispatchHeldAt.ShouldNotBeNull();
+            moved.Card.AutoDispatchHeldAt.ShouldNotBeNull();
+
+            // Explicit start lifts the hold and claims a session.
+            var spawned = await harness.CardService.SpawnAsync(
+                card.Id,
+                new SpawnCardRequest("fake", 100, 24),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            spawned.SessionId.ShouldNotBe(Guid.Empty);
+            await using var afterSpawn = CreateContext();
+            var released = await afterSpawn.Cards.SingleAsync(c => c.Id == card.Id);
+            released.AutoDispatchHeldAt.ShouldBeNull();
+            (await afterSpawn.AgentSessions.CountAsync(s => s.CardId == card.Id && s.Id == spawned.SessionId))
+                .ShouldBe(1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // CARD-0087: a hold is only meaningful while the card sits in an active column with no work
+    // started. Leaving clears it so a later re-entry is a new decision, not a stale timestamp.
+    [Test]
+    public async Task Moving_a_held_card_off_active_and_back_in_reapplies_the_hold()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot, []);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Hold re-entry board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id,
+                new CreateCardRequest(null, "Hold, leave, come back"),
+                CancellationToken.None);
+            var activeColumn = board.Columns.Single(c => c.StateKey == "in-progress");
+            var backlogColumn = board.Columns.Single(c => c.StateKey == "backlog");
+
+            var held = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(activeColumn.Id, card.ConcurrencyToken, "Parked in progress."),
+                CancellationToken.None);
+            held.SpawnSuppressed.ShouldBeTrue();
+            held.Card.AutoDispatchHeldAt.ShouldNotBeNull();
+
+            var offActive = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(backlogColumn.Id, held.Card.ConcurrencyToken, "Back to the pile."),
+                CancellationToken.None);
+            offActive.Card.AutoDispatchHeldAt.ShouldBeNull();
+            offActive.SpawnSuppressed.ShouldBeFalse();
+
+            var backIn = await harness.CardService.MoveAsync(
+                card.Id,
+                new MoveCardRequest(activeColumn.Id, offActive.Card.ConcurrencyToken, "Back in, still not starting."),
+                CancellationToken.None);
+            backIn.SpawnSuppressed.ShouldBeTrue();
+            backIn.Card.AutoDispatchHeldAt.ShouldNotBeNull();
+
+            await using var verify = CreateContext();
+            var stored = await verify.Cards.SingleAsync(c => c.Id == card.Id);
+            stored.AutoDispatchHeldAt.ShouldNotBeNull();
+            stored.OwnerSessionId.ShouldBeNull();
+            (await verify.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
         }
         finally
         {
