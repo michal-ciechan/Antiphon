@@ -8,8 +8,8 @@ namespace Antiphon.SessionRunner;
 /// <summary>
 /// Incremental read of ONE candidate transcript, collecting just the facts the adoption rules need
 /// (CARD-0006): its recorded <c>cwd</c> (C2), its <c>agentName</c> meta record (C2b), the first
-/// TIMESTAMPED record (C3), and whether any user prompt in it matches input this session actually
-/// sent (C4).
+/// TIMESTAMPED record (C3), and whether any user prompt — or a queued delivery of the same text
+/// (CARD-0064) — matches input this session actually sent (C4).
 ///
 /// Incremental because discovery polls four times a second and a candidate can be tens of MB: the
 /// file is append-only, so each pass reads only the bytes added since the last one. The C4 check
@@ -186,6 +186,11 @@ internal sealed class TranscriptCandidateProbe
             {
                 FirstTimestamp = parsed;
             }
+
+            // CARD-0064: C4-only. A brief typed into a mid-turn composer lands as queue-operation
+            // / queued_command, never as a user record. Harvest here, not in TranscriptNormalizer —
+            // a queued-but-unsubmitted body must not become a UserPrompt for CARD-0055 confirmation.
+            HarvestQueuedDelivery(root);
         }
 
         RememberPromptText(line);
@@ -204,14 +209,49 @@ internal sealed class TranscriptCandidateProbe
         {
             if (part.Kind != TranscriptKinds.UserPrompt || string.IsNullOrWhiteSpace(part.Text))
                 continue;
-            if (TranscriptKinds.IsLocalCommandRecord(part.Kind, part.Text))
-                continue;
-            if (TranscriptKinds.IsInterruptPrompt(part.Kind, part.Text))
-                continue;
-
-            _recentPrompts.Add(part.Text!);
-            if (_recentPrompts.Count > MaxRetainedPrompts)
-                _recentPrompts.RemoveAt(0);
+            RememberPrompt(part.Text!);
         }
     }
+
+    /// <summary>
+    /// Pulls delivered-text evidence out of the two record kinds Claude writes when the composer
+    /// queues a body instead of submitting it. Either <c>enqueue</c> or <c>remove</c> carries the
+    /// full body; a <c>queued_command</c> attachment carries it as <c>attachment.prompt</c>.
+    /// Other attachment types are ignored.
+    /// </summary>
+    private void HarvestQueuedDelivery(JsonElement root)
+    {
+        var type = GetString(root, "type");
+        string? text = type switch
+        {
+            "queue-operation" => GetString(root, "content"),
+            "attachment" when root.TryGetProperty("attachment", out var att)
+                && att.ValueKind == JsonValueKind.Object
+                && GetString(att, "type") == "queued_command"
+                => GetString(att, "prompt"),
+            _ => null,
+        };
+
+        if (!string.IsNullOrWhiteSpace(text))
+            RememberPrompt(text);
+    }
+
+    private void RememberPrompt(string text)
+    {
+        if (TranscriptKinds.IsLocalCommandRecord(TranscriptKinds.UserPrompt, text))
+            return;
+        if (TranscriptKinds.IsInterruptPrompt(TranscriptKinds.UserPrompt, text))
+            return;
+
+        _recentPrompts.Add(text);
+        if (_recentPrompts.Count > MaxRetainedPrompts)
+            _recentPrompts.RemoveAt(0);
+    }
+
+    private static string? GetString(JsonElement el, string prop) =>
+        el.ValueKind == JsonValueKind.Object
+        && el.TryGetProperty(prop, out var v)
+        && v.ValueKind == JsonValueKind.String
+            ? v.GetString()
+            : null;
 }

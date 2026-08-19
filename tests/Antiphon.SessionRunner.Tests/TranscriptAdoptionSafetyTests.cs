@@ -589,6 +589,253 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    // ------------------------------------------------------------- CARD-0064 queued C4 evidence
+
+    /// <summary>
+    /// THE test for CARD-0064. A brief typed into a mid-turn composer is recorded as
+    /// <c>queue-operation</c> <c>enqueue</c> and never as a <c>user</c> prompt. C4 must still bind
+    /// on that body. The ingested snapshot stays empty — the harvest is C4-only and must not
+    /// leak a queued-but-unsubmitted body into the transcript stream CARD-0055 confirms against.
+    /// </summary>
+    [Test]
+    public async Task Queue_operation_enqueue_of_delivered_text_binds_via_C4()
+    {
+        using var tree = new TranscriptTree("queued-enqueue");
+        var prompt = "Implement CARD-0064 queued delivery evidence for C4";
+        var input = new SessionInputLog();
+        input.Append(prompt);
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(400);
+            var file = tree.NewTranscript();
+            var now = DateTime.UtcNow;
+            await tree.AppendAsync(file, CwdAnchorLine(tree.Cwd, now));
+            await tree.AppendAsync(file, QueueOperationLine("enqueue", prompt, now));
+
+            await AssertBoundByDiscoveryAsync(hub, tailer, file);
+            await Task.Delay(400);
+            tailer.Snapshot().Entries.ShouldBeEmpty(
+                "a queued body is C4 evidence only — it must not be ingested as a UserPrompt");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Queued_command_attachment_of_delivered_text_binds_via_C4()
+    {
+        using var tree = new TranscriptTree("queued-command");
+        var prompt = "Implement CARD-0064 queued_command attachment evidence for C4";
+        var input = new SessionInputLog();
+        input.Append(prompt);
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(400);
+            var file = tree.NewTranscript();
+            await tree.AppendAsync(file, QueuedCommandLine("qc1", tree.Cwd, prompt, DateTime.UtcNow));
+
+            await AssertBoundByDiscoveryAsync(hub, tailer, file);
+            await Task.Delay(400);
+            tailer.Snapshot().Entries.ShouldBeEmpty(
+                "a queued_command attachment is C4 evidence only — it must not be ingested as a UserPrompt");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Queue_operation_whose_content_was_never_delivered_is_refused()
+    {
+        using var tree = new TranscriptTree("queued-stranger");
+        var input = new SessionInputLog();
+        input.Append("Implement CARD-0064 in the session runner");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(400);
+            var file = tree.NewTranscript();
+            var now = DateTime.UtcNow;
+            await tree.AppendAsync(file, CwdAnchorLine(tree.Cwd, now));
+            await tree.AppendAsync(file, QueueOperationLine("enqueue", "this is a stranger's queued brief text", now));
+
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBeNull("queued text this session never sent is not C4 evidence");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Queued_body_under_MinMatchChars_is_still_refused()
+    {
+        using var tree = new TranscriptTree("queued-short");
+        var input = new SessionInputLog();
+        input.Append("green");
+        input.Append("Implement CARD-0064 in the session runner");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(400);
+            var file = tree.NewTranscript();
+            var now = DateTime.UtcNow;
+            await tree.AppendAsync(file, CwdAnchorLine(tree.Cwd, now));
+            await tree.AppendAsync(file, QueueOperationLine("enqueue", "green", now));
+
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBeNull("MinMatchChars still governs queued evidence");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Queued_evidence_does_not_override_a_C2b_agent_name_mismatch()
+    {
+        using var tree = new TranscriptTree("queued-c2b");
+        var prompt = "Implement CARD-0064 queued delivery evidence for C4";
+        var input = new SessionInputLog();
+        input.Append(prompt);
+
+        var file = tree.NewTranscript();
+        var now = DateTime.UtcNow;
+        await tree.AppendAsync(file, AgentNameLine("some-other-agent"));
+        await tree.AppendAsync(file, CwdAnchorLine(tree.Cwd, now));
+        await tree.AppendAsync(file, QueueOperationLine("enqueue", prompt, now));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5), agentName: "antiphon-worker");
+        tailer.Start();
+        try
+        {
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBeNull("queued C4 evidence does not override C2b");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Queued_evidence_does_not_override_a_C3_epoch_failure()
+    {
+        using var tree = new TranscriptTree("queued-c3");
+        var prompt = "Implement CARD-0064 queued delivery evidence for C4";
+        var input = new SessionInputLog();
+        input.Append(prompt);
+
+        var childStart = DateTime.UtcNow;
+        var stale = childStart.AddHours(-1);
+        var file = tree.NewTranscript();
+        await tree.AppendAsync(file, CwdAnchorLine(tree.Cwd, stale));
+        await tree.AppendAsync(file, QueueOperationLine("enqueue", prompt, stale));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: childStart);
+        tailer.Start();
+        try
+        {
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBeNull("queued C4 evidence does not override C3");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// The measured outlier (session 8fb1c60e / transcript d12e3c6d): first timestamped record is
+    /// a queue-operation at +16.3s carrying the brief, first cwd is a later non-prompt attachment,
+    /// the only user prompt in the prefix is the 5-character <c>green</c> that MinMatchChars
+    /// rejects. Replayed against the live JSONL prefix when that file is on disk; otherwise the
+    /// same records are synthesized with the measured timestamps.
+    /// </summary>
+    [Test]
+    public void Measured_CARD_0064_prefix_satisfies_C4_from_the_queue_operation_at_16s()
+    {
+        var childStart = DateTimeOffset.Parse("2026-08-19T20:26:29.4072311Z");
+        var enqueueAt = DateTimeOffset.Parse("2026-08-19T20:26:45.667Z");
+        const string live = @"C:\Users\lndco\.claude\projects\C--src-Antiphon\d12e3c6d-ec7d-4579-859c-f59eb1eba3cd.jsonl";
+
+        string prefix;
+        string brief;
+        if (File.Exists(live))
+        {
+            var lines = File.ReadLines(live).Take(11).ToList();
+            prefix = string.Join("\n", lines) + "\n";
+            brief = lines.Select(l =>
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(l);
+                    var root = doc.RootElement;
+                    return root.TryGetProperty("type", out var type)
+                        && type.GetString() == "queue-operation"
+                        && root.TryGetProperty("content", out var content)
+                            ? content.GetString()
+                            : null;
+                }
+                catch (JsonException) { return null; }
+            }).First(s => !string.IsNullOrEmpty(s))!;
+        }
+        else
+        {
+            brief = "Implement CARD-0064 queued delivery evidence for C4 — the measured 16.3s bind";
+            prefix = string.Join("\n",
+            [
+                AgentNameLine("task-d52298ac"),
+                QueueOperationLine("enqueue", brief, enqueueAt),
+                CwdAnchorLine(@"C:\src\Antiphon", DateTimeOffset.Parse("2026-08-19T20:26:45.658Z")),
+                UserLine("green", @"C:\src\Antiphon", "green", DateTimeOffset.Parse("2026-08-19T20:26:45.679Z")),
+            ]) + "\n";
+        }
+
+        var tmp = Path.Combine(Path.GetTempPath(), $"antiphon-c64-replay-{Guid.NewGuid():N}.jsonl");
+        File.WriteAllText(tmp, prefix);
+        try
+        {
+            var log = new SessionInputLog();
+            log.Append(brief);
+            var probe = new TranscriptCandidateProbe(tmp);
+            probe.Refresh(log).ShouldBeTrue();
+            probe.ContentMatched.ShouldBeTrue("C4 must see the queued brief — this is the 2940.8s → 16.3s fix");
+            probe.Cwd.ShouldBe(@"C:\src\Antiphon");
+            if (File.Exists(live))
+                probe.AgentName.ShouldBe("task-d52298ac");
+            probe.FirstTimestamp.ShouldNotBeNull();
+            var delay = probe.FirstTimestamp!.Value - childStart;
+            delay.TotalSeconds.ShouldBeGreaterThan(16);
+            delay.TotalSeconds.ShouldBeLessThan(17);
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { /* best effort */ }
+        }
+    }
+
     // ---------------------------------------------------------------------------- test plumbing
 
     private static TranscriptTailer NewTailer(
@@ -633,6 +880,52 @@ public class TranscriptAdoptionSafetyTests
     /// <summary>The meta record every <c>--name</c>ed launch writes (rule C2b).</summary>
     private static string AgentNameLine(string agentName) =>
         JsonSerializer.Serialize(new { type = "agent-name", agentName });
+
+    /// <summary>
+    /// Claude's <c>queue-operation</c> shape (CARD-0064). Real records carry no <c>cwd</c>; C2
+    /// comes from a sibling attachment. Both <c>enqueue</c> and <c>remove</c> carry the full body.
+    /// </summary>
+    private static string QueueOperationLine(string operation, string content, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "queue-operation",
+            operation,
+            timestamp = timestamp.ToUniversalTime().ToString("o"),
+            content,
+        });
+
+    /// <summary>Claude's <c>attachment.type = queued_command</c> shape — prompt is the queued body.</summary>
+    private static string QueuedCommandLine(string uuid, string cwd, string prompt, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "attachment",
+            uuid,
+            cwd,
+            timestamp = timestamp.ToUniversalTime().ToString("o"),
+            attachment = new { type = "queued_command", prompt },
+        });
+
+    /// <summary>
+    /// A cwd+timestamp attachment that is not a prompt (the measured file's first cwd is a
+    /// <c>hook_cancelled</c> attachment). Gives C2/C3 something to read without feeding C4.
+    /// </summary>
+    private static string CwdAnchorLine(string cwd, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "attachment",
+            uuid = "cwd-anchor",
+            cwd,
+            timestamp = timestamp.ToUniversalTime().ToString("o"),
+            attachment = new { type = "hook_cancelled" },
+        });
+
+    private static async Task AssertBoundByDiscoveryAsync(HubEvents hub, TranscriptTailer tailer, string file)
+    {
+        var bound = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptBound, TimeSpan.FromSeconds(10));
+        bound.ShouldNotBeNull("queued C4 evidence must bind by discovery");
+        bound!.RootElement.GetProperty("How").GetString().ShouldBe(TranscriptBindMethods.Discovery);
+        tailer.BoundTranscriptPath.ShouldBe(file);
+    }
 
     private static async Task<IReadOnlyList<RunnerTranscriptEvent>> PollForEntriesAsync(
         TranscriptTailer tailer, int want, TimeSpan timeout)

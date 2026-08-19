@@ -418,4 +418,21 @@ public class TranscriptNormalizerTests
         TranscriptNormalizer.Normalize("""{"type":"file-history-snapshot"}""").ShouldBeEmpty();
         TranscriptNormalizer.Normalize("""{"type":"last-prompt","lastPrompt":"x"}""").ShouldBeEmpty();
     }
+
+    // CARD-0064: queued-but-unsubmitted bodies stay out of the ingested stream. C4 harvests them
+    // inside TranscriptCandidateProbe; if they leaked through here, CARD-0055 could confirm Sent
+    // on a body still sitting in the composer queue.
+    [Test]
+    public void Queue_operation_and_queued_command_attachment_normalize_to_nothing()
+    {
+        TranscriptNormalizer.Normalize(
+                """{"type":"queue-operation","operation":"enqueue","content":"the brief this session was sent"}""")
+            .ShouldBeEmpty();
+        TranscriptNormalizer.Normalize(
+                """{"type":"queue-operation","operation":"remove","content":"the brief this session was sent"}""")
+            .ShouldBeEmpty();
+        TranscriptNormalizer.Normalize(
+                """{"type":"attachment","attachment":{"type":"queued_command","prompt":"the brief this session was sent"}}""")
+            .ShouldBeEmpty();
+    }
 }
