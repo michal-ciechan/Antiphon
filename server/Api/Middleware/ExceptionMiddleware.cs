@@ -39,7 +39,7 @@ public class ExceptionMiddleware
 
     private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
-        var statusCode = exception is HttpException httpEx ? httpEx.StatusCode : 500;
+        var (statusCode, detail) = Classify(exception);
         var traceId = context.TraceIdentifier;
 
         // Log at appropriate level
@@ -57,9 +57,7 @@ public class ExceptionMiddleware
             ["type"] = GetProblemType(statusCode),
             ["title"] = GetProblemTitle(statusCode),
             ["status"] = statusCode,
-            ["detail"] = exception is HttpException
-                ? exception.Message
-                : "An unexpected error occurred.",
+            ["detail"] = detail,
             ["traceId"] = traceId,
         };
 
@@ -77,6 +75,43 @@ public class ExceptionMiddleware
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(problemDetails, JsonOptions));
     }
+
+    /// <summary>
+    /// Body-bind failures (unknown enum name, numeric enum token with integers disallowed) arrive
+    /// as <see cref="BadHttpRequestException"/> wrapping a <see cref="JsonException"/>. Without
+    /// this mapping they used to become a generic 500. A raw <see cref="JsonException"/> is
+    /// treated the same only when it is the body-bind escape — a service parsing a stored file
+    /// should still 500 if it lets one out.
+    /// </summary>
+    private static (int StatusCode, string Detail) Classify(Exception exception) => exception switch
+    {
+        HttpException http => (http.StatusCode, http.Message),
+        BadHttpRequestException bad => (bad.StatusCode, BindFailureDetail(bad)),
+        JsonException json when IsRequestBodyBindFailure(json) => (StatusCodes.Status400BadRequest, json.Message),
+        _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred.")
+    };
+
+    private static string BindFailureDetail(BadHttpRequestException exception) =>
+        FindJsonException(exception)?.Message ?? exception.Message;
+
+    private static JsonException? FindJsonException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is JsonException json)
+                return json;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// STJ names the failing token with a JSON pointer (<c>$.modelLevel</c>). Used only as the
+    /// body-bind escape when Minimal APIs do not wrap the throw in
+    /// <see cref="BadHttpRequestException"/>.
+    /// </summary>
+    private static bool IsRequestBodyBindFailure(JsonException exception) =>
+        exception.Path is { Length: > 0 } path && path.StartsWith('$');
 
     private static string GetProblemType(int statusCode) => statusCode switch
     {

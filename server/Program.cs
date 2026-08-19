@@ -191,10 +191,13 @@ try
         client.Timeout = Timeout.InfiniteTimeSpan;
     });
 
-    // JSON serialization — serialize enums as strings for API responses
+    // JSON serialization — serialize enums as strings for API responses.
+    // Integer tokens are rejected: a numeric modelLevel used to bind as the enum ordinal
+    // (0 → Frontier, 99 → an undefined value that round-tripped as a number).
     builder.Services.ConfigureHttpJsonOptions(options =>
     {
-        options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        options.SerializerOptions.Converters.Add(
+            new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false));
     });
 
     // Health checks (NFR21)

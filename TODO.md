@@ -59,20 +59,6 @@ candidate whose first record predates this session's launch — a genuine transc
 cannot start before the session did. Failing both checks, run without a transcript and raise an
 incident rather than silently binding to the wrong one.
 
-### A numeric `modelLevel` is silently ignored on agent create
-`POST /api/agents` with `"modelLevel": 0` returns **200 with an agent on `High`**, not `Frontier`.
-`CreateAgentRequest.ModelLevel` is a nullable enum and the API serialises enums as *strings*, so a
-numeric value fails to bind, lands as null, and takes the `High` default. Confirmed live 2026-08-09.
-
-**What breaks if this is not fixed:** a script or integration that provisions agents believes it
-created a Frontier (fable) agent and gets an Opus one. Nothing errors, nothing logs, and the only
-symptom is the wrong model tier and the wrong bill — the response body reads `"modelLevel": "High"`
-and a caller that does not diff it against what it sent will never notice. It also makes the API
-inconsistent with itself, since `PATCH /api/agents/{id}` with `"modelLevel": "Frontier"` works fine.
-
-**Fix:** reject an unbindable `modelLevel` with a 400 rather than defaulting. Silent coercion of a
-value the caller explicitly supplied is the bug; the string-only enum is fine.
-
 ### Always-on cannot be set when an agent is created
 `CreateAgentRequest` has no `alwaysOn` or `remoteControlEnabled` — only `UpdateAgentRequest` does. So
 every supervised agent is a two-step: create, then PATCH. In the UI that is New Agent → fill → Create

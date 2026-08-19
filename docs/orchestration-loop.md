@@ -100,10 +100,9 @@ check at **$0.12**.
 
 Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).
 Never launch the `claude` CLI directly, and never a `launch-remote` script. When setting
-`modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`) — a numeric
-`0` silently becomes `High` instead of the intended tier (known API sharp edge; also in `TODO.md`;
-do not fix the API from an orchestration-loop edit). Frontier maps to fable (Claude) by default, or
-`grok-4.6` when `Kind=Grok` is passed.
+`modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`). A numeric
+token (`0`, `1`, `99`) is a **400** — the wire is the member name, not the enum ordinal (CARD-0007).
+Frontier maps to fable (Claude) by default, or `grok-4.6` when `Kind=Grok` is passed.
 
 ---
 
