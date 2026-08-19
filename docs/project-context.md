@@ -142,3 +142,12 @@ All AI agents and developers MUST follow these 13 rules:
 | `GateActioned` | `['workflow', id]`, `['workflows']` | Gate approved, rejected, or go-back |
 | `ArtifactUpdated` | `['workflow', id, 'artifacts']` | New artifact version created |
 | `CascadeTriggered` | `['workflow', id, 'stages']`, `['workflow', id]` | Course correction cascade initiated |
+
+## The record
+
+Outstanding work belongs on the Antiphon board as a card (`scripts/card.ps1 new -Board <name> ...`),
+not in a `TODO.md` file. Board and column identifiers are this deployment's data, not a portable
+fact — name the board, do not hard-code its id.
+
+Operational knowledge discovered in a session should be promoted into the tracked doc that owns the
+topic before the session ends. The auto-memory system is a cache, not the record.

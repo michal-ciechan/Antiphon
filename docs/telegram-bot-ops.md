@@ -19,6 +19,22 @@ joined to the SAME Telegram group would collide on one channel row and route to 
 agent that row is bound to. Policy: one bot per group. Future fix: a `BotId` discriminator
 column.
 
+## Deploying the messaging service (server2)
+
+The `family` gateway on server2 is rebuilt from this repo's messaging projects, not from a published
+image bump alone. Tar-sync `src/Antiphon.Messaging*` plus `Messaging.Pack.props` to
+`/home/mc/antiphon-messaging/build/src` on server2, then:
+
+```bash
+docker compose build messaging-service && docker compose up -d messaging-service
+```
+
+Kafka topics `channels.inbound` / `channels.outbound` carry `max.message.bytes=20971520`.
+
+These exact paths and steps should be re-verified against server2 at the time anyone actually runs
+them — they were captured from an operator memory note, not re-derived fresh when this section was
+written.
+
 ## Configure the agent (Channels + Agents pages, or API)
 
 1. Agent row: `WorkingDirectory = C:\src\ClaudeBot\agents\<name>` (workspace must contain

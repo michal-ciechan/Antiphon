@@ -25,6 +25,11 @@ pick a card
    merge --ff-only  ──▶  deploy  ──▶  close the card  ──▶  clean up
 ```
 
+A finished Plan or Docs deliverable sitting in a worktree is invisible. Cherry-pick or copy it onto
+master and push as soon as the task reports — do not wait for the task to formally settle. Two
+2026-08-10 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before
+anyone noticed.
+
 ### Picking
 
 P0 first, but prefer a card that **changes how everything else gets done** over one more feature.
@@ -89,6 +94,15 @@ Say this in the brief explicitly; do not assume the role name carries it.
 
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
+
+### Launching an agent
+
+Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).
+Never launch the `claude` CLI directly, and never a `launch-remote` script. When setting
+`modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`) — a numeric
+`0` silently becomes `High` instead of the intended tier (known API sharp edge; also in `TODO.md`;
+do not fix the API from an orchestration-loop edit). Frontier maps to fable (Claude) by default, or
+`grok-4.6` when `Kind=Grok` is passed.
 
 ---
 
