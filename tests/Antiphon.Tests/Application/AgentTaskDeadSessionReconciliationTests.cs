@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -241,6 +242,77 @@ public class AgentTaskDeadSessionReconciliationTests
         (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
     }
 
+    // ---- CARD-0085: same recovery gate on the dead-session sweep ---------------------------------
+
+    [Test]
+    public async Task a_dead_session_with_zero_transcript_and_a_worktree_commit_recovers_without_killing()
+    {
+        using var repo = new ScratchGitRepo("card0085-dead-wt");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var manager = new WorktreeManager(
+            Options.Create(new GitSettings
+            {
+                WorktreeBasePath = repo.WorktreeRoot,
+                WorktreeStaleAfterDays = 7,
+                WorktreeJanitorIntervalHours = 24,
+            }),
+            TimeProvider.System,
+            NullLogger<WorktreeManager>.Instance);
+        var worktrees = new DelegationWorktreeService(
+            manager,
+            new GitService(NullLogger<GitService>.Instance),
+            NullLogger<DelegationWorktreeService>.Instance);
+        var draft = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            RootTaskId = Guid.NewGuid(),
+            Title = "CARD-0083 plan",
+            Goal = "plan",
+            Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = repo.Path,
+            RepoPath = repo.Path,
+            MergeTargetRef = "feat/parent",
+            CreatedAt = DateTime.UtcNow,
+        };
+        await worktrees.CreateForTaskAsync(draft, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(draft.WorktreePath!, "plan.md"), "the plan\n");
+        (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "add", ".")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "commit", "-m", "docs: CARD-0083 plan")).Ok
+            .ShouldBeTrue();
+        var sha = (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "rev-parse", "--short", "HEAD"))
+            .StdOut.Trim();
+
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(
+            AgentTaskStatus.Dispatched, SessionStatus.Failed, failureReason: "the pty-host exited (code 1)",
+            workspace: WorkspaceMode.Worktree,
+            workingDirectory: repo.Path,
+            title: "CARD-0083 plan",
+            worktreePath: draft.WorktreePath,
+            worktreeBranch: draft.WorktreeBranch,
+            mergeTargetRef: "feat/parent",
+            repoPath: repo.Path,
+            sessionCwd: draft.WorktreePath);
+        var harness = scenario.Harness(task.SessionId);
+
+        await scenario.PastGraceAsync(harness);
+
+        var recovered = await scenario.ReadTaskAsync(task.Id);
+        recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        recovered.Result.ShouldContain(sha);
+        harness.Stopper.Killed.ShouldBeEmpty("recovery never kills — CARD-0056, and this sweep already must not");
+        harness.Runner.Killed.ShouldBeEmpty();
+
+        await using var verify = CreateContext();
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+            .ShouldBeTrue();
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.SessionId))
+            .ShouldBe(0);
+    }
+
     // ---- 11: the lockstep ------------------------------------------------------------------------
 
     /// <summary>
@@ -360,6 +432,15 @@ public class AgentTaskDeadSessionReconciliationTests
             services.AddScoped<AgentTaskService>();
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton(firstSeen);
+            // CARD-0085: same recovery gate as the delivery watchdog. Empty projects root so Arm B
+            // cannot scan the machine's real ~/.claude/projects during these fleet-global sweeps.
+            services.AddSingleton<AgentTaskReplyService>();
+            services.AddSingleton<GitWorkspaceService>();
+            services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"),
+            }));
+            services.AddSingleton<DelegateBindRefusalRecovery>();
             services.AddScoped<AgentTaskDispatcher>();
 
             var provider = services.BuildServiceProvider();
@@ -382,7 +463,15 @@ public class AgentTaskDeadSessionReconciliationTests
             string? failureReason = null,
             int? endedMinutesAgo = null,
             AgentTaskRole role = AgentTaskRole.Code,
-            bool detachSession = false)
+            bool detachSession = false,
+            WorkspaceMode workspace = WorkspaceMode.Shared,
+            string? workingDirectory = null,
+            string? title = null,
+            string? worktreePath = null,
+            string? worktreeBranch = null,
+            string? mergeTargetRef = null,
+            string? repoPath = null,
+            string? sessionCwd = null)
         {
             await EnsureParentSessionAsync();
 
@@ -393,6 +482,7 @@ public class AgentTaskDeadSessionReconciliationTests
             // Recent on purpose: the delivery watchdog's own 10-minute window must not be able to
             // reach these rows, so a failure here can only ever have come from the sweep under test.
             var dispatched = DateTime.UtcNow.AddMinutes(-1);
+            var cwd = sessionCwd ?? workingDirectory ?? Path.GetTempPath();
 
             await using var db = CreateContext();
             db.AgentSessions.Add(new AgentSession
@@ -401,7 +491,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 DefinitionName = "dead-session-test",
                 AgentKind = AgentKind.ClaudeCode,
                 Status = sessionStatus,
-                Cwd = Path.GetTempPath(),
+                Cwd = cwd,
                 Cols = 120,
                 Rows = 30,
                 CreatedAt = dispatched,
@@ -415,7 +505,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 Id = agentId,
                 Name = agentName,
                 Slug = agentName,
-                WorkingDirectory = Path.GetTempPath(),
+                WorkingDirectory = cwd,
                 Details = "Dead-session reconciliation test delegate.",
                 Status = AgentStatus.Running,
                 ModelLevel = AgentModelLevel.High,
@@ -428,13 +518,17 @@ public class AgentTaskDeadSessionReconciliationTests
             {
                 Id = taskId,
                 RootTaskId = taskId,
-                Title = "Dead session reconciliation test",
+                Title = title ?? "Dead session reconciliation test",
                 Goal = "Do the thing.",
                 Kind = AgentTaskKind.Worker,
                 Role = role,
                 ModelLevel = AgentModelLevel.High,
-                Workspace = WorkspaceMode.Shared,
-                WorkingDirectory = Path.GetTempPath(),
+                Workspace = workspace,
+                WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
+                RepoPath = repoPath,
+                WorktreePath = worktreePath,
+                WorktreeBranch = worktreeBranch,
+                MergeTargetRef = mergeTargetRef,
                 AgentId = agentId,
                 AgentName = agentName,
                 AgentSessionId = detachSession ? null : sessionId,
@@ -530,6 +624,7 @@ public class AgentTaskDeadSessionReconciliationTests
         {
             await using var db = CreateContext();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+            await db.AgentIncidents.Where(i => _agents.Contains(i.AgentId)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages
                 .Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();

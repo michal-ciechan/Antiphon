@@ -345,6 +345,10 @@ try
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
     builder.Services.AddSingleton<GitWorkspaceService>();
+    // CARD-0085: positive-evidence gate before a zero-transcript Failed. Singleton — no DB of
+    // its own; the dispatcher (scoped) calls it with the task + session it already loaded.
+    builder.Services.AddOptions<DelegateBindRefusalRecoverySettings>();
+    builder.Services.AddSingleton<DelegateBindRefusalRecovery>();
     // Workspace switcher lookups (repo root / branch / worktree list), TTL-cached.
     builder.Services.AddSingleton<WorkspaceInfoService>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<WorkspaceInfoService>());

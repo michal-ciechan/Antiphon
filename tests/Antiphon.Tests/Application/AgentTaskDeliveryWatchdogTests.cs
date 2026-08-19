@@ -1,13 +1,16 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -201,9 +204,209 @@ public class AgentTaskDeliveryWatchdogTests
             .Status.ShouldBe(AgentTaskStatus.Dispatched, "the reviewers are still working");
     }
 
+    // ---- CARD-0085: recover a false-negative delivery-failed --------------------------------
+
+    [Test]
+    public async Task zero_transcript_plus_worktree_commit_recovers_succeeded_and_does_not_kill()
+    {
+        using var repo = new ScratchGitRepo("card0085-wt");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (worktrees, _) = CreateWorktreeService(repo);
+        var draft = NewWorktreeDraft(repo.Path, "feat/parent");
+        await worktrees.CreateForTaskAsync(draft, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(draft.WorktreePath!, "plan.md"), "the plan\n");
+        (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "add", ".")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "commit", "-m", "docs: CARD-0083 plan")).Ok
+            .ShouldBeTrue();
+        var sha = (await ScratchGitRepo.GitInAsync(draft.WorktreePath!, "rev-parse", "--short", "HEAD"))
+            .StdOut.Trim();
+
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedRecoverableTaskAsync(
+            dispatchedMinutesAgo: 11,
+            workspace: WorkspaceMode.Worktree,
+            workingDirectory: repo.Path,
+            title: "CARD-0083 plan",
+            worktreePath: draft.WorktreePath,
+            worktreeBranch: draft.WorktreeBranch,
+            mergeTargetRef: "feat/parent",
+            repoPath: repo.Path,
+            sessionCwd: draft.WorktreePath);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        recovered.Status.ShouldBe(AgentTaskStatus.Succeeded, "the work landed — Failed would redispatch on it");
+        recovered.Result.ShouldNotBeNull();
+        recovered.Result.ShouldContain(sha, customMessage: "Result names the commit that recovered it");
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning))
+            .ShouldBeTrue("Succeeded but loud — the caveat is an event, not a silent flip");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+            .ShouldBeTrue("kind 24 is the recovery; TranscriptBindFailed stays the refusal");
+        stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value, "do not kill a live unbound worker");
+        (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.AgentSessionId))
+            .ShouldBe(0, "recovery must not ingest or bind the refused file");
+    }
+
+    [Test]
+    public async Task zero_transcript_plus_unrelated_shared_commit_still_fails_and_kills()
+    {
+        using var repo = new ScratchGitRepo("card0085-shared-unrelated");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.CommitFileAsync("neighbour.md", "someone else's work\n");
+
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedRecoverableTaskAsync(
+            dispatchedMinutesAgo: 11,
+            workingDirectory: repo.Path,
+            title: "Do the thing",
+            sessionCwd: repo.Path);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(
+            AgentTaskStatus.Failed,
+            "a neighbouring commit on a shared checkout is not this task's — CARD-0006");
+        failed.FailureReason.ShouldContain("never delivered");
+        stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task zero_transcript_plus_shared_commit_citing_the_card_recovers()
+    {
+        using var repo = new ScratchGitRepo("card0085-shared-card");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "plan.md"), "the plan\n");
+        await repo.GitAsync("add", ".");
+        await repo.GitAsync("commit", "-m", "docs(providers): CARD-0083 plan - the contract");
+        var sha = (await repo.GitReadAsync("rev-parse", "--short", "HEAD")).Trim();
+
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedRecoverableTaskAsync(
+            dispatchedMinutesAgo: 11,
+            workingDirectory: repo.Path,
+            title: "CARD-0083 plan the provider contract",
+            sessionCwd: repo.Path);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        recovered.Result.ShouldContain(sha);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeTrue();
+        stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task zero_transcript_plus_later_jsonl_needle_recovers_without_ingesting()
+    {
+        var projectsRoot = Directory.CreateTempSubdirectory("card0085-jsonl").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0085-cwd").FullName;
+        string? jsonl = null;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                sessionCwd: cwd);
+
+            var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+            var projectDir = Path.Combine(projectsRoot, encoded);
+            Directory.CreateDirectory(projectDir);
+            jsonl = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+            var started = DateTime.UtcNow;
+            await File.WriteAllTextAsync(jsonl,
+                JsonlUser(cwd, "green", started) + "\n"
+                + JsonlAssistant(
+                    cwd,
+                    $"done. {DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
+                    started.AddMinutes(2))
+                + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            recovered.Result.ShouldContain(jsonl, customMessage: "incident/result names the file, not a bind");
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.AgentSessionId))
+                .ShouldBe(0, "Arm B does not ingest. C4 stays refused.");
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered);
+            incident.Message.ShouldContain(jsonl);
+            incident.Severity.ShouldBe(AlertSeverity.Warning);
+            stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task a_c3_refused_jsonl_is_not_evidence_even_when_the_needle_matches()
+    {
+        var projectsRoot = Directory.CreateTempSubdirectory("card0085-c3").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0085-c3-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                title: "CARD-0083 plan",
+                sessionCwd: cwd);
+
+            var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+            var projectDir = Path.Combine(projectsRoot, encoded);
+            Directory.CreateDirectory(projectDir);
+            var jsonl = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+            var hourAgo = DateTime.UtcNow.AddHours(-1);
+            await File.WriteAllTextAsync(jsonl,
+                JsonlUser(cwd, "green", hourAgo) + "\n"
+                + JsonlAssistant(cwd, $"CARD-0083 {DelegationReportFormatter.TaskMarker(task.Id)}", hourAgo.AddMinutes(1))
+                + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(
+                AgentTaskStatus.Failed,
+                "a C3-refused file is the 2026-08-09 operator-collision — not this session");
+            stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+            (await verify.AgentIncidents.AnyAsync(
+                i => i.AgentId == task.AgentId && i.Kind == AgentIncidentKind.DelegateBindRefusalRecovered))
+                .ShouldBeFalse();
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness()
+    private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
+        DelegateBindRefusalRecoverySettings? recoverySettings = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
@@ -234,6 +437,11 @@ public class AgentTaskDeliveryWatchdogTests
         // has to be a real one here (it is optional in the constructor — an unregistered one simply
         // leaves the sweep unarmed, which every other harness relies on).
         services.AddSingleton<AgentTaskReplyService>();
+        // CARD-0085: the bind-refusal recovery gate. Predating tests still Fail when neither arm
+        // finds evidence (TempPath is not a repo and the title has no CARD-NNNN).
+        services.AddSingleton<GitWorkspaceService>();
+        services.AddSingleton(Options.Create(recoverySettings ?? new DelegateBindRefusalRecoverySettings()));
+        services.AddSingleton<DelegateBindRefusalRecovery>();
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
@@ -463,4 +671,146 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    /// <summary>
+    /// A Dispatched task plus its pool delegate, so a recovered incident has an AgentId to hang on.
+    /// Optional worktree / cwd coordinates for the two CARD-0085 evidence arms.
+    /// </summary>
+    private static async Task<AgentTask> SeedRecoverableTaskAsync(
+        int dispatchedMinutesAgo,
+        WorkspaceMode workspace = WorkspaceMode.Shared,
+        string? workingDirectory = null,
+        string? title = null,
+        string? goal = null,
+        string? worktreePath = null,
+        string? worktreeBranch = null,
+        string? mergeTargetRef = null,
+        string? repoPath = null,
+        string? sessionCwd = null)
+    {
+        var sessionId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var agentName = $"rec-{agentId:N}"[..16];
+        var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
+        var cwd = sessionCwd ?? workingDirectory ?? Path.GetTempPath();
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = dispatched,
+            StartedAt = dispatched,
+            LastSeenAt = dispatched,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = agentName,
+            Slug = agentName,
+            WorkingDirectory = cwd,
+            Details = "CARD-0085 recovery test delegate.",
+            Status = AgentStatus.Running,
+            ModelLevel = AgentModelLevel.Frontier,
+            IsPoolDelegate = true,
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = dispatched,
+            UpdatedAt = dispatched,
+        });
+        var task = new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            Title = title ?? "Delivery watchdog recovery test",
+            Goal = goal ?? "Do the thing.",
+            Role = AgentTaskRole.Plan,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = workspace,
+            WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
+            RepoPath = repoPath,
+            WorktreePath = worktreePath,
+            WorktreeBranch = worktreeBranch,
+            MergeTargetRef = mergeTargetRef,
+            AgentId = agentId,
+            AgentName = agentName,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = dispatched,
+            DispatchedAt = dispatched,
+        };
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
+
+    private static AgentTask NewWorktreeDraft(string repoPath, string mergeTarget) => new()
+    {
+        Id = Guid.NewGuid(),
+        RootTaskId = Guid.NewGuid(),
+        Title = "CARD-0083 plan",
+        Goal = "plan the provider contract",
+        Workspace = WorkspaceMode.Worktree,
+        WorkingDirectory = repoPath,
+        RepoPath = repoPath,
+        MergeTargetRef = mergeTarget,
+        CreatedAt = DateTime.UtcNow,
+    };
+
+    private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateWorktreeService(
+        ScratchGitRepo repo)
+    {
+        var manager = new WorktreeManager(
+            Options.Create(new GitSettings
+            {
+                WorktreeBasePath = repo.WorktreeRoot,
+                WorktreeStaleAfterDays = 7,
+                WorktreeJanitorIntervalHours = 24,
+            }),
+            TimeProvider.System,
+            NullLogger<WorktreeManager>.Instance);
+        var service = new DelegationWorktreeService(
+            manager,
+            new GitService(NullLogger<GitService>.Instance),
+            NullLogger<DelegationWorktreeService>.Instance);
+        return (service, manager);
+    }
+
+    private static string JsonlUser(string cwd, string text, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "user",
+            uuid = Guid.NewGuid().ToString("D"),
+            cwd,
+            timestamp = timestamp.UtcDateTime.ToString("o"),
+            message = new { role = "user", content = text },
+        });
+
+    private static string JsonlAssistant(string cwd, string text, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            uuid = Guid.NewGuid().ToString("D"),
+            cwd,
+            timestamp = timestamp.UtcDateTime.ToString("o"),
+            message = new { role = "assistant", content = new[] { new { type = "text", text } } },
+        });
+
+    private static void TryDeleteTree(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+                return;
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 }

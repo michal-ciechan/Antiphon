@@ -507,6 +507,79 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
+    /// CARD-0085: the delivery watchdog (or the dead-session twin) was about to write Failed
+    /// because the session ingested nothing, but the working directory has positive evidence the
+    /// work happened. Succeeded is the right status — Failed is what makes a less-careful caller
+    /// redispatch on top of already-pushed work — and CARD-0046's "Succeeded but loud" is how the
+    /// recovered verdict stays visible: Warning event, incident, caller-facing caveat.
+    ///
+    /// Does not bind or ingest the refused file. Does not kill the session (CARD-0056: a kill on
+    /// a false Failed is how you kill a live worker).
+    /// </summary>
+    public async Task RecoverFromBindRefusalAsync(
+        Guid taskId, DelegateBindRefusalEvidence evidence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.AgentTasks.FirstOrDefaultAsync(
+            t => t.Id == taskId
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            ct);
+        if (task is null)
+            return;
+
+        var now = UtcNow();
+        var where = evidence.Describe();
+        var note =
+            $"Recovered from an unbound session; work is at {where}. C1–C4 were not changed.";
+        var warning =
+            $"WARNING: this task was recovered from an unbound session (zero ingested transcript "
+            + $"rows). The work is at {where}. C1–C4 were not changed. Do not redispatch — that "
+            + "would run again on top of already-landed work.";
+
+        task.Status = AgentTaskStatus.Succeeded;
+        task.Result = note;
+        task.FailureReason = null;
+        task.CompletedAt = now;
+        task.ConcurrencyToken = Guid.NewGuid();
+
+        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Completed, note, now));
+        db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, warning, now));
+
+        string? workspaceNote = null;
+        if (task.Workspace == WorkspaceMode.Worktree)
+            workspaceNote = await MergeBackAsync(scope.ServiceProvider, db, task, now, ct);
+
+        // Incident before release: AgentIncidents cascade-delete with the agent row, and a
+        // worktree pool delegate's ordinary success removes that row.
+        if (task.AgentSessionId is Guid sessionId)
+        {
+            await RecordIncidentOnceAsync(
+                scope.ServiceProvider, db, task, sessionId,
+                AgentIncidentKind.DelegateBindRefusalRecovered,
+                $"Delegate task {DelegationReportFormatter.Short(task.Id)} recovered from an unbound session",
+                $"task {DelegationReportFormatter.Short(task.Id)} recovered from an unbound session; "
+                + $"work is at {where}. C1–C4 were not changed.",
+                ct);
+        }
+
+        // Ordinary success release, minus the kill: the session may still be a live worker whose
+        // only crime was an unbound transcript (CARD-0056). killSession: false also skips the
+        // agent-row delete so the incident just recorded is not cascaded away.
+        if (task.Status == AgentTaskStatus.Succeeded)
+            await ReleaseDelegateAsync(scope.ServiceProvider, db, task, now, ct, killSession: false);
+
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "Task {ShortId} recovered from bind refusal ({Evidence}); settled Succeeded. Session not killed.",
+            DelegationReportFormatter.Short(task.Id), where);
+
+        await DeliverToParentAsync(task, note, ct, workspaceNote, warning);
+        await PublishAsync(task, ct);
+    }
+
+    /// <summary>
     /// The turn ended and produced NO text at all — not the turn-ending response's, not anything
     /// earlier. Measured 1 in 180 responses: a lone <c>end_turn</c> thinking record followed 106 ms
     /// later by "API Error: Connection lost mid-response".
@@ -871,7 +944,8 @@ public sealed class AgentTaskReplyService
     /// because settlement is the only thing that frees a delegate.</para>
     /// </summary>
     private async Task ReleaseDelegateAsync(
-        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
+        bool killSession = true)
     {
         if (task.AgentId is not Guid agentId)
             return;
@@ -898,6 +972,11 @@ public sealed class AgentTaskReplyService
                 agent.Name, agent.WorkingDirectory, DelegationReportFormatter.Short(task.RootTaskId));
             return;
         }
+
+        // CARD-0085: a recovered bind-refusal must not kill the session AND must not delete the
+        // agent row (AgentIncidents cascade with it). The worker may still be live.
+        if (!killSession)
+            return;
 
         if (task.AgentSessionId is Guid sessionId)
         {

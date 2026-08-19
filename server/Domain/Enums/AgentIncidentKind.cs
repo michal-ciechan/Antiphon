@@ -183,4 +183,19 @@ public enum AgentIncidentKind
     /// incident/alert with no session-targeted notification — there is no caller to tell.
     /// </summary>
     AutoCompactFailed = 23,
+
+    /// <summary>
+    /// A delegated task that was about to be Failed for zero ingested transcript rows was instead
+    /// settled Succeeded because the working directory had positive evidence the work happened
+    /// (commits on the task branch, or a cwd-matching JSONL whose later content cites the task).
+    /// Warning: Succeeded is the right status — the work landed — but C1–C4 still refused the
+    /// transcript, and the existing <see cref="TranscriptBindFailed"/> stays on the timeline.
+    ///
+    /// Live miss 2026-08-18 (CARD-0085): task 9a5b93a3 finished and pushed <c>b9ecf40</c>, then
+    /// the delivery watchdog wrote Failed because the session had zero <c>TranscriptEntries</c>
+    /// (C4 never saw a typed user-prompt head). Failed is what makes a less-careful caller
+    /// redispatch on top of already-pushed work. Recovery does not bind or ingest the refused
+    /// file and does not change C1–C4.
+    /// </summary>
+    DelegateBindRefusalRecovered = 24,
 }

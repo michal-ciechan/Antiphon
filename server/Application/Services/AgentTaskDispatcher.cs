@@ -37,6 +37,7 @@ public sealed class AgentTaskDispatcher
     private readonly AgentTaskCheckQueue? _checkQueue;
     private readonly ISessionRunnerClient? _runnerClient;
     private readonly DeadSessionFirstSeenState? _deadSessions;
+    private readonly DelegateBindRefusalRecovery? _bindRefusalRecovery;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -62,12 +63,16 @@ public sealed class AgentTaskDispatcher
         // sweep unarmed — it must never fail a task on the DB row alone (see
         // FailDeadSessionTasksAsync), so an absent runner client disarms rather than degrades.
         ISessionRunnerClient? runnerClient = null,
-        DeadSessionFirstSeenState? deadSessions = null)
+        DeadSessionFirstSeenState? deadSessions = null,
+        // CARD-0085: optional so predating harnesses keep today's Failed on an empty transcript
+        // table. Recovery also needs _replies (it owns settlement); either missing skips the gate.
+        DelegateBindRefusalRecovery? bindRefusalRecovery = null)
     {
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
         _checkQueue = checkQueue;
         _replies = replies;
+        _bindRefusalRecovery = bindRefusalRecovery;
         _ptyProfile = ptyProfile;
         _db = db;
         _agentRegistry = agentRegistry;
@@ -366,6 +371,11 @@ public sealed class AgentTaskDispatcher
             string reason;
             if (!started)
             {
+                // CARD-0085: an empty TranscriptEntries table is not evidence the work did not
+                // happen. Pull git / later-JSONL evidence before writing Failed (and killing).
+                if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
+                    continue;
+
                 var briefStatus = await _db.SessionQueuedMessages
                     .AsNoTracking()
                     .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
@@ -578,6 +588,17 @@ public sealed class AgentTaskDispatcher
             var firstSeen = _deadSessions.FirstSeenAt(task.Id, now);
             if (now - firstSeen < grace)
                 continue;
+
+            // CARD-0085: same gate as FailNeverStartedAsync, and ONLY when this session also has
+            // zero TranscriptEntries. A dead session that ingested turns is CARD-0021's "no report
+            // is coming"; do not widen.
+            if (task.AgentSessionId is Guid unbound
+                && !await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == unbound, ct)
+                && await TryRecoverBindRefusalAsync(task, unbound, ct))
+            {
+                _deadSessions.Forget(task.Id);
+                continue;
+            }
 
             var what = AgentTaskLiveness.Describe(task.AgentSessionId, session);
             var evidence = session?.FailureReason
@@ -1271,6 +1292,35 @@ public sealed class AgentTaskDispatcher
             At = now,
         });
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// CARD-0085: before a zero-transcript Failed is written, ask the working directory whether
+    /// the work actually happened. Recovery needs both the helper (evidence) and the reply
+    /// service (settlement it already owns); either missing leaves today's Failed in place so
+    /// predating harnesses stay unchanged.
+    /// </summary>
+    private async Task<bool> TryRecoverBindRefusalAsync(
+        AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        if (_replies is null || _bindRefusalRecovery is null)
+            return false;
+
+        var session = await _db.AgentSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+        var evidence = await _bindRefusalRecovery.TryFindAsync(task, session, ct);
+        if (evidence is null)
+            return false;
+
+        await _replies.RecoverFromBindRefusalAsync(task.Id, evidence, ct);
+        // Settlement ran on a different scope/DbContext. This tracker still holds the pre-recovery
+        // Dispatched entity; detach so a later SaveChanges in this tick cannot clobber Succeeded.
+        _db.Entry(task).State = EntityState.Detached;
+        _logger.LogWarning(
+            "Task {ShortId} recovered from an unbound session ({Evidence}); C1–C4 were not changed. "
+            + "Session {SessionId} was not killed.",
+            DelegationReportFormatter.Short(task.Id), evidence.Describe(), sessionId);
+        return true;
     }
 
     private async Task FailAsync(AgentTask task, string reason, CancellationToken ct)
