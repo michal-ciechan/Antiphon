@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Agents.Tui;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -152,24 +153,63 @@ public sealed class ProviderContractCatalogTests
     [Test]
     public void TurnCompletion_Claude_is_structured_matching_ActivityModeFor_Structured()
     {
-        // AgentTuiLaunchResolver.ActivityModeFor maps Claude → Structured today. Grok is still
-        // QuietTime there (stale since CARD-0080 S2); S3 flips that. This pin is the Claude
-        // half that must stay identical across the migration.
         var turn = ProviderContractCatalog.For(AgentKind.ClaudeCode).TurnCompletion;
+        turn.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        turn.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
+        turn.HasScreenFallback.ShouldBeTrue();
+        AgentTuiLaunchResolver.ActivityModeFor(AgentKind.ClaudeCode)
+            .ShouldBe(AgentTuiLaunchActivityMode.Structured);
+    }
+
+    [Test]
+    public void TurnCompletion_Grok_is_structured_with_screen_fallback()
+    {
+        var turn = ProviderContractCatalog.For(AgentKind.Grok).TurnCompletion;
         turn.State.ShouldBe(AgentTuiCapabilityState.Supported);
         turn.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
         turn.HasScreenFallback.ShouldBeTrue();
     }
 
     [Test]
-    public void TurnCompletion_Grok_is_structured_with_screen_fallback()
+    public void ActivityModeFor_Grok_is_Structured_after_CARD_0080_S2()
     {
-        // Catalog truth (CARD-0080 S2). ActivityModeFor(Grok) is still QuietTime — S3's
-        // deliberate fix, not a lockstep pin.
+        // Deliberate S3 fix: ActivityModeFor used to map Grok → QuietTime, stale since the
+        // Grok tailer landed (CARD-0080 S2). It now reads TurnCompletion.Signal.
+        AgentTuiLaunchResolver.ActivityModeFor(AgentKind.Grok)
+            .ShouldBe(AgentTuiLaunchActivityMode.Structured);
+        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        {
+            AgentTuiLaunchResolver.ActivityModeFor(kind)
+                .ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
+        }
+    }
+
+    [Test]
+    public void Grok_structuredActivity_TUI_row_is_Supported_after_CARD_0080_S2()
+    {
+        // Deliberate S3/D2 fix: AgentTuiRunnerCatalog.structuredActivity is derived from
+        // TurnCompletion, so Grok can no longer say Degraded "ACP session updates are not tailed"
+        // while the tailer is live.
+        var row = new AgentTuiRunnerCatalog().Get(AgentKind.Grok).Capabilities
+            .Single(c => c.Name == "structuredActivity");
         var turn = ProviderContractCatalog.For(AgentKind.Grok).TurnCompletion;
-        turn.State.ShouldBe(AgentTuiCapabilityState.Supported);
-        turn.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
-        turn.HasScreenFallback.ShouldBeTrue();
+        row.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        row.State.ShouldBe(turn.State);
+        row.Reason.ShouldBe(turn.Reason);
+        row.Reason.ShouldContain("CARD-0080 S2");
+    }
+
+    [Test]
+    public void Tui_structuredActivity_is_derived_from_TurnCompletion_for_every_kind()
+    {
+        var tui = new AgentTuiRunnerCatalog();
+        foreach (var kind in AllKinds)
+        {
+            var row = tui.Get(kind).Capabilities.Single(c => c.Name == "structuredActivity");
+            var turn = ProviderContractCatalog.For(kind).TurnCompletion;
+            row.State.ShouldBe(turn.State, $"{kind}.structuredActivity.State");
+            row.Reason.ShouldBe(turn.Reason, $"{kind}.structuredActivity.Reason");
+        }
     }
 
     [Test]

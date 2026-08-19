@@ -67,7 +67,7 @@ public sealed class AgentTuiLaunchResolverTests
     }
 
     [Test]
-    public async Task Grok_resolve_appends_model_and_uses_quiet_time_activity()
+    public async Task Grok_resolve_appends_model_and_uses_structured_activity()
     {
         await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var provider = BuildProvider(isolatedSchema.ConnectionString);
@@ -88,7 +88,7 @@ public sealed class AgentTuiLaunchResolverTests
         resolved.Spec.Kind.ShouldBe(AgentKind.Grok);
         resolved.Spec.Args.TakeLast(2).ShouldBe(new[] { "--model", "grok-4.6" });
         resolved.EffectiveModelId.ShouldBe("grok-4.6");
-        resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
+        resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.Structured);
         resolved.Spec.Env["GROK_TELEMETRY_ENABLED"].ShouldBe("0");
         resolved.ProfileRevisionId.ShouldBe(revision.Id);
     }

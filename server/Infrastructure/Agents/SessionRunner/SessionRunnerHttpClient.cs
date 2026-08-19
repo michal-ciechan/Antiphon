@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -61,14 +62,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     /// <summary>Which agent kinds get a runner-side transcript tailer (see StartAsync's mapping).</summary>
     public static bool TranscriptEnabledFor(AgentKind kind) =>
-        kind is AgentKind.ClaudeCode or AgentKind.Grok;
+        ProviderContractCatalog.For(kind).Transcript.State == AgentTuiCapabilityState.Supported;
 
     /// <summary>
     /// Which tailer the runner should use. Null for Claude on purpose — it is the pre-Grok default,
     /// so a new server in front of an old runner asks for exactly what that runner already does.
     /// </summary>
-    public static string? TranscriptFormatFor(AgentKind kind) =>
-        kind == AgentKind.Grok ? TranscriptFormats.Grok : null;
+    public static string? TranscriptFormatFor(AgentKind kind)
+    {
+        var transcript = ProviderContractCatalog.For(kind).Transcript;
+        if (transcript.State != AgentTuiCapabilityState.Supported)
+            return null;
+        // Claude's Format is the pre-Grok runner default; sending it would break old runners.
+        return transcript.Format == TranscriptFormats.Claude ? null : transcript.Format;
+    }
 
     /// <summary>
     /// Null on ANY failure — an old runner without the endpoint, an unreachable one, a malformed

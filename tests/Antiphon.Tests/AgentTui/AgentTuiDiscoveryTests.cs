@@ -608,7 +608,7 @@ public sealed class AgentTuiDiscoveryTests
         run.Capabilities.Single(capability => capability.Name == "structuredActivity").State
             .ShouldBe(AgentTuiCapabilityState.Degraded);
         run.Capabilities.Single(capability => capability.Name == "structuredActivity").Reason
-            .ShouldBe("PTY quiet-time fallback; ACP/event integration not active");
+            .ShouldBe(ProviderContractCatalog.For(AgentKind.OpenCode).TurnCompletion.Reason);
         run.Suitability.Interactive.ShouldBeTrue();
         run.Suitability.Queued.ShouldBeFalse();
         run.Suitability.Delegated.ShouldBeFalse();

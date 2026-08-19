@@ -397,12 +397,17 @@ public sealed class AgentTuiLaunchResolver
             environment["GROK_FEEDBACK_ENABLED"] = "0";
     }
 
-    private static AgentTuiLaunchActivityMode ActivityModeFor(AgentKind kind) => kind switch
+    // CARD-0080 S2 landed the Grok tailer; structured turn-completion is now the catalog fact,
+    // not a Claude-only kind list. Undefined kinds stay Unknown (catalog.For throws).
+    public static AgentTuiLaunchActivityMode ActivityModeFor(AgentKind kind)
     {
-        AgentKind.ClaudeCode => AgentTuiLaunchActivityMode.Structured,
-        AgentKind.Codex or AgentKind.OpenCode or AgentKind.Grok or AgentKind.Raw => AgentTuiLaunchActivityMode.QuietTime,
-        _ => AgentTuiLaunchActivityMode.Unknown
-    };
+        if (!Enum.IsDefined(kind))
+            return AgentTuiLaunchActivityMode.Unknown;
+        return ProviderContractCatalog.For(kind).TurnCompletion.Signal
+            == TurnCompletionSignal.StructuredTranscript
+            ? AgentTuiLaunchActivityMode.Structured
+            : AgentTuiLaunchActivityMode.QuietTime;
+    }
 
     private static string[] DeserializeArray(string json)
     {

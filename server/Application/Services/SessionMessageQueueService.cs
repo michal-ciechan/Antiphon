@@ -1086,11 +1086,13 @@ public sealed class SessionMessageQueueService
         // from its ACP updates.jsonl (CARD-0080 S2). Codex/OpenCode/Raw sessions deliver blind.
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await db.AgentSessions.AsNoTracking()
-            .AnyAsync(
-                s => s.Id == sessionId
-                    && (s.AgentKind == AgentKind.ClaudeCode || s.AgentKind == AgentKind.Grok),
-                ct);
+        var kind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct);
+        return kind is { } k
+            && ProviderContractCatalog.For(k).DeliveryVerification.State
+                == AgentTuiCapabilityState.Supported;
     }
 
     // Verification failed: return the message to the queue (never silently lose it), record an

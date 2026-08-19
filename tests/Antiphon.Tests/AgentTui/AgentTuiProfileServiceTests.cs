@@ -796,7 +796,7 @@ public class AgentTuiProfileServiceTests
         grok.CuratedModels.Select(model => model.Identifier).ShouldBe(["grok-4.6", "grok-4.5"]);
         Capability(grok, "modelArgument").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "modelDiscovery").State.ShouldBe(AgentTuiCapabilityState.Supported);
-        Capability(grok, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        Capability(grok, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
         Capability(grok, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Supported);
@@ -810,7 +810,7 @@ public class AgentTuiProfileServiceTests
         Capability(openCode, "modelDiscovery").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(openCode, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Degraded);
         Capability(openCode, "structuredActivity").Reason.ShouldBe(
-            "PTY quiet-time fallback; ACP/event integration not active");
+            ProviderContractCatalog.For(AgentKind.OpenCode).TurnCompletion.Reason);
         Capability(openCode, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Unknown);
         Capability(openCode, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
         Capability(openCode, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Unsupported);

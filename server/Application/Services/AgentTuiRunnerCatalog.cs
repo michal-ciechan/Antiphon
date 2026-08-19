@@ -5,9 +5,6 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTuiRunnerCatalog
 {
-    private const string OpenCodeQuietFallbackReason =
-        "PTY quiet-time fallback; ACP/event integration not active";
-
     public IReadOnlyList<AgentTuiRunnerTypeDto> List() =>
     [
         Get(AgentKind.ClaudeCode),
@@ -48,7 +45,7 @@ public sealed class AgentTuiRunnerCatalog
             "xAI Grok Build TUI terminal client.",
             ["grok-4.6", "grok-4.5"],
             GrokCapabilities(profileArguments),
-            "Use --always-approve for permission bypass and --no-alt-screen so Antiphon can capture the PTY. Structured activity is quiet-time until Grok's ACP session log is tailed."),
+            "Use --always-approve for permission bypass and --no-alt-screen so Antiphon can capture the PTY. Structured activity follows the tailed ACP turn_completed stream (CARD-0080 S2)."),
         AgentKind.Raw => new AgentTuiRunnerTypeDto(
             kind,
             "Raw process",
@@ -105,7 +102,7 @@ public sealed class AgentTuiRunnerCatalog
     [
         Supported("modelArgument", "Claude accepts an exact model through --model."),
         Unsupported("modelDiscovery", "No stable machine-readable model-list command is assumed."),
-        Supported("structuredActivity", "Claude transcript events provide structured turn activity."),
+        StructuredActivity(AgentKind.ClaudeCode),
         Supported("sessionResume", "Claude sessions can be resumed by conversation identity."),
         Supported("remoteControl", "Claude supports Antiphon's remote-control launch behaviour."),
         Supported("systemPromptAppend", "Claude supports --append-system-prompt."),
@@ -119,7 +116,7 @@ public sealed class AgentTuiRunnerCatalog
     [
         Supported("modelArgument", "Codex accepts an exact model argument."),
         Unknown("modelDiscovery", "Installed-client model discovery has not been probed."),
-        Degraded("structuredActivity", "PTY quiet-time detection is not structured turn activity."),
+        StructuredActivity(AgentKind.Codex),
         Unknown("sessionResume", "Installed-client resume support has not been probed."),
         Unsupported("remoteControl", "Claude-style remote control is not available."),
         Unsupported("systemPromptAppend", "Claude-style system-prompt append is not available."),
@@ -133,7 +130,7 @@ public sealed class AgentTuiRunnerCatalog
     [
         Supported("modelArgument", "OpenCode accepts an exact provider/model identifier through --model."),
         Supported("modelDiscovery", "OpenCode exposes the models operation."),
-        Degraded("structuredActivity", OpenCodeQuietFallbackReason),
+        StructuredActivity(AgentKind.OpenCode),
         Unknown("sessionResume", "Installed OpenCode session-resume support has not been established."),
         Unsupported("remoteControl", "Claude-style remote control is not supported."),
         Unsupported("systemPromptAppend", "Claude-style system-prompt append is not supported."),
@@ -147,7 +144,7 @@ public sealed class AgentTuiRunnerCatalog
     [
         Supported("modelArgument", "Grok accepts an exact model through --model."),
         Supported("modelDiscovery", "Grok exposes the models command."),
-        Degraded("structuredActivity", "PTY quiet-time fallback; Grok ACP session updates are not tailed."),
+        StructuredActivity(AgentKind.Grok),
         Supported("sessionResume", "Grok sessions can be resumed by conversation identity."),
         Unsupported("remoteControl", "Claude-style remote control is not available."),
         Supported("systemPromptAppend", "Grok accepts extra standing instructions through --rules."),
@@ -161,21 +158,26 @@ public sealed class AgentTuiRunnerCatalog
     [
         Unknown("modelArgument", "Raw commands have no runner-owned model contract."),
         Unsupported("modelDiscovery", "Raw commands have no model discovery contract."),
-        Degraded("structuredActivity", "PTY quiet-time detection is not structured turn activity."),
+        StructuredActivity(AgentKind.Raw),
         Unknown("sessionResume", "Raw commands have no declared resume contract."),
         Unsupported("remoteControl", "Raw commands have no declared remote-control contract."),
         Unsupported("systemPromptAppend", "Raw commands have no declared system-prompt contract."),
         Unknown("permissionBypass", "Raw command permission semantics are not known.")
     ];
 
+    // D2: structuredActivity is derived from ProviderContract.TurnCompletion so the TUI
+    // row and the machinery cannot drift (the Grok Degraded reason was stale since CARD-0080 S2).
+    private static AgentTuiCapabilityDto StructuredActivity(AgentKind kind)
+    {
+        var turn = ProviderContractCatalog.For(kind).TurnCompletion;
+        return new AgentTuiCapabilityDto("structuredActivity", turn.State, turn.Reason);
+    }
+
     private static AgentTuiCapabilityDto Supported(string name, string reason) =>
         new(name, AgentTuiCapabilityState.Supported, reason);
 
     private static AgentTuiCapabilityDto Unsupported(string name, string reason) =>
         new(name, AgentTuiCapabilityState.Unsupported, reason);
-
-    private static AgentTuiCapabilityDto Degraded(string name, string reason) =>
-        new(name, AgentTuiCapabilityState.Degraded, reason);
 
     private static AgentTuiCapabilityDto Unknown(string name, string reason) =>
         new(name, AgentTuiCapabilityState.Unknown, reason);

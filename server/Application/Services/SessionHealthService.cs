@@ -280,7 +280,10 @@ public sealed class SessionHealthService
 
     private async Task<List<(Agent Agent, AgentSession Session)>> LoadCandidatesAsync(CancellationToken ct)
     {
-        // Health watch covers always-on agents' live interactive ClaudeCode sessions.
+        // Health watch is the RC-bridge scan (WatchRcAsync), not a transcript/delivery gate.
+        // remoteControl is Supported only for Claude and lives on AgentTuiRunnerCatalog — D3
+        // deliberately left it off ProviderContract. Transcript/DeliveryVerification would
+        // pull Grok in and start queueing /remote-control at a kind that has no bridge.
         var agents = await _db.Agents.AsNoTracking().Where(a => a.AlwaysOn).ToListAsync(ct);
         var result = new List<(Agent, AgentSession)>();
         foreach (var agent in agents)

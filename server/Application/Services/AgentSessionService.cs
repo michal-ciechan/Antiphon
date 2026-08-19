@@ -692,7 +692,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
 
-        if (session.AgentKind is not (AgentKind.ClaudeCode or AgentKind.Grok))
+        if (ProviderContractCatalog.For(session.AgentKind).SessionResume.State
+            != AgentTuiCapabilityState.Supported)
             throw new ConflictException("Only Claude Code and Grok sessions can be resumed.");
         // Resume rebuilds a card's worktree-bound session; a cardless interactive session has neither.
         if (session.CardId is not Guid cardId)
@@ -919,7 +920,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     private static bool UsesSessionIdentityArgs(AgentKind kind) =>
-        kind is AgentKind.ClaudeCode or AgentKind.Grok;
+        ProviderContractCatalog.For(kind).SessionResume.State == AgentTuiCapabilityState.Supported;
 
     private static IReadOnlyList<string> BuildSessionIdentityArgs(
         IReadOnlyList<string> args,
