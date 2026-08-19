@@ -39,7 +39,7 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             Environment.SetEnvironmentVariable(hostCanaryName, previous);
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -73,7 +73,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -97,7 +97,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -124,7 +124,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -145,7 +145,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -158,7 +158,9 @@ public sealed class RunnerProcessProbeTests
             var script = WriteHelper(scratch);
             var pidPath = Path.Combine(scratch, "timeout-pids.txt");
             var reaper = new RunnerProcessReaper();
-            var probe = CreateProbe(reaper, timeoutSeconds: 1);
+            // The timeout must fire only AFTER the helper's tree exists — at 1s it killed pwsh
+            // before the pid file was ever written under full-suite load (CARD-0050, measured).
+            var probe = CreateProbe(reaper, timeoutSeconds: 10);
 
             var result = await probe.RunAsync(
                 Request(script, ["tree", pidPath]),
@@ -175,7 +177,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -215,7 +217,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -237,7 +239,7 @@ public sealed class RunnerProcessProbeTests
             });
             var probe = CreateProbe(
                 reaper,
-                timeoutSeconds: 1,
+                timeoutSeconds: 10, // must fire after the tree is up — see CARD-0050 note above
                 seams: new RunnerProcessProbeSeams
                 {
                     StopTreeAsync = (_, _) => Task.FromResult(false)
@@ -264,7 +266,7 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             releaseReaper.TrySetResult();
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -286,7 +288,7 @@ public sealed class RunnerProcessProbeTests
             });
             var probe = CreateProbe(
                 reaper,
-                timeoutSeconds: 1,
+                timeoutSeconds: 10, // must fire after the tree is up — see CARD-0050 note above
                 seams: new RunnerProcessProbeSeams
                 {
                     StopTreeAsync = (_, _) => Task.FromResult(false)
@@ -314,7 +316,7 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             releaseReaper.TrySetResult();
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -383,7 +385,7 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             releaseStart.TrySetResult();
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -424,7 +426,7 @@ public sealed class RunnerProcessProbeTests
                 foreach (var processId in await ReadPidsAsync(pidPath))
                     StopProcessIfRunning(processId);
             }
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -502,7 +504,7 @@ public sealed class RunnerProcessProbeTests
         finally
         {
             releaseStart.TrySetResult();
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -514,10 +516,13 @@ public sealed class RunnerProcessProbeTests
         {
             var script = WriteHelper(scratch);
             var pidPath = Path.Combine(scratch, "clean-stop-pid.txt");
-            var probe = CreateProbe(timeoutSeconds: 5);
+            var probe = CreateProbe(timeoutSeconds: 30);
+            // A clean stop needs the child already blocked on ReadLine when stdin closes, and
+            // StopAfter is the only trigger — it cannot be gated on the pid file, so it has to
+            // outlast a cold pwsh start under full-suite load (>6s measured, CARD-0050).
             var request = Request(script, ["stdin-close", pidPath]) with
             {
-                StopAfter = TimeSpan.FromMilliseconds(250)
+                StopAfter = TimeSpan.FromSeconds(8)
             };
 
             var result = await probe.RunAsync(request, CancellationToken.None);
@@ -532,7 +537,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -560,7 +565,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -582,7 +587,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -624,7 +629,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -651,7 +656,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -678,7 +683,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -738,7 +743,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -989,7 +994,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1077,7 +1082,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
 
         static TimeSpan MeasureRedaction(
@@ -1111,7 +1116,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1147,7 +1152,7 @@ public sealed class RunnerProcessProbeTests
         {
             if (OperatingSystem.IsWindows() && denyRule is not null)
                 RestoreWindowsFileAccess(path, denyRule);
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1167,7 +1172,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1202,7 +1207,7 @@ public sealed class RunnerProcessProbeTests
         {
             if (OperatingSystem.IsWindows() && denyRule is not null)
                 RestoreWindowsFileAccess(path, denyRule);
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1227,7 +1232,7 @@ public sealed class RunnerProcessProbeTests
                     scratch,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1275,7 +1280,7 @@ public sealed class RunnerProcessProbeTests
                     scratch,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1301,7 +1306,7 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
@@ -1313,10 +1318,12 @@ public sealed class RunnerProcessProbeTests
         {
             var script = WriteHelper(scratch);
             var pidPath = Path.Combine(scratch, "forced-stop-pids.txt");
-            var probe = CreateProbe(timeoutSeconds: 5);
+            var probe = CreateProbe(timeoutSeconds: 30);
+            // Same constraint as the clean-stop test above: the stop must land on an already-built
+            // tree, and the only lever is outlasting the cold pwsh start (CARD-0050).
             var request = Request(script, ["tree", pidPath]) with
             {
-                StopAfter = TimeSpan.FromSeconds(1)
+                StopAfter = TimeSpan.FromSeconds(8)
             };
 
             var result = await probe.RunAsync(request, CancellationToken.None);
@@ -1332,12 +1339,17 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Directory.Delete(scratch, recursive: true);
+            DeleteScratchBestEffort(scratch);
         }
     }
 
+    // CARD-0050: the default timeout is a runaway bound, not part of any scenario — on the success
+    // path the probe returns when the child exits, so a generous bound costs nothing. Under
+    // full-suite parallel load a cold pwsh start was MEASURED taking >6s (2026-08-19 double-suite
+    // run: three tree tests timed out at 1s with the helper's pid file never written), so any test
+    // whose scenario does not NEED the timeout to fire must not sit near that latency.
     private static RunnerProcessProbe CreateProbe(
-        int timeoutSeconds = 5,
+        int timeoutSeconds = 30,
         int maxOutputBytes = 64 * 1024) =>
         new(Options.Create(new AgentTuiSettings
         {
@@ -1347,7 +1359,7 @@ public sealed class RunnerProcessProbeTests
 
     private static RunnerProcessProbe CreateProbe(
         RunnerProcessReaper reaper,
-        int timeoutSeconds = 5,
+        int timeoutSeconds = 30,
         int maxOutputBytes = 64 * 1024,
         RunnerProcessProbeSeams? seams = null) =>
         new(
@@ -1509,6 +1521,32 @@ public sealed class RunnerProcessProbeTests
         var path = Path.Combine(Path.GetTempPath(), $"antiphon-runner-probe-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    /// <summary>
+    /// CARD-0050: a probe child killed mid-startup can leave shell-cache droppings (a killed pwsh
+    /// with the probe's bounded environment wrote <c>Caches\cversions.2.db</c> into its scratch
+    /// cwd) that hold access-denied for a moment — and a throwing <c>finally</c> fails a test whose
+    /// assertions all passed. Retry briefly, then let temp residue be temp residue.
+    /// </summary>
+    private static void DeleteScratchBestEffort(string path)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                    return;
+                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(file, FileAttributes.Normal);
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     private static string WriteHelper(string scratch)

@@ -57,6 +57,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 && existing.HasExited
                 && _sessions.TryUpdate(request.SessionId, session, existing))
             {
+                // CARD-0050: the pipe name derives from the session id, so a relaunch races the
+                // PREVIOUS host's teardown — its Shutdown ack is fire-and-forget (HandleExited),
+                // and until that host exits it still owns a pipe server instance with the exact
+                // name the new host will claim. Under load the new client's connect reached the
+                // dying host, which correctly answered "alreadyLaunched: Session is Exited" and
+                // failed the relaunch. The child is already exited here, so forcing the old host
+                // out forfeits nothing a pty-host exists to protect.
+                await existing.EnsureExitedHostGoneAsync(TimeSpan.FromSeconds(5), ct);
                 await existing.DisposeAsync();
             }
             else
@@ -991,6 +999,78 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 failure,
                 "pty-host pipe for running session {SessionId} disconnected (host pid {HostPid})",
                 _sessionId, _hostPid);
+        }
+
+        /// <summary>
+        /// Relaunch prerequisite (CARD-0050): waits until this EXITED session's pty-host process is
+        /// really gone, so a new host for the same session id cannot lose the pipe-name race to it.
+        /// Ack-first (the normal path — the host deletes its manifest and exits), bounded wait,
+        /// then a verified kill: with the child already exited the host protects nothing, and a
+        /// lingering one only exists to reject the relaunch. Never throws.
+        /// </summary>
+        public async Task EnsureExitedHostGoneAsync(TimeSpan bound, CancellationToken ct)
+        {
+            if (!HasExited || _hostPid <= 0)
+                return;
+
+            await ShutdownHostAsync();
+
+            var deadline = DateTime.UtcNow + bound;
+            var killed = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!HostProcessStillAlive())
+                    return;
+                if (!killed && DateTime.UtcNow + TimeSpan.FromSeconds(2) >= deadline)
+                {
+                    // The ack did not take (host wedged, or the ack raced its own pipe teardown) —
+                    // escalate once, then keep waiting for the exit inside the same bound.
+                    KillHostIfStillOurs();
+                    killed = true;
+                }
+
+                try
+                {
+                    await Task.Delay(50, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+
+            _logger.LogWarning(
+                "Exited session {SessionId}'s pty-host (pid {HostPid}) survived shutdown + kill within "
+                + "{Bound}; the relaunch may race its pipe",
+                _sessionId, _hostPid, bound);
+        }
+
+        private bool HostProcessStillAlive()
+        {
+            try
+            {
+                using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
+                // Pid reuse by an unrelated process counts as "gone" — never wait on a stranger.
+                return !host.HasExited && host.ProcessName.Contains("PtyHost", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private void KillHostIfStillOurs()
+        {
+            try
+            {
+                using var host = System.Diagnostics.Process.GetProcessById(_hostPid);
+                if (!host.HasExited && host.ProcessName.Contains("PtyHost", StringComparison.OrdinalIgnoreCase))
+                    host.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Already gone.
+            }
         }
 
         private async Task ShutdownHostAsync()

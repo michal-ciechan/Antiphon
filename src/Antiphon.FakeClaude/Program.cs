@@ -127,6 +127,11 @@ internal static class Program
             stdout.Flush();
         }
 
+        // CARD-0050: stamp process start into the timing sidecar so a captured flake can measure
+        // serializer/file-cache warm-up (first record's stamp minus this one) on a real failure.
+        if (!string.IsNullOrEmpty(transcriptPath))
+            AppendTiming(transcriptPath, 0, "\"process-start\"", gaveUp: false);
+
         // Startup banner, then quiet — lets the quiet-period readiness detector settle.
         Write(banner + "\r\n");
         // Printed only when clipping is on, and it carries the SEED: a non-deterministic failure is
@@ -713,9 +718,42 @@ internal static class Program
         // readers; a fake that silently could was modelling a failure nothing has.
         for (var attempt = 0; ; attempt++)
         {
-            try { File.AppendAllText(path, jsonLine + "\n"); return; }
+            try
+            {
+                File.AppendAllText(path, jsonLine + "\n");
+                AppendTiming(path, attempt, jsonLine, gaveUp: false);
+                return;
+            }
             catch (IOException) when (attempt < 100) { Thread.Sleep(10); }
-            catch { return; /* anything else stays best-effort test plumbing */ }
+            catch
+            {
+                // Anything else stays best-effort test plumbing — but a DROPPED record must leave
+                // evidence (CARD-0050: a full-suite flake presents as "one record short at the 10s
+                // poll deadline" and lost-vs-late is the diagnosis that matters).
+                AppendTiming(path, attempt, jsonLine, gaveUp: true);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0050 evidence trail: every transcript append also stamps a sidecar line
+    /// (<c>&lt;path&gt;.timing</c>) with wall-clock time, retry count, and the record's head, so a
+    /// captured flake shows whether a missing record was written late, starved by share-mode
+    /// retries, or dropped entirely. Best-effort by design — the sidecar must never fail a test.
+    /// </summary>
+    private static void AppendTiming(string path, int retries, string jsonLine, bool gaveUp)
+    {
+        try
+        {
+            var head = jsonLine.Length > 80 ? jsonLine[..80] : jsonLine;
+            File.AppendAllText(
+                path + ".timing",
+                $"{DateTime.UtcNow:O} retries={retries}{(gaveUp ? " GAVE-UP" : "")} {head}\n");
+        }
+        catch
+        {
+            // Never let diagnostics interfere with the record path.
         }
     }
 

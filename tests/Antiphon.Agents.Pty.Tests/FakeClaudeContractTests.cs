@@ -340,7 +340,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -401,7 +401,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -435,7 +435,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -499,7 +499,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -532,12 +532,16 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
     // The transcript is written after the screen output, so "the screen said Compacted" is not
     // evidence the records landed. Poll for the expected count, then assert on what arrived.
+    // CARD-0050: the read handle shares ReadWrite so polling never blocks the fake's append (the
+    // old File.ReadAllLines share mode could starve the writer into its retry loop), and a deadline
+    // miss fails HERE with the fake's timing sidecar attached — the late/lost/starved distinction
+    // is the whole diagnosis for this flake cast.
     private static async Task<string[]> WaitForTranscriptLinesAsync(string path, int expected)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
@@ -548,7 +552,7 @@ public class FakeClaudeContractTests
             {
                 try
                 {
-                    lines = (await File.ReadAllLinesAsync(path))
+                    lines = (await ReadSharedLinesAsync(path))
                         .Where(l => !string.IsNullOrWhiteSpace(l))
                         .ToArray();
                     if (lines.Length >= expected)
@@ -561,7 +565,36 @@ public class FakeClaudeContractTests
             }
             await Task.Delay(50);
         }
+
+        lines.Length.ShouldBeGreaterThanOrEqualTo(
+            expected,
+            $"transcript at {path} was still {expected - lines.Length} record(s) short at the 10s "
+            + $"deadline. Timing sidecar (process-start → per-record stamps):\n{ReadTimingSidecar(path)}");
         return lines;
+    }
+
+    /// <summary>Reads the whole file WITHOUT excluding concurrent writers (FileShare.ReadWrite).</summary>
+    private static async Task<string[]> ReadSharedLinesAsync(string path)
+    {
+        await using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return (await reader.ReadToEndAsync()).Split('\n');
+    }
+
+    private static string ReadTimingSidecar(string path)
+    {
+        try
+        {
+            var sidecar = path + ".timing";
+            return File.Exists(sidecar)
+                ? string.Join("\n", File.ReadAllLines(sidecar))
+                : "(no sidecar written — the fake never reached its first append)";
+        }
+        catch (Exception ex)
+        {
+            return $"(sidecar unreadable: {ex.Message})";
+        }
     }
 
     /// <summary>The <c>message</c> object of an assistant record — id, stop_reason, content.</summary>
@@ -619,7 +652,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -674,7 +707,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -705,7 +738,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -753,7 +786,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -808,7 +841,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
@@ -1342,7 +1375,7 @@ public class FakeClaudeContractTests
         }
         finally
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); File.Delete(path + ".timing"); } catch { }
         }
     }
 
