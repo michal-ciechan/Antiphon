@@ -15,27 +15,34 @@ public sealed class DataRetentionService
 {
     private readonly AppDbContext _db;
     private readonly RetentionSettings _settings;
+    private readonly AuditSettings _auditSettings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<DataRetentionService> _logger;
+    private readonly AuditService _auditService;
 
     public DataRetentionService(
         AppDbContext db,
         IOptions<RetentionSettings> settings,
+        IOptions<AuditSettings> auditSettings,
         TimeProvider timeProvider,
-        ILogger<DataRetentionService> logger)
+        ILogger<DataRetentionService> logger,
+        AuditService auditService)
     {
         _db = db;
         _settings = settings.Value;
+        _auditSettings = auditSettings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _auditService = auditService;
     }
 
     /// <summary>
-    /// Runs the implemented table passes: sessions → transcripts → queued messages → tasks.
-    /// Slice 2 owns sessions; slice 1 owns transcripts and queued messages; slice 3 owns tasks.
-    /// Tasks run last so the session pass still sees surviving task-session references (the
-    /// windows self-sequence: a session outlives its tasks, then becomes eligible next sweep).
-    /// There is no FK either way between AgentTask and AgentSession, so this is not a
+    /// Runs the implemented table passes: sessions → transcripts → queued messages → tasks → audit.
+    /// Slice 2 owns sessions; slice 1 owns transcripts and queued messages; slice 3 owns tasks;
+    /// slice 4 archives audit FullContent past <see cref="AuditSettings.RetentionDays"/>.
+    /// Tasks run last among the deletes so the session pass still sees surviving task-session
+    /// references (the windows self-sequence: a session outlives its tasks, then becomes eligible
+    /// next sweep). There is no FK either way between AgentTask and AgentSession, so this is not a
     /// constraint hazard — only an eligibility delay of one sweep.
     /// </summary>
     public async Task<DataRetentionSweepResult> RunOnceAsync(CancellationToken ct)
@@ -44,7 +51,14 @@ public sealed class DataRetentionService
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
         var tasks = await PruneTasksAsync(ct);
-        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks);
+        var auditRecords = 0;
+        if (_auditSettings.RetentionDays > 0)
+        {
+            var archive = await _auditService.ArchiveFullContentAsync(_auditSettings.RetentionDays, ct);
+            auditRecords = archive.ArchivedCount;
+        }
+
+        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords);
     }
 
     /// <summary>
@@ -256,4 +270,5 @@ public sealed class DataRetentionService
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
 
-public sealed record DataRetentionSweepResult(int Transcripts, int QueuedMessages, int Sessions, int Tasks);
+public sealed record DataRetentionSweepResult(
+    int Transcripts, int QueuedMessages, int Sessions, int Tasks, int AuditRecords);

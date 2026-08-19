@@ -14,10 +14,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0044 slices 1-3: transcript deletion is per-session all-or-nothing, settled queue rows
+/// CARD-0044 slices 1-4: transcript deletion is per-session all-or-nothing, settled queue rows
 /// are pruned independently of session liveness, terminal AgentSession rows past 90d are
-/// deleted when nothing still names them, and AgentTask trees past 180d are deleted whole or
-/// not at all. The sweep is global, so this class is
+/// deleted when nothing still names them, AgentTask trees past 180d are deleted whole or
+/// not at all, and audit FullContent is archived past <c>AuditSettings.RetentionDays</c>. The
+/// sweep is global, so this class is
 /// <see cref="NotInParallelAttribute"/> with no group key (serialise against everything, not just
 /// itself) and every assertion is scoped to ids this test created.
 /// </summary>
@@ -511,16 +512,86 @@ public class DataRetentionServiceTests
         }
     }
 
+    [Test]
+    public async Task RunOnce_archives_old_audit_FullContent_using_the_configured_window()
+    {
+        var marker = NewMarker();
+        try
+        {
+            // 20d is younger than the hardcoded 90 the endpoint used to default to, so this
+            // only goes if RunOnceAsync actually reads AuditSettings.RetentionDays = 14.
+            var oldId = await SeedAuditAsync(marker, DaysAgo(20), """{"prompt":"old"}""", " old");
+            var youngId = await SeedAuditAsync(marker, DaysAgo(7), """{"prompt":"young"}""", " young");
+
+            await using var db = CreateContext();
+            var result = await CreateService(db, auditSettings: new AuditSettings { RetentionDays = 14 })
+                .RunOnceAsync(CancellationToken.None);
+
+            result.AuditRecords.ShouldBeGreaterThanOrEqualTo(1);
+
+            var old = await GetAuditAsync(oldId);
+            old.ShouldNotBeNull();
+            old.FullContent.ShouldBeNull();
+            old.Summary.ShouldBe($"{marker} old");
+            old.ModelName.ShouldBe("test-model");
+            old.TokensIn.ShouldBe(10);
+            old.TokensOut.ShouldBe(20);
+            old.CostUsd.ShouldBe(0.001m);
+
+            var young = await GetAuditAsync(youngId);
+            young.ShouldNotBeNull();
+            young.FullContent.ShouldNotBeNull("a 7-day-old record is inside the 14-day window");
+            young.FullContent.ShouldContain("young");
+            young.Summary.ShouldBe($"{marker} young");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task A_zero_audit_window_skips_the_archive_pass()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var oldId = await SeedAuditAsync(marker, DaysAgo(200), """{"prompt":"keep"}""");
+
+            await using var db = CreateContext();
+            var result = await CreateService(db, auditSettings: new AuditSettings { RetentionDays = 0 })
+                .RunOnceAsync(CancellationToken.None);
+
+            result.AuditRecords.ShouldBe(0);
+            var kept = await GetAuditAsync(oldId);
+            kept.ShouldNotBeNull();
+            kept.FullContent.ShouldNotBeNull("RetentionDays <= 0 must skip the archive pass");
+            kept.FullContent.ShouldContain("keep");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     // ---------- helpers ----------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static DataRetentionService CreateService(AppDbContext db, RetentionSettings? settings = null) =>
-        new(
+    private static DataRetentionService CreateService(
+        AppDbContext db,
+        RetentionSettings? settings = null,
+        AuditSettings? auditSettings = null)
+    {
+        var audit = auditSettings ?? new AuditSettings();
+        return new DataRetentionService(
             db,
             Options.Create(settings ?? new RetentionSettings()),
+            Options.Create(audit),
             TimeProvider.System,
-            NullLogger<DataRetentionService>.Instance);
+            NullLogger<DataRetentionService>.Instance,
+            new AuditService(db, Options.Create(audit)));
+    }
 
     private static string NewMarker() => $"ret-{Guid.NewGuid():N}";
 
@@ -747,5 +818,34 @@ public class DataRetentionServiceTests
 
         await db.Agents.Where(a => a.Name == marker).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).ExecuteDeleteAsync();
+        await db.AuditRecords.Where(a => a.Summary.StartsWith(marker)).ExecuteDeleteAsync();
+    }
+
+    private static async Task<Guid> SeedAuditAsync(
+        string marker, DateTime createdAt, string? fullContent, string summarySuffix = "")
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AuditRecords.Add(new AuditRecord
+        {
+            Id = id,
+            EventType = AuditEventType.LlmCall,
+            ModelName = "test-model",
+            TokensIn = 10,
+            TokensOut = 20,
+            CostUsd = 0.001m,
+            DurationMs = 100,
+            Summary = $"{marker}{summarySuffix}",
+            FullContent = fullContent,
+            CreatedAt = createdAt,
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<AuditRecord?> GetAuditAsync(Guid id)
+    {
+        await using var db = CreateContext();
+        return await db.AuditRecords.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id);
     }
 }

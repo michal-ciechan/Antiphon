@@ -6,8 +6,9 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 
 /// <summary>
 /// Drives <see cref="DataRetentionService"/> on a fixed interval. One hosted service covers
-/// every table the retention settings name; slices 1-3 delete sessions, transcripts,
-/// queued messages, and whole AgentTask trees.
+/// every table the retention settings name plus the audit FullContent archive; slices 1-3
+/// delete sessions, transcripts, queued messages, and whole AgentTask trees, and slice 4
+/// nulls stale audit FullContent.
 /// </summary>
 public sealed class DataRetentionHostedService : BackgroundService
 {
@@ -56,8 +57,8 @@ public sealed class DataRetentionHostedService : BackgroundService
             var retention = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
             var result = await retention.RunOnceAsync(stoppingToken);
             _logger.LogInformation(
-                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s)",
-                result.Sessions, result.Transcripts, result.QueuedMessages, result.Tasks);
+                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s), {AuditRecords} audit record(s)",
+                result.Sessions, result.Transcripts, result.QueuedMessages, result.Tasks, result.AuditRecords);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

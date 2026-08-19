@@ -2,6 +2,8 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -101,11 +103,12 @@ public static class AuditEndpoints
             int? olderThanDays,
             ICurrentUser currentUser,
             AuditService auditService,
+            IOptions<AuditSettings> auditSettings,
             CancellationToken cancellationToken) =>
         {
             // Admin-only operation
             // Note: In MVP, all users are admin. Future: check currentUser.IsAdmin
-            var days = olderThanDays ?? 90;
+            var days = olderThanDays ?? auditSettings.Value.RetentionDays;
 
             if (days < 1)
             {

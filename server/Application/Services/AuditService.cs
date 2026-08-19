@@ -292,18 +292,11 @@ public class AuditService
     {
         var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
 
-        var recordsToArchive = await _db.AuditRecords
+        var archived = await _db.AuditRecords
             .Where(r => r.CreatedAt < cutoff && r.FullContent != null)
-            .ToListAsync(cancellationToken);
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.FullContent, (string?)null), cancellationToken);
 
-        foreach (var record in recordsToArchive)
-        {
-            record.FullContent = null;
-        }
-
-        await _db.SaveChangesAsync(cancellationToken);
-
-        return new ArchiveResultDto(recordsToArchive.Count, cutoff);
+        return new ArchiveResultDto(archived, cutoff);
     }
 
     private static async Task<CostSummaryDto> BuildCostSummaryAsync(
