@@ -17,6 +17,14 @@ $root         = $PSScriptRoot
 $appHostDir   = "$root\Antiphon.AppHost"
 $settingsFile = "$root\server\appsettings.json"
 
+# CARD-0011: tell the watchdog a launch is in flight so a 2-minute fire does not
+# call restart-apphost.ps1 over the top of us. Removed in finally even on Write-Error
+# ($ErrorActionPreference Stop) -- a trailing Remove-Item would be skipped.
+$launchLock = Join-Path $root 'logs\apphost.launch.lock'
+New-Item -ItemType Directory -Force (Split-Path $launchLock) | Out-Null
+('{0} {1}' -f $PID, [datetime]::UtcNow.ToString('o')) | Set-Content -LiteralPath $launchLock
+try {
+
 if (-not (Test-Path $settingsFile)) {
     Write-Error "server\appsettings.json not found. Copy appsettings.json.example first."
 }
@@ -174,3 +182,6 @@ if (-not $pgOK) {
 Write-Host ""
 Write-Host "AppHost running in background (PID $($appHostProc.Id))." -ForegroundColor Green
 Start-Sleep 3
+} finally {
+    Remove-Item -LiteralPath $launchLock -ErrorAction SilentlyContinue
+}

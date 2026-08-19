@@ -14,26 +14,43 @@
                        control API 17207) at logon via scripts/autostart-apphost.ps1.
                        Skip it with -NoAppHost if you would rather start the app by
                        hand with dev-aspire.ps1.
+      4. AppHost watchdog - registers a third per-user Scheduled Task that probes
+                       17202/health and 17203 over HTTP every 2 minutes and calls
+                       scripts/restart-apphost.ps1 if both stay down. Skip with
+                       -NoWatchdog. Treated as AppHost-side, so -AppHostOnly includes
+                       it and never touches a running session-runner.
 
     The AppHost task fires 1 minute after logon and waits for Docker Desktop before
     starting; it no-ops if the AppHost is already running, and it adopts the
-    already-running Postgres + session-runner.
+    already-running Postgres + session-runner. The watchdog is delayed 15 minutes
+    after logon so it does not kill that launch window, then repeats every 2 minutes.
 .PARAMETER Uninstall
-    Remove both Scheduled Tasks. Leaves the Postgres container and its data alone
-    (prints how to remove them if you want to).
+    Remove the Scheduled Tasks this script registered. Leaves the Postgres container
+    and its data alone (prints how to remove them if you want to).
 .PARAMETER NoAppHost
-    Do not register (or, with -Uninstall, do not remove) the AppHost logon task.
-    Restores the old behaviour: only Postgres + session-runner are always-on.
+    Do not register (or, with -Uninstall, do not remove) the AppHost logon task or
+    the watchdog (watchdog is AppHost-side). Restores the old behaviour: only
+    Postgres + session-runner are always-on.
+.PARAMETER NoWatchdog
+    Do not register (or, with -Uninstall, do not remove) the AppHost watchdog task.
+    The logon AppHost task is still registered unless -NoAppHost is also set.
 .PARAMETER AppHostOnly
-    Only touch the AppHost task; leave the session-runner task alone. Use this when the
-    session-runner is already running - re-registering a RUNNING task terminates its
-    live supervisor, which would leave the daemon unsupervised until the next logon.
+    Only touch the AppHost-side tasks (logon AppHost + watchdog); leave the
+    session-runner task alone. Use this when the session-runner is already running -
+    re-registering a RUNNING task terminates its live supervisor, which would leave
+    the daemon unsupervised until the next logon.
 .PARAMETER TaskName
     Session-runner Scheduled Task name. Default: "Antiphon Session Runner".
 .PARAMETER AppHostTaskName
     AppHost Scheduled Task name. Default: "Antiphon AppHost".
+.PARAMETER WatchdogTaskName
+    AppHost watchdog Scheduled Task name. Default: "Antiphon AppHost Watchdog".
 .PARAMETER AppHostDelay
     ISO-8601 duration to delay the AppHost task after logon. Default: PT1M.
+.PARAMETER WatchdogDelay
+    ISO-8601 duration to delay the watchdog after logon. Default: PT15M. The logon
+    AppHost task can legitimately hold 17202 dead for several minutes; firing into
+    that window would kill the launch the watchdog is supposed to protect.
 .EXAMPLE
     pwsh -File scripts/install-autostart.ps1
 .EXAMPLE
@@ -43,10 +60,13 @@
 param(
     [switch]$Uninstall,
     [switch]$NoAppHost,
+    [switch]$NoWatchdog,
     [switch]$AppHostOnly,
     [string]$TaskName = 'Antiphon Session Runner',
     [string]$AppHostTaskName = 'Antiphon AppHost',
-    [string]$AppHostDelay = 'PT1M'
+    [string]$WatchdogTaskName = 'Antiphon AppHost Watchdog',
+    [string]$AppHostDelay = 'PT1M',
+    [string]$WatchdogDelay = 'PT15M'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +84,7 @@ if ($Uninstall) {
     $toRemove = @()
     if (-not $AppHostOnly) { $toRemove += $TaskName }
     if (-not $NoAppHost)   { $toRemove += $AppHostTaskName }
+    if (-not $NoWatchdog -and -not $NoAppHost) { $toRemove += $WatchdogTaskName }
     foreach ($t in $toRemove) {
         Write-Step "Removing Scheduled Task '$t'..."
         if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
@@ -80,10 +101,12 @@ if ($Uninstall) {
 }
 
 # -- Pre-flight --------------------------------------------------------------
-$appHostScript = Join-Path $PSScriptRoot 'autostart-apphost.ps1'
+$appHostScript  = Join-Path $PSScriptRoot 'autostart-apphost.ps1'
+$watchdogScript = Join-Path $PSScriptRoot 'watchdog-apphost.ps1'
 if (-not (Test-Path $autostartScript)) { throw "Missing $autostartScript" }
 if (-not (Test-Path $composeFile))     { throw "Missing $composeFile" }
 if (-not $NoAppHost -and -not (Test-Path $appHostScript)) { throw "Missing $appHostScript" }
+if (-not $NoWatchdog -and -not $NoAppHost -and -not (Test-Path $watchdogScript)) { throw "Missing $watchdogScript" }
 
 # Resolve a PowerShell host for the task action (prefer pwsh 7, fall back to 5.1).
 # Probe the real install dirs first - pwsh may not be on THIS session's PATH.
@@ -230,6 +253,68 @@ if (-not $NoAppHost) {
     Write-Note "Start the app by hand with:  .\dev-aspire.ps1"
 }
 
+# -- 4. AppHost watchdog Scheduled Task --------------------------------------
+# The logon AppHost task is a one-shot (Ready, no NextRun after it succeeds).
+# This third task is the supervisor: HTTP-probe every 2 minutes, restart via
+# restart-apphost.ps1. It is AppHost-side, so -AppHostOnly includes it and a
+# healthy running session-runner is never Unregister'd here.
+if (-not $NoWatchdog -and -not $NoAppHost) {
+    Write-Step "Registering watchdog Scheduled Task '$WatchdogTaskName'..."
+
+    $wdAction = New-ScheduledTaskAction `
+        -Execute $psExe `
+        -Argument "-NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogScript`"" `
+        -WorkingDirectory $root
+
+    $wdPrincipal = New-ScheduledTaskPrincipal `
+        -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType Interactive `
+        -RunLevel Limited
+
+    $wdSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+
+    # Logon + 15 min delay + 2 min repetition: protects the logon AppHost launch
+    # window (Docker wait + restore + npm + 180s health). Copying .Repetition
+    # from a Once trigger is required - AtLogOn leaves it empty.
+    #
+    # Measured on this host: that logon trigger ALONE leaves NextRunTime blank
+    # while the user is already logged on (the same silent "one-shot" shape as
+    # the AppHost task). A Once/Time trigger starting in 2 minutes is what
+    # actually populates NextRunTime and runs the loop in the current session.
+    $wdInterval = New-TimeSpan -Minutes 2
+    $wdDuration = New-TimeSpan -Days 3650
+    $wdRepetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $wdInterval -RepetitionDuration $wdDuration).Repetition
+
+    $wdLogon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $wdLogon.Delay = $WatchdogDelay
+    $wdLogon.Repetition = $wdRepetition
+
+    $wdRepeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(2)) `
+        -RepetitionInterval $wdInterval `
+        -RepetitionDuration $wdDuration
+
+    if (Get-ScheduledTask -TaskName $WatchdogTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $WatchdogTaskName -Confirm:$false
+    }
+
+    Register-ScheduledTask `
+        -TaskName $WatchdogTaskName `
+        -Action $wdAction `
+        -Trigger @($wdLogon, $wdRepeat) `
+        -Principal $wdPrincipal `
+        -Settings $wdSettings `
+        -Description 'Probes Antiphon AppHost HTTP health (17202/health and 17203) every 2 minutes; restarts via restart-apphost.ps1 if both stay down. Never touches the session-runner on 17204.' | Out-Null
+
+    Write-Ok "Task registered (logon+$WatchdogDelay then every 2 min as $env:USERNAME)."
+} else {
+    Write-Step "Skipping AppHost watchdog task."
+}
+
 # -- Done --------------------------------------------------------------------
 Write-Host ""
 Write-Host "Always-on backend configured:" -ForegroundColor Green
@@ -237,6 +322,9 @@ Write-Note "  Postgres       : docker container 'antiphon-postgres'  (localhost:
 Write-Note "  Session-runner : Scheduled Task '$TaskName'            (http://localhost:17204)"
 if (-not $NoAppHost) {
     Write-Note "  AppHost        : Scheduled Task '$AppHostTaskName'  (server :17202, client :17203, dashboard :17205)"
+    if (-not $NoWatchdog) {
+        Write-Note "  AppHost watchdog: Scheduled Task '$WatchdogTaskName'  (HTTP probe every 2 min -> restart-apphost.ps1)"
+    }
 } else {
     Write-Note "  The rest (server/client/dashboard): run  .\dev-aspire.ps1"
 }
@@ -245,5 +333,9 @@ Write-Note "Start the session-runner now without logging out:  Start-ScheduledTa
 if (-not $NoAppHost) {
     Write-Note "Start the AppHost now without logging out:          Start-ScheduledTask -TaskName `"$AppHostTaskName`""
     Write-Note "AppHost auto-start log:                             $root\logs\autostart-apphost.log"
+    if (-not $NoWatchdog) {
+        Write-Note "Watchdog log:                                       $root\logs\watchdog-apphost.log"
+        Write-Note "Disable the watchdog (leave the stack down):        Disable-ScheduledTask -TaskName `"$WatchdogTaskName`""
+    }
 }
 Write-Note "Remove auto-start later:                            pwsh -File scripts/install-autostart.ps1 -Uninstall"
