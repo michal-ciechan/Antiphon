@@ -198,4 +198,18 @@ public enum AgentIncidentKind
     /// file and does not change C1–C4.
     /// </summary>
     DelegateBindRefusalRecovered = 24,
+
+    /// <summary>
+    /// A message was submitted (a matching <c>UserPrompt</c> row exists) but the stored text does
+    /// not contain the full body — measured truncation, not a size-before-send prediction.
+    /// Distinct from <see cref="OversizedTerminalDelivery"/> (14), which fires on size alone and
+    /// then types anyway. The message is parked immediately; the session is not killed; nothing
+    /// re-types (that would double-send a clipped body). Warning normally; Critical when the
+    /// agent is channel-bound — a parked channel reply is a human waiting on a splice.
+    ///
+    /// Live miss 2026-08-10 (CARD-0024 / task c7151848): a 5 471-char report reached the parent
+    /// as 379 characters (head + tail, 5 × 1024 bytes dropped from the middle) and was marked
+    /// Sent because identity matches the surviving head.
+    /// </summary>
+    TruncatedTerminalDelivery = 25,
 }

@@ -96,13 +96,20 @@ public sealed class SessionMessageQueueService
                     $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
             }
 
-            var verdict = await DeliverAsync(sessionId, trimmed, ct);
-            if (verdict != DeliveryVerdict.Delivered)
+            var outcome = await DeliverAsync(sessionId, trimmed, ct);
+            if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
-                await HandleDeliveryFailureAsync(sessionId, null, verdict, ct);
+                await HandleTruncationAsync(sessionId, null, trimmed, outcome.RecordText, ct);
+                throw new ConflictException(
+                    "Message delivery reached the transcript truncated "
+                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+            }
+            if (outcome.Verdict != DeliveryVerdict.Delivered)
+            {
+                await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct);
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
-                    + $"({Describe(verdict)}). See the agent's incidents.");
+                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
             }
             return await GetQueueAsync(sessionId, ct);
         }
@@ -229,7 +236,8 @@ public sealed class SessionMessageQueueService
 
             // Same late-confirm as the automatic paths: a previously attempted message whose body
             // is already in the transcript went in, and re-typing it here would put it in twice.
-            if (await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct) > 0)
+            // Truncated is also "handled" — the body submitted, so re-typing would double-send.
+            if ((await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct)).Handled > 0)
             {
                 var confirmed = await GetQueueAsync(sessionId, ct);
                 await PublishQueueChangedAsync(confirmed, ct);
@@ -243,13 +251,20 @@ public sealed class SessionMessageQueueService
             message.LastDeliveryStartedAt = UtcNow();
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             await db.SaveChangesAsync(ct);
-            var verdict = await DeliverAsync(sessionId, message.Body, ct, baseline);
-            if (verdict != DeliveryVerdict.Delivered)
+            var outcome = await DeliverAsync(sessionId, message.Body, ct, baseline);
+            if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
-                await HandleDeliveryFailureAsync(sessionId, [message.Id], verdict, ct);
+                await HandleTruncationAsync(sessionId, [message.Id], message.Body, outcome.RecordText, ct);
+                throw new ConflictException(
+                    "Message delivery reached the transcript truncated "
+                    + $"({Describe(outcome.Verdict)}). The message has been parked in the queue.");
+            }
+            if (outcome.Verdict != DeliveryVerdict.Delivered)
+            {
+                await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct);
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
-                    + $"({Describe(verdict)}). The message has been returned to the queue.");
+                    + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
             }
         }
         finally
@@ -532,16 +547,17 @@ public sealed class SessionMessageQueueService
         // fails verification for two very different reasons — the body never reached Claude, or it
         // did and the matcher was blind (ingestion stall, a fork, a text transform) — and only the
         // transcript can tell them apart. Automatic retry is safe BECAUSE the retry looks first.
-        var lateConfirmed = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
-        if (lateConfirmed > 0)
+        var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
+        if (late.Handled > 0)
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
 
         // Parked messages (at the attempts cap) stay Pending and visible, but no automatic path
         // types them again — that is what "parks for a human" means. They are still late-confirmed
-        // above, so a park resolves itself if the body turns out to have landed.
+        // above, so a park resolves itself if the body turns out to have landed complete. A
+        // truncated park stays parked: identity-without-completeness is not Sent.
         var deliverable = pending.Where(m => m.DeliveryAttempts < MaxAttempts).ToList();
         if (deliverable.Count == 0)
-            return lateConfirmed > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+            return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         pending = deliverable;
         var head = pending[0];
@@ -594,10 +610,10 @@ public sealed class SessionMessageQueueService
         }
         await db.SaveChangesAsync(ct);
 
-        DeliveryVerdict verdict;
+        DeliveryOutcome outcome;
         try
         {
-            verdict = await DeliverAsync(sessionId, body, ct, baseline);
+            outcome = await DeliverAsync(sessionId, body, ct, baseline);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -623,19 +639,28 @@ public sealed class SessionMessageQueueService
             return FlushResult.Failed;
         }
 
-        if (verdict == DeliveryVerdict.Delivered)
+        if (outcome.Verdict == DeliveryVerdict.Delivered)
             return FlushResult.Delivered;
 
-        await HandleDeliveryFailureAsync(sessionId, run.Select(m => m.Id).ToList(), verdict, ct);
+        var ids = run.Select(m => m.Id).ToList();
+        if (outcome.Verdict == DeliveryVerdict.Truncated)
+        {
+            await HandleTruncationAsync(sessionId, ids, body, outcome.RecordText, ct);
+            return FlushResult.Failed;
+        }
+
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct);
         return FlushResult.Failed;
     }
 
     /// <summary>
     /// CARD-0055 D3's late-confirm: for every Pending message that has already been typed at least
     /// once, re-run the prompt matcher over the <c>UserPrompt</c> rows that arrived after that
-    /// attempt's stored baseline. A match means the body DID reach Claude — the first attempt's
-    /// verification was simply blind (ingestion stall, a mid-session fork, a slow tailer) — so the
-    /// message is marked Sent with ZERO writes to the terminal and never typed again.
+    /// attempt's stored baseline. A COMPLETE match means the body DID reach Claude — the first
+    /// attempt's verification was simply blind (ingestion stall, a mid-session fork, a slow tailer)
+    /// — so the message is marked Sent with ZERO writes to the terminal and never typed again.
+    /// Identity without completeness is CARD-0024 truncation: park, do not mark Sent (a splice
+    /// that lands after the confirm window must not be promoted on the next flush).
     ///
     /// This is what makes the automatic retry above safe. The re-pressed Enter inside a delivery
     /// cannot double-submit (empty composer, per-session lock); the place a duplicate to a human
@@ -652,21 +677,40 @@ public sealed class SessionMessageQueueService
     /// time) is never late-confirmed — there is no floor, so a match would prove nothing.</item>
     /// </list>
     /// </summary>
-    private async Task<int> LateConfirmAttemptedMessagesAsync(
+    private async Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
         AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending, CancellationToken ct)
     {
         if (!_verification.TranscriptConfirmEnabled)
-            return 0;
+            return LateConfirmCounts.Empty;
 
         var confirmed = 0;
+        var truncated = 0;
         foreach (var m in pending)
         {
             if (m.DeliveryAttempts == 0 || m.LastDeliveryBaselineSequence is not { } floor)
                 continue;
             if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
                 continue;
-            if (!await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct))
+
+            var match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct);
+            if (!match.Identity)
                 continue;
+
+            if (!match.Complete)
+            {
+                // Park the tracked entity in THIS context so the rest of the flush (the
+                // deliverable filter) sees the cap. HandleTruncationAsync uses its own scope
+                // for the incident and the durable park; the two writes are the same values.
+                if (m.Status == QueuedMessageStatus.Sent)
+                {
+                    m.Status = QueuedMessageStatus.Pending;
+                    m.SentAt = null;
+                }
+                m.DeliveryAttempts = Math.Max(m.DeliveryAttempts, MaxAttempts);
+                await HandleTruncationAsync(sessionId, [m.Id], m.Body, match.Text, ct);
+                truncated++;
+                continue;
+            }
 
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = UtcNow();
@@ -681,7 +725,7 @@ public sealed class SessionMessageQueueService
         if (confirmed > 0)
             await db.SaveChangesAsync(ct);
 
-        return confirmed;
+        return new LateConfirmCounts(confirmed, truncated);
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run)
@@ -761,13 +805,39 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord }
+    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord, Truncated }
+
+    private readonly record struct DeliveryOutcome(DeliveryVerdict Verdict, string? RecordText = null)
+    {
+        public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
+        public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
+            new(verdict, recordText);
+    }
+
+    private readonly record struct TranscriptConfirm(bool Identity, bool Complete, string? Text)
+    {
+        public static TranscriptConfirm None { get; } = new(false, false, null);
+
+        public static TranscriptConfirm Classify(string? body, string? recordText)
+        {
+            if (!PromptSubmissionMatch.IsConfirmedBy(body, recordText))
+                return None;
+            return new(true, PromptSubmissionMatch.IsCompleteIn(body, recordText), recordText);
+        }
+    }
+
+    private readonly record struct LateConfirmCounts(int Confirmed, int Truncated)
+    {
+        public static LateConfirmCounts Empty { get; } = new(0, 0);
+        public int Handled => Confirmed + Truncated;
+    }
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
         DeliveryVerdict.NoComposerEvidence => "the typed message never appeared in the composer",
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
         DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
+        DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
         _ => "delivered",
     };
 
@@ -825,7 +895,7 @@ public sealed class SessionMessageQueueService
     // <paramref name="stampedBaseline"/> is the floor the caller already captured and persisted on
     // the message rows before typing; passing it through keeps the stored baseline and the one this
     // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
-    private async Task<DeliveryVerdict> DeliverAsync(
+    private async Task<DeliveryOutcome> DeliverAsync(
         Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
@@ -911,7 +981,7 @@ public sealed class SessionMessageQueueService
                 "Delivery verification failed for session {SessionId}: body ({Length} chars) produced no "
                 + "composer evidence within {Timeout}s — submit Enter withheld",
                 sessionId, trimmed.Length, _verification.EvidenceTimeoutSeconds);
-            return DeliveryVerdict.NoComposerEvidence;
+            return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
         }
 
         long? sequenceBeforeSubmit = null;
@@ -931,17 +1001,21 @@ public sealed class SessionMessageQueueService
                 "Delivery verification failed for session {SessionId}: submit Enter produced no output "
                 + "within {Timeout}s",
                 sessionId, _verification.PostSubmitAdvanceTimeoutSeconds);
-            return DeliveryVerdict.NoSubmitOutput;
+            return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
         }
 
-        return DeliveryVerdict.Delivered;
+        return DeliveryOutcome.Delivered;
     }
 
     /// <summary>
     /// CARD-0055's confirm loop, and the only thing that may now produce <c>Delivered</c> on a
     /// transcript-observable Claude session: poll for a <c>UserPrompt</c> row past
-    /// <paramref name="baseline"/> whose text carries our body, re-pressing Enter every
+    /// <paramref name="baseline"/> whose text carries our FULL body, re-pressing Enter every
     /// <c>ReEnterIntervalSeconds</c> until <c>SubmitAttempts</c> is spent.
+    ///
+    /// Identity without completeness is <c>Truncated</c> and stops the loop immediately: the
+    /// UserPrompt is written once, waiting will not grow it, and another Enter would submit
+    /// whatever is now in the composer — not repair the splice.
     ///
     /// The retry is ENTER-ONLY and this is not negotiable. If the first Enter really did submit,
     /// the composer is empty and a re-press is a no-op (the documented <c>VerifiedSubmitOptions</c>
@@ -954,7 +1028,7 @@ public sealed class SessionMessageQueueService
     /// still held in the composer, and a stale-body submit produces a record whose text FAILS the
     /// match, so the re-press submits ours and the next record matches.
     /// </summary>
-    private async Task<DeliveryVerdict> WaitForTranscriptConfirmAsync(
+    private async Task<DeliveryOutcome> WaitForTranscriptConfirmAsync(
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
@@ -966,13 +1040,26 @@ public sealed class SessionMessageQueueService
 
         while (true)
         {
-            if (await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct))
+            var match = await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct);
+            if (match.Identity)
             {
+                if (!match.Complete)
+                {
+                    _logger.LogWarning(
+                        "Delivery to session {SessionId} reached a UserPrompt record past sequence "
+                        + "{Baseline} after {Enters} Enter(s) but the body is truncated "
+                        + "(sent {Sent} normalized chars, recorded {Recorded})",
+                        sessionId, baseline.MaxSequence, entersSent,
+                        PromptSubmissionMatch.Normalize(body).Length,
+                        PromptSubmissionMatch.Normalize(match.Text ?? "").Length);
+                    return DeliveryOutcome.Of(DeliveryVerdict.Truncated, match.Text);
+                }
+
                 _logger.LogDebug(
                     "Delivery to session {SessionId} confirmed by a UserPrompt record past sequence "
                     + "{Baseline} after {Enters} Enter(s) ({Strength} match)",
                     sessionId, baseline.MaxSequence, entersSent, strong ? "text" : "weak");
-                return DeliveryVerdict.Delivered;
+                return DeliveryOutcome.Delivered;
             }
 
             // Kept only as a wedge signal for the log: a terminal that redrew but produced no record
@@ -994,7 +1081,7 @@ public sealed class SessionMessageQueueService
                     sessionId, body.Length, baseline.MaxSequence,
                     _verification.TranscriptConfirmTimeoutSeconds, entersSent,
                     sawSequenceAdvance ? "DID advance (the terminal redrew but nothing was submitted)" : "never advanced");
-                return DeliveryVerdict.NoTranscriptRecord;
+                return DeliveryOutcome.Of(DeliveryVerdict.NoTranscriptRecord);
             }
 
             if (entersSent < _verification.SubmitAttempts && UtcNow() - lastEnter >= reEnterAfter)
@@ -1023,13 +1110,14 @@ public sealed class SessionMessageQueueService
     /// text-match restriction means a body too short to identify (an auto-continue) is never
     /// grace-confirmed: those take the ordinary failure path exactly as before.</para>
     /// </summary>
-    private async Task<HashSet<Guid>> GraceConfirmAsync(
+    private async Task<(HashSet<Guid> Confirmed, HashSet<Guid> Truncated)> GraceConfirmAsync(
         Guid sessionId, IReadOnlyList<Guid> messageIds, CancellationToken ct)
     {
         var confirmed = new HashSet<Guid>();
+        var truncated = new HashSet<Guid>();
         var grace = TimeSpan.FromSeconds(Math.Max(0, _verification.PostFailureConfirmGraceSeconds));
         if (!_verification.TranscriptConfirmEnabled || grace <= TimeSpan.Zero)
-            return confirmed;
+            return (confirmed, truncated);
 
         var deadline = UtcNow() + grace;
         while (true)
@@ -1047,18 +1135,21 @@ public sealed class SessionMessageQueueService
                 var outstanding = (await db.SessionQueuedMessages
                         .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
                         .ToListAsync(ct))
-                    .Where(m => !confirmed.Contains(m.Id))
+                    .Where(m => !confirmed.Contains(m.Id) && !truncated.Contains(m.Id))
                     .ToList();
 
                 foreach (var message in outstanding)
                 {
-                    if (await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct) > 0)
+                    var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, [message], ct);
+                    if (late.Confirmed > 0)
                         confirmed.Add(message.Id);
+                    else if (late.Truncated > 0)
+                        truncated.Add(message.Id);
                 }
             }
 
-            if (confirmed.Count == messageIds.Count)
-                return confirmed;
+            if (confirmed.Count + truncated.Count == messageIds.Count)
+                return (confirmed, truncated);
 
             if (UtcNow() >= deadline)
             {
@@ -1066,9 +1157,9 @@ public sealed class SessionMessageQueueService
                 // up seconds later then the window — not the delivery — is what was wrong.
                 _logger.LogWarning(
                     "Post-failure grace of {Grace}s expired for session {SessionId} with {Confirmed} of "
-                    + "{Total} message(s) confirmed; proceeding to the failure path",
-                    grace.TotalSeconds, sessionId, confirmed.Count, messageIds.Count);
-                return confirmed;
+                    + "{Total} message(s) confirmed ({Truncated} truncated); proceeding to the failure path",
+                    grace.TotalSeconds, sessionId, confirmed.Count, messageIds.Count, truncated.Count);
+                return (confirmed, truncated);
             }
 
             // Deliberately slower than PollIntervalMs: each iteration fetches a whole transcript
@@ -1080,7 +1171,7 @@ public sealed class SessionMessageQueueService
 
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
-    private async Task<bool> TryFindConfirmingRecordAsync(
+    private async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
         Guid sessionId, string body, long baselineSequence, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1088,7 +1179,7 @@ public sealed class SessionMessageQueueService
         return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct);
     }
 
-    private static async Task<bool> TryFindConfirmingRecordAsync(
+    private static async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct)
     {
         var texts = await db.TranscriptEntries
@@ -1100,7 +1191,14 @@ public sealed class SessionMessageQueueService
             .Select(t => t.Text)
             .ToListAsync(ct);
 
-        return texts.Any(text => PromptSubmissionMatch.IsConfirmedBy(body, text));
+        foreach (var text in texts)
+        {
+            var match = TranscriptConfirm.Classify(body, text);
+            if (match.Identity)
+                return match;
+        }
+
+        return TranscriptConfirm.None;
     }
 
     private async Task<bool> WaitForComposerEvidenceAsync(
@@ -1154,6 +1252,101 @@ public sealed class SessionMessageQueueService
                 == AgentTuiCapabilityState.Supported;
     }
 
+    /// <summary>
+    /// CARD-0024: identity matched but the stored UserPrompt does not contain the full body.
+    /// The submit happened — re-typing would double-send, killing would abort a live turn —
+    /// so park immediately, raise <see cref="AgentIncidentKind.TruncatedTerminalDelivery"/>,
+    /// and leave the session alone. Deduped on the message id so a later late-confirm of the
+    /// same splice does not raise a second row.
+    /// </summary>
+    private async Task HandleTruncationAsync(
+        Guid sessionId,
+        IReadOnlyList<Guid>? messageIds,
+        string body,
+        string? recordText,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agent = await db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+
+            if (messageIds is { Count: > 0 })
+            {
+                var messages = await db.SessionQueuedMessages
+                    .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
+                    .ToListAsync(ct);
+                foreach (var message in messages)
+                {
+                    if (message.Status == QueuedMessageStatus.Sent)
+                    {
+                        message.Status = QueuedMessageStatus.Pending;
+                        message.SentAt = null;
+                    }
+
+                    message.DeliveryAttempts = Math.Max(message.DeliveryAttempts, MaxAttempts);
+                }
+            }
+
+            var sentLen = PromptSubmissionMatch.Normalize(body).Length;
+            var recordedLen = PromptSubmissionMatch.Normalize(recordText ?? string.Empty).Length;
+
+            if (agent is not null)
+            {
+                var keys = messageIds is { Count: > 0 }
+                    ? messageIds.Select(id => id.ToString("D")).ToList()
+                    : [$"now:{sessionId:D}"];
+                var failureReason = string.Join(",", keys.OrderBy(k => k, StringComparer.Ordinal));
+                var already = await db.AgentIncidents
+                    .Where(i => i.AgentId == agent.Id
+                        && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery
+                        && i.FailureReason != null)
+                    .Select(i => i.FailureReason!)
+                    .ToListAsync(ct);
+                var covered = keys.All(key =>
+                    already.Any(reason => reason.Contains(key, StringComparison.Ordinal)));
+
+                if (!covered)
+                {
+                    var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
+                    var severity = channelBound ? AlertSeverity.Critical : AlertSeverity.Warning;
+                    var detail =
+                        $"A {sentLen:N0}-character message reached this terminal as {recordedLen:N0} "
+                        + "characters in the UserPrompt record (normalized). The submit happened — the "
+                        + "body is a splice. The message is PARKED; it will not be re-typed (that would "
+                        + "send a second copy). The session was not restarted."
+                        + (channelBound
+                            ? " This agent is channel-bound: someone is waiting on a reply."
+                            : string.Empty);
+
+                    var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                    await supervisor.RecordIncidentAsync(
+                        agent.Id, sessionId, AgentIncidentKind.TruncatedTerminalDelivery, severity,
+                        detail, failureReason: failureReason, ct: ct);
+                }
+            }
+
+            await db.SaveChangesAsync(ct);
+
+            if (agent is not null)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+
+            _logger.LogWarning(
+                "Delivery to session {SessionId} was truncated (sent {Sent} normalized chars, "
+                + "recorded {Recorded}); agent={AgentName}, parked={Parked}, killed=false",
+                sessionId, sentLen, recordedLen, agent?.Name ?? "<none>",
+                messageIds is { Count: > 0 });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to handle truncated delivery for session {SessionId}", sessionId);
+        }
+    }
+
     // Verification failed: return the message to the queue (never silently lose it), record an
     // incident against the owning agent (which also raises an alert), and for always-on agents kill
     // the wedged session — the supervisor's ladder restarts it (resuming the SAME session row, so
@@ -1178,16 +1371,31 @@ public sealed class SessionMessageQueueService
             // verdict says our ingestion had not caught up inside the confirm window, which is NOT
             // the same claim as "the submit failed" — and the difference is a session's life. See
             // DeliveryVerificationSettings.PostFailureConfirmGraceSeconds for the measured miss.
-            var lateConfirmed = verdict == DeliveryVerdict.NoTranscriptRecord && messageIds is { Count: > 0 }
-                ? await GraceConfirmAsync(sessionId, messageIds, ct)
-                : [];
-            if (messageIds is { Count: > 0 } && lateConfirmed.Count == messageIds.Count)
+            // A truncated classification during grace is handled (park + incident), not confirmed:
+            // it must not fall through as NoTranscriptRecord and kill the session.
+            HashSet<Guid> lateConfirmed = [];
+            HashSet<Guid> lateTruncated = [];
+            if (verdict == DeliveryVerdict.NoTranscriptRecord && messageIds is { Count: > 0 })
+                (lateConfirmed, lateTruncated) = await GraceConfirmAsync(sessionId, messageIds, ct);
+            if (messageIds is { Count: > 0 }
+                && lateConfirmed.Count + lateTruncated.Count == messageIds.Count)
             {
-                _logger.LogInformation(
-                    "Delivery to session {SessionId} verified late: all {Count} message(s) reached the "
-                    + "transcript within the post-failure grace window. No incident, and the session is "
-                    + "NOT restarted — it took the message correctly, our ingestion was just behind",
-                    sessionId, messageIds.Count);
+                if (lateTruncated.Count == 0)
+                {
+                    _logger.LogInformation(
+                        "Delivery to session {SessionId} verified late: all {Count} message(s) reached the "
+                        + "transcript within the post-failure grace window. No incident, and the session is "
+                        + "NOT restarted — it took the message correctly, our ingestion was just behind",
+                        sessionId, messageIds.Count);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Delivery to session {SessionId} classified {Truncated} message(s) as truncated "
+                        + "during the post-failure grace window ({Confirmed} confirmed). The session is "
+                        + "NOT restarted — the submit happened",
+                        sessionId, lateTruncated.Count, lateConfirmed.Count);
+                }
                 await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
                 return;
             }
@@ -1209,7 +1417,9 @@ public sealed class SessionMessageQueueService
                 var messages = await db.SessionQueuedMessages
                     .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
                     .ToListAsync(ct);
-                messages = messages.Where(m => !lateConfirmed.Contains(m.Id)).ToList();
+                messages = messages
+                    .Where(m => !lateConfirmed.Contains(m.Id) && !lateTruncated.Contains(m.Id))
+                    .ToList();
                 foreach (var message in messages.Where(m => m.Status == QueuedMessageStatus.Sent))
                 {
                     message.Status = QueuedMessageStatus.Pending;

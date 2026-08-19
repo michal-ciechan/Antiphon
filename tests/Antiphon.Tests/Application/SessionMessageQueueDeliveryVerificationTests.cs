@@ -821,4 +821,149 @@ public class SessionMessageQueueDeliveryVerificationTests
         var message = await verify.SessionQueuedMessages.SingleAsync(m => m.Body == "survive the fresh fallback");
         message.AgentSessionId.ShouldBe(newSessionId, "pending messages must follow the agent to its new session");
     }
+
+    // ---- CARD-0024: identity is not completeness -----------------------------------------------
+    //
+    // A UserPrompt whose HEAD matches is Sent under CARD-0055. A clip that keeps the opening
+    // frame (first-chunk-only, or the 2026-08-10 head+tail splice) therefore used to be marked
+    // Sent. Completeness is a second check on the same row: identity without it parks immediately,
+    // does not re-type, does not kill, and late-confirm must not promote the splice.
+
+    private static string LongQueuedBody() =>
+        "CARD-0024 truncation body — head frame that identity matches. " + new string('x', 800);
+
+    private static async Task ClipSubmitToPrefixAsync(BridgeQueueHarness h, int keepChars = 250)
+    {
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            var clipped = submitted.Length <= keepChars ? submitted : submitted[..keepChars];
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, clipped);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        };
+    }
+
+    [Test]
+    public async Task A_clipped_prefix_parks_as_truncated_not_sent()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var body = LongQueuedBody();
+        body.Length.ShouldBeGreaterThan(PromptSubmissionMatch.MatchWindowChars);
+        PromptSubmissionMatch.IsConfirmedBy(body, body[..250]).ShouldBeTrue("sanity: this clip still identifies");
+        PromptSubmissionMatch.IsCompleteIn(body, body[..250]).ShouldBeFalse("sanity: this clip is incomplete");
+        await ClipSubmitToPrefixAsync(h);
+
+        var dto = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        dto.Messages.Count.ShouldBe(1);
+        dto.Messages[0].Status.ShouldBe(nameof(QueuedMessageStatus.Pending));
+        dto.Messages[0].Parked.ShouldBeTrue("truncated parks immediately — not after MaxDeliveryAttempts retries");
+        h.Adapter.Inputs.ShouldBe([body, "\r"], "no re-press and no re-type: the splice is already the current turn");
+        h.Adapter.Killed.ShouldBeFalse("the session took a turn; truncation is not a wedge");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(3, "parked: attempts jumped to the cap so no automatic path retries");
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.Message.ShouldContain("PARKED");
+        incident.Message.ShouldContain("splice");
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeFalse("truncation is not a wedge and must not reuse the verification-failed kind");
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.OversizedTerminalDelivery))
+            .ShouldBeFalse("size-before-send is a different signal; do not conflate it with a measured splice");
+    }
+
+    [Test]
+    public async Task A_complete_long_body_still_marks_sent()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var body = LongQueuedBody();
+
+        var dto = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        dto.Messages.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBe([body]);
+        h.Adapter.Killed.ShouldBeFalse();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Truncation_parks_immediately_and_the_watchdog_does_not_retype()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var body = LongQueuedBody();
+        await ClipSubmitToPrefixAsync(h);
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+        var writes = h.Adapter.Inputs.Count;
+        writes.ShouldBe(2);
+
+        (await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None))
+            .ShouldBe(0, "a truncated park must not even wake the watchdog");
+        h.Adapter.Inputs.Count.ShouldBe(writes);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1, "the body was typed once; parking forbids a second copy");
+    }
+
+    [Test]
+    public async Task Truncating_a_channel_bound_agent_raises_a_critical_incident()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await h.BindChannelAsync();
+        var body = LongQueuedBody();
+        await ClipSubmitToPrefixAsync(h);
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+        incident.Message.ShouldContain("channel-bound");
+        h.Adapter.Killed.ShouldBeFalse();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    [Test]
+    public async Task Late_confirm_does_not_promote_a_truncated_body_to_sent()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var body = LongQueuedBody();
+        var clipped = body[..250];
+
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, clipped);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("truncated late-confirm parks; it must not type a second copy");
+        await using (var db = CreateContext())
+        {
+            var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+            message.Status.ShouldBe(QueuedMessageStatus.Pending);
+            message.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(3);
+            var incidents = await db.AgentIncidents
+                .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery)
+                .ToListAsync();
+            incidents.ShouldHaveSingleItem();
+        }
+
+        // A subsequent flush must not raise a second incident or flip the row to Sent.
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await using var again = CreateContext();
+        (await again.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+        (await again.AgentIncidents.CountAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery))
+            .ShouldBe(1, "deduped on the message id — late-confirm must not raise a second row");
+    }
 }

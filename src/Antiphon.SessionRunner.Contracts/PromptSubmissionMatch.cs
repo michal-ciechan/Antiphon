@@ -192,4 +192,37 @@ public static class PromptSubmissionMatch
             && record.Replace(" ", "", StringComparison.Ordinal)
                 .Contains(strippedNeedle, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// CARD-0024's completeness rule: does <paramref name="recordText"/> carry the FULL body we
+    /// typed, not merely its identifying head?
+    ///
+    /// <see cref="IsConfirmedBy"/> is identity — a 200-char head window — and must stay that way
+    /// (C4 asks a different question of the same matcher). Completeness is the second question,
+    /// asked only after identity: <c>Normalize(record).Contains(Normalize(body))</c>, then the
+    /// same whitespace-free arm identity already uses so a Grok newline-join (CARD-0080) is not
+    /// invented as a splice. First-chunk-only clips and the 2026-08-10 head+tail splice both fail
+    /// here; a framed-but-whole record still passes.
+    ///
+    /// Vacuous <c>true</c> when the body is too short to identify (<see cref="RequiresTextMatch"/>
+    /// is false): the weak arm has no completeness claim.
+    /// </summary>
+    public static bool IsCompleteIn(string? body, string? recordText)
+    {
+        if (!RequiresTextMatch(body))
+            return true;
+
+        if (string.IsNullOrEmpty(body) || string.IsNullOrEmpty(recordText))
+            return false;
+
+        var normalizedBody = Normalize(body);
+        var record = Normalize(recordText);
+        if (record.Contains(normalizedBody, StringComparison.Ordinal))
+            return true;
+
+        var strippedBody = normalizedBody.Replace(" ", "", StringComparison.Ordinal);
+        return strippedBody.Length >= MinMatchChars
+            && record.Replace(" ", "", StringComparison.Ordinal)
+                .Contains(strippedBody, StringComparison.Ordinal);
+    }
 }

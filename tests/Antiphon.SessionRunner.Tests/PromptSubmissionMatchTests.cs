@@ -249,6 +249,98 @@ public class PromptSubmissionMatchTests
             .ShouldBeFalse("a different command's wrapper is not our command");
     }
 
+    // ---- CARD-0024: completeness is a second question, not a change to identity -----------------
+    //
+    // IsConfirmedBy stays the head-window identity matcher (C4 shares it). IsCompleteIn asks
+    // whether the same record contains the FULL normalized body. Identity without completeness
+    // is the measured clip: first-chunk-only and the 2026-08-10 head+tail splice both confirm
+    // and both fail completeness.
+
+    [Test]
+    public void The_2026_08_10_head_and_tail_splice_identifies_but_is_not_complete()
+    {
+        // Measured: 5 471 queued, 379 recorded = src[0..246] + src[5339..5470], 5 × 1024 dropped.
+        const int headKept = 247;
+        const int tailStart = 5339;
+        const int total = 5471;
+        var body = new string('A', headKept) + new string('M', tailStart - headKept) + new string('Z', total - tailStart);
+        var recorded = body[..headKept] + body[tailStart..];
+
+        body.Length.ShouldBe(total);
+        recorded.Length.ShouldBe(379);
+        PromptSubmissionMatch.IsConfirmedBy(body, recorded).ShouldBeTrue("the surviving head is enough for identity");
+        PromptSubmissionMatch.IsCompleteIn(body, recorded).ShouldBeFalse("both ends survived; the middle did not");
+    }
+
+    [Test]
+    public void A_first_chunk_only_clip_identifies_but_is_not_complete()
+    {
+        var body = new string('h', 250) + new string('t', 800);
+        var clipped = body[..250];
+
+        PromptSubmissionMatch.IsConfirmedBy(body, clipped).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(body, clipped).ShouldBeFalse();
+    }
+
+    [Test]
+    public void A_whole_body_is_complete()
+    {
+        const string body = "deliver this exact instruction to the delegate";
+        PromptSubmissionMatch.IsConfirmedBy(body, body).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(body, body).ShouldBeTrue();
+    }
+
+    [Test]
+    public void A_framed_whole_body_is_complete()
+    {
+        const string body = "deliver this exact instruction to the delegate";
+        PromptSubmissionMatch.IsConfirmedBy(body, $"<framing>{body}</framing>").ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(body, $"<framing>{body}</framing>").ShouldBeTrue();
+    }
+
+    [Test]
+    public void A_newline_dropped_join_is_complete()
+    {
+        const string body = "line one of the channel reply\nline two of the channel reply\nline three";
+        const string grokRecord = "line one of the channel replyline two of the channel replyline three";
+
+        PromptSubmissionMatch.IsConfirmedBy(body, grokRecord).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(body, grokRecord)
+            .ShouldBeTrue("Grok drops newlines with no separator; completeness uses the same whitespace-free arm");
+        PromptSubmissionMatch.IsCompleteIn(body, "prefix " + grokRecord + " suffix").ShouldBeTrue();
+    }
+
+    [Test]
+    public void A_long_body_that_confirms_on_its_head_window_alone_is_not_complete()
+    {
+        var head = "[Antiphon delegation brief] CARD-0055 slice 2 — transcript-confirmed delivery. ";
+        var body = head + new string('z', 40_000);
+
+        PromptSubmissionMatch.IsConfirmedBy(body, head + new string('z', 200)).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(body, head + new string('z', 200)).ShouldBeFalse();
+    }
+
+    [Test]
+    public void A_weak_match_body_is_vacuously_complete()
+    {
+        PromptSubmissionMatch.RequiresTextMatch("Continue.").ShouldBeFalse();
+        PromptSubmissionMatch.IsCompleteIn("Continue.", "something else entirely").ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn("Continue.", null).ShouldBeTrue();
+    }
+
+    [Test]
+    public void The_local_command_wrapper_is_complete_for_the_slash_command_that_was_typed()
+    {
+        const string wrapper =
+            "<command-name>/remote-control</command-name>\n"
+            + "            <command-message>remote-control</command-message>\n"
+            + "            <command-args></command-args>";
+
+        PromptSubmissionMatch.IsConfirmedBy("/remote-control", wrapper).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn("/remote-control", wrapper)
+            .ShouldBeTrue("the wrapper contains the typed body, so completeness is a no-op there");
+    }
+
     // ---- lockstep with C4 ------------------------------------------------------------------------
 
     // SessionInputLog must ask the extracted matcher the same question it used to answer itself:
