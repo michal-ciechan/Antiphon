@@ -228,18 +228,31 @@ public class AgentTaskDeadSessionReconciliationTests
     }
 
     [Test]
-    public async Task a_check_task_is_never_settled_by_this_sweep()
+    public async Task a_check_task_on_a_dead_session_is_failed_with_no_parent_note()
     {
-        // A check's lifecycle belongs to AgentTaskCheckService, it is pinned to the standing
-        // interpreter, and a completion note about one would be noise in the caller's session.
+        // CARD-0079: a zombie Dispatched check on a dead previous session occupied the standing
+        // interpreter for two days. ReplyTo=None already suppresses a completion note; the sweep
+        // still never kills, and RemoveEphemeralAgentAsync only deletes pool delegates.
         await using var scenario = new Scenario();
         var task = await scenario.AddTaskAsync(
-            AgentTaskStatus.Dispatched, SessionStatus.Failed, role: AgentTaskRole.Check);
+            AgentTaskStatus.Dispatched, SessionStatus.Failed,
+            role: AgentTaskRole.Check,
+            replyTo: AgentTaskReplyTo.None,
+            isPoolDelegate: false);
         var harness = scenario.Harness(task.SessionId);
 
         await scenario.PastGraceAsync(harness);
 
-        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await scenario.ReadTaskAsync(task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        harness.Stopper.Killed.ShouldBeEmpty(
+            "THE SWEEP NEVER KILLS — failing the task is enough; a kill would be CARD-0056");
+        harness.Runner.Killed.ShouldBeEmpty("and not through the runner client either");
+        (await scenario.ParentNoteBodiesAsync())
+            .ShouldBeEmpty("ReplyTo=None already suppresses a completion note");
+
+        await using var verify = CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == task.AgentId))
+            .ShouldBeTrue("the standing specialist is not a pool delegate and must stay");
     }
 
     // ---- CARD-0085: same recovery gate on the dead-session sweep ---------------------------------
@@ -463,6 +476,8 @@ public class AgentTaskDeadSessionReconciliationTests
             string? failureReason = null,
             int? endedMinutesAgo = null,
             AgentTaskRole role = AgentTaskRole.Code,
+            AgentTaskReplyTo replyTo = AgentTaskReplyTo.Session,
+            bool isPoolDelegate = true,
             bool detachSession = false,
             WorkspaceMode workspace = WorkspaceMode.Shared,
             string? workingDirectory = null,
@@ -509,7 +524,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 Details = "Dead-session reconciliation test delegate.",
                 Status = AgentStatus.Running,
                 ModelLevel = AgentModelLevel.High,
-                IsPoolDelegate = true,
+                IsPoolDelegate = isPoolDelegate,
                 PersistentSessionId = sessionId.ToString("D"),
                 CreatedAt = dispatched,
                 UpdatedAt = dispatched,
@@ -533,7 +548,7 @@ public class AgentTaskDeadSessionReconciliationTests
                 AgentName = agentName,
                 AgentSessionId = detachSession ? null : sessionId,
                 Status = status,
-                ReplyTo = AgentTaskReplyTo.Session,
+                ReplyTo = replyTo,
                 ParentSessionId = ParentSessionId,
                 CreatedAt = dispatched,
                 DispatchedAt = dispatched,

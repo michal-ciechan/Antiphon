@@ -590,6 +590,100 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Fresh_start_moves_pending_messages_and_repoints_in_flight_tasks()
+    {
+        // CARD-0079: the pair that 4A already wrote for messages, applied to tasks. A new session
+        // id used to move Pending queue rows and leave Dispatched/Working tasks on the previous
+        // id, so settlement looked in the wrong session and occupancy locked the specialist.
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        Guid? taskId = null;
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var freshAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, freshAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("AlwaysOn Specialist", workspace, AlwaysOn: true),
+                CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.PersistentSessionId.ShouldNotBeNull();
+            var previousSessionId = Guid.Parse(first.PersistentSessionId);
+
+            taskId = Guid.NewGuid();
+            var messageId = Guid.NewGuid();
+            await using (var seed = CreateContext())
+            {
+                seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = messageId,
+                    AgentSessionId = previousSessionId,
+                    Body = "pending brief that must follow the new session",
+                    Status = QueuedMessageStatus.Pending,
+                    Sequence = 1,
+                    Origin = QueuedMessageOrigin.Delegation,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                seed.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId.Value,
+                    RootTaskId = taskId.Value,
+                    Title = "in-flight interpretation",
+                    Goal = "in-flight interpretation",
+                    Kind = AgentTaskKind.Worker,
+                    Role = AgentTaskRole.Check,
+                    ReplyTo = AgentTaskReplyTo.None,
+                    ModelLevel = AgentModelLevel.Low,
+                    Workspace = WorkspaceMode.Shared,
+                    WorkingDirectory = workspace,
+                    AgentId = agent.Id,
+                    AgentSessionId = previousSessionId,
+                    Ephemeral = false,
+                    Status = AgentTaskStatus.Dispatched,
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+                    DispatchedAt = DateTime.UtcNow.AddMinutes(-5),
+                });
+                await seed.SaveChangesAsync();
+            }
+
+            await MarkSessionEndedAsync(first.PersistentSessionId, SessionStatus.Stopped);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldNotBeNull();
+            second.PersistentSessionId.ShouldNotBe(first.PersistentSessionId);
+            var newSessionId = Guid.Parse(second.PersistentSessionId);
+
+            await using var verify = CreateContext();
+            var moved = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == messageId);
+            moved.AgentSessionId.ShouldBe(newSessionId, "Pending messages follow the new session");
+
+            var remapped = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId.Value);
+            remapped.AgentSessionId.ShouldBe(newSessionId, "in-flight tasks follow the new session");
+            remapped.Status.ShouldBe(AgentTaskStatus.Dispatched, "re-pointing is not settlement");
+        }
+        finally
+        {
+            if (taskId is { } id)
+            {
+                await using var cleanup = CreateContext();
+                await cleanup.AgentTasks.Where(t => t.Id == id).ExecuteDeleteAsync();
+            }
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     // The agent queue reflects work REMAINING: reaching Review must remove the card from its
     // agent's queue and compact the positions behind it, exactly like the explicit queue-remove
     // endpoint. Left enqueued, the card re-spawns a session on every agent start (CARD-0001).

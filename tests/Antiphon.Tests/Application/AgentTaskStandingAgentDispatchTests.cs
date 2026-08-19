@@ -132,6 +132,31 @@ public class AgentTaskStandingAgentDispatchTests
             .ShouldBe(1, "two tasks, one standing session, zero launches");
     }
 
+    [Test]
+    public async Task a_dispatched_task_on_a_stopped_previous_session_does_not_occupy_the_live_one()
+    {
+        // CARD-0079: occupancy is the live composer, not "any Dispatched row on this agent".
+        // The check interpreter sat behind a Dispatched task on a dead previous session for two
+        // days while every new check waited 60s and fell back to the digest.
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateHarness();
+        var (agentId, liveSessionId) = await SeedStandingAgentAsync(workspace.Path, alwaysOn: true);
+        var previousSessionId = await SeedStoppedSessionAsync(workspace.Path);
+        await SeedDispatchedTaskAsync(workspace.Path, agentId, previousSessionId);
+        var next = await SeedQueuedTaskAsync(workspace.Path, pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var dispatched = await ReloadTaskAsync(next.Id);
+        dispatched.Status.ShouldBe(
+            AgentTaskStatus.Dispatched, "a zombie on a previous session must not occupy");
+        dispatched.AgentSessionId.ShouldBe(liveSessionId, "the next pin lands in the LIVE session");
+
+        await using var verify = CreateContext();
+        (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace.Path))
+            .ShouldBe(2, "the stopped previous session is still there — we did not spawn a third");
+    }
+
     // ---- no live session -----------------------------------------------------------------------
 
     [Test]
@@ -331,6 +356,59 @@ public class AgentTaskStandingAgentDispatchTests
 
         var provider = services.BuildServiceProvider();
         return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), provider);
+    }
+
+    private static async Task<Guid> SeedStoppedSessionAsync(string directory)
+    {
+        var sessionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Stopped,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now.AddDays(-2),
+            StartedAt = now.AddDays(-2),
+            LastSeenAt = now.AddDays(-2),
+            EndedAt = now.AddDays(-2),
+        });
+        await db.SaveChangesAsync();
+        return sessionId;
+    }
+
+    private static async Task<AgentTask> SeedDispatchedTaskAsync(
+        string directory, Guid agentId, Guid sessionId)
+    {
+        var id = Guid.NewGuid();
+        var now = DateTime.UtcNow.AddDays(-2);
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "zombie interpretation",
+            Goal = "zombie interpretation",
+            Kind = AgentTaskKind.Worker,
+            Role = AgentTaskRole.Custom,
+            ReplyTo = AgentTaskReplyTo.None,
+            ModelLevel = AgentModelLevel.Low,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            AgentId = agentId,
+            AgentSessionId = sessionId,
+            Ephemeral = false,
+            Status = AgentTaskStatus.Dispatched,
+            CreatedAt = now,
+            DispatchedAt = now,
+        };
+        await using var db = CreateContext();
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
     }
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedStandingAgentAsync(

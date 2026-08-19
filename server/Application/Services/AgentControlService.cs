@@ -329,6 +329,20 @@ public sealed class AgentControlService
                 _logger.LogInformation(
                     "Agent {AgentName}: moved {Count} pending queued message(s) from session {Previous} to new session {New}",
                     agent.Name, moved, previousSessionId, session.Id);
+
+            // Same follow-through for in-flight tasks: OnTurnEndAsync looks up the open task by
+            // AgentSessionId of the session that just ended the turn. Leaving Dispatched/Working
+            // rows on the previous id is how CARD-0079's check interpreter answered on the new
+            // session and never settled (the occupancy lock then blocked every later check).
+            var remapped = await _db.AgentTasks
+                .Where(t => t.AgentId == agent.Id
+                    && t.AgentSessionId == previousSessionId
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working))
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentSessionId, session.Id), ct);
+            if (remapped > 0)
+                _logger.LogInformation(
+                    "Agent {AgentName}: re-pointed {Count} in-flight task(s) from session {Previous} to new session {New}",
+                    agent.Name, remapped, previousSessionId, session.Id);
         }
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);

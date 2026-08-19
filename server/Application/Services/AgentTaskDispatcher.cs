@@ -493,10 +493,11 @@ public sealed class AgentTaskDispatcher
     /// <para>Plus <see cref="DelegationSettings.DeadSessionFailGraceMinutes"/> from the FIRST sweep
     /// that saw the task dead, so re-adoption and a late settlement both win the race.</para>
     ///
-    /// <para><see cref="AgentTaskRole.Check"/> tasks are excluded: their lifecycle belongs to
-    /// <c>AgentTaskCheckService</c> (a delivery failure already produces <c>DeliveryFailed</c>),
-    /// they are pinned to the standing interpreter, and a completion note about one would be noise
-    /// in the caller's session.</para>
+    /// <para><see cref="AgentTaskRole.Check"/> tasks are included: a zombie Dispatched check on a
+    /// dead previous session is what occupied the standing interpreter for two days (CARD-0079).
+    /// <c>ReplyTo = None</c> already suppresses a completion note, and
+    /// <see cref="AgentTaskService.RemoveEphemeralAgentAsync"/> only deletes pool delegates, so
+    /// the specialist is safe. The sweep still never kills a session.</para>
     /// </summary>
     internal async Task<int> FailDeadSessionTasksAsync(CancellationToken ct)
     {
@@ -510,8 +511,7 @@ public sealed class AgentTaskDispatcher
             return 0;
 
         var open = await _db.AgentTasks
-            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                && t.Role != AgentTaskRole.Check)
+            .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             .ToListAsync(ct);
         if (open.Count == 0)
             return 0;
@@ -1524,12 +1524,15 @@ public sealed class AgentTaskDispatcher
                 + "kind so it runs on a fresh delegate.");
         }
 
-        // One task at a time on one agent. A brief delivered while the agent is mid-task lands
-        // BETWEEN the running task's turns and corrupts both correlations — the same invariant the
-        // warm pool holds, enforced here against the agent's own tasks rather than a pool flag.
+        // One task at a time on the LIVE composer. A brief delivered while the agent is mid-task
+        // lands BETWEEN the running task's turns and corrupts both correlations — the same
+        // invariant the warm pool holds. Occupancy is that session, not "any Dispatched row on
+        // this agent": a Dispatched task whose AgentSessionId is a previous AlwaysOn generation
+        // (or a dead session) must not block. That is the CARD-0079 zombie.
         var busy = await _db.AgentTasks.AnyAsync(
             t => t.AgentId == standing.Id
                 && t.Id != claimed.Id
+                && t.AgentSessionId == session
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
             ct);
         if (busy)
