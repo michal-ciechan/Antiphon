@@ -14,9 +14,11 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0082 S3: once-a-minute idle+full scan that enqueues a verified <c>/compact</c> through
-/// the existing session queue. Eligibility is every Running Claude Code session (claimed or not);
-/// per-agent overrides apply only when an Agent's PersistentSessionId claims the session.
+/// CARD-0082 S3 / CARD-0083 S5: once-a-minute idle+full scan that enqueues a verified
+/// <c>/compact</c> through the existing session queue. Eligibility is every Running session
+/// whose <c>ContextWindowUsage</c> contract is Supported or Degraded (claimed or not) — both
+/// mean a usage signal exists. Unknown and Unsupported stay out of the query. Per-agent
+/// overrides apply only when an Agent's PersistentSessionId claims the session.
 ///
 /// Singleton: the in-memory per-session attempt stamp has to survive the hosted service's
 /// per-tick scope, or two ticks a few seconds apart would double-fire inside the delivery window.
@@ -71,9 +73,42 @@ public sealed class ContextCompactionService
     }
 
     /// <summary>
-    /// Scan running Claude sessions; enqueue at most one compact per eligible session. Returns
-    /// how many sessions this pass actually enqueued for. Other sessions may ride along on a
-    /// shared database — callers must not assert on this number as a global count.
+    /// Kinds whose <c>ContextWindowUsage</c> contract is Supported or Degraded. Closed list so
+    /// the sweep query can <c>IN</c>-filter at the database; Unknown and Unsupported never leave
+    /// the store.
+    /// </summary>
+    internal static readonly AgentKind[] ContextWindowEligibleKinds =
+        Enum.GetValues<AgentKind>().Where(IsContextWindowEligible).ToArray();
+
+    /// <summary>
+    /// True when the kind's context-window contract says a usage signal exists (Supported or
+    /// Degraded). Unknown (survey debt) and Unsupported (settled no) stay out.
+    /// </summary>
+    internal static bool IsContextWindowEligible(AgentKind kind)
+    {
+        if (!Enum.IsDefined(kind))
+            return false;
+        var state = ProviderContractCatalog.For(kind).ContextWindowUsage.State;
+        return state is AgentTuiCapabilityState.Supported or AgentTuiCapabilityState.Degraded;
+    }
+
+    /// <summary>
+    /// Running sessions whose context-window contract is Supported or Degraded. The filter is
+    /// an EF-translatable <c>IN</c> over <see cref="ContextWindowEligibleKinds"/> so Unknown
+    /// and Unsupported kinds never leave the database.
+    /// </summary>
+    internal static IQueryable<AgentSession> WhereEligibleForContextWindow(
+        IQueryable<AgentSession> sessions)
+    {
+        var eligible = ContextWindowEligibleKinds;
+        return sessions.Where(s => s.Status == SessionStatus.Running && eligible.Contains(s.AgentKind));
+    }
+
+    /// <summary>
+    /// Scan running sessions whose context-window contract is Supported or Degraded; enqueue at
+    /// most one compact per eligible session. Returns how many sessions this pass actually
+    /// enqueued for. Other sessions may ride along on a shared database — callers must not
+    /// assert on this number as a global count.
     /// </summary>
     public async Task<int> SweepAsync(CancellationToken ct)
     {
@@ -82,8 +117,7 @@ public sealed class ContextCompactionService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var rows = await db.AgentSessions.AsNoTracking()
-                .Where(s => s.Status == SessionStatus.Running && s.AgentKind == AgentKind.ClaudeCode)
+            var rows = await WhereEligibleForContextWindow(db.AgentSessions.AsNoTracking())
                 .Select(s => new { s.Id, s.EffectiveModelId })
                 .ToListAsync(ct);
             sessions = rows.Select(s => (s.Id, s.EffectiveModelId)).ToList();

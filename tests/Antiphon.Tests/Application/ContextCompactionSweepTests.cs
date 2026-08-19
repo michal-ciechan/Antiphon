@@ -16,9 +16,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0082 S3 — the idle auto-compact sweep. Shared-Postgres rules: every assertion is scoped
-/// to a row this test created, and the class takes <c>[NotInParallel]</c> with NO group key
-/// because SweepAsync walks every Running Claude session.
+/// CARD-0082 S3 / CARD-0083 S5 — the idle auto-compact sweep. Shared-Postgres rules: every
+/// assertion is scoped to a row this test created, and the class takes <c>[NotInParallel]</c>
+/// with NO group key because SweepAsync walks every Running session whose context-window
+/// contract is Supported or Degraded.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -34,6 +35,8 @@ public class ContextCompactionSweepTests
     {
         await using var h = await CreateHarnessAsync();
         await SeedIdleFullAsync(h.SessionId);
+
+        (await EligibleSessionIdsAsync()).ShouldContain(h.SessionId);
 
         await SweepAsync(h, FastSettings());
 
@@ -233,35 +236,59 @@ public class ContextCompactionSweepTests
     }
 
     [Test]
-    public async Task A_non_claude_session_is_not_eligible()
+    public void Context_window_eligibility_follows_Supported_or_Degraded()
+    {
+        ContextCompactionService.IsContextWindowEligible(AgentKind.ClaudeCode).ShouldBeTrue();
+        ContextCompactionService.IsContextWindowEligible(AgentKind.Grok).ShouldBeTrue();
+        ContextCompactionService.IsContextWindowEligible(AgentKind.Codex).ShouldBeFalse();
+        ContextCompactionService.IsContextWindowEligible(AgentKind.OpenCode).ShouldBeFalse();
+        ContextCompactionService.IsContextWindowEligible(AgentKind.Raw).ShouldBeFalse();
+        ContextCompactionService.IsContextWindowEligible((AgentKind)int.MaxValue).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task A_grok_session_passes_eligibility_but_does_not_enqueue_when_fullness_is_unknown()
     {
         await using var h = await CreateHarnessAsync();
-        var grokId = Guid.NewGuid();
-        await using (var db = CreateContext())
-        {
-            var now = DateTime.UtcNow;
-            db.AgentSessions.Add(new AgentSession
-            {
-                Id = grokId,
-                DefinitionName = "fake",
-                AgentKind = AgentKind.Grok,
-                Status = SessionStatus.Running,
-                Cwd = Path.Combine(h.TempRoot, "grok"),
-                Cols = 120,
-                Rows = 30,
-                CreatedAt = now,
-                StartedAt = now,
-                LastSeenAt = now,
-            });
-            await db.SaveChangesAsync();
-        }
-
-        await SeedIdleFullAsync(grokId);
+        var grokId = await SeedRunningSessionAsync(h, AgentKind.Grok);
+        // Transcript exists (so this is not the zero-rows skip) but no usage columns — the
+        // production Grok tailer shape today. The session is in the query; Compute returns unknown.
+        await SeedUsageAsync(grokId, TranscriptKinds.AssistantText, tokens: null, hoursAgo: 3, text: "reply");
+        await SeedUsageAsync(grokId, TranscriptKinds.TurnEnd, tokens: null, hoursAgo: 3, stopReason: "end_turn");
         h.Runtime.Register(grokId, new FakeAgentProtocolAdapter());
+
+        (await EligibleSessionIdsAsync()).ShouldContain(grokId);
 
         await SweepAsync(h, FastSettings());
 
         (await SupervisionMessagesAsync(grokId)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Unknown_and_Unsupported_kinds_are_excluded_from_the_sweep_query()
+    {
+        await using var h = await CreateHarnessAsync();
+        var rawId = await SeedRunningSessionAsync(h, AgentKind.Raw);
+        var codexId = await SeedRunningSessionAsync(h, AgentKind.Codex);
+        var openCodeId = await SeedRunningSessionAsync(h, AgentKind.OpenCode);
+        // Usage columns populated so IsEligibleFromStoreAsync would fire if the query leaked them.
+        await SeedIdleFullAsync(rawId);
+        await SeedIdleFullAsync(codexId);
+        await SeedIdleFullAsync(openCodeId);
+        h.Runtime.Register(rawId, new FakeAgentProtocolAdapter());
+        h.Runtime.Register(codexId, new FakeAgentProtocolAdapter());
+        h.Runtime.Register(openCodeId, new FakeAgentProtocolAdapter());
+
+        var eligible = await EligibleSessionIdsAsync();
+        eligible.ShouldNotContain(rawId);
+        eligible.ShouldNotContain(codexId);
+        eligible.ShouldNotContain(openCodeId);
+
+        await SweepAsync(h, FastSettings());
+
+        (await SupervisionMessagesAsync(rawId)).ShouldBeEmpty();
+        (await SupervisionMessagesAsync(codexId)).ShouldBeEmpty();
+        (await SupervisionMessagesAsync(openCodeId)).ShouldBeEmpty();
     }
 
     [Test]
@@ -376,6 +403,39 @@ public class ContextCompactionSweepTests
             LastDeliveryBaselineSequence = 0,
         });
         await db.SaveChangesAsync();
+    }
+
+    private static async Task<List<Guid>> EligibleSessionIdsAsync()
+    {
+        await using var db = CreateContext();
+        return await ContextCompactionService
+            .WhereEligibleForContextWindow(db.AgentSessions.AsNoTracking())
+            .Select(s => s.Id)
+            .ToListAsync();
+    }
+
+    private static async Task<Guid> SeedRunningSessionAsync(BridgeQueueHarness h, AgentKind kind)
+    {
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(h.TempRoot, $"{kind}-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "fake",
+            AgentKind = kind,
+            Status = SessionStatus.Running,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        });
+        await db.SaveChangesAsync();
+        return sessionId;
     }
 
     private static async Task<(Guid SessionId, FakeAgentProtocolAdapter Adapter)> SeedUnclaimedLiveSessionAsync(
