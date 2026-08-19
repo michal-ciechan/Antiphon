@@ -43,6 +43,13 @@
     "DefaultContextTokens": 200000,
     "ModelOverrides": {}
   },
+  "ContextCompaction": {
+    "Enabled": true,
+    "IdleMinutes": 480,
+    "ContextPercent": 50,
+    "CooldownHours": 24,
+    "BoundaryTimeoutMinutes": 10
+  },
   "Retention": {
     "TranscriptRetentionDays": 30,
     "QueuedMessageRetentionDays": 30,

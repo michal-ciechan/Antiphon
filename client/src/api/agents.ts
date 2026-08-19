@@ -145,6 +145,13 @@ export interface AgentSummaryDto {
    * Informational only: the agent picks the new ones up at its next launch and nothing forces that.
    */
   bundlesOutOfDate?: boolean
+  /**
+   * Per-agent auto-compact overrides (CARD-0082). Null / omitted = use the installation
+   * ContextCompactionSettings value.
+   */
+  autoCompactEnabled?: boolean | null
+  autoCompactIdleMinutes?: number | null
+  autoCompactContextPercent?: number | null
 }
 
 export interface AgentSupervisionDto {
@@ -245,6 +252,10 @@ export interface CreateAgentRequest {
   /** Supervised from birth: auto-started at boot, auto-restarted on crash. */
   alwaysOn?: boolean
   remoteControlEnabled?: boolean
+  /** Null / omit = use the installation ContextCompactionSettings value. */
+  autoCompactEnabled?: boolean | null
+  autoCompactIdleMinutes?: number | null
+  autoCompactContextPercent?: number | null
 }
 
 export interface UpdateAgentRequest {
@@ -273,6 +284,13 @@ export interface UpdateAgentRequest {
    * EMPTY array is the explicit "detach all". Order is composition order.
    */
   bundleKeys?: string[] | null
+  /**
+   * Per-agent auto-compact overrides (CARD-0082). Always sent from the settings modal, including
+   * JSON null for "use the installation default".
+   */
+  autoCompactEnabled?: boolean | null
+  autoCompactIdleMinutes?: number | null
+  autoCompactContextPercent?: number | null
 }
 
 export interface DraftAgentRequest {

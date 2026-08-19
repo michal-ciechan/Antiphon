@@ -129,6 +129,10 @@ try
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
+    builder.Services.AddSingleton<IValidateOptions<ContextCompactionSettings>, ContextCompactionSettingsValidator>();
+    builder.Services.AddOptions<ContextCompactionSettings>()
+        .Bind(builder.Configuration.GetSection("ContextCompaction"))
+        .ValidateOnStart();
     builder.Services.Configure<AlertsSettings>(builder.Configuration.GetSection("Alerts"));
     builder.Services.Configure<RetentionSettings>(builder.Configuration.GetSection("Retention"));
     builder.Services.AddSingleton<IValidateOptions<AgentTuiSettings>, AgentTuiSettingsValidator>();

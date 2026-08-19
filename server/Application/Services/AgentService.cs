@@ -223,6 +223,7 @@ public sealed class AgentService
     public async Task<AgentDetailDto> CreateAsync(CreateAgentRequest request, CancellationToken ct)
     {
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
+        ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
 
         var workingDirectory = request.WorkingDirectory.Trim();
@@ -262,6 +263,9 @@ public sealed class AgentService
                 ReplyStyle = request.ReplyStyle,
                 AlwaysOn = request.AlwaysOn,
                 RemoteControlEnabled = request.RemoteControlEnabled,
+                AutoCompactEnabled = request.AutoCompactEnabled,
+                AutoCompactIdleMinutes = request.AutoCompactIdleMinutes,
+                AutoCompactContextPercent = request.AutoCompactContextPercent,
                 BoardId = board.Id,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -313,6 +317,7 @@ public sealed class AgentService
     public async Task<AgentDetailDto> UpdateAsync(Guid id, UpdateAgentRequest request, CancellationToken ct)
     {
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
+        ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
         await EnsureBoardExistsAsync(request.BoardId, ct);
 
@@ -342,6 +347,10 @@ public sealed class AgentService
             agent.ModelLevel = modelLevel;
         if (request.ReplyStyle is { } replyStyle)
             agent.ReplyStyle = replyStyle;
+        // Applied even when null — null IS the "use the global default" state (CARD-0082 S2).
+        agent.AutoCompactEnabled = request.AutoCompactEnabled;
+        agent.AutoCompactIdleMinutes = request.AutoCompactIdleMinutes;
+        agent.AutoCompactContextPercent = request.AutoCompactContextPercent;
         // CARD-0058 slice 6. Null leaves attachments alone; an empty list detaches everything. The
         // rows change here and nothing else does: the agent's RUNNING session keeps the bundles it
         // launched with, which is what the drift badge on the detail DTO is for.
@@ -812,7 +821,10 @@ public sealed class AgentService
             configured,
             liveSelection,
             agent.ReplyStyle,
-            bundlesOutOfDate);
+            bundlesOutOfDate,
+            agent.AutoCompactEnabled,
+            agent.AutoCompactIdleMinutes,
+            agent.AutoCompactContextPercent);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -872,7 +884,10 @@ public sealed class AgentService
             // — recomputed per request rather than stored, so the list can never drift from the repo.
             composed.Stamps,
             IsOutOfDate(live, composed),
-            keys);
+            keys,
+            agent.AutoCompactEnabled,
+            agent.AutoCompactIdleMinutes,
+            agent.AutoCompactContextPercent);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
@@ -1021,6 +1036,17 @@ public sealed class AgentService
         if (string.IsNullOrWhiteSpace(workingDirectory))
             errors["WorkingDirectory"] = ["Working directory is required."];
 
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
+
+    private static void ValidateAutoCompactOverrides(int? idleMinutes, int? contextPercent)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (idleMinutes is <= 0)
+            errors["AutoCompactIdleMinutes"] = ["Must be a positive number of minutes, or empty to use the default."];
+        if (contextPercent is < 1 or > 100)
+            errors["AutoCompactContextPercent"] = ["Must be between 1 and 100, or empty to use the default."];
         if (errors.Count > 0)
             throw new ValidationException(errors);
     }

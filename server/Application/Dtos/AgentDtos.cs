@@ -52,7 +52,11 @@ public sealed record AgentSummaryDto(
     // an edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
     // Informational ONLY: it restarts with the new ones at its next launch and nothing here forces
     // that. False whenever there is no live session, or no recorded stamp to compare.
-    bool BundlesOutOfDate = false);
+    bool BundlesOutOfDate = false,
+    // CARD-0082 S2. Null = this agent uses the global ContextCompactionSettings value.
+    bool? AutoCompactEnabled = null,
+    int? AutoCompactIdleMinutes = null,
+    int? AutoCompactContextPercent = null);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -93,7 +97,11 @@ public sealed record AgentDetailDto(
     // The bundle KEYS attached to this agent, in composition order — what the settings modal's
     // multi-select round-trips. Distinct from ComposedBundles, which is the whole composition
     // (attachments AND the reply-style block) stamped with versions.
-    IReadOnlyList<string>? AttachedBundleKeys = null);
+    IReadOnlyList<string>? AttachedBundleKeys = null,
+    // CARD-0082 S2. Null = this agent uses the global ContextCompactionSettings value.
+    bool? AutoCompactEnabled = null,
+    int? AutoCompactIdleMinutes = null,
+    int? AutoCompactContextPercent = null);
 
 /// <summary>
 /// One attachable bundle from the catalog (CARD-0058). The catalog is CODE — markdown files in the
@@ -170,7 +178,11 @@ public sealed record CreateAgentRequest(
     // CARD-0008: supervision is part of the agent's identity, not an afterthought — an agent
     // meant to be always-on must never exist unsupervised between a create and a PATCH.
     bool AlwaysOn = false,
-    bool RemoteControlEnabled = false);
+    bool RemoteControlEnabled = false,
+    // CARD-0082 S2. Null = use the global ContextCompactionSettings value.
+    bool? AutoCompactEnabled = null,
+    int? AutoCompactIdleMinutes = null,
+    int? AutoCompactContextPercent = null);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -207,7 +219,15 @@ public sealed record UpdateAgentRequest(
     // everything. An EMPTY list is the explicit "detach all". Order is composition order; unknown or
     // style keys are rejected 422 rather than dropped, because a key an operator typed that names
     // nothing is a mistake worth hearing about.
-    IReadOnlyList<string>? BundleKeys = null);
+    IReadOnlyList<string>? BundleKeys = null,
+    // CARD-0082 S2. Unlike AlwaysOn (null = leave unchanged), these three ARE applied even when
+    // null: null on the entity means "use the global ContextCompactionSettings value", and the
+    // settings modal round-trips the empty/use-default state as JSON null. An older caller that
+    // omits them therefore resets any override to the installation default — the safe direction,
+    // and these columns are new.
+    bool? AutoCompactEnabled = null,
+    int? AutoCompactIdleMinutes = null,
+    int? AutoCompactContextPercent = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

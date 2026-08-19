@@ -7,6 +7,7 @@ import {
   Input,
   Modal,
   MultiSelect,
+  NumberInput,
   SegmentedControl,
   Select,
   Stack,
@@ -59,6 +60,9 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [boardId, setBoardId] = useState<string | null>(null)
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
+  const [autoCompactEnabled, setAutoCompactEnabled] = useState<boolean | null>(null)
+  const [autoCompactIdleMinutes, setAutoCompactIdleMinutes] = useState<number | null>(null)
+  const [autoCompactContextPercent, setAutoCompactContextPercent] = useState<number | null>(null)
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
@@ -100,6 +104,9 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setBoardId(agent.boardId)
     setAlwaysOn(agent.alwaysOn)
     setRemoteControlEnabled(agent.remoteControlEnabled)
+    setAutoCompactEnabled(agent.autoCompactEnabled ?? null)
+    setAutoCompactIdleMinutes(agent.autoCompactIdleMinutes ?? null)
+    setAutoCompactContextPercent(agent.autoCompactContextPercent ?? null)
     setSystemPromptAppend(agent.systemPromptAppend ?? '')
     // An older server response omits the field entirely; Normal is what that means.
     setReplyStyle(agent.replyStyle ?? 'Normal')
@@ -146,6 +153,10 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         boardId,
         alwaysOn,
         remoteControlEnabled,
+        // Empty / null = use the installation ContextCompactionSettings default.
+        autoCompactEnabled,
+        autoCompactIdleMinutes,
+        autoCompactContextPercent,
         // Empty string clears the preamble server-side; null would mean "leave unchanged".
         systemPromptAppend: systemPromptAppend.trim(),
         tuiProfileId,
@@ -237,6 +248,44 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           description="Every start arms /remote-control so the session can be driven from claude.ai."
           checked={remoteControlEnabled}
           onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
+        />
+
+        <Select
+          label="Auto-compact"
+          description="Idle auto-compaction for this agent's Claude sessions. Empty uses the installation default (on)."
+          placeholder="Use default"
+          clearable
+          data={[
+            { value: 'on', label: 'On' },
+            { value: 'off', label: 'Off' },
+          ]}
+          value={autoCompactEnabled === null ? null : autoCompactEnabled ? 'on' : 'off'}
+          onChange={(value) => {
+            if (value === 'on') setAutoCompactEnabled(true)
+            else if (value === 'off') setAutoCompactEnabled(false)
+            else setAutoCompactEnabled(null)
+          }}
+        />
+        <NumberInput
+          label="Auto-compact idle minutes"
+          description="Minutes idle before a compact is considered. Empty uses the installation default (480 = 8 hours)."
+          placeholder="Use default"
+          min={1}
+          allowDecimal={false}
+          allowNegative={false}
+          value={autoCompactIdleMinutes ?? ''}
+          onChange={(value) => setAutoCompactIdleMinutes(typeof value === 'number' ? value : null)}
+        />
+        <NumberInput
+          label="Auto-compact context percent"
+          description="Compact when context is at least this full (1–100). Empty uses the installation default (50)."
+          placeholder="Use default"
+          min={1}
+          max={100}
+          allowDecimal={false}
+          allowNegative={false}
+          value={autoCompactContextPercent ?? ''}
+          onChange={(value) => setAutoCompactContextPercent(typeof value === 'number' ? value : null)}
         />
 
         <Textarea

@@ -49,6 +49,22 @@ public class Agent
     /// </summary>
     public AgentReplyStyle ReplyStyle { get; set; } = AgentReplyStyle.Normal;
 
+    /// <summary>
+    /// Per-agent override of <c>ContextCompactionSettings.Enabled</c> (CARD-0082).
+    /// Null = use the installation default. The first override an operator wants is "off for this one".
+    /// </summary>
+    public bool? AutoCompactEnabled { get; set; }
+
+    /// <summary>
+    /// Per-agent override of <c>ContextCompactionSettings.IdleMinutes</c>. Null = use the installation default.
+    /// </summary>
+    public int? AutoCompactIdleMinutes { get; set; }
+
+    /// <summary>
+    /// Per-agent override of <c>ContextCompactionSettings.ContextPercent</c>. Null = use the installation default.
+    /// </summary>
+    public int? AutoCompactContextPercent { get; set; }
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The board automatically created for this agent when it was added.</summary>
