@@ -16,6 +16,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeInteractionTests
 {
 	// ── I01: screen buffer detects permission prompt ──────────────────────────

@@ -30,6 +30,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyBracketedPasteContractTests
 {
     private static void SkipIfUnavailable()

@@ -29,6 +29,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [Category("HeadedCanary")]
 [Category("Card0080")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class GrokCanaryTests
 {
     /// <summary>RunnerGrokAdapter's current screen turn-end heuristic, measured here against reality.</summary>

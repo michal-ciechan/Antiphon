@@ -5,11 +5,13 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeAdapterIntegrationTests
 {
     [Test]

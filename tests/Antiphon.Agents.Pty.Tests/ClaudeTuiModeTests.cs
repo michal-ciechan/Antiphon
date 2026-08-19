@@ -15,6 +15,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeTuiModeTests
 {
     [Test]

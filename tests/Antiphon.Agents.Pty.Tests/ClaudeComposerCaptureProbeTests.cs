@@ -22,6 +22,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Card0027")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeComposerCaptureProbeTests
 {
     private static readonly StringBuilder Report = new();

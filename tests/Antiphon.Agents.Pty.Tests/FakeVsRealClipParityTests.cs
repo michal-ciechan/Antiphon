@@ -45,6 +45,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Card0028")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class FakeVsRealClipParityTests
 {
     private const int MarkerBytes = 7;   // "Q00000\n"

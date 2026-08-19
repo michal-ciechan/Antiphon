@@ -7,6 +7,7 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Agents.Pty.Tests;
 
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeDetectorsTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

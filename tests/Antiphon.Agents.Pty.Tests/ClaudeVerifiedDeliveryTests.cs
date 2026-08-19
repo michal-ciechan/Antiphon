@@ -22,6 +22,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Pty")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeVerifiedDeliveryTests
 {
     private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);

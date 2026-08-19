@@ -27,6 +27,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Card0027")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudePasteLossCanaryTests
 {
     private static readonly StringBuilder Report = new();

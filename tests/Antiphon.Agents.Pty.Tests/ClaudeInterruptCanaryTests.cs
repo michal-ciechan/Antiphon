@@ -27,6 +27,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Headed")]
 [Category("HeadedCanary")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeInterruptCanaryTests
 {
     private const string EscToInterrupt = "esc to interrupt";

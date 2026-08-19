@@ -41,6 +41,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [Category("HeadedCanary")]
 [Category("Card0055")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeSubmitConfirmCanaryTests
 {
     private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);

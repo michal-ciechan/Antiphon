@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -26,6 +27,7 @@ namespace Antiphon.Tests.Agents;
 /// </summary>
 [NotInParallel("Pty")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeAdapterLocalShellTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

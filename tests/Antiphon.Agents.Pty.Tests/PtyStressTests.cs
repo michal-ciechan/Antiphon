@@ -8,6 +8,7 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Agents.Pty.Tests;
 
 [Category("PtyStress")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyStressTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

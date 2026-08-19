@@ -1,6 +1,6 @@
 # CARD-0050 — the .NET flake cast: diagnosis, first fixes, remaining slices
 
-**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slices 1–4 shipped; slice 5 open.
+**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slices 1–5 implemented; S5 concurrent 3-green bar not met (see S5).
 
 ## The scoping answer the card asked for
 
@@ -145,24 +145,35 @@ concurrent double-runs (one other test in the same file, `Channel_delegate_claim
 failed once under load — untouched by this slice, treated as a rotating member, not investigated
 here).
 
-## Remaining slices
+## Slice 5 — IMPLEMENTED (sequential 3-green; concurrent bar not met)
 
-- **S5 — the structural end-state** (this is what actually stops the cast rotating): decide the
-  concurrency lane for process-spawning tests. Concretely evaluate: (a) TUnit `ParallelLimiter`
-  capping concurrent process-spawning tests per assembly (pty runners, probe, codex, session
-  runtime); (b) full-suite runner guidance to not co-schedule the two process-heavy projects at
-  full width; (c) whether the delegate-brief "known flaky list" can then be DELETED — the list is
-  itself the rot CARD-0045 exists to stop. Measure: 3 consecutive concurrent double-runs green.
+**(a) + (b).** TUnit `[ParallelLimiter<ProcessSpawnLimit>]` with `Limit = 1` on every
+process-spawning class in `Antiphon.Tests` and `Antiphon.Agents.Pty.Tests` (the limiter is
+per-process). CLAUDE.md now says do not co-schedule those two projects: Limit=2, Limit=1, and
+Limit=1 plus `--maximum-parallel-tests 4` / `2` on `Antiphon.Tests` all still rotated FakeClaude
+under a concurrent double-run. Three consecutive **sequential** pair-runs (Antiphon.Tests, then
+Pty.Tests) were green: 1682/1686 + 237/277 each time (4 + 40 skipped, headed).
 
-## For whoever picks up S5
+**(c) not deleted, because it never lived in the repo.** The "known flaky list" is informal
+delegate-brief prose, not a `server/Bundles/` artifact. The standing CLAUDE.md line that told
+delegates some Antiphon.Tests are "PTY-timing flaky under full parallel load" is gone; a failure
+in the lane is a real defect unless it also fails at the base commit. Do not restore a named
+ignore-list.
 
-- Reproduction is cheap and reliable: the concurrent double-run above reproduced 13 failures in
-  one 5-minute pass. Do not accept "passes in isolation" as evidence for this card.
-- `bin-c50/` build dirs must be deleted after the work (`Get-ChildItem -Recurse -Depth 2
-  -Directory -Filter bin-c50 | Remove-Item -Recurse -Force`) — and never with a trailing
+The plan's own concurrent 3-green measure did **not** land. New rotating members seen only under
+concurrent load, not chased: `FakeClaudeContractTests` (submit/clip windows),
+`FakeGrokContractTests.Body_then_separate_CR_submits`,
+`AgentStartRecoveryTests.Interactive_start_failure_marks_agent_failed_not_working` (not a
+process-spawner — Start returned Failed before Running).
+
+## Notes left for the orchestrator
+
+- Reproduction is cheap and reliable: the concurrent double-run still rotates FakeClaude under
+  saturation. Sequential pair-runs (Antiphon.Tests, then Pty.Tests) are the configuration S5
+  proved green 3/3. Do not accept "passes in isolation" as evidence that concurrent is fixed.
+- `bin-c50*` build dirs must be deleted after the work (`Get-ChildItem -Recurse -Depth 2
+  -Directory -Filter bin-c50* | Remove-Item -Recurse -Force`) — and never with a trailing
   backslash on the OutputPath (see CLAUDE.md).
 - The FakeClaudeContractTests transcript-row lead the card opens with (cold file cache on first
   JSON serialization) did not reproduce in either load run *with the sidecar armed* — if it recurs,
   the sidecar now captures the whole answer. Do not re-derive it from scratch.
-- After S1–S4, the cast still rotates under saturation (new members appear each load run even as
-  named ones go green) — S5 is what's expected to end that, per its own acceptance measure above.

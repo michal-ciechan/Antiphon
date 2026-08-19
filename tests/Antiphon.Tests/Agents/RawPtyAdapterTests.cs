@@ -6,11 +6,13 @@ using TUnit.Core.Exceptions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
 [NotInParallel("Pty")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class RawPtyAdapterTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

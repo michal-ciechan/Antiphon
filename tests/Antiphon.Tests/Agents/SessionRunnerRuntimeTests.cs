@@ -4,11 +4,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
 [Category("Integration")]
 [NotInParallel("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class SessionRunnerRuntimeTests
 {
     [Test]

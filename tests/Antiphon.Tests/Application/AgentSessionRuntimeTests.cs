@@ -106,6 +106,7 @@ public class AgentSessionRuntimeTests
 
     [Test]
     [NotInParallel("Pty")]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Backend_runtime_can_send_input_to_live_runner_session_after_restart()
     {
         var eventBus = new MockEventBus();

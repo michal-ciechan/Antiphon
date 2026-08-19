@@ -60,6 +60,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel(["Headed", "AgentQueue"])]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class GrokDelegateEndToEndTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

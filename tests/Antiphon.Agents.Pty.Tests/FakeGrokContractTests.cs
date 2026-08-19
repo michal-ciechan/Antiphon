@@ -14,6 +14,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class FakeGrokContractTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

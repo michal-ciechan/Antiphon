@@ -25,6 +25,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Headed")]
 [Category("HeadedCanary")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeTrustPromptCanaryTests
 {
     /// <summary>The budget the user asked for: a couple of seconds, not tens.</summary>

@@ -34,6 +34,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Headed")]
 [Category("HeadedCanary")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeComposerRenderCanaryTests
 {
     private const string StartMarker = "STARTMARKERALPHA";

@@ -5,11 +5,13 @@ using Antiphon.Server.Infrastructure.Agents.Pty;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class CodexAdapterIntegrationTests
 {
     [Test]

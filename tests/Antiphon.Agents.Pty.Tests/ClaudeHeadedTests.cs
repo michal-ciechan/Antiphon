@@ -9,6 +9,7 @@ namespace Antiphon.Agents.Pty.Tests;
 // parallel API quota contention and quiet-period detector interference.
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeHeadedTests
 {
     // ---------- S11: cl --version smoke ----------
@@ -196,6 +197,7 @@ public class ClaudeHeadedTests
 
 [NotInParallel("Headed")]
 [Category("HeadedLong")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeHeadedLongTests
 {
     // ---------- S18: --resume preserves context across runner instances ----------

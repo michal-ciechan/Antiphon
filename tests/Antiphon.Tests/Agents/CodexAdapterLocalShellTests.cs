@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
@@ -19,6 +20,7 @@ namespace Antiphon.Tests.Agents;
 /// </summary>
 [NotInParallel("Pty")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class CodexAdapterLocalShellTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");

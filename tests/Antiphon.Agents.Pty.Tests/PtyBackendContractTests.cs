@@ -22,6 +22,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyBackendContractTests
 {
     private static void SkipIfNotWindows()

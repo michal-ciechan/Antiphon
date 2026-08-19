@@ -10,6 +10,7 @@ namespace Antiphon.Agents.Pty.Tests;
 
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public partial class PtyAgentRunnerTests
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

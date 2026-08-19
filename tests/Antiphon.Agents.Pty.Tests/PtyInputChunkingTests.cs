@@ -23,6 +23,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyInputChunkingTests
 {
     private static void SkipIfUnavailable()

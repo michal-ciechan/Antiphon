@@ -12,10 +12,12 @@ using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.AgentTui;
 
 [NotInParallel("RunnerProcessProbe")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerProcessProbeTests
 {
     [Test]

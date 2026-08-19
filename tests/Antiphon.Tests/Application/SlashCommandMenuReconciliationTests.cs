@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Application;
 
@@ -25,6 +26,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Headed")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class SlashCommandMenuReconciliationTests
 {
     private const string EnvFlag = "ANTIPHON_HEADED_TESTS";

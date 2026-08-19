@@ -21,6 +21,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Card0030")]
 [Explicit]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class PtyPasteMarkerExperiments
 {
     private static readonly StringBuilder Report = new();

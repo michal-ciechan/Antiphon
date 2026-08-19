@@ -29,6 +29,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [NotInParallel("Headed")]
 [Category("Headed")]
 [Category("HeadedCanary")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeCompactionCanaryTests
 {
     private static readonly Regex DonePattern = new(@" for \d+s", RegexOptions.Compiled);

@@ -28,6 +28,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class ModernPtyDa1Tests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
