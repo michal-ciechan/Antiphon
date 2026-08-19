@@ -1,6 +1,6 @@
 # CARD-0050 — the .NET flake cast: diagnosis, first fixes, remaining slices
 
-**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slices 1 and 3 shipped; slices 2, 4, 5 open.
+**Date**: 2026-08-19 · **Task**: d8a10896 · **Status**: Slices 1–4 shipped; slice 5 open.
 
 ## The scoping answer the card asked for
 
@@ -68,7 +68,7 @@ members green, with two NEW rotating members failing (`PtyAgentRunnerTests.Stdin
 under the reproduction load and that the cast rotates with saturation until the structural slice
 lands.
 
-## Slice 1 — SHIPPED (this commit)
+## Slice 1 — SHIPPED (`3f792ec`)
 
 1. **Runner relaunch race** (`SessionRunnerRuntime`): the relaunch arm of `StartAsync` now calls
    `EnsureExitedHostGoneAsync` before launching the new host — Shutdown-ack first, bounded wait
@@ -93,27 +93,60 @@ lands.
    longer starve the fake's writer into its 100-retry give-up (a real silent-loss path: after 100
    `IOException`s the record was dropped forever).
 
+## Slice 2 — SHIPPED (`e091acc`)
+
+`CodexAdapterLocalShellTests` wait-window inventory (this file only). Concurrent double-run
+before this slice: **8 failures** (5 + 3), 3 of them this file, all empty snapshots in 1.74–3.06s
+(QuietPeriod 750ms of zero output — MaxWait never ran). After: **4 failures** (1 + 3), **this
+file 3 → 0**. The remaining 4 are S1 residual (`Probe_cancellation…`) and rotating S3 members.
+
+| Window | Class | Action |
+|---|---|---|
+| `CodexReadyMaxWaitMs` / `CodexDoneMaxWaitMs` 15s → 60s | runaway | widened (success returns on quiet) |
+| `CodexReadyQuietPeriodMs` / `CodexDoneQuietPeriodMs` 750ms | scenario-gated | kept — already the ConPTY-echo floor (250ms flaked). Stretching this only delays the same false ready |
+| `WaitUntilSnapshotContainsAsync` 60s | runaway + gate | new. Empty+quiet and title-only both return ready before the body exists |
+| `KillAsync(2s)` / `ShouldBeLessThan(2.5s)` / `Delay(300)` | runaway / scenario-gated / settle | untouched — kill test did not fail under load |
+
+Measured: first ConPTY write under load was the cmd **title** at **2321ms**; batch body still
+absent at **6549ms** (title→body gap >4.2s, CARD-0015 shape). Any-byte gate was not enough;
+expected-text gates (`>` / `1. Yes, continue` / `READY_AFTER_TRUST`) wait for the body.
+
+## Slice 3 — SHIPPED (`8d6e517`)
+
+**Echo-gated submit helper**: `EchoGatedSubmit` writes the body, waits for
+`ComposerDeliveryEvidence` on the rendered screen, then sends CR — mirrors production's
+`VerifiedPromptSubmitter` (evidence-gated, not time-gated). Two-write FakeClaude / ClaudeSubmit
+tests moved onto it; the one-write paste arm is untouched (time-based — a single write can only be
+split, never merged). Ready-banner wait 15s→45s (runaway bound; launch measured >15s).
+FakeGrok `updates.jsonl` now polls with `FileShare.ReadWrite` and a `.timing` sidecar (same trail
+S1 gave FakeClaude), with retry-then-give-up on `IOException`. `ANTIPHON_FAKE_BURST_MS` left at
+12ms — the [15,19]ms window between read jitter and writer spacing is too thin to tune. Concurrent
+double-run 17→8; every named S3 member green. The remaining 8 rotated outside this slice (S2
+CodexAdapter, AgentTui windows, two PtyInputChunking/large-write tests).
+
+## Slice 4 — SHIPPED (`2721c6c`)
+
+**`AgentChannelServiceIntegrationTests` instrumentation**: mechanism still did not reproduce (0/2
+load runs, and 0/2 further runs during this slice). Static analysis confirmed the CLAUDE.md
+global-count hypothesis does not apply here — the mention-target lookup is scoped to the
+per-harness runtime's live session ids and the test's own board, assertions are per-adapter.
+Since the failure won't reproduce on demand, the slice shipped instrumentation instead of a guess:
+`MentionRouteDiagnostics` (256-entry ring buffer, append-only, wrapped so a diagnostics failure can
+never affect routing) records every pipeline stage (`delta-observed` → `pending-scheduled`/
+`pending-cleared` → `debounce-delay-started` → `debounce-fired`/`stale`/`cancelled`/`no-mentions`/
+`not-ready` → `command-enqueued`/`dropped`/`skipped-duplicate` → `command-dequeued` →
+`route-started` → `source-query-returned` → `target-query-returned` → `input-sent` →
+`event-published` → `route-returned`/`route-failed`). On a `WaitUntilAsync` timeout the assertion
+now prints the last stage reached, the full trail, and relevant session/event state, so the next
+natural occurrence self-diagnoses instead of needing another investigation pass. `_diagnostics` is
+nullable, defaults to `null`, and is not registered in production DI — true no-op outside tests.
+Isolated `AgentChannelServiceIntegrationTests` 6/6; the target test passed in two further
+concurrent double-runs (one other test in the same file, `Channel_delegate_claims_via_optimistic_concurrency`,
+failed once under load — untouched by this slice, treated as a rotating member, not investigated
+here).
+
 ## Remaining slices
 
-- **S2 — CodexAdapterLocalShellTests** (two distinct tests failed across two runs): establish this
-  file's wait-window inventory the way slice 1 did for the probe file; separate "runaway bound"
-  windows (widen freely) from "scenario needs the deadline" windows (gate or measure). Ship with
-  a load-run before/after count.
-- **S3 — SHIPPED (echo-gated submit helper)**: `EchoGatedSubmit` writes the body, waits for
-  `ComposerDeliveryEvidence` on the rendered screen, then sends CR. Two-write FakeClaude /
-  ClaudeSubmit tests moved onto it; the one-write paste arm is untouched (time-based — a single
-  write can only be split). Ready-banner wait 15s→45s (runaway bound; launch measured >15s).
-  FakeGrok `updates.jsonl` now polls with `FileShare.ReadWrite` and a `.timing` sidecar (S1's
-  transcript-wait shape). `ANTIPHON_FAKE_BURST_MS` left at 12ms. Concurrent double-run 17→8;
-  every named S3 member green. The remaining 8 rotate (S2 CodexAdapter, AgentTui windows, two
-  PtyInputChunking/large-write tests).
-- **S4 — AgentChannelServiceIntegrationTests**: mechanism still unestablished (0 reproductions in
-  2 load runs). Static analysis this pass ruled OUT the CLAUDE.md global-count class: the mention
-  target lookup is scoped to the per-harness runtime's live-session ids and the test's own board,
-  and the assertions are per-adapter. Next step is instrumentation, not a guess: on `WaitUntilAsync`
-  timeout, report which pipeline stage was reached (pending-mention debounce fired? route command
-  dequeued? DB source/target queries returned? event published?) so the next natural failure names
-  its stage. Suspect ranking: shared-testcontainer query latency under load inside the 5s window.
 - **S5 — the structural end-state** (this is what actually stops the cast rotating): decide the
   concurrency lane for process-spawning tests. Concretely evaluate: (a) TUnit `ParallelLimiter`
   capping concurrent process-spawning tests per assembly (pty runners, probe, codex, session
@@ -121,7 +154,7 @@ lands.
   full width; (c) whether the delegate-brief "known flaky list" can then be DELETED — the list is
   itself the rot CARD-0045 exists to stop. Measure: 3 consecutive concurrent double-runs green.
 
-## For whoever picks up S2–S5
+## For whoever picks up S5
 
 - Reproduction is cheap and reliable: the concurrent double-run above reproduced 13 failures in
   one 5-minute pass. Do not accept "passes in isolation" as evidence for this card.
@@ -131,3 +164,5 @@ lands.
 - The FakeClaudeContractTests transcript-row lead the card opens with (cold file cache on first
   JSON serialization) did not reproduce in either load run *with the sidecar armed* — if it recurs,
   the sidecar now captures the whole answer. Do not re-derive it from scratch.
+- After S1–S4, the cast still rotates under saturation (new members appear each load run even as
+  named ones go green) — S5 is what's expected to end that, per its own acceptance measure above.
