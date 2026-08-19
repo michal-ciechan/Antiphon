@@ -69,6 +69,63 @@ public sealed class SessionMessageQueueService
         _ptyProfile?.Ceilings
         ?? _delegationSettings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
 
+    private string NowModeFileStem() =>
+        $"now-{_timeProvider.GetUtcNow().UtcDateTime:yyyyMMddHHmmss}";
+
+    /// <summary>
+    /// CARD-0025: if <paramref name="body"/> is over the single-write envelope, write it to
+    /// <c>{cwd}/.antiphon/inbox/{fileStem}.md</c> and return the pointer to type. Under the
+    /// ceiling, or if the file cannot be written (empty cwd, IO error), the original is
+    /// returned so <see cref="DeliverAsync"/>'s tripwire still fires.
+    /// </summary>
+    private async Task<string> SpillQueueBodyAsync(
+        Guid sessionId,
+        string body,
+        string fileStem,
+        string? channelEnvelope,
+        AppDbContext? db,
+        CancellationToken ct)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(body) <= Ceilings.SingleWriteMaxBytes)
+            return body;
+
+        string? cwd = null;
+        var kind = AgentKind.ClaudeCode;
+        if (db is not null)
+        {
+            var session = await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.Cwd, s.AgentKind })
+                .FirstOrDefaultAsync(ct);
+            cwd = session?.Cwd;
+            kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        }
+        else
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var scoped = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var session = await scoped.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.Cwd, s.AgentKind })
+                .FirstOrDefaultAsync(ct);
+            cwd = session?.Cwd;
+            kind = session?.AgentKind ?? AgentKind.ClaudeCode;
+        }
+
+        string? absolute = null;
+        if (!string.IsNullOrWhiteSpace(cwd))
+            absolute = TypedBodySpill.InboxAbsolutePath(cwd, fileStem);
+
+        return TypedBodySpill.Fit(new TypedBodySpill.Request(
+            Body: body,
+            CeilingBytes: Ceilings.SingleWriteMaxBytes,
+            AbsoluteSpillPath: absolute,
+            RelativeSpillPath: TypedBodySpill.InboxRelativePath(fileStem),
+            AgentKind: kind,
+            EnvelopePrefix: channelEnvelope,
+            Logger: _logger)).ToType;
+    }
+
     /// <summary>
     /// Typing attempts a queued message gets before it parks for a human (CARD-0055). Floored at 1:
     /// a misconfigured 0 would park every message on creation, i.e. deliver nothing at all.
@@ -96,10 +153,16 @@ public sealed class SessionMessageQueueService
                     $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
             }
 
-            var outcome = await DeliverAsync(sessionId, trimmed, ct);
+            var nowBody = await SpillQueueBodyAsync(
+                sessionId, trimmed, NowModeFileStem(),
+                origin == QueuedMessageOrigin.Channel
+                    ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
+                    : null,
+                db: null, ct);
+            var outcome = await DeliverAsync(sessionId, nowBody, ct);
             if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
-                await HandleTruncationAsync(sessionId, null, trimmed, outcome.RecordText, ct);
+                await HandleTruncationAsync(sessionId, null, nowBody, outcome.RecordText, ct);
                 throw new ConflictException(
                     "Message delivery reached the transcript truncated "
                     + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
@@ -245,16 +308,24 @@ public sealed class SessionMessageQueueService
             }
 
             var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
+            var sendNowBody = await SpillQueueBodyAsync(
+                sessionId, message.Body, message.Id.ToString("D"),
+                message.Origin == QueuedMessageOrigin.Channel
+                    ? TypedBodySpill.TryReadChannelEnvelope(message.Body)
+                    : null,
+                db, ct);
+            if (sendNowBody != message.Body)
+                message.Body = sendNowBody;
             message.Status = QueuedMessageStatus.Sent;
             message.SentAt = UtcNow();
             message.DeliveryAttempts++;
             message.LastDeliveryStartedAt = UtcNow();
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             await db.SaveChangesAsync(ct);
-            var outcome = await DeliverAsync(sessionId, message.Body, ct, baseline);
+            var outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline);
             if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
-                await HandleTruncationAsync(sessionId, [message.Id], message.Body, outcome.RecordText, ct);
+                await HandleTruncationAsync(sessionId, [message.Id], sendNowBody, outcome.RecordText, ct);
                 throw new ConflictException(
                     "Message delivery reached the transcript truncated "
                     + $"({Describe(outcome.Verdict)}). The message has been parked in the queue.");
@@ -590,10 +661,23 @@ public sealed class SessionMessageQueueService
             }
         }
 
-        var body = run.Count == 1
+        var composed = run.Count == 1
             ? head.Body
             : ChannelPromptFormat.FormatBatch(
                 run.Take(run.Count - 1).Select(m => m.Body).ToList(), run[^1].Body);
+
+        // CARD-0025: spill an oversize composed body BEFORE the Sent stamp, and persist the
+        // POINTER as each row's Body in that same SaveChanges. Confirmation, late-confirm,
+        // PromptsMatch and CARD-0024 completeness all compare the stored Body against the
+        // transcript; leaving the original while typing a pointer would fire Truncated on
+        // every successful spill and leave Channel replies unroutable. Under-ceiling batches
+        // keep their original per-row bodies so each still matches by containment.
+        var channelEnvelope = head.Origin == QueuedMessageOrigin.Channel
+            ? TypedBodySpill.TryReadChannelEnvelope(run[^1].Body)
+            : null;
+        var body = await SpillQueueBodyAsync(
+            sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct);
+        var spilled = !ReferenceEquals(body, composed) && body != composed;
 
         // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
         // attempt happened, and the baseline is what the next attempt's late-confirm reads. A crash
@@ -607,6 +691,8 @@ public sealed class SessionMessageQueueService
             m.DeliveryAttempts++;
             m.LastDeliveryStartedAt = now;
             m.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
+            if (spilled)
+                m.Body = body;
         }
         await db.SaveChangesAsync(ct);
 
@@ -928,7 +1014,9 @@ public sealed class SessionMessageQueueService
         // it is one 1 024-byte read chunk, on the shipped modern pseudoconsole it is the 86 400-byte
         // single write measured whole. The tripwire is not removed on the modern backend, only
         // moved — anything past the measured envelope is past all evidence, and a delivery nobody
-        // has ever watched arrive is exactly what this exists to name.
+        // has ever watched arrive is exactly what this exists to name. CARD-0025 spills at the
+        // call sites, so this arm is the backstop for a write failure (or a future typer). A
+        // successful spill must not reach here.
         var ceilings = Ceilings;
         var bodyBytes = System.Text.Encoding.UTF8.GetByteCount(trimmed);
         if (bodyBytes > ceilings.SingleWriteMaxBytes)

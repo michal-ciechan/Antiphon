@@ -437,6 +437,102 @@ public class AgentSessionLaunchFailureTests
         + "            <command-message>remote-control</command-message>\n"
         + "            <command-args></command-args>";
 
+    // ---- CARD-0025: spawn prompt spill ----------------------------------------------------------
+
+    private static string OversizedSpawnPrompt() =>
+        "Work on card CARD-0025: Leaky launch\n\nDescription:\n" + new string('a', 2_000);
+
+    [Test]
+    public async Task An_oversized_spawn_prompt_is_typed_as_a_pointer_and_the_file_holds_the_original()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "working" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+        var prompt = OversizedSpawnPrompt();
+        System.Text.Encoding.UTF8.GetByteCount(prompt).ShouldBeGreaterThan(900);
+
+        var started = await fixture.StartCardSessionAsync(card, prompt);
+
+        var typed = adapter.Prompts.ShouldHaveSingleItem();
+        typed.ShouldContain(TypedBodySpill.PointerHeadline);
+        typed.ShouldNotBe(prompt);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        var attempt = await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId);
+        attempt.Prompt.ShouldBe(prompt, "RunAttempt.Prompt is the work record, not the typed pointer");
+
+        var stem = $"spawn-{started.SessionId.ToString("N")[..8]}";
+        var spill = TypedBodySpill.InboxAbsolutePath(session.Cwd, stem);
+        File.Exists(spill).ShouldBeTrue();
+        File.ReadAllText(spill).ShouldBe(prompt);
+        typed.ShouldContain(TypedBodySpill.InboxRelativePath(stem));
+    }
+
+    [Test]
+    public async Task A_small_spawn_prompt_is_typed_whole_with_no_spill_file()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "working" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+        const string prompt = "do the work";
+
+        var started = await fixture.StartCardSessionAsync(card, prompt);
+
+        adapter.Prompts.ShouldBe([prompt]);
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        Directory.Exists(Path.Combine(session.Cwd, ".antiphon", "inbox")).ShouldBeFalse();
+        (await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId)).Prompt.ShouldBe(prompt);
+        session.Status.ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task A_spill_file_write_failure_on_boot_types_the_original_and_does_not_block_launch()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "working" };
+        await using var fixture = await LaunchFixture.CreateAsync(
+            adapter,
+            s => s.AddSingleton<IWorktreeManager>(new BlockAntiphonDirWorktreeManager()));
+        var card = await fixture.CreateCardAsync();
+        var prompt = OversizedSpawnPrompt();
+
+        var started = await fixture.StartCardSessionAsync(card, prompt);
+
+        adapter.Prompts.ShouldBe([prompt], "filesystem failure types the body inline rather than blocking");
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running, "a spill-file failure must not fail the launch");
+        (await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId)).Prompt.ShouldBe(prompt);
+    }
+
+    /// <summary>
+    /// Creates the worktree, then plants a FILE at <c>.antiphon</c> so the spill helper cannot
+    /// create <c>.antiphon/inbox/</c>.
+    /// </summary>
+    private sealed class BlockAntiphonDirWorktreeManager : IWorktreeManager
+    {
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct)
+        {
+            var worktreePath = Path.Combine(repoPath, $"card-{cardId}");
+            Directory.CreateDirectory(worktreePath);
+            File.WriteAllText(Path.Combine(worktreePath, ".antiphon"), "blocker");
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(
+                new WorktreeInfo(cardId, repoPath, worktreePath, $"feat/card-{cardId}", baseRef, now, now));
+        }
+
+        public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<WorktreeInfo>>([]);
+
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) => Task.CompletedTask;
+
+        public Task TouchAsync(string worktreePath, CancellationToken ct) => Task.CompletedTask;
+
+        public Task<int> PruneStaleAsync(CancellationToken ct) => Task.FromResult(0);
+    }
+
     // ---- Fixture --------------------------------------------------------------------------------
 
     /// <summary>
@@ -468,7 +564,21 @@ public class AgentSessionLaunchFailureTests
         public static Task<LaunchFixture> CreateAsync(params FakeAgentProtocolAdapter[] adapters) =>
             CreateAsync(new QueueAdapterFactory(adapters));
 
-        public static async Task<LaunchFixture> CreateAsync(IAgentProtocolAdapterFactory adapterFactory)
+        public static Task<LaunchFixture> CreateAsync(
+            IAgentProtocolAdapterFactory adapterFactory,
+            Action<IServiceCollection>? extraServices = null)
+        {
+            return CreateCoreAsync(adapterFactory, extraServices);
+        }
+
+        public static Task<LaunchFixture> CreateAsync(
+            FakeAgentProtocolAdapter adapter,
+            Action<IServiceCollection> extraServices) =>
+            CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices);
+
+        private static async Task<LaunchFixture> CreateCoreAsync(
+            IAgentProtocolAdapterFactory adapterFactory,
+            Action<IServiceCollection>? extraServices)
         {
             var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
@@ -486,6 +596,7 @@ public class AgentSessionLaunchFailureTests
                         RemoteControlArmTimeoutMs = 300,
                         SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-launch-fail-{Guid.NewGuid():N}"),
                     }));
+                    extraServices?.Invoke(s);
                 },
             });
 
@@ -541,7 +652,7 @@ public class AgentSessionLaunchFailureTests
                 CancellationToken.None);
 
         /// <summary>A project/board/card graph for the card-launch path. Returns the card id.</summary>
-        public async Task<Guid> CreateCardAsync()
+        public async Task<Guid> CreateCardAsync(string? description = null)
         {
             var repoPath = Path.Combine(Harness.TempRoot, "repo");
             Directory.CreateDirectory(repoPath);
@@ -566,7 +677,7 @@ public class AgentSessionLaunchFailureTests
             var board = await Services.GetRequiredService<BoardService>()
                 .CreateAsync(new CreateBoardRequest(project.Id, "Launch failures"), CancellationToken.None);
             var card = await Services.GetRequiredService<CardService>()
-                .CreateAsync(board.Id, new CreateCardRequest(null, "Leaky launch"), CancellationToken.None);
+                .CreateAsync(board.Id, new CreateCardRequest(null, "Leaky launch", description), CancellationToken.None);
             return card.Id;
         }
 

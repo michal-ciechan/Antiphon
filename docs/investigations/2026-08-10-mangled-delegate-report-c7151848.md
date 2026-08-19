@@ -154,9 +154,9 @@ identically on a clean `master` and is unrelated.
 
 ## Still open
 
-1. **Only the delegation paths have a file fallback.** Channel and UI messages over 4 000
-   characters now raise an incident but are still typed. A generic "spill to `.antiphon/inbox/` and
-   type a pointer" helper would close that.
+1. ~~**Only the delegation paths have a file fallback.**~~ Closed by CARD-0025: `TypedBodySpill`
+   covers Channel/UI/System (queue, composed body, Now-mode) and the spawn boot prompt. Delegation
+   briefs/refinements keep `FitBriefForTyping` / `FitRefinementForTyping`.
 2. **Verification still cannot detect truncation.** `ComposerDeliveryEvidence` matches head or
    tail by necessity (a large paste renders as `[Pasted text #N +X lines]`, so the middle is not on
    screen). The ground truth is the recipient's own transcript — comparing what was recorded

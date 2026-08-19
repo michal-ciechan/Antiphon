@@ -337,9 +337,8 @@ now concrete and no longer blocks the cap:
 With that in place the 20,000-char cap ships unconditionally: on modern, a mostly-ASCII 20k
 description (~20-22 KB) goes inline under 43,200 B; a worst-case multibyte one (up to 80 KB) or
 any inbox-fallback machine spills. The cap needs no knowledge of the backend; the delivery layer
-already owns that decision. Note this is the same gap **CARD-0025** tracks ("only delegation
-paths spill oversized bodies") — implement the spawn-path spill once and settle both cards'
-claims on it, rather than building it twice.
+already owns that decision. Settled by **CARD-0025** (`TypedBodySpill` at
+`SendBootPromptWithRetryAsync`, brief ceiling, file at `{cwd}/.antiphon/inbox/spawn-{id}.md`).
 
 ### Minor API correction
 

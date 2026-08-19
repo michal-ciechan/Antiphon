@@ -38,6 +38,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // (CARD-0056 slice 3): both answer "did the body we typed actually reach the composer", and the
     // late-confirm reuses the queue's matcher outright.
     private readonly DeliveryVerificationSettings _verification;
+    private readonly DelegationSettings _delegationSettings;
+    private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentSessionService> _logger;
 
@@ -53,7 +55,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         IOptions<AgentSessionSettings> settings,
         IOptions<SupervisionSettings> supervision,
         TimeProvider timeProvider,
-        ILogger<AgentSessionService> logger)
+        ILogger<AgentSessionService> logger,
+        IOptions<DelegationSettings>? delegationSettings = null,
+        PtyDeliveryProfile? ptyProfile = null)
     {
         _db = db;
         _worktreeManager = worktreeManager;
@@ -67,7 +71,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         _verification = supervision.Value.DeliveryVerification;
         _timeProvider = timeProvider;
         _logger = logger;
+        _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
+        _ptyProfile = ptyProfile;
     }
+
+    /// <summary>
+    /// Same conservative default as <see cref="SessionMessageQueueService"/>: tests (and any
+    /// construction that forgets the profile) get the inbox conhost ceilings.
+    /// </summary>
+    private PtyDeliveryCeilings Ceilings =>
+        _ptyProfile?.Ceilings
+        ?? _delegationSettings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
 
     public async Task<AgentSessionStartResult> StartAsync(
         StartAgentSessionRequest request,
@@ -484,6 +498,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     {
         var attempts = Math.Max(1, _verification.BootPromptAttempts);
         var delay = TimeSpan.FromSeconds(Math.Max(0, _verification.BootPromptRetryDelaySeconds));
+        var toType = await SpillBootPromptAsync(sessionId, body, ct);
 
         // Captured ONCE, before the first keystroke: every attempt is confirmed against the same
         // floor, so a record that landed during attempt 1 still counts after attempt 3.
@@ -494,7 +509,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             try
             {
-                await adapter.SendPromptAsync(body, ct);
+                await adapter.SendPromptAsync(toType, ct);
                 return;
             }
             catch (PromptDeliveryException ex)
@@ -511,7 +526,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     continue;
                 }
 
-                if (await TryLateConfirmBootPromptAsync(sessionId, body, baseline, confirmFrom, ct))
+                if (await TryLateConfirmBootPromptAsync(sessionId, toType, baseline, confirmFrom, ct))
                     return;
 
                 _logger.LogWarning(ex,
@@ -519,6 +534,73 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     + "record confirms it", sessionId, attempts);
                 throw;
             }
+        }
+    }
+
+    /// <summary>
+    /// CARD-0025 / CARD-0019 Delta 2: a spawn work prompt over the brief ceiling is written to
+    /// <c>{cwd}/.antiphon/inbox/spawn-{sessionId:N8}.md</c> and typed as a pointer. File-write
+    /// failure (or empty cwd) types the original so a filesystem problem cannot block the launch;
+    /// if that original is past the single-write envelope the existing oversize incident still
+    /// fires. <c>RunAttempt.Prompt</c> is the caller's body and is not rewritten.
+    /// </summary>
+    private async Task<string> SpillBootPromptAsync(Guid sessionId, string body, CancellationToken ct)
+    {
+        var ceilings = Ceilings;
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(body);
+        if (bytes <= ceilings.BriefInlineMaxBytes)
+            return body;
+
+        var session = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.Cwd, s.AgentKind })
+            .FirstOrDefaultAsync(ct);
+
+        var fileStem = $"spawn-{sessionId.ToString("N")[..8]}";
+        string? absolute = null;
+        if (!string.IsNullOrWhiteSpace(session?.Cwd))
+            absolute = TypedBodySpill.InboxAbsolutePath(session.Cwd, fileStem);
+
+        var fit = TypedBodySpill.Fit(new TypedBodySpill.Request(
+            Body: body,
+            CeilingBytes: ceilings.BriefInlineMaxBytes,
+            AbsoluteSpillPath: absolute,
+            RelativeSpillPath: TypedBodySpill.InboxRelativePath(fileStem),
+            AgentKind: session?.AgentKind ?? AgentKind.ClaudeCode,
+            Logger: _logger));
+
+        if (!fit.Spilled && bytes > ceilings.SingleWriteMaxBytes)
+            await RecordBootOversizeAsync(sessionId, bytes, ceilings, ct);
+
+        return fit.ToType;
+    }
+
+    private async Task RecordBootOversizeAsync(
+        Guid sessionId, int length, PtyDeliveryCeilings ceilings, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agent = await db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+            if (agent is null)
+                return;
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                agent.Id, sessionId, AgentIncidentKind.OversizedTerminalDelivery, AlertSeverity.Warning,
+                $"A {length:N0}-byte spawn prompt was written into this terminal, past the "
+                + $"{ceilings.SingleWriteMaxBytes:N0} bytes measured to arrive whole on {ceilings.Backend}. "
+                + "The spill file could not be written, so the body was typed anyway. Treat what the "
+                + "agent read as unverified.",
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to record oversized spawn prompt for session {SessionId}", sessionId);
         }
     }
 

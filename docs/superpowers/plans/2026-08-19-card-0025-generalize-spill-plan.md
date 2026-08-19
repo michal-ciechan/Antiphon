@@ -1,7 +1,7 @@
 # CARD-0025 — Generalize message spill-to-file beyond delegation: plan
 
 **Date:** 2026-08-19
-**Status:** planned (not implemented)
+**Status:** implemented
 **Card:** CARD-0025 (`e626c3f4-96ad-475e-bbba-8693d6cc903a`) — only delegation paths spill
 oversized bodies to a file; channel and UI messages are still typed whole
 **Incident:** task `c7151848` (2026-08-10). Investigation "Still open" #1:

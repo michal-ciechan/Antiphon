@@ -29,11 +29,11 @@ public sealed class CardService
     /// Callers composing corrections programmatically need a deterministic pre-check, so the limit
     /// and the actual length are both named in the validation error.
     ///
-    /// <para>Known exposure, inherited not introduced: <see cref="BuildPrompt"/> embeds the
-    /// description verbatim into the spawn prompt, which is TYPED INTO THE PTY and does not yet go
-    /// through the ceiling-aware spill that delegation briefs get (CARD-0025). On the modern conpty
-    /// backend this deployment runs, a 20,000-character mostly-ASCII description is ~20-22 KB and
-    /// sits under the 43,200-byte single-write ceiling; a worst-case multibyte one does not.</para>
+    /// <para><see cref="BuildPrompt"/> still embeds the description verbatim. CARD-0025's
+    /// <c>TypedBodySpill</c> then measures the composed spawn prompt against
+    /// <c>BriefInlineMaxBytes</c> (inbox 900 B, modern 43 200 B) and writes an oversize body to
+    /// <c>{cwd}/.antiphon/inbox/spawn-{{id}}.md</c> so the pty is typed a pointer, not 20 k
+    /// characters. A filesystem failure falls back to typing the original.</para>
     /// </remarks>
     public const int MaxDescriptionLength = 20_000;
 
