@@ -85,16 +85,17 @@ public sealed class RawPtyAdapter : IAgentProtocolAdapter
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        // First chunk arrives -> ready immediately. Otherwise grace period
-        // elapses -> still ready (raw shells may have nothing to say).
-        await _runner.WaitForOutputAsync(_ => true, ReadyGrace, ct);
+        // First visible chunk (ANSI-stripped) or ReadyGrace, then ready.
+        // `_ => true` used to match the empty snapshot on the first poll, so
+        // ReadyGrace was dead. Silent shells still become ready at grace.
+        await _runner.WaitForOutputAsync(VisiblePtyOutput.HasVisibleOutput, ReadyGrace, ct);
         return true;
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _runner.WaitForQuietAsync(TurnQuietPeriod, TurnMaxWait, ct);
+        var quiet = await _runner.WaitForQuietAfterVisibleAsync(TurnQuietPeriod, TurnMaxWait, ct);
         var raw = _runner.SnapshotText();
         return new AgentTurnResult(
             TurnCompleted: quiet,

@@ -1,3 +1,4 @@
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
@@ -77,14 +78,16 @@ public sealed class RunnerRawAdapter : IAgentProtocolAdapter
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        await _terminal.WaitForOutputAsync(_ => true, ReadyGrace, ct);
+        // First visible chunk or ReadyGrace, then ready. Do not match the empty
+        // snapshot on the first poll — that made ReadyGrace dead (CARD-0052).
+        await _terminal.WaitForOutputAsync(VisiblePtyOutput.HasVisibleOutput, ReadyGrace, ct);
         return true;
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _terminal.WaitForQuietAsync(TurnQuietPeriod, TurnMaxWait, ct);
+        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(TurnQuietPeriod, TurnMaxWait, ct);
         var raw = await _terminal.SnapshotTextAsync(ct);
         return new AgentTurnResult(
             TurnCompleted: quiet,

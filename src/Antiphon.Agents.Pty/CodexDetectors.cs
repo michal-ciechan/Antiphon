@@ -6,44 +6,19 @@ namespace Antiphon.Agents.Pty;
 /// <summary>
 /// Waits until the Codex TUI has settled enough to accept input.
 /// Codex does not currently expose a stable ready token through the PTY, so
-/// readiness is a quiet terminal window after startup noise.
+/// readiness is visible child output followed by a quiet terminal window
+/// (CARD-0052: empty or title-only snapshots are not ready).
 /// </summary>
 public sealed class CodexReadyDetector
 {
     public TimeSpan QuietPeriod { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(60);
 
-    public async Task<bool> WaitAsync(
+    public Task<bool> WaitAsync(
         PtyAgentRunner runner,
         Func<CancellationToken, Task>? observeStartupAsync = null,
         CancellationToken ct = default)
-    {
-        var deadline = DateTime.UtcNow + MaxWait;
-        var lastLength = runner.SnapshotText().Length;
-        var lastChange = DateTime.UtcNow;
-
-        while (DateTime.UtcNow < deadline)
-        {
-            if (observeStartupAsync is not null)
-                await observeStartupAsync(ct);
-
-            try { await Task.Delay(50, ct); }
-            catch (OperationCanceledException) { return false; }
-
-            var currentLength = runner.SnapshotText().Length;
-            if (currentLength != lastLength)
-            {
-                lastLength = currentLength;
-                lastChange = DateTime.UtcNow;
-                continue;
-            }
-
-            if (DateTime.UtcNow - lastChange >= QuietPeriod)
-                return true;
-        }
-
-        return false;
-    }
+        => runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct, observeStartupAsync);
 }
 
 /// <summary>
@@ -57,7 +32,7 @@ public sealed class CodexDoneDetector
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromMinutes(5);
 
     public Task<bool> WaitAsync(PtyAgentRunner runner, CancellationToken ct = default)
-        => runner.WaitForQuietAsync(QuietPeriod, MaxWait, ct);
+        => runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct);
 }
 
 public static class CodexResponseAnalyzer

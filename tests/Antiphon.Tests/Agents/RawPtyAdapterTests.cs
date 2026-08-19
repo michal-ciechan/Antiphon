@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
@@ -177,5 +178,45 @@ public class RawPtyAdapterTests
         Should.Throw<InvalidOperationException>(() => adapter.SnapshotRawOutput());
         Should.Throw<InvalidOperationException>(() => adapter.SnapshotRenderedScreen());
         await Should.ThrowAsync<InvalidOperationException>(() => adapter.SendPromptAsync("x", CancellationToken.None));
+    }
+
+    [Test]
+    public async Task Wait_for_turn_complete_does_not_succeed_on_a_stripped_empty_slow_start()
+    {
+        SkipIfNotWindows();
+        using var bat = new PtyTempBatch(
+            "@echo off\r\nping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\nprompt $G\r\n");
+        await using var adapter = new RawPtyAdapter();
+        await adapter.StartAsync(SpecForCmd(new[] { "/d", "/q", "/k", bat.Path }), CancellationToken.None);
+
+        await adapter.SendPromptAsync("rem card-0052", CancellationToken.None);
+        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        result.TurnCompleted.ShouldBeTrue();
+        VisiblePtyOutput.HasVisibleOutput(result.RawSnapshot).ShouldBeTrue(
+            "a completed empty turn is the card title — the snapshot must have visible text");
+        result.RawSnapshot.ShouldContain("SLOW_START_BODY");
+    }
+
+    [Test]
+    public async Task Wait_for_ready_on_a_silent_shell_still_returns_true_after_ready_grace()
+    {
+        SkipIfNotWindows();
+        using var bat = new PtyTempBatch(
+            "@echo off\r\nprompt $S\r\nping -n 10 127.0.0.1 > nul\r\n");
+        await using var adapter = new RawPtyAdapter();
+        // Silent batch: no echo, space prompt, ping to nul. Title OSC is not
+        // visible. ReadyGrace must still fire — do not wait forever.
+        await adapter.StartAsync(SpecForCmd(new[] { "/d", "/q", "/c", bat.Path }), CancellationToken.None);
+
+        var sw = Stopwatch.StartNew();
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+        sw.Stop();
+
+        ready.ShouldBeTrue("silent raw shells stay valid — ReadyGrace, not forever-wait");
+        sw.Elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(450),
+            $"ReadyGrace is 500ms; `_ => true` used to return instantly. snapshot={adapter.SnapshotRawOutput()}");
+        sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+        await adapter.KillAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
     }
 }

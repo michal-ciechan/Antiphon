@@ -142,7 +142,7 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _terminal.WaitForQuietAsync(
+        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(
             TimeSpan.FromMilliseconds(_settings.GrokReadyQuietPeriodMs),
             TimeSpan.FromMilliseconds(_settings.GrokReadyMaxWaitMs),
             ct);
@@ -198,7 +198,8 @@ public sealed class RunnerGrokAdapter : IAgentProtocolAdapter
                         lastSequence = sequence;
                         lastChange = DateTime.UtcNow;
                     }
-                    else if (DateTime.UtcNow - lastChange >= quietPeriod)
+                    else if (DateTime.UtcNow - lastChange >= quietPeriod
+                             && VisiblePtyOutput.HasVisibleOutput(rawText))
                     {
                         screenDone = true;
                     }

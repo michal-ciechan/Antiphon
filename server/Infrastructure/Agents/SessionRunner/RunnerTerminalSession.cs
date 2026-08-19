@@ -128,6 +128,61 @@ internal sealed class RunnerTerminalSession
         return false;
     }
 
+    /// <summary>
+    /// Quiet cannot count until the snapshot has visible child output (CARD-0052).
+    /// Lockstep with <c>PtyAgentRunner.WaitForQuietAfterVisibleAsync</c>: poll until
+    /// visible, then wait <paramref name="quietPeriod"/> of no further sequence
+    /// change. Returns false if <paramref name="maxWait"/> expires at either stage.
+    /// </summary>
+    public async Task<bool> WaitForQuietAfterVisibleAsync(
+        TimeSpan quietPeriod,
+        TimeSpan maxWait,
+        CancellationToken ct,
+        Func<CancellationToken, Task>? observeAsync = null)
+    {
+        var deadline = DateTime.UtcNow + maxWait;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (observeAsync is not null)
+                await observeAsync(ct);
+
+            if (VisiblePtyOutput.HasVisibleOutput(await SnapshotTextAsync(ct)))
+                break;
+
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+
+        if (!VisiblePtyOutput.HasVisibleOutput(await SnapshotTextAsync(ct)))
+            return false;
+
+        var lastSequence = await GetLastSequenceAsync(ct);
+        var lastChange = DateTime.UtcNow;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (observeAsync is not null)
+                await observeAsync(ct);
+
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+
+            var currentSequence = await GetLastSequenceAsync(ct);
+            if (currentSequence != lastSequence)
+            {
+                lastSequence = currentSequence;
+                lastChange = DateTime.UtcNow;
+                continue;
+            }
+
+            if (DateTime.UtcNow - lastChange >= quietPeriod)
+                return true;
+        }
+
+        return false;
+    }
+
     public async Task ResizeAsync(int cols, int rows, CancellationToken ct)
     {
         EnsureStarted();

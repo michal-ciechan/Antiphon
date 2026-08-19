@@ -265,6 +265,64 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         return false;
     }
 
+    /// <summary>
+    /// Quiet cannot count until the snapshot has visible child output (CARD-0052).
+    /// Polls until <see cref="VisiblePtyOutput.HasVisibleOutput"/> is true, then waits
+    /// <paramref name="quietPeriod"/> of no further buffer change. Returns false if
+    /// <paramref name="maxWait"/> expires at either stage. Does not change
+    /// <see cref="WaitForQuietAsync"/> — that primitive stays "unchanged for T".
+    /// </summary>
+    public async Task<bool> WaitForQuietAfterVisibleAsync(
+        TimeSpan quietPeriod,
+        TimeSpan maxWait,
+        CancellationToken ct = default,
+        Func<CancellationToken, Task>? observeAsync = null)
+    {
+        var deadline = DateTime.UtcNow + maxWait;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (observeAsync is not null)
+                await observeAsync(ct);
+
+            if (VisiblePtyOutput.HasVisibleOutput(SnapshotText()))
+                break;
+
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+
+        if (!VisiblePtyOutput.HasVisibleOutput(SnapshotText()))
+            return false;
+
+        int lastLen;
+        DateTime lastChange = DateTime.UtcNow;
+        lock (_bufferLock) lastLen = _liveBuffer.Length;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (observeAsync is not null)
+                await observeAsync(ct);
+
+            try { await Task.Delay(50, ct); }
+            catch (OperationCanceledException) { return false; }
+
+            int curLen;
+            lock (_bufferLock) curLen = _liveBuffer.Length;
+            if (curLen != lastLen)
+            {
+                lastLen = curLen;
+                lastChange = DateTime.UtcNow;
+            }
+            else if (DateTime.UtcNow - lastChange >= quietPeriod)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void Resize(int cols, int rows)
     {
         if (_conn is null) throw new InvalidOperationException("Not started");

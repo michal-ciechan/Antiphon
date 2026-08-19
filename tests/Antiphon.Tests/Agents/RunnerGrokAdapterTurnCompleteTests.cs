@@ -95,6 +95,22 @@ public class RunnerGrokAdapterTurnCompleteTests
             "an old TurnEnd below the baseline is history, not this turn's completion");
     }
 
+    [Test]
+    public async Task Quiet_fallback_does_not_complete_an_empty_snapshot()
+    {
+        var client = new ScriptedRunnerClient();
+        var adapter = NewAdapter(client, doneQuietMs: 200, doneMaxWaitMs: 800);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("do the thing", CancellationToken.None);
+        // No transcript rows, no done line, empty snapshot: the CARD-0080 quiet
+        // fallback must not resurrect CARD-0052 (empty+quiet → TurnCompleted true).
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        turn.TurnCompleted.ShouldBeFalse(
+            "screen quiet on an empty snapshot is not a completed turn");
+    }
+
     private static RunnerGrokAdapter NewAdapter(ISessionRunnerClient client, int doneQuietMs, int doneMaxWaitMs) =>
         new(
             client,

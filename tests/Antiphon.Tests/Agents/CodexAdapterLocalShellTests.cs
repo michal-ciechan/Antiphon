@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -54,19 +55,10 @@ public class CodexAdapterLocalShellTests
     // CARD-0050 S2 wait-window inventory. Quiet periods are the already-measured ConPTY-echo
     // floor (250ms declared ready/done in the latency gap before cmd's output arrived, ~2/3 of
     // loaded full-suite runs). MaxWaits are runaway bounds — success returns on quiet, so a
-    // generous ceiling costs nothing. They are NOT the lever for a late-starting child:
-    // CodexReadyDetector / WaitForQuietAsync treat empty+quiet as ready, so they return true
-    // after QuietPeriod of ZERO output (or of title-only OSC) and MaxWait never runs.
-    //
-    // Measured under the concurrent double-suite load (2026-08-19, this slice):
-    //   - before: 3 tests in this file finished in 1.74–3.06s with snapshot "" — first
-    //     body output was strictly later than QuietPeriod, so ready/done fired empty.
-    //   - after a any-byte gate: first ConPTY write at 2321ms was the cmd TITLE
-    //     (ESC]0;cmd.exe - <bat>…), and the batch body was STILL absent at 6549ms
-    //     (title→body gap >4.2s — the CARD-0015 shape). Gating on any byte just
-    //     moved the false ready from empty to title-only.
-    // Stretching QuietPeriod would only delay that same false ready. Expected-text
-    // gates (WaitUntilSnapshotContainsAsync) wait for the body the assertion needs.
+    // generous ceiling costs nothing. CARD-0052 closed the empty/title-only hole: quiet
+    // cannot count until HasVisibleOutput, so these existing tests still gate on the body
+    // via WaitUntilSnapshotContainsAsync (cmd writes the OSC title before the batch body)
+    // and the new slow-start tests pin ready/done themselves.
     private static IOptions<AgentRegistrySettings> FastOptions() => Options.Create(new AgentRegistrySettings
     {
         DefaultDefinition = "codex-fake",
@@ -186,5 +178,62 @@ public class CodexAdapterLocalShellTests
         killed.ShouldBeTrue();
         adapter.ExitReason.ShouldBe(AgentExitReason.KilledByRequest);
         sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2.5));
+    }
+
+    private static IOptions<AgentRegistrySettings> SlowStartOptions() => Options.Create(new AgentRegistrySettings
+    {
+        DefaultDefinition = "codex-fake",
+        Definitions = { ["codex-fake"] = new AgentDefinition { Kind = "Codex", Exe = Cmd } },
+        CodexReadyQuietPeriodMs = 600,
+        CodexReadyMaxWaitMs = 15_000,
+        CodexDoneQuietPeriodMs = 600,
+        CodexDoneMaxWaitMs = 15_000,
+    });
+
+    private static AgentLaunchSpec SlowStartCmdSpec(string batchPath) => new(
+        DefinitionName: "codex-fake",
+        Kind: AgentKind.Codex,
+        Exe: Cmd,
+        Args: new[] { "/d", "/q", "/k", batchPath },
+        Env: new Dictionary<string, string>(),
+        Cwd: Environment.CurrentDirectory,
+        Cols: 120,
+        Rows: 30);
+
+    [Test]
+    public async Task Wait_for_ready_does_not_fire_during_slow_start_silence()
+    {
+        SkipIfNotWindows();
+        using var bat = new PtyTempBatch(
+            "@echo off\r\nping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\nprompt $G\r\n");
+        await using var adapter = new CodexAdapter(SlowStartOptions());
+        await adapter.StartAsync(SlowStartCmdSpec(bat.Path), CancellationToken.None);
+
+        var sw = Stopwatch.StartNew();
+        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+        sw.Stop();
+
+        ready.ShouldBeTrue();
+        adapter.SnapshotRawOutput().ShouldContain("SLOW_START_BODY");
+        sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(2),
+            "ready must not fire in the silent ping window");
+    }
+
+    [Test]
+    public async Task Wait_for_turn_complete_does_not_succeed_on_a_stripped_empty_slow_start()
+    {
+        SkipIfNotWindows();
+        using var bat = new PtyTempBatch(
+            "@echo off\r\nping -n 5 127.0.0.1 > nul\r\necho SLOW_START_BODY\r\nprompt $G\r\n");
+        await using var adapter = new CodexAdapter(SlowStartOptions());
+        await adapter.StartAsync(SlowStartCmdSpec(bat.Path), CancellationToken.None);
+
+        await adapter.SendPromptAsync("rem card-0052", CancellationToken.None);
+        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        result.TurnCompleted.ShouldBeTrue();
+        VisiblePtyOutput.HasVisibleOutput(result.RawSnapshot).ShouldBeTrue(
+            "a completed empty turn is the card title — the snapshot must have visible text");
+        result.RawSnapshot.ShouldContain("SLOW_START_BODY");
     }
 }

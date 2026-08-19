@@ -76,38 +76,19 @@ public sealed class RunnerOpenCodeAdapter : IAgentProtocolAdapter
         return _terminal.ResizeAsync(cols, rows, ct);
     }
 
-    public async Task<bool> WaitForReadyAsync(CancellationToken ct)
+    public Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quietPeriod = TimeSpan.FromMilliseconds(_settings.OpenCodeReadyQuietPeriodMs);
-        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(_settings.OpenCodeReadyMaxWaitMs);
-        var lastSequence = await _terminal.GetLastSequenceAsync(ct);
-        var lastChange = DateTime.UtcNow;
-
-        while (DateTime.UtcNow < deadline)
-        {
-            try { await Task.Delay(50, ct); }
-            catch (OperationCanceledException) { return false; }
-
-            var currentSequence = await _terminal.GetLastSequenceAsync(ct);
-            if (currentSequence != lastSequence)
-            {
-                lastSequence = currentSequence;
-                lastChange = DateTime.UtcNow;
-                continue;
-            }
-
-            if (DateTime.UtcNow - lastChange >= quietPeriod)
-                return true;
-        }
-
-        return false;
+        return _terminal.WaitForQuietAfterVisibleAsync(
+            TimeSpan.FromMilliseconds(_settings.OpenCodeReadyQuietPeriodMs),
+            TimeSpan.FromMilliseconds(_settings.OpenCodeReadyMaxWaitMs),
+            ct);
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var done = await _terminal.WaitForQuietAsync(
+        var done = await _terminal.WaitForQuietAfterVisibleAsync(
             TimeSpan.FromMilliseconds(_settings.OpenCodeDoneQuietPeriodMs),
             TimeSpan.FromMilliseconds(_settings.OpenCodeDoneMaxWaitMs),
             ct);

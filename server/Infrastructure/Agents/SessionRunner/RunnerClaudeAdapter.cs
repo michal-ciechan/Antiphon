@@ -123,7 +123,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
-        var quiet = await _terminal.WaitForQuietAsync(
+        var quiet = await _terminal.WaitForQuietAfterVisibleAsync(
             TimeSpan.FromMilliseconds(_settings.ClaudeReadyQuietPeriodMs),
             TimeSpan.FromMilliseconds(_settings.ClaudeReadyMaxWaitMs),
             ct);

@@ -7,10 +7,11 @@ namespace Antiphon.Agents.Pty;
 /// connection can take 3–7 s to establish on a cold start.  Input sent before
 /// the connection is ready is accepted by the TUI but silently dropped.
 ///
-/// Strategy: wait for a 5 s quiet window (no PTY output), then also enforce
-/// <see cref="MinTotalWait"/> from when <see cref="PtyAgentRunner.StartAsync"/>
-/// was called.  The minimum covers cases where startup noise clears quickly but
-/// the backend is still connecting.
+/// Strategy: wait for visible child output, then a 5 s quiet window (no PTY
+/// output), then also enforce <see cref="MinTotalWait"/> from when
+/// <see cref="PtyAgentRunner.StartAsync"/> was called. The minimum covers
+/// cases where startup noise clears quickly but the backend is still connecting.
+/// Quiet cannot count on an empty or title-only snapshot (CARD-0052).
 /// </summary>
 public sealed class ClaudeReadyDetector
 {
@@ -26,7 +27,7 @@ public sealed class ClaudeReadyDetector
 
     public async Task<bool> WaitAsync(PtyAgentRunner runner, CancellationToken ct = default)
     {
-        var quiet = await runner.WaitForQuietAsync(QuietPeriod, MaxWait, ct);
+        var quiet = await runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct);
         if (!quiet) return false;
 
         var elapsed = DateTime.UtcNow - runner.StartedAt;
@@ -53,7 +54,7 @@ public sealed class ClaudeDoneDetector
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromMinutes(2);
 
     public Task<bool> WaitAsync(PtyAgentRunner runner, CancellationToken ct = default)
-        => runner.WaitForQuietAsync(QuietPeriod, MaxWait, ct);
+        => runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct);
 }
 
 /// <summary>
