@@ -278,6 +278,81 @@ public sealed class SessionMessageQueueService
         return dto;
     }
 
+    /// <summary>
+    /// Prepend <paramref name="prefix"/> to a still-Pending, never-typed message and re-fit it
+    /// to <paramref name="ceiling"/>. CARD-0074: the check-note sweep uses this so a task that
+    /// settled while the note sat in the queue is marked, not silently delivered as live.
+    ///
+    /// <para>Same lock, same scoped context, same re-check-under-the-lock shape as
+    /// <see cref="CancelAsync"/>. A read-modify-write from the sweep's own scope races
+    /// <c>FlushAsync</c>: the flush reads <c>head.Body</c> into memory and stamps Sent in a later
+    /// SaveChanges, and an amend landing in that gap makes the stored body disagree with what
+    /// was typed — exactly the disagreement CARD-0055/CARD-0024 exist to detect, which can then
+    /// trigger the always-on kill on a false <c>NoTranscriptRecord</c>.</para>
+    ///
+    /// <para>Returns false when the row is gone, no longer Pending, already typed
+    /// (<c>DeliveryAttempts != 0</c>), or already carries the prefix. The caller decides what
+    /// to say; this only applies it safely.</para>
+    /// </summary>
+    public async Task<bool> AmendPendingBodyAsync(
+        Guid sessionId, Guid messageId, string prefix, int ceiling, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(prefix))
+            return false;
+
+        var applied = false;
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var message = await db.SessionQueuedMessages
+                .FirstOrDefaultAsync(m => m.Id == messageId && m.AgentSessionId == sessionId, ct);
+            if (message is null)
+                return false;
+
+            if (message.Status != QueuedMessageStatus.Pending || message.DeliveryAttempts != 0)
+                return false;
+
+            var intro = prefix.TrimEnd();
+            if (message.Body.StartsWith(intro, StringComparison.Ordinal))
+                return false;
+
+            message.Body = PrependWithinCeiling(intro, message.Body, ceiling);
+            await db.SaveChangesAsync(ct);
+            applied = true;
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (applied)
+        {
+            var dto = await GetQueueAsync(sessionId, ct);
+            await PublishQueueChangedAsync(dto, ct);
+        }
+
+        return applied;
+    }
+
+    /// <summary>
+    /// Keep the prefix whole and trim the original body's tail when the pair exceeds the
+    /// ceiling. The banner is worth more to the reader than the last block of a snapshot
+    /// they have just been told is historical.
+    /// </summary>
+    internal static string PrependWithinCeiling(string prefix, string body, int ceiling)
+    {
+        var intro = prefix.TrimEnd() + "\n\n";
+        if (ceiling < 1)
+            ceiling = 1;
+        if (intro.Length >= ceiling)
+            return intro[..ceiling];
+        var room = ceiling - intro.Length;
+        return body.Length <= room ? intro + body : intro + body[..room];
+    }
+
     /// <summary>Promote a specific queued message: deliver it immediately and remove it from the queue.</summary>
     public async Task<SessionQueueDto> SendNowAsync(Guid sessionId, Guid messageId, CancellationToken ct)
     {
@@ -1786,7 +1861,7 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private SemaphoreSlim GetLock(Guid sessionId) =>
+    internal SemaphoreSlim GetLock(Guid sessionId) =>
         _locks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

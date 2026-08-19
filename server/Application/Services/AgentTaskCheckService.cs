@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
@@ -149,7 +150,23 @@ public sealed class AgentTaskCheckService
         // The ONE new path (CARD-0047 slice 4C). Everything it can return other than an
         // interpretation is today's note plus a prefix naming why — see Interpretation.
         var interpretation = await InterpretAsync(task, facts, digest, ct);
-        var body = BuildNote(task, facts, digest, interpretation.Text, interpretation.DegradedReason);
+
+        // Interpreter window (CARD-0074): GatherAsync ran before the wait, and a task that
+        // settled during it still owes the caller a note — marked, never suppressed. The
+        // completion note is the current answer; the digest below the banner is the snapshot.
+        var latest = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id == task.Id)
+            .Select(t => new { t.Status, t.CompletedAt })
+            .FirstOrDefaultAsync(ct);
+        string? supersededBanner = null;
+        if (latest is not null && AgentTaskService.IsSettled(latest.Status))
+        {
+            var settledAt = latest.CompletedAt ?? _timeProvider.GetUtcNow().UtcDateTime;
+            supersededBanner = SupersededBanner(latest.Status, settledAt, facts.At);
+        }
+
+        var body = BuildNote(
+            task, facts, digest, interpretation.Text, interpretation.DegradedReason, supersededBanner);
 
         try
         {
@@ -191,6 +208,18 @@ public sealed class AgentTaskCheckService
 
     /// <summary>One conversation per task, so a check never coalesces with anything else.</summary>
     public static string ConversationKey(Guid taskId) => $"check:{taskId:N}";
+
+    /// <summary>Inverse of <see cref="ConversationKey"/> — the format has one definition.</summary>
+    public static bool TryParseCheckConversationKey(string? conversationKey, out Guid taskId)
+    {
+        taskId = default;
+        const string prefix = "check:";
+        if (conversationKey is null || conversationKey.Length != prefix.Length + 32)
+            return false;
+        if (!conversationKey.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        return Guid.TryParseExact(conversationKey.AsSpan(prefix.Length), "N", out taskId);
+    }
 
     /// <summary>
     /// What a <see cref="AgentTaskEventType.Check"/> event stores (CARD-0035 slice 5): the cost line,
@@ -613,6 +642,52 @@ public sealed class AgentTaskCheckService
     public const string InterpreterDownMarker = "INTERPRETER DOWN";
 
     /// <summary>
+    /// Opening token of a check note whose task settled after the digest was captured (CARD-0074).
+    /// Used for idempotency in the queue-window sweep — a second pass must not prepend twice.
+    /// </summary>
+    public const string SupersededMarker = "SUPERSEDED";
+
+    /// <summary>
+    /// The one place the superseded banner is built, so the interpreter-window prepend and the
+    /// queue-window amend cannot drift. Names the three destructive reactions the card forbids.
+    /// </summary>
+    internal static string SupersededBanner(
+        AgentTaskStatus status, DateTime settledAt, DateTime capturedAt) =>
+        $"{SupersededMarker} — captured {DelegateCheckProbe.Stamp(capturedAt)}, but this task SETTLED at {DelegateCheckProbe.Stamp(settledAt)}, after\n"
+        + $"capture. It is now {status}. Every status/working/elapsed line below is historical. The\n"
+        + "completion note is the current answer — do not chase, cancel or re-dispatch this task.";
+
+    /// <summary>
+    /// The capture stamp printed into the digest / header, when it is still sitting in the body.
+    /// The queue-window sweep uses this so the banner names the same moment the digest does.
+    /// </summary>
+    internal static bool TryReadCapturedAt(string? body, out DateTime capturedAt)
+    {
+        capturedAt = default;
+        if (string.IsNullOrEmpty(body))
+            return false;
+
+        foreach (var token in new[] { "CAPTURED ", "captured " })
+        {
+            var at = body.IndexOf(token, StringComparison.Ordinal);
+            if (at < 0)
+                continue;
+            var start = at + token.Length;
+            if (start + 20 > body.Length)
+                continue;
+            if (DateTime.TryParseExact(
+                    body.AsSpan(start, 20),
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out capturedAt))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The note as the caller sees it. The first line has to be unmistakable at a glance: a check
     /// is an OBSERVATION about work still in flight, and a caller that read it as a completion
     /// would move on from a task that has not finished.
@@ -632,12 +707,17 @@ public sealed class AgentTaskCheckService
     /// tell an unread digest from a read one at a glance. Null when the specialist is not wired in
     /// at all, which is not a degradation — it is the pre-slice-4 note, unchanged.
     /// </param>
+    /// <param name="supersededBanner">
+    /// CARD-0074: when the task settled after capture, this banner is prepended BEFORE the pty
+    /// ceiling fit so the marker survives and the digest tail is what gets trimmed.
+    /// </param>
     internal string BuildNote(
         AgentTask task,
         DelegateCheckProbe.CheckFacts facts,
         string digest,
         string? interpretation = null,
-        string? degradedReason = null)
+        string? degradedReason = null,
+        string? supersededBanner = null)
     {
         var header = new StringBuilder();
         header.Append(HeaderPrefix)
@@ -650,6 +730,7 @@ public sealed class AgentTaskCheckService
             bits.Add(InterpreterDownMarker);
         if (!string.IsNullOrWhiteSpace(task.Title))
             bits.Add(task.Title.Trim().ReplaceLineEndings(" "));
+        bits.Add($"captured {DelegateCheckProbe.Stamp(facts.At)}");
         bits.Add($"{FormatAge(facts.Task.Age)} elapsed (expected {facts.Task.ExpectedDurationMinutes}m)");
         bits.Add(facts.Session is { } session
             ? $"session {session.Status} · {(session.Working ? "working" : "idle")}"
@@ -666,7 +747,13 @@ public sealed class AgentTaskCheckService
                 ? $"(unverified digest — {reason})\n\n{digest}"
                 : digest;
 
-        var note = $"{header}\n\n{ScrubTaskMarkers(body)}".ReplaceLineEndings("\n");
+        // Banner first so a skim of line 1 sees SUPERSEDED, then the existing header. The fit
+        // below treats this whole prefix as unsacrificeable — the digest tail yields first.
+        var prefix = string.IsNullOrEmpty(supersededBanner)
+            ? header.ToString()
+            : supersededBanner.TrimEnd() + "\n\n" + header;
+
+        var note = $"{prefix}\n\n{ScrubTaskMarkers(body)}".ReplaceLineEndings("\n");
 
         // A digest is a few KB and the pty it is typed into has a measured ceiling (CARD-0037). Fit
         // it the same way a report is fitted rather than letting every check trip the oversize
@@ -678,10 +765,13 @@ public sealed class AgentTaskCheckService
         // Floored: a pathological title (300 chars) against a small configured ceiling could
         // otherwise leave the body a negative budget, and the excerpt arithmetic would throw on the
         // one delivery that most needed to survive.
-        var bodyBudget = Math.Max(400, ceiling - header.Length - 2);
+        var bodyBudget = Math.Max(400, ceiling - prefix.Length - 2);
         var (fitted, _) = DelegationReportFormatter.FitReport(
             ScrubTaskMarkers(body), task, _settings, bodyBudget);
-        return $"{header}\n\n{fitted}".ReplaceLineEndings("\n");
+        var result = $"{prefix}\n\n{fitted}".ReplaceLineEndings("\n");
+        // FitReport's excerpt banner can overshoot the budget by a few hundred characters.
+        // The prefix (banner + header) is at the front, so a tail cut keeps it.
+        return result.Length <= ceiling ? result : result[..ceiling];
     }
 
     /// <summary>

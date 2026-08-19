@@ -338,6 +338,7 @@ public class AgentTaskCheckSweepTests
 
         var note = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldStartWith("[check ");
+        note.ShouldContain("captured ");
         note.ShouldNotStartWith("[task ");
         note.ShouldNotContain("[antiphon-task:", customMessage:
             "no marker of ANY task may ride a check note into someone else's session");
@@ -522,7 +523,238 @@ public class AgentTaskCheckSweepTests
             .ShouldBe(1, "control: a write to the delegate's queue really is visible from here");
     }
 
+    // ---- CARD-0074: interpreter window, queue window, lock, ceiling ----------------------------
+
+    [Test]
+    public async Task a_task_that_settles_during_interpretation_still_enqueues_a_superseded_note()
+    {
+        // The 3/7 case: settled after GatherAsync / during InterpretAsync, before EnqueueAsync.
+        // A note still goes out — marked — because the caller was scheduled to receive one.
+        var scratch = Directory.CreateTempSubdirectory("antiphon-c74-interp").FullName;
+        try
+        {
+            var harness = new Harness(s =>
+            {
+                s.CheckInterpreterEnabled = true;
+                s.CheckInterpreterAgentSlug = $"c74-{Guid.NewGuid():N}"[..20];
+                s.CheckInterpreterWorkingDirectory = scratch;
+            });
+            var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
+            await harness.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+
+            var specialistId = await harness.EnsureSpecialistAsync();
+            var checks = harness.CreateChecksWithInterpreter();
+
+            var run = Task.Run(() => checks.RunCheckAsync(seed.Task.Id, CancellationToken.None));
+            var interpretation = await harness.WaitForInterpretationAsync(specialistId);
+            await harness.SettleAsync(seed.Task.Id);
+            await harness.SettleInterpretationAsync(interpretation.Id);
+
+            (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+            var note = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+            note.ShouldStartWith(AgentTaskCheckService.SupersededMarker);
+            note.ShouldContain("SETTLED at");
+            note.ShouldContain("It is now Succeeded");
+            note.ShouldContain("[check ");
+            note.ShouldContain("do not chase, cancel or re-dispatch");
+        }
+        finally
+        {
+            try { Directory.Delete(scratch, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Test]
+    public async Task a_pending_check_note_is_amended_once_when_its_task_settles()
+    {
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var captured = DateTime.UtcNow.AddMinutes(-2);
+        var body =
+            $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] captured {DelegateCheckProbe.Stamp(captured)}\n\n"
+            + $"CAPTURED {DelegateCheckProbe.Stamp(captured)} — a snapshot of that moment, not of now.\n\n"
+            + "TASK deadbeef: still going";
+        var noteId = await harness.SeedCheckNoteAsync(
+            seed.CallerSessionId, seed.Task.Id, body, createdAt: captured.AddSeconds(5));
+
+        await harness.SettleAsync(seed.Task.Id);
+
+        (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None))
+            .ShouldBeGreaterThanOrEqualTo(1);
+        var first = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        first.ShouldStartWith(AgentTaskCheckService.SupersededMarker);
+        var firstCount = CountOccurrences(first, AgentTaskCheckService.SupersededMarker);
+        firstCount.ShouldBe(1);
+        first.ShouldContain("SETTLED at");
+        first.ShouldContain("TASK deadbeef");
+
+        (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None))
+            .ShouldBe(0, "a second pass must not prepend again");
+        var second = (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
+        CountOccurrences(second, AgentTaskCheckService.SupersededMarker).ShouldBe(1);
+        second.ShouldBe(first);
+
+        await using var verify = CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Status.ShouldBe(QueuedMessageStatus.Pending, "mark, never suppress — status is unchanged");
+        stored.DeliveryAttempts.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_check_note_already_typed_once_is_not_amended()
+    {
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] the original digest";
+        var noteId = await harness.SeedCheckNoteAsync(
+            seed.CallerSessionId, seed.Task.Id, body,
+            deliveryAttempts: 1, createdAt: DateTime.UtcNow.AddMinutes(-2));
+        await harness.SettleAsync(seed.Task.Id);
+
+        (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using var verify = CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Body.ShouldBe(body);
+        stored.Body.ShouldNotContain(AgentTaskCheckService.SupersededMarker);
+        stored.DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task a_check_note_whose_task_is_still_working_is_not_amended()
+    {
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] still live";
+        var noteId = await harness.SeedCheckNoteAsync(seed.CallerSessionId, seed.Task.Id, body);
+
+        (await harness.Dispatcher.ReconcileSupersededChecksAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using var verify = CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Body.ShouldBe(body);
+        stored.Body.ShouldNotContain(AgentTaskCheckService.SupersededMarker);
+    }
+
+    [Test]
+    public async Task amend_waits_on_the_same_lock_cancel_uses()
+    {
+        // Would go green on an unlocked separate-scope write: that path would mutate while this
+        // test still holds the per-session lock. Holding GetLock is exactly what CancelAsync and
+        // FlushAsync serialise on.
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var original = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] unlocked-write detector";
+        var noteId = await harness.SeedCheckNoteAsync(seed.CallerSessionId, seed.Task.Id, original);
+        await harness.SettleAsync(seed.Task.Id);
+
+        var queue = harness.Messages;
+        var sem = queue.GetLock(seed.CallerSessionId);
+        await sem.WaitAsync();
+        Task<bool> amend;
+        try
+        {
+            var banner = AgentTaskCheckService.SupersededBanner(
+                AgentTaskStatus.Succeeded, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(-1));
+            amend = Task.Run(() => queue.AmendPendingBodyAsync(
+                seed.CallerSessionId, noteId, banner, 3_000, CancellationToken.None));
+
+            var finished = await Task.WhenAny(amend, Task.Delay(400));
+            finished.ShouldNotBe(amend, "AmendPendingBodyAsync must wait on GetLock — an unlocked scope would have finished");
+
+            await using var mid = CreateContext();
+            var still = await mid.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+            still.Body.ShouldBe(original, "no write may land while the session lock is held");
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        (await amend).ShouldBeTrue();
+        await using var after = CreateContext();
+        var amended = await after.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        amended.Body.ShouldStartWith(AgentTaskCheckService.SupersededMarker);
+        amended.Body.ShouldContain(original);
+    }
+
+    [Test]
+    public async Task a_banner_on_a_ceiling_sized_note_keeps_the_banner_and_trims_the_tail()
+    {
+        var ceiling = new DelegationSettings().ReplyInlineMaxChars;
+        var harness = new Harness();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: -1);
+        await harness.SeedNoisyDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
+
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == seed.Task.Id);
+        var facts = await new DelegateCheckProbe(
+                db,
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                TimeProvider.System,
+                Options.Create(new SupervisionSettings()))
+            .GatherAsync(task, CancellationToken.None);
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+        digest.Length.ShouldBeGreaterThan(ceiling, "control: the unfitted digest really does exceed the ceiling");
+
+        var settledAt = facts.At.AddMinutes(2);
+        var banner = AgentTaskCheckService.SupersededBanner(AgentTaskStatus.Succeeded, settledAt, facts.At);
+        var note = harness.Checks.BuildNote(task, facts, digest, supersededBanner: banner);
+
+        note.Length.ShouldBeLessThanOrEqualTo(ceiling);
+        note.ShouldStartWith(AgentTaskCheckService.SupersededMarker);
+        note.ShouldContain("SETTLED at");
+        note.ShouldContain("[check ");
+        note.ShouldContain("EXCERPT", customMessage: "the digest tail is what yields, not the banner");
+    }
+
+    [Test]
+    public async Task tick_runs_the_superseded_check_reconcile()
+    {
+        var harness = new Harness(s =>
+        {
+            s.MaxConcurrentTasks = 0;
+            s.RolePolicy.Clear();
+            s.FinalMessageGraceSeconds = 0;
+            s.SubagentGraceMinutes = 0;
+            s.PoolIdleRetireMinutes = 525_600;
+            s.PoolMaxIdlePerDirectory = int.MaxValue;
+            s.CheckEnabled = false;
+        });
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var body = $"[check {DelegationReportFormatter.Short(seed.Task.Id)} #1] live-looking digest";
+        await harness.SeedCheckNoteAsync(
+            seed.CallerSessionId, seed.Task.Id, body, createdAt: DateTime.UtcNow.AddMinutes(-2));
+        await harness.SettleAsync(seed.Task.Id);
+
+        await harness.Dispatcher.TickAsync(CancellationToken.None);
+
+        (await harness.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem()
+            .ShouldStartWith(AgentTaskCheckService.SupersededMarker);
+    }
+
+    [Test]
+    public void conversation_key_round_trips()
+    {
+        var id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        AgentTaskCheckService.TryParseCheckConversationKey(
+            AgentTaskCheckService.ConversationKey(id), out var parsed).ShouldBeTrue();
+        parsed.ShouldBe(id);
+        AgentTaskCheckService.TryParseCheckConversationKey("check:not-a-guid", out _).ShouldBeFalse();
+        AgentTaskCheckService.TryParseCheckConversationKey("delegation:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", out _).ShouldBeFalse();
+        AgentTaskCheckService.TryParseCheckConversationKey(null, out _).ShouldBeFalse();
+    }
+
     // ---- helpers ------------------------------------------------------------------------------
+
+    private static int CountOccurrences(string text, string token)
+    {
+        var count = 0;
+        for (var i = 0; (i = text.IndexOf(token, i, StringComparison.Ordinal)) >= 0; i += token.Length)
+            count++;
+        return count;
+    }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
@@ -537,11 +769,13 @@ public class AgentTaskCheckSweepTests
     private sealed class Harness
     {
         private readonly ServiceProvider _provider;
+        private readonly DelegationSettings _settings;
 
         public Harness(Action<DelegationSettings>? configure = null, IEventBus? eventBus = null)
         {
-            var settings = new DelegationSettings { MaxConcurrentTasks = 512 };
-            configure?.Invoke(settings);
+            _settings = new DelegationSettings { MaxConcurrentTasks = 512 };
+            configure?.Invoke(_settings);
+            var settings = _settings;
 
             var services = new ServiceCollection();
             services.AddLogging();
@@ -589,6 +823,100 @@ public class AgentTaskCheckSweepTests
         public AgentTaskCheckService Checks { get; }
         public AgentTaskReplyService Replies { get; }
         public AgentTaskCheckQueue Queue { get; }
+        public SessionMessageQueueService Messages =>
+            _provider.GetRequiredService<SessionMessageQueueService>();
+
+        /// <summary>
+        /// Same check service as <see cref="Checks"/>, but with the specialist wired in so
+        /// <c>InterpretAsync</c> actually waits — the interpreter window CARD-0074 closes.
+        /// </summary>
+        public AgentTaskCheckService CreateChecksWithInterpreter()
+        {
+            var db = CreateContext();
+            return new AgentTaskCheckService(
+                db,
+                new DelegateCheckProbe(
+                    db, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                    TimeProvider.System, Options.Create(new SupervisionSettings())),
+                Messages,
+                Options.Create(_settings),
+                _provider.GetRequiredService<IEventBus>(),
+                TimeProvider.System,
+                NullLogger<AgentTaskCheckService>.Instance,
+                interpreter: new CheckInterpreterProvisioner(
+                    db, Options.Create(_settings), TimeProvider.System,
+                    NullLogger<CheckInterpreterProvisioner>.Instance));
+        }
+
+        public async Task<Guid> EnsureSpecialistAsync()
+        {
+            await using var db = CreateContext();
+            var agent = await new CheckInterpreterProvisioner(
+                    db, Options.Create(_settings), TimeProvider.System,
+                    NullLogger<CheckInterpreterProvisioner>.Instance)
+                .EnsureAsync(CancellationToken.None);
+            agent.ShouldNotBeNull();
+            return agent!.Id;
+        }
+
+        public async Task<AgentTask> WaitForInterpretationAsync(Guid specialistId)
+        {
+            var started = DateTime.UtcNow.AddSeconds(-5);
+            for (var attempt = 0; attempt < 200; attempt++)
+            {
+                await using var db = CreateContext();
+                var row = await db.AgentTasks.AsNoTracking()
+                    .Where(t => t.AgentId == specialistId
+                        && t.Role == AgentTaskRole.Check
+                        && t.CreatedAt >= started
+                        && t.Status == AgentTaskStatus.Queued)
+                    .OrderByDescending(t => t.CreatedAt)
+                    .FirstOrDefaultAsync();
+                if (row is not null)
+                    return row;
+                await Task.Delay(25);
+            }
+
+            throw new TimeoutException("The check never created an interpretation task.");
+        }
+
+        public async Task SettleInterpretationAsync(Guid id)
+        {
+            await using var db = CreateContext();
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == id);
+            row.Status = AgentTaskStatus.Succeeded;
+            row.Result = "DOING — still mid-turn when this reading was captured.";
+            row.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<Guid> SeedCheckNoteAsync(
+            Guid callerSessionId,
+            Guid taskId,
+            string body,
+            int deliveryAttempts = 0,
+            DateTime? createdAt = null)
+        {
+            await using var db = CreateContext();
+            var next = await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == callerSessionId)
+                .MaxAsync(m => (long?)m.Sequence) ?? 0;
+            var id = Guid.NewGuid();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = id,
+                AgentSessionId = callerSessionId,
+                Body = body,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = next + 1,
+                Origin = QueuedMessageOrigin.Check,
+                ConversationKey = AgentTaskCheckService.ConversationKey(taskId),
+                CreatedAt = createdAt ?? DateTime.UtcNow.AddSeconds(-30),
+                DeliveryAttempts = deliveryAttempts,
+            });
+            await db.SaveChangesAsync();
+            return id;
+        }
 
         /// <summary>A check service whose probe is built over a DISPOSED context, so it throws.</summary>
         public AgentTaskCheckService BrokenChecks()

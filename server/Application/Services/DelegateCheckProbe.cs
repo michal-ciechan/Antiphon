@@ -362,6 +362,10 @@ public sealed class DelegateCheckProbe
         var sb = new StringBuilder();
         var task = facts.Task;
 
+        sb.Append("CAPTURED ").Append(Stamp(facts.At))
+          .AppendLine(" — a snapshot of that moment, not of now. Nothing below updates");
+        sb.AppendLine("after capture; if the delta since then matters, read the task row before acting on it.");
+        sb.AppendLine();
         sb.Append("TASK ").Append(task.ShortId).Append(": ").AppendLine(task.Title);
         sb.Append("  status=").Append(task.Status)
           .Append(task.Settled ? " (SETTLED)" : string.Empty)
@@ -601,6 +605,10 @@ public sealed class DelegateCheckProbe
 
     private static string Clock(DateTime at) =>
         at.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "Z";
+
+    /// <summary>Full ISO-8601 UTC (day included) — a check note can be read the next morning.</summary>
+    internal static string Stamp(DateTime at) =>
+        at.ToString("yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture) + "Z";
 
     private static string Duration(TimeSpan? span)
     {

@@ -470,6 +470,40 @@ public class DelegateCheckProbeTests
         digest.ShouldContain("ToolResult ERROR: The file does not exist.");
     }
 
+    // ---- CARD-0074: capture time on line 1 ----------------------------------------------------
+
+    [Test]
+    public async Task the_digest_opens_with_the_capture_timestamp()
+    {
+        var clock = FrozenClock();
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync(checkCount: 1);
+        await SeedIncidentAsync(
+            seed.SessionId, "Message delivery could not be verified.",
+            createdAt: now.AddMinutes(-28));
+        await SeedPendingMessageAsync(
+            seed.SessionId, "CARD-0089: the labelled brief.",
+            sequence: 1, createdAt: now.AddMinutes(-3));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        var first = digest.Split('\n')[0];
+        first.ShouldStartWith("CAPTURED 2026-08-19T15:00:00Z");
+        first.ShouldContain("a snapshot of that moment, not of now");
+
+        var taskAt = digest.IndexOf("\nTASK ", StringComparison.Ordinal);
+        taskAt.ShouldBeGreaterThan(0, "the TASK line is still there, below the capture stamp");
+        digest.IndexOf("CAPTURED ", StringComparison.Ordinal).ShouldBeLessThan(taskAt);
+
+        // CARD-0089 blocks are untouched — this slice adds a line above them.
+        digest.ShouldContain("14:32:00Z (28m ago)");
+        digest.ShouldContain("Warning DeliveryVerificationFailed");
+        digest.ShouldContain("BRIEF (Delegation,");
+        digest.ShouldContain("INCIDENTS:");
+        digest.ShouldContain("DELEGATE QUEUE:");
+    }
+
     // ---- the digest ---------------------------------------------------------------------------
 
     [Test]

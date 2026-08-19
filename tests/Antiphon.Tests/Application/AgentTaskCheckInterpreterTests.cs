@@ -191,7 +191,8 @@ public class AgentTaskCheckInterpreterTests
             .Where(e => e.AgentTaskId == seed.Task.Id && e.Type == AgentTaskEventType.Check)
             .ToListAsync()).ShouldHaveSingleItem();
 
-        check.Detail.ShouldStartWith("TASK ", customMessage: "the pre-slice shape, unchanged");
+        check.Detail.ShouldStartWith("CAPTURED ", customMessage: "digest-only (no reading heading); CARD-0074 stamps line 1");
+        check.Detail.ShouldContain("TASK ");
         check.Detail.ShouldNotContain(AgentTaskCheckService.ReadingHeading);
         AgentTaskCheckService.TryReadInterpretation(check.Detail).ShouldBeNull();
     }

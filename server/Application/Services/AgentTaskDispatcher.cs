@@ -88,7 +88,7 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <param name="SweepFailures">
-    /// How many of the tick's six clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's seven clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -101,7 +101,7 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The six clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The seven clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
@@ -138,6 +138,12 @@ public sealed class AgentTaskDispatcher
         // granularity, so a 5 s cadence is two orders of magnitude finer than needed. It CLAIMS AND
         // HANDS OFF only — see RunScheduledChecksAsync for why the tick must never run a check.
         sweepFailures += await RunSweepAsync("scheduled checks", RunScheduledChecksAsync, ct);
+
+        // And with check notes still Pending whose task has since settled (CARD-0074). The
+        // interpreter window is closed in RunCheckAsync; this is the queue window — WhenIdle
+        // notes that sat while the task finished. Mark, never suppress; the amend goes through
+        // the queue's per-session lock so it cannot race a flush mid-type.
+        sweepFailures += await RunSweepAsync("superseded check notes", ReconcileSupersededChecksAsync, ct);
 
         // The cap bounds concurrent Claude PROCESSES, so interpretation tasks are outside it both
         // ways — they neither consume a slot nor wait for one. A Check task is pinned to the
@@ -813,6 +819,59 @@ public sealed class AgentTaskDispatcher
         }
 
         return claimed;
+    }
+
+    /// <summary>
+    /// Queue window (CARD-0074): a still-Pending check note whose task settled after enqueue
+    /// gets a SUPERSEDED banner prepended in place. Status is unchanged — mark, never suppress.
+    /// The amend goes through <see cref="SessionMessageQueueService.AmendPendingBodyAsync"/> so
+    /// it serialises with flush on the same per-session lock <c>CancelAsync</c> uses.
+    ///
+    /// <para>Only <c>DeliveryAttempts == 0</c> rows are touched. A note that has been typed once
+    /// carries a baseline sequence; amending it would make late-confirm hunt for banner text
+    /// that was never typed.</para>
+    /// </summary>
+    internal async Task<int> ReconcileSupersededChecksAsync(CancellationToken ct)
+    {
+        var pending = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Status == QueuedMessageStatus.Pending
+                && m.Origin == QueuedMessageOrigin.Check
+                && m.DeliveryAttempts == 0)
+            .Select(m => new { m.Id, m.AgentSessionId, m.ConversationKey, m.CreatedAt, m.Body })
+            .ToListAsync(ct);
+        if (pending.Count == 0)
+            return 0;
+
+        var ceiling = _ptyProfile?.Ceilings.ReplyInlineMaxChars ?? _settings.ReplyInlineMaxChars;
+        var amended = 0;
+
+        foreach (var note in pending)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!AgentTaskCheckService.TryParseCheckConversationKey(note.ConversationKey, out var taskId))
+                continue;
+            if (note.Body.StartsWith(AgentTaskCheckService.SupersededMarker, StringComparison.Ordinal))
+                continue;
+
+            var task = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == taskId)
+                .Select(t => new { t.Status, t.CompletedAt })
+                .FirstOrDefaultAsync(ct);
+            if (task is null || !AgentTaskService.IsSettled(task.Status))
+                continue;
+            if (task.CompletedAt is not { } settledAt || settledAt <= note.CreatedAt)
+                continue;
+
+            var capturedAt = AgentTaskCheckService.TryReadCapturedAt(note.Body, out var parsed)
+                ? parsed
+                : note.CreatedAt;
+            var banner = AgentTaskCheckService.SupersededBanner(task.Status, settledAt, capturedAt);
+            if (await _queue.AmendPendingBodyAsync(note.AgentSessionId, note.Id, banner, ceiling, ct))
+                amended++;
+        }
+
+        return amended;
     }
 
     /// <summary>
