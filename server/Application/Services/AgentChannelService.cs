@@ -19,19 +19,22 @@ public sealed class AgentChannelService
     private readonly CardService _cardService;
     private readonly IEventBus _eventBus;
     private readonly ILogger<AgentChannelService> _logger;
+    private readonly MentionRouteDiagnostics? _diagnostics;
 
     public AgentChannelService(
         AppDbContext db,
         AgentSessionRuntime runtime,
         CardService cardService,
         IEventBus eventBus,
-        ILogger<AgentChannelService> logger)
+        ILogger<AgentChannelService> logger,
+        MentionRouteDiagnostics? diagnostics = null)
     {
         _db = db;
         _runtime = runtime;
         _cardService = cardService;
         _eventBus = eventBus;
         _logger = logger;
+        _diagnostics = diagnostics;
     }
 
     public async Task SendToSessionAsync(
@@ -58,16 +61,26 @@ public sealed class AgentChannelService
         AgentMention mention,
         CancellationToken ct)
     {
+        Record(sourceSessionId, MentionRouteDiagnostics.RouteStarted, $"target={mention.Target}");
         var source = await _db.AgentSessions
             .AsNoTracking()
             .Include(s => s.Card)
             .FirstOrDefaultAsync(s => s.Id == sourceSessionId && SourceStatuses.Contains(s.Status), ct);
         if (source is null)
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=false");
+            Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=source-missing");
             return false;
+        }
         // Cardless interactive sessions don't participate in card-scoped channel routing.
         if (source.CardId is not Guid sourceCardId)
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, "found=true cardId=no");
+            Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=cardless");
             return false;
+        }
 
+        Record(sourceSessionId, MentionRouteDiagnostics.SourceQueryReturned, $"found=true cardId={sourceCardId:N}");
         var matches = await FindMentionTargetsAsync(source, mention.Target, ct);
         if (matches.Count != 1)
         {
@@ -81,18 +94,28 @@ public sealed class AgentChannelService
                     reason = matches.Count == 0 ? "No live target matched." : "Mention target was ambiguous."
                 },
                 ct);
+            Record(sourceSessionId, MentionRouteDiagnostics.EventPublished, "ChannelMentionIgnored");
+            Record(
+                sourceSessionId,
+                MentionRouteDiagnostics.RouteReturned,
+                matches.Count == 0 ? "ok=false reason=no-target" : "ok=false reason=ambiguous");
             return false;
         }
 
         var target = matches.Single();
         if (target.Id == source.Id)
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=false reason=self");
             return false;
+        }
 
         var message = string.IsNullOrWhiteSpace(mention.Message)
             ? $"@{mention.Target}"
             : mention.Message.Trim();
         await _runtime.SendInputAsync(target.Id, FormatInput(source, message), ct);
+        Record(sourceSessionId, MentionRouteDiagnostics.InputSent, $"target={target.Id:N}");
         await PublishMessageAsync(source, target, message, routedByMention: true, ct);
+        Record(sourceSessionId, MentionRouteDiagnostics.RouteReturned, "ok=true");
         return true;
     }
 
@@ -154,7 +177,10 @@ public sealed class AgentChannelService
     {
         var normalized = target.Trim();
         if (string.IsNullOrWhiteSpace(normalized))
+        {
+            Record(source.Id, MentionRouteDiagnostics.TargetQueryReturned, "matches=0 reason=empty-target");
             return [];
+        }
 
         var liveSessionIds = _runtime.ListLiveSessions().ToHashSet();
         var sessions = await _db.AgentSessions
@@ -169,15 +195,24 @@ public sealed class AgentChannelService
         var matches = sessions
             .Where(s => s.DefinitionName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        if (matches.Count > 0)
-            return matches;
+        if (matches.Count == 0 && normalized.Length >= 8)
+        {
+            matches = sessions
+                .Where(s => s.Id.ToString("N").StartsWith(normalized.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
 
-        if (normalized.Length < 8)
-            return [];
+        Record(
+            source.Id,
+            MentionRouteDiagnostics.TargetQueryReturned,
+            $"matches={matches.Count} live={liveSessionIds.Count} scanned={sessions.Count}");
+        return matches;
+    }
 
-        return sessions
-            .Where(s => s.Id.ToString("N").StartsWith(normalized.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase))
-            .ToList();
+    private void Record(Guid sourceSessionId, string stage, string? detail = null)
+    {
+        if (_diagnostics is not null)
+            _diagnostics.Record(sourceSessionId, stage, detail);
     }
 
     private async Task PublishMessageAsync(
@@ -189,7 +224,11 @@ public sealed class AgentChannelService
     {
         // Cardless interactive targets have no card channel to broadcast on.
         if (target.CardId is not Guid targetCardId)
+        {
+            if (routedByMention && source is not null)
+                Record(source.Id, MentionRouteDiagnostics.EventPublished, "skipped-cardless");
             return;
+        }
 
         try
         {
@@ -205,9 +244,13 @@ public sealed class AgentChannelService
                     routedByMention
                 },
                 ct);
+            if (routedByMention && source is not null)
+                Record(source.Id, MentionRouteDiagnostics.EventPublished, "ChannelMessage");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            if (routedByMention && source is not null)
+                Record(source.Id, MentionRouteDiagnostics.EventPublished, $"failed {ex.GetType().Name}");
             _logger.LogWarning(ex, "Failed to publish channel message for target session {SessionId}", target.Id);
         }
     }

@@ -37,6 +37,27 @@ public class AgentChannelServiceIntegrationTests
     }
 
     [Test]
+    public async Task WaitUntilAsync_timeout_attaches_the_stage_trail()
+    {
+        Exception? caught = null;
+        try
+        {
+            await WaitUntilAsync(
+                () => false,
+                () => $"{Environment.NewLine}last stage: debounce-fired",
+                TimeSpan.FromMilliseconds(40));
+        }
+        catch (Exception ex)
+        {
+            caught = ex;
+        }
+
+        caught.ShouldNotBeNull();
+        caught!.ToString().ShouldContain("WaitUntilAsync timed out");
+        caught.ToString().ShouldContain("last stage: debounce-fired");
+    }
+
+    [Test]
     public async Task ChannelHub_mention_routes_to_target_session_stdin()
     {
         await using var db = CreateContext();
@@ -62,10 +83,25 @@ public class AgentChannelServiceIntegrationTests
 
             sourceAdapter.Emit("@helper please inspect failing test");
 
-            await WaitUntilAsync(() => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal));
+            await WaitUntilAsync(
+                () => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal),
+                () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
             targetAdapter.SentInput.ShouldContain("[channel from lead]");
             harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "ChannelMessage"
                 && e.Group == AgentChannelGroups.Card(graph.TargetCard.Id));
+            // Stages that precede SendInput — they must already be on the trail when
+            // the stdin predicate trips. Later stages (input-sent / event-published)
+            // can still be in-flight at that instant.
+            var stages = harness.RouteDiagnostics.Snapshot().Select(s => s.Stage).ToList();
+            stages.ShouldContain(MentionRouteDiagnostics.DeltaObserved);
+            stages.ShouldContain(MentionRouteDiagnostics.PendingScheduled);
+            stages.ShouldContain(MentionRouteDiagnostics.DebounceDelayStarted);
+            stages.ShouldContain(MentionRouteDiagnostics.DebounceFired);
+            stages.ShouldContain(MentionRouteDiagnostics.CommandEnqueued);
+            stages.ShouldContain(MentionRouteDiagnostics.CommandDequeued);
+            stages.ShouldContain(MentionRouteDiagnostics.RouteStarted);
+            stages.ShouldContain(MentionRouteDiagnostics.SourceQueryReturned);
+            stages.ShouldContain(MentionRouteDiagnostics.TargetQueryReturned);
         }
         finally
         {
@@ -98,7 +134,9 @@ public class AgentChannelServiceIntegrationTests
 
             sourceAdapter.Emit("@helper are you online?");
 
-            await WaitUntilAsync(() => harness.EventBus.PublishedEvents.Any(e => e.EventName == "ChannelMentionIgnored"));
+            await WaitUntilAsync(
+                () => harness.EventBus.PublishedEvents.Any(e => e.EventName == "ChannelMentionIgnored"),
+                () => DescribeChannelPipeline(harness, sourceSession.Id));
             harness.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "ChannelMentionIgnored"
                 && e.Group == AgentChannelGroups.Card(graph.SourceCard.Id));
         }
@@ -139,7 +177,9 @@ public class AgentChannelServiceIntegrationTests
             sourceAdapter.Emit("lease ");
             sourceAdapter.Emit("inspect failing test");
 
-            await WaitUntilAsync(() => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal));
+            await WaitUntilAsync(
+                () => targetAdapter.SentInput.Contains("please inspect failing test", StringComparison.Ordinal),
+                () => DescribeChannelPipeline(harness, sourceSession.Id, targetAdapter));
             await Task.Delay(450);
 
             CountOccurrences(targetAdapter.SentInput, "[channel from lead]").ShouldBe(1);
@@ -245,6 +285,7 @@ public class AgentChannelServiceIntegrationTests
         }));
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<MentionScanner>();
+        services.AddSingleton<MentionRouteDiagnostics>();
         services.AddScoped<AgentChannelService>();
         services.AddSingleton<AgentMentionRouter>();
         services.AddSingleton<IWorktreeManager>(new FakeWorktreeManager(Path.Combine(tempRoot, "worktrees")));
@@ -273,7 +314,8 @@ public class AgentChannelServiceIntegrationTests
             scope,
             provider.GetRequiredService<AgentSessionRuntime>(),
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
-            eventBus);
+            eventBus,
+            provider.GetRequiredService<MentionRouteDiagnostics>());
     }
 
     private static Graph NewGraph(string tempRoot)
@@ -418,9 +460,14 @@ public class AgentChannelServiceIntegrationTests
         await db.Projects.Where(p => projectIds.Contains(p.Id)).ExecuteDeleteAsync();
     }
 
-    private static async Task WaitUntilAsync(Func<bool> predicate)
+    private static async Task WaitUntilAsync(
+        Func<bool> predicate,
+        Func<string>? timeoutDetail = null,
+        TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var started = DateTime.UtcNow;
+        var budget = timeout ?? TimeSpan.FromSeconds(5);
+        var deadline = started + budget;
         while (DateTime.UtcNow < deadline)
         {
             if (predicate())
@@ -429,7 +476,46 @@ public class AgentChannelServiceIntegrationTests
             await Task.Delay(25);
         }
 
-        predicate().ShouldBeTrue();
+        var elapsedMs = (DateTime.UtcNow - started).TotalMilliseconds;
+        var detail = timeoutDetail?.Invoke();
+        predicate().ShouldBeTrue(
+            $"WaitUntilAsync timed out after {elapsedMs:F0}ms (budget {budget.TotalMilliseconds:F0}ms)."
+            + (detail ?? ""));
+    }
+
+    private static string DescribeChannelPipeline(
+        Harness harness,
+        Guid sourceSessionId,
+        FakeAgentProtocolAdapter? target = null)
+    {
+        var last = harness.RouteDiagnostics.Last;
+        var lastLabel = last is null
+            ? "(none — ObserveDelta never recorded)"
+            : $"{last.Value.Stage}{(string.IsNullOrEmpty(last.Value.Detail) ? "" : " " + last.Value.Detail)}";
+        var events = harness.EventBus.PublishedEvents.Count == 0
+            ? "(none)"
+            : string.Join(", ", harness.EventBus.PublishedEvents.Select(e => e.EventName));
+        var live = string.Join(", ", harness.Runtime.ListLiveSessions());
+        var input = target is null
+            ? "(no target adapter)"
+            : TruncateForTimeout(target.SentInput);
+        return $"""
+
+            last stage: {lastLabel}
+            stages:
+            {harness.RouteDiagnostics.Format(sourceSessionId)}
+            events: {events}
+            live sessions: {live}
+            target.SentInput: {input}
+            """;
+    }
+
+    private static string TruncateForTimeout(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "(empty)";
+        const int max = 200;
+        return text.Length <= max ? text : text[..max] + $"… ({text.Length} chars)";
     }
 
     private static int CountOccurrences(string text, string value)
@@ -470,7 +556,8 @@ public class AgentChannelServiceIntegrationTests
         IServiceScope Scope,
         AgentSessionRuntime Runtime,
         AgentSessionLaunchQueue LaunchQueue,
-        MockEventBus EventBus) : IAsyncDisposable
+        MockEventBus EventBus,
+        MentionRouteDiagnostics RouteDiagnostics) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {

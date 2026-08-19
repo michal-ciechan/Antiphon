@@ -22,17 +22,20 @@ public sealed class AgentMentionRouter : IDisposable
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly MentionScanner _scanner;
     private readonly ILogger<AgentMentionRouter> _logger;
+    private readonly MentionRouteDiagnostics? _diagnostics;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
 
     public AgentMentionRouter(
         IServiceScopeFactory scopeFactory,
         MentionScanner scanner,
-        ILogger<AgentMentionRouter> logger)
+        ILogger<AgentMentionRouter> logger,
+        MentionRouteDiagnostics? diagnostics = null)
     {
         _scopeFactory = scopeFactory;
         _scanner = scanner;
         _logger = logger;
+        _diagnostics = diagnostics;
         _worker = Task.Run(ProcessAsync);
     }
 
@@ -42,6 +45,10 @@ public sealed class AgentMentionRouter : IDisposable
             return;
 
         var stripped = MentionScanner.StripAnsi(text);
+        Record(
+            sourceSessionId,
+            MentionRouteDiagnostics.DeltaObserved,
+            $"chars={stripped.Length} newline={stripped.Contains('\n') || stripped.Contains('\r')}");
         var combined = _pendingText.AddOrUpdate(
             sourceSessionId,
             stripped,
@@ -84,10 +91,12 @@ public sealed class AgentMentionRouter : IDisposable
         foreach (var mention in _scanner.Extract(line))
         {
             if (skipPendingDuplicate && PendingRouteExists(sourceSessionId, mention))
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.CommandSkippedDuplicate, $"target={mention.Target}");
                 continue;
+            }
 
-            if (!_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention)))
-                _logger.LogWarning("Dropped mention route command for source session {SessionId}", sourceSessionId);
+            EnqueueCommand(sourceSessionId, mention);
         }
     }
 
@@ -96,6 +105,7 @@ public sealed class AgentMentionRouter : IDisposable
         if (string.IsNullOrWhiteSpace(line))
         {
             _pendingStates.TryRemove(sourceSessionId, out _);
+            Record(sourceSessionId, MentionRouteDiagnostics.PendingCleared);
             return;
         }
 
@@ -107,52 +117,73 @@ public sealed class AgentMentionRouter : IDisposable
             version = ++state.Version;
         }
 
+        Record(sourceSessionId, MentionRouteDiagnostics.PendingScheduled, $"version={version} remainderChars={line.Length}");
         _ = EnqueuePendingMentionsAfterDebounceAsync(sourceSessionId, version);
     }
 
     private async Task EnqueuePendingMentionsAfterDebounceAsync(Guid sourceSessionId, long version)
     {
+        Record(sourceSessionId, MentionRouteDiagnostics.DebounceDelayStarted, $"version={version}");
         try
         {
             await Task.Delay(PendingMentionDebounce, _cts.Token);
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
         {
+            Record(sourceSessionId, MentionRouteDiagnostics.DebounceCancelled, $"version={version}");
             return;
         }
 
         if (!_pendingStates.TryGetValue(sourceSessionId, out var state))
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.DebounceStale, $"version={version} reason=state-gone");
             return;
+        }
 
         string line;
         lock (state.Gate)
         {
             if (state.Version != version)
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.DebounceStale, $"version={version} current={state.Version}");
                 return;
+            }
 
             line = state.Text;
         }
 
         var mentions = _scanner.Extract(line);
         if (mentions.Count == 0)
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.DebounceNoMentions, $"lineChars={line.Length}");
             return;
+        }
 
         lock (state.Gate)
         {
             if (state.Version != version)
+            {
+                Record(sourceSessionId, MentionRouteDiagnostics.DebounceStale, $"version={version} current={state.Version} after-extract");
                 return;
+            }
 
+            Record(sourceSessionId, MentionRouteDiagnostics.DebounceFired, $"mentions={mentions.Count}");
             foreach (var mention in mentions)
             {
                 if (!IsPendingMentionReady(mention))
+                {
+                    Record(sourceSessionId, MentionRouteDiagnostics.DebounceNotReady, $"target={mention.Target} messageChars={mention.Message.Length}");
                     continue;
+                }
 
                 var key = PendingRouteKey(mention);
                 if (!state.RoutedKeys.Add(key))
+                {
+                    Record(sourceSessionId, MentionRouteDiagnostics.CommandSkippedDuplicate, $"target={mention.Target}");
                     continue;
+                }
 
-                if (!_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention)))
-                    _logger.LogWarning("Dropped pending mention route command for source session {SessionId}", sourceSessionId);
+                EnqueueCommand(sourceSessionId, mention);
             }
         }
     }
@@ -174,6 +205,10 @@ public sealed class AgentMentionRouter : IDisposable
         {
             await foreach (var command in _commands.Reader.ReadAllAsync(_cts.Token))
             {
+                Record(
+                    command.SourceSessionId,
+                    MentionRouteDiagnostics.CommandDequeued,
+                    $"target={command.Mention.Target} messageChars={command.Mention.Message.Length}");
                 try
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
@@ -186,6 +221,10 @@ public sealed class AgentMentionRouter : IDisposable
                 }
                 catch (Exception ex)
                 {
+                    Record(
+                        command.SourceSessionId,
+                        MentionRouteDiagnostics.RouteFailed,
+                        $"{ex.GetType().Name}: {ex.Message}");
                     _logger.LogWarning(ex, "Failed to route mention from session {SessionId}", command.SourceSessionId);
                 }
             }
@@ -203,6 +242,24 @@ public sealed class AgentMentionRouter : IDisposable
         public string Text { get; set; } = string.Empty;
         public long Version { get; set; }
         public HashSet<string> RoutedKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void EnqueueCommand(Guid sourceSessionId, AgentMention mention)
+    {
+        if (_commands.Writer.TryWrite(new MentionRouteCommand(sourceSessionId, mention)))
+        {
+            Record(sourceSessionId, MentionRouteDiagnostics.CommandEnqueued, $"target={mention.Target}");
+            return;
+        }
+
+        Record(sourceSessionId, MentionRouteDiagnostics.CommandDropped, $"target={mention.Target}");
+        _logger.LogWarning("Dropped mention route command for source session {SessionId}", sourceSessionId);
+    }
+
+    private void Record(Guid sourceSessionId, string stage, string? detail = null)
+    {
+        if (_diagnostics is not null)
+            _diagnostics.Record(sourceSessionId, stage, detail);
     }
 
     private static bool IsPendingMentionReady(AgentMention mention) =>
