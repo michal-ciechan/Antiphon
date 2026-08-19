@@ -145,11 +145,20 @@ public partial class PtyAgentRunnerTests
         runner.Exited.IsCompleted.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The memory hog must be <c>powershell.exe</c> (Windows PowerShell 5.1), never <c>pwsh.exe</c>:
+    /// pwsh 7 is commonly MSIX-installed (WindowsApps app-exec alias), and a packaged process
+    /// silently ESCAPES the caller's job object on Windows 10 — the AppModel places it in its own
+    /// per-package job instead (probed 2026-08-19: MSIX pwsh grandchild reports
+    /// <c>IsProcessInJob(ourJob)=false</c> while a 5.1 grandchild reports <c>true</c>). With the hog
+    /// outside the job, neither the hard commit limit nor the monitor's kill ever applied — it
+    /// committed 33 GB unhindered and this test stood red for 9 days (CARD-0026). 5.1 ships with
+    /// Windows, so no availability skip is needed.
+    /// </summary>
     [Test]
     public async Task JobObject_kills_session_when_memory_limit_exceeded()
     {
         SkipIfNotWindows();
-        SkipIfPwshUnavailable();
         await using var runner = new PtyAgentRunner();
         using var script = new TempPowerShellScript("""
             $chunks = [System.Collections.Generic.List[byte[]]]::new()
@@ -161,7 +170,7 @@ public partial class PtyAgentRunnerTests
         using var bat = new TempBatch(
             "@echo off\r\n"
             + "ping -n 2 127.0.0.1 > nul\r\n"
-            + $"pwsh.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File \"{script.Path}\"\r\n"
+            + $"powershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File \"{script.Path}\"\r\n"
             + "exit /b %ERRORLEVEL%\r\n");
 
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path }, memoryLimitMb: 256);
