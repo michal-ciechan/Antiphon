@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -8,6 +9,8 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -251,6 +254,222 @@ public class DelegateCheckProbeTests
         facts.Incidents.ShouldHaveSingleItem().Message.ShouldContain("could not be verified");
     }
 
+    // ---- CARD-0089: dated, de-duplicated, labelled digest --------------------------------------
+
+    [Test]
+    public async Task an_incident_carries_its_time_and_age()
+    {
+        var clock = FrozenClock();
+        var seed = await SeedAsync(checkCount: 1);
+        await SeedIncidentAsync(
+            seed.SessionId, "Message delivery could not be verified.",
+            createdAt: clock.GetUtcNow().UtcDateTime.AddMinutes(-28));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("14:32:00Z (28m ago)");
+        digest.ShouldContain("Warning DeliveryVerificationFailed");
+        digest.ShouldNotContain("0m ago", customMessage:
+            "a 28-minute-old incident must not render as if it were current");
+    }
+
+    [Test]
+    public async Task incidents_older_than_the_previous_check_are_not_marked_new()
+    {
+        var clock = FrozenClock();
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync(checkCount: 3);
+        await SeedIncidentAsync(seed.SessionId, "returned to the queue", createdAt: now.AddMinutes(-28));
+        await SeedCheckEventAsync(seed.Task.Id, at: now.AddMinutes(-23));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("none NEW since check #2 (14:37:00Z, 23m ago)");
+        digest.ShouldNotContain("NEW 14:");
+    }
+
+    [Test]
+    public async Task an_incident_after_the_previous_check_is_marked_new()
+    {
+        var clock = FrozenClock();
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync(checkCount: 3);
+        await SeedIncidentAsync(seed.SessionId, "something just happened", createdAt: now.AddMinutes(-5));
+        await SeedCheckEventAsync(seed.Task.Id, at: now.AddMinutes(-23));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("1 NEW since check #2 (14:37:00Z, 23m ago)");
+        digest.ShouldContain("NEW 14:55:00Z (5m ago)");
+    }
+
+    [Test]
+    public async Task the_first_check_says_every_incident_is_new_to_the_reader()
+    {
+        var clock = FrozenClock();
+        var seed = await SeedAsync(checkCount: 1);
+        await SeedIncidentAsync(
+            seed.SessionId, "first sight of this",
+            createdAt: clock.GetUtcNow().UtcDateTime.AddMinutes(-10));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("(first check — all are new to you)");
+        digest.ShouldNotContain("since check #");
+        digest.ShouldNotContain("NEW 14:");
+    }
+
+    [Test]
+    public async Task identical_incidents_collapse_to_one_line_with_a_count()
+    {
+        var clock = FrozenClock();
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync(checkCount: 1);
+        await SeedIncidentAsync(seed.SessionId, "The message has been returned to the queue.", createdAt: now.AddMinutes(-12));
+        await SeedIncidentAsync(seed.SessionId, "The message has been returned to the queue.", createdAt: now.AddMinutes(-8));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("2 on this session");
+        digest.ShouldContain("DeliveryVerificationFailed ×2:");
+        digest.ShouldContain("14:52:00Z (8m ago)", customMessage: "the newest timestamp of the group");
+        digest.ShouldNotContain("14:48:00Z", customMessage: "the older duplicate is collapsed, not listed");
+    }
+
+    [Test]
+    public async Task a_parked_message_says_so_in_the_queue_block()
+    {
+        var clock = FrozenClock();
+        var now = clock.GetUtcNow().UtcDateTime;
+        var seed = await SeedAsync();
+        var settings = new SupervisionSettings { DeliveryVerification = { MaxDeliveryAttempts = 4 } };
+        await SeedPendingMessageAsync(
+            seed.SessionId, "still waiting on a human",
+            sequence: 1, createdAt: now.AddMinutes(-41));
+        await SeedPendingMessageAsync(
+            seed.SessionId, "the parked brief",
+            sequence: 2, createdAt: now.AddMinutes(-41),
+            deliveryAttempts: 4, lastDeliveryStartedAt: now.AddMinutes(-38));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe(clock, settings).GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("PARKED 4/4 attempts, last tried 38m ago");
+        var parkedAt = digest.IndexOf("#2 BRIEF", StringComparison.Ordinal);
+        var liveAt = digest.IndexOf("#1 BRIEF", StringComparison.Ordinal);
+        parkedAt.ShouldBeGreaterThan(0);
+        liveAt.ShouldBeGreaterThan(parkedAt, "parked rows sort first — the row nothing will retry decides what the reader does next");
+        digest.ShouldNotContain("PARKED 3/", customMessage: "the cap is read from settings, never redefined");
+    }
+
+    [Test]
+    public async Task a_slash_command_is_labelled_control_plane_and_the_brief_is_not()
+    {
+        var seed = await SeedAsync();
+        await SeedPendingMessageAsync(
+            seed.SessionId,
+            "/compact This session is being handed NEW, unrelated work.",
+            sequence: 1);
+        await SeedPendingMessageAsync(
+            seed.SessionId,
+            "CARD-0089: read the plan and implement the digest.",
+            sequence: 2);
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe().GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("#1 control-plane (Delegation,");
+        digest.ShouldContain("#2 BRIEF (Delegation,");
+    }
+
+    [Test]
+    public async Task a_spilled_brief_is_still_labelled_brief()
+    {
+        var seed = await SeedAsync();
+        await SeedPendingMessageAsync(
+            seed.SessionId,
+            $"{TypedBodySpill.PointerHeadline} It is 5,771 characters — too long to type into a terminal.");
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe().GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("BRIEF (Delegation,");
+        digest.ShouldContain(TypedBodySpill.PointerHeadline);
+        digest.ShouldNotContain("control-plane", customMessage:
+            "a spilled brief is still the brief — the pointer is not plumbing just because it is short");
+    }
+
+    [Test]
+    public async Task a_tool_call_shows_its_input()
+    {
+        var seed = await SeedAsync();
+        await SeedTranscriptAsync(seed.SessionId,
+            (TranscriptKinds.ToolCall, null, "Read",
+                """{"file_path":"C:\\src\\Antiphon\\server\\Application\\Services\\DelegateCheckProbe.cs"}""",
+                null));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe().GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("ToolCall Read:");
+        digest.ShouldContain("file_path");
+        digest.ShouldContain("DelegateCheckProbe.cs");
+    }
+
+    [Test]
+    public async Task a_tool_call_without_input_renders_as_it_does_today()
+    {
+        var seed = await SeedAsync();
+        await SeedTranscriptAsync(seed.SessionId, (TranscriptKinds.ToolCall, null, "Bash"));
+
+        var facts = await Probe().GatherAsync(seed.Task, CancellationToken.None);
+        var digest = DelegateCheckProbe.RenderDigest(facts);
+
+        facts.TranscriptTail.ShouldHaveSingleItem().Excerpt.ShouldBe("Bash");
+        facts.TranscriptTail[0].ToolInput.ShouldBeNull();
+        digest.ShouldContain($"#{facts.TranscriptTail[0].Sequence} ToolCall: Bash");
+        digest.ShouldNotContain("ToolCall Bash");
+    }
+
+    [Test]
+    public async Task a_repeated_tool_call_collapses_to_one_line_with_a_count()
+    {
+        var seed = await SeedAsync();
+        var input = """{"file_path":"C:\\src\\Antiphon\\README.md"}""";
+        await SeedTranscriptAsync(seed.SessionId,
+            (TranscriptKinds.ToolCall, null, "Read", input, null),
+            (TranscriptKinds.ToolCall, null, "Read", input, null),
+            (TranscriptKinds.ToolCall, null, "Read", input, null),
+            (TranscriptKinds.ToolCall, null, "Read", input, null));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe().GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("ToolCall Read ×4:");
+        digest.ShouldContain("#1 ");
+        digest.ShouldNotContain("#2 ");
+        digest.ShouldNotContain("#3 ");
+        digest.ShouldNotContain("#4 ");
+    }
+
+    [Test]
+    public async Task a_failed_tool_result_is_marked()
+    {
+        var seed = await SeedAsync();
+        await SeedTranscriptAsync(seed.SessionId,
+            (TranscriptKinds.ToolResult, "The file does not exist.", null, null, true));
+
+        var digest = DelegateCheckProbe.RenderDigest(
+            await Probe().GatherAsync(seed.Task, CancellationToken.None));
+
+        digest.ShouldContain("ToolResult ERROR: The file does not exist.");
+    }
+
     // ---- the digest ---------------------------------------------------------------------------
 
     [Test]
@@ -301,7 +520,8 @@ public class DelegateCheckProbeTests
                 .Options);
 
         var probe = new DelegateCheckProbe(
-            refusing, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), TimeProvider.System);
+            refusing, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), TimeProvider.System,
+            Options.Create(new SupervisionSettings()));
 
         var facts = await probe.GatherAsync(seed.Task, CancellationToken.None);
 
@@ -336,8 +556,14 @@ public class DelegateCheckProbeTests
 
     // ---- helpers ------------------------------------------------------------------------------
 
-    private static DelegateCheckProbe Probe() =>
-        new(CreateContext(), new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), TimeProvider.System);
+    private static readonly DateTimeOffset FrozenNow =
+        new(2026, 8, 19, 15, 0, 0, TimeSpan.Zero);
+
+    private static FakeTimeProvider FrozenClock() => new(FrozenNow);
+
+    private static DelegateCheckProbe Probe(TimeProvider? time = null, SupervisionSettings? supervision = null) =>
+        new(CreateContext(), new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+            time ?? TimeProvider.System, Options.Create(supervision ?? new SupervisionSettings()));
 
     private sealed record Seeded(AgentTask Task, Guid SessionId);
 
@@ -400,13 +626,17 @@ public class DelegateCheckProbeTests
         return new Seeded(task, sessionId);
     }
 
+    private static Task SeedTranscriptAsync(
+        Guid sessionId, params (string Kind, string? Text, string? Tool)[] entries) =>
+        SeedTranscriptAsync(sessionId, entries.Select(e => (e.Kind, e.Text, e.Tool, (string?)null, (bool?)null)).ToArray());
+
     private static async Task SeedTranscriptAsync(
-        Guid sessionId, params (string Kind, string? Text, string? Tool)[] entries)
+        Guid sessionId, params (string Kind, string? Text, string? Tool, string? ToolInput, bool? IsError)[] entries)
     {
         var at = DateTime.UtcNow.AddMinutes(-2);
         var seq = 0L;
         await using var db = CreateContext();
-        foreach (var (kind, text, tool) in entries)
+        foreach (var (kind, text, tool, toolInput, isError) in entries)
         {
             seq++;
             db.TranscriptEntries.Add(new TranscriptEntry
@@ -418,6 +648,8 @@ public class DelegateCheckProbeTests
                 Uuid = $"probe-{Guid.NewGuid():N}",
                 Text = text,
                 ToolName = tool,
+                ToolInput = toolInput,
+                ToolIsError = isError,
                 StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
                 Timestamp = at.AddSeconds(seq),
                 CreatedAt = at.AddSeconds(seq),
@@ -426,7 +658,14 @@ public class DelegateCheckProbeTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task SeedPendingMessageAsync(Guid sessionId, string body)
+    private static async Task SeedPendingMessageAsync(
+        Guid sessionId,
+        string body,
+        long sequence = 1,
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Delegation,
+        DateTime? createdAt = null,
+        int deliveryAttempts = 0,
+        DateTime? lastDeliveryStartedAt = null)
     {
         await using var db = CreateContext();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
@@ -435,14 +674,21 @@ public class DelegateCheckProbeTests
             AgentSessionId = sessionId,
             Body = body,
             Status = QueuedMessageStatus.Pending,
-            Sequence = 1,
-            Origin = QueuedMessageOrigin.Delegation,
-            CreatedAt = DateTime.UtcNow.AddMinutes(-3),
+            Sequence = sequence,
+            Origin = origin,
+            CreatedAt = createdAt ?? DateTime.UtcNow.AddMinutes(-3),
+            DeliveryAttempts = deliveryAttempts,
+            LastDeliveryStartedAt = lastDeliveryStartedAt,
         });
         await db.SaveChangesAsync();
     }
 
-    private static async Task SeedIncidentAsync(Guid sessionId, string message)
+    private static async Task SeedIncidentAsync(
+        Guid sessionId,
+        string message,
+        DateTime? createdAt = null,
+        AgentIncidentKind kind = AgentIncidentKind.DeliveryVerificationFailed,
+        AlertSeverity severity = AlertSeverity.Warning)
     {
         var name = $"probe-{Guid.NewGuid():N}"[..16];
         await using var db = CreateContext();
@@ -465,10 +711,24 @@ public class DelegateCheckProbeTests
             Id = Guid.NewGuid(),
             AgentId = agent.Id,
             SessionId = sessionId,
-            Kind = AgentIncidentKind.DeliveryVerificationFailed,
-            Severity = AlertSeverity.Warning,
+            Kind = kind,
+            Severity = severity,
             Message = message,
-            CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+            CreatedAt = createdAt ?? DateTime.UtcNow.AddMinutes(-1),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedCheckEventAsync(Guid taskId, DateTime at)
+    {
+        await using var db = CreateContext();
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(),
+            AgentTaskId = taskId,
+            Type = AgentTaskEventType.Check,
+            Detail = "previous check",
+            At = at,
         });
         await db.SaveChangesAsync();
     }

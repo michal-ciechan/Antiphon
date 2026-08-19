@@ -197,9 +197,10 @@ public class AgentTaskCheckInterpreterTests
     }
 
     /// <summary>
-    /// The digest keeps its own 900-char budget and the reading gets a separate one. Sharing would
+    /// The digest keeps its own 1800-char budget and the reading gets a separate one. Sharing would
     /// mean a long reading ate the evidence it is a reading OF, which is the half a sceptical reader
-    /// actually needs.
+    /// actually needs. CARD-0089 raised the digest half from 900 so longer dated/collapsed lines
+    /// still leave the card-thread tail inside the stored head.
     /// </summary>
     [Test]
     public void the_two_halves_are_budgeted_apart_and_the_reading_survives_a_long_digest()
@@ -210,10 +211,15 @@ public class AgentTaskCheckInterpreterTests
         var detail = AgentTaskCheckService.ComposeEventDetail(reading, "interpreter: task abcd1234, $0.0031", digest);
 
         detail.ShouldStartWith("interpreter: task abcd1234");
-        detail.Length.ShouldBeLessThan(2_000, "bounded — the column is 4000 and both halves are capped");
+        detail.Length.ShouldBeLessThan(3_000, "bounded — the column is 4000 and both halves are capped (1800+600)");
+        detail.ShouldContain("…", customMessage: "the 1800-char digest budget still truncates");
+        detail.ShouldNotContain("TASK line 399", customMessage: "truncation eats the digest tail, not the reading");
         var read = AgentTaskCheckService.TryReadInterpretation(detail);
         read.ShouldNotBeNull();
         read!.ShouldStartWith("rrrr", customMessage: "the reading survives whole-ish, from its head");
+        detail.IndexOf(AgentTaskCheckService.ReadingHeading).ShouldBeLessThan(
+            detail.IndexOf(AgentTaskCheckService.DigestHeading),
+            "the interpreter's reading stays above the digest");
         detail.ShouldContain("TASK line 0", customMessage: "and the digest still opens with its facts");
     }
 

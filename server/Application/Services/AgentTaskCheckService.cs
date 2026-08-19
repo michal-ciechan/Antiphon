@@ -31,12 +31,17 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class AgentTaskCheckService
 {
-    /// <summary>How much of the digest the task's timeline entry keeps.</summary>
-    private const int EventDetailChars = 900;
+    /// <summary>
+    /// How much of the digest the task's timeline entry keeps. Raised from 900 to 1800 with
+    /// CARD-0089: dated/collapsed digest lines are longer, and <c>CardThreadService</c> shows the
+    /// last 6 lines of this stored head — leaving 900 would move which section the card-thread
+    /// tail lands in.
+    /// </summary>
+    private const int EventDetailChars = 1800;
 
     /// <summary>
     /// How much of the interpreter's reading the timeline entry keeps (CARD-0035 slice 5). Its own
-    /// budget, deliberately: sharing the digest's 900 would mean a long reading ate the evidence it
+    /// budget, deliberately: sharing the digest's 1800 would mean a long reading ate the evidence it
     /// is a reading OF, and the digest is the part that is reviewable.
     /// </summary>
     private const int InterpretationDetailChars = 600;

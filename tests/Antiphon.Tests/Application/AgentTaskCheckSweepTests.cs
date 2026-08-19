@@ -598,7 +598,8 @@ public class AgentTaskCheckSweepTests
             return new AgentTaskCheckService(
                 CreateContext(),
                 new DelegateCheckProbe(
-                    dead, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), TimeProvider.System),
+                    dead, new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance), TimeProvider.System,
+                    Options.Create(new SupervisionSettings())),
                 _provider.GetRequiredService<SessionMessageQueueService>(),
                 Options.Create(new DelegationSettings()),
                 new MockEventBus(),

@@ -1,9 +1,12 @@
+using System.Globalization;
 using System.Text;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -21,11 +24,13 @@ namespace Antiphon.Server.Application.Services;
 ///
 /// <para><b>The read-only guarantee is visible in the constructor.</b> It takes the database (every
 /// query <c>AsNoTracking</c>), a git wrapper that only ever runs <c>log</c>/<c>status</c>/
-/// <c>rev-parse</c> with <c>--no-optional-locks</c>, and a clock. It depends on NOTHING with a
-/// write surface — no message queue, no session stopper, no runner client — so a reviewer can read
-/// six lines and see that a check cannot type into, kill, or commit for the delegate it is
-/// inspecting. There is no process probe here to get wrong, either: the card's self-matching
-/// process-scan trap is excluded by construction rather than by care.</para>
+/// <c>rev-parse</c> with <c>--no-optional-locks</c>, a clock, and
+/// <c>IOptions&lt;SupervisionSettings&gt;</c> — configuration, not a write surface (the parking
+/// cap is read so the digest and the queue cannot disagree about what parked means). It depends
+/// on NOTHING with a write surface — no message queue, no session stopper, no runner client —
+/// so a reviewer can read six lines and see that a check cannot type into, kill, or commit for
+/// the delegate it is inspecting. There is no process probe here to get wrong, either: the card's
+/// self-matching process-scan trap is excluded by construction rather than by care.</para>
 /// </summary>
 public sealed class DelegateCheckProbe
 {
@@ -35,6 +40,9 @@ public sealed class DelegateCheckProbe
     /// <summary>Per-entry excerpt ceiling. A tail is for shape, not for reading the work.</summary>
     private const int ExcerptChars = 200;
 
+    /// <summary>Flattened tool-input window. Smaller than the 200-char ToolResult excerpt already carried.</summary>
+    private const int ToolInputChars = 120;
+
     private const int CommitLimit = 20;
     private const int PendingMessageLimit = 5;
     private const int IncidentLimit = 5;
@@ -42,12 +50,18 @@ public sealed class DelegateCheckProbe
     private readonly AppDbContext _db;
     private readonly GitWorkspaceService _git;
     private readonly TimeProvider _timeProvider;
+    private readonly SupervisionSettings _supervision;
 
-    public DelegateCheckProbe(AppDbContext db, GitWorkspaceService git, TimeProvider timeProvider)
+    public DelegateCheckProbe(
+        AppDbContext db,
+        GitWorkspaceService git,
+        TimeProvider timeProvider,
+        IOptions<SupervisionSettings> supervision)
     {
         _db = db;
         _git = git;
         _timeProvider = timeProvider;
+        _supervision = supervision.Value;
     }
 
     // ---- the fact bundle -----------------------------------------------------------------------
@@ -109,7 +123,13 @@ public sealed class DelegateCheckProbe
         DateTime? LastEntryAt,
         TimeSpan? SinceLastEntry);
 
-    public sealed record CheckTranscriptLine(long Sequence, string Kind, string? Excerpt, DateTime? At);
+    public sealed record CheckTranscriptLine(
+        long Sequence,
+        string Kind,
+        string? Excerpt,
+        DateTime? At,
+        string? ToolInput = null,
+        bool? IsError = null);
 
     /// <param name="Range">
     /// <c>mergeTarget..branch</c> for a worktree task — commit messages are the durable report in
@@ -129,7 +149,16 @@ public sealed class DelegateCheckProbe
         int UntrackedFiles,
         string? Unavailable);
 
-    public sealed record CheckQueuedMessage(long Sequence, QueuedMessageOrigin Origin, DateTime CreatedAt, string Excerpt);
+    public sealed record CheckQueuedMessage(
+        long Sequence,
+        QueuedMessageOrigin Origin,
+        DateTime CreatedAt,
+        string Excerpt,
+        int DeliveryAttempts = 0,
+        DateTime? LastDeliveryStartedAt = null,
+        bool Parked = false,
+        int MaxDeliveryAttempts = 3,
+        string Label = "");
 
     public sealed record CheckIncident(AgentIncidentKind Kind, AlertSeverity Severity, string Message, DateTime CreatedAt);
 
@@ -142,7 +171,8 @@ public sealed class DelegateCheckProbe
         IReadOnlyList<CheckTranscriptLine> TranscriptTail,
         CheckGitFacts? Git,
         IReadOnlyList<CheckQueuedMessage> PendingMessages,
-        IReadOnlyList<CheckIncident> Incidents);
+        IReadOnlyList<CheckIncident> Incidents,
+        DateTime? PreviousCheckAt = null);
 
     // ---- gathering -----------------------------------------------------------------------------
 
@@ -169,6 +199,10 @@ public sealed class DelegateCheckProbe
             !string.IsNullOrWhiteSpace(task.Result),
             task.FailureReason);
 
+        var previousCheckAt = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Check)
+            .MaxAsync(e => (DateTime?)e.At, ct);
+
         var session = await GatherSessionAsync(task, now, ct);
         var tail = task.AgentSessionId is Guid tailSession
             ? await GatherTranscriptTailAsync(tailSession, ct)
@@ -181,7 +215,7 @@ public sealed class DelegateCheckProbe
             : [];
         var git = await GatherGitAsync(task, ct);
 
-        return new CheckFacts(now, taskFacts, session, tail, git, pending, incidents);
+        return new CheckFacts(now, taskFacts, session, tail, git, pending, incidents, previousCheckAt);
     }
 
     private async Task<CheckSessionFacts?> GatherSessionAsync(AgentTask task, DateTime now, CancellationToken ct)
@@ -216,7 +250,7 @@ public sealed class DelegateCheckProbe
             .Where(e => e.AgentSessionId == sessionId)
             .OrderByDescending(e => e.Sequence)
             .Take(TranscriptTailSize)
-            .Select(e => new { e.Sequence, e.Kind, e.Text, e.ToolName, e.Timestamp })
+            .Select(e => new { e.Sequence, e.Kind, e.Text, e.ToolName, e.Timestamp, e.ToolInput, e.ToolIsError })
             .ToListAsync(ct);
 
         return rows
@@ -224,10 +258,12 @@ public sealed class DelegateCheckProbe
             .Select(r => new CheckTranscriptLine(
                 r.Sequence,
                 r.Kind,
-                // A tool call's identity is its NAME; its text is null and its input is JSON nobody
-                // needs at triage altitude.
+                // A tool call's identity is still its NAME. ToolInput is carried separately so a
+                // row with none degrades to today's line, never a blank.
                 r.Kind == TranscriptKinds.ToolCall ? r.ToolName : Excerpt(r.Text),
-                r.Timestamp))
+                r.Timestamp,
+                r.ToolInput,
+                r.ToolIsError))
             .ToList();
     }
 
@@ -236,24 +272,36 @@ public sealed class DelegateCheckProbe
     {
         // A stranded WhenIdle delivery is a classic stall signature: the delegate looks alive, and
         // the thing it is waiting for has been sitting in front of it the whole time.
+        var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
         var rows = await _db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
-            .OrderBy(m => m.Sequence)
-            .Take(PendingMessageLimit)
-            .Select(m => new { m.Sequence, m.Origin, m.CreatedAt, m.Body })
+            .Select(m => new { m.Sequence, m.Origin, m.CreatedAt, m.Body, m.DeliveryAttempts, m.LastDeliveryStartedAt })
             .ToListAsync(ct);
 
         return rows
-            .Select(m => new CheckQueuedMessage(m.Sequence, m.Origin, m.CreatedAt, Excerpt(m.Body) ?? string.Empty))
+            .Select(m => new CheckQueuedMessage(
+                m.Sequence,
+                m.Origin,
+                m.CreatedAt,
+                Excerpt(m.Body) ?? string.Empty,
+                m.DeliveryAttempts,
+                m.LastDeliveryStartedAt,
+                Parked: m.DeliveryAttempts >= maxAttempts,
+                MaxDeliveryAttempts: maxAttempts,
+                Label: QueueLabel(m.Origin, m.Body)))
+            .OrderByDescending(m => m.Parked)
+            .ThenBy(m => m.Sequence)
+            .Take(PendingMessageLimit)
             .ToList();
     }
 
     private async Task<IReadOnlyList<CheckIncident>> GatherIncidentsAsync(Guid sessionId, CancellationToken ct)
     {
+        // Limit is applied AFTER collapsing in RenderDigest, so five distinct incidents survive
+        // where five identical ones used to fill the block.
         var rows = await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.SessionId == sessionId)
             .OrderByDescending(i => i.CreatedAt)
-            .Take(IncidentLimit)
             .Select(i => new CheckIncident(i.Kind, i.Severity, i.Message, i.CreatedAt))
             .ToListAsync(ct);
         return rows;
@@ -292,12 +340,14 @@ public sealed class DelegateCheckProbe
             directory, range, commits ?? [], counts?.Changed ?? 0, counts?.Untracked ?? 0, unavailable);
     }
 
-    private static string? Excerpt(string? text)
+    private static string? Excerpt(string? text) => Excerpt(text, ExcerptChars);
+
+    private static string? Excerpt(string? text, int limit)
     {
         if (string.IsNullOrWhiteSpace(text))
             return null;
         var flat = text.ReplaceLineEndings(" ").Trim();
-        return flat.Length <= ExcerptChars ? flat : flat[..ExcerptChars] + "…";
+        return flat.Length <= limit ? flat : flat[..limit] + "…";
     }
 
     // ---- rendering -----------------------------------------------------------------------------
@@ -356,13 +406,8 @@ public sealed class DelegateCheckProbe
         else
         {
             sb.Append("TRANSCRIPT TAIL (last ").Append(facts.TranscriptTail.Count).AppendLine("):");
-            foreach (var line in facts.TranscriptTail)
-            {
-                sb.Append("  #").Append(line.Sequence).Append(' ').Append(line.Kind);
-                if (!string.IsNullOrWhiteSpace(line.Excerpt))
-                    sb.Append(": ").Append(line.Excerpt);
-                sb.AppendLine();
-            }
+            foreach (var (line, count) in CollapseConsecutiveTranscript(facts.TranscriptTail))
+                AppendTranscriptLine(sb, line, count);
         }
 
         sb.AppendLine();
@@ -401,25 +446,161 @@ public sealed class DelegateCheckProbe
         {
             sb.Append(facts.PendingMessages.Count).AppendLine(" message(s) still Pending:");
             foreach (var message in facts.PendingMessages)
-                sb.Append("  · #").Append(message.Sequence).Append(' ').Append(message.Origin)
-                  .Append(": ").AppendLine(message.Excerpt);
+            {
+                sb.Append("  · #").Append(message.Sequence).Append(' ').Append(message.Label)
+                  .Append(" (").Append(message.Origin).Append(", ")
+                  .Append(Duration(facts.At - message.CreatedAt)).Append(" old)");
+                if (message.Parked)
+                {
+                    sb.Append(" PARKED ").Append(message.DeliveryAttempts).Append('/')
+                      .Append(message.MaxDeliveryAttempts).Append(" attempts");
+                    if (message.LastDeliveryStartedAt is { } lastTried)
+                        sb.Append(", last tried ").Append(Duration(facts.At - lastTried)).Append(" ago");
+                }
+                sb.Append(": ").AppendLine(message.Excerpt);
+            }
         }
 
+        AppendIncidents(sb, facts);
+
+        return sb.ToString().ReplaceLineEndings("\n").TrimEnd() + "\n";
+    }
+
+    private static void AppendIncidents(StringBuilder sb, CheckFacts facts)
+    {
         sb.Append("INCIDENTS: ");
         if (facts.Incidents.Count == 0)
         {
             sb.AppendLine("none on this session.");
+            return;
+        }
+
+        var collapsed = CollapseIncidents(facts.Incidents);
+        sb.Append(facts.Incidents.Count).Append(" on this session — ");
+        if (facts.PreviousCheckAt is not DateTime previous)
+        {
+            sb.AppendLine("(first check — all are new to you):");
         }
         else
         {
-            sb.Append(facts.Incidents.Count).AppendLine(":");
-            foreach (var incident in facts.Incidents)
-                sb.Append("  · ").Append(incident.Severity).Append(' ').Append(incident.Kind)
-                  .Append(": ").AppendLine(Excerpt(incident.Message));
+            var newCount = facts.Incidents.Count(i => i.CreatedAt > previous);
+            var prevNumber = Math.Max(1, facts.Task.CheckNumber - 1);
+            var since = $"since check #{prevNumber} ({Clock(previous)}, {Duration(facts.At - previous)} ago)";
+            if (newCount == 0)
+                sb.Append("none NEW ").Append(since).AppendLine(":");
+            else
+                sb.Append(newCount).Append(" NEW ").Append(since).AppendLine(":");
         }
 
-        return sb.ToString().ReplaceLineEndings("\n").TrimEnd() + "\n";
+        foreach (var (incident, count) in collapsed)
+        {
+            var isNew = facts.PreviousCheckAt is DateTime prev && incident.CreatedAt > prev;
+            sb.Append("  · ");
+            if (isNew)
+                sb.Append("NEW ");
+            sb.Append(Clock(incident.CreatedAt))
+              .Append(" (").Append(Duration(facts.At - incident.CreatedAt)).Append(" ago)  ")
+              .Append(incident.Severity).Append(' ').Append(incident.Kind);
+            if (count > 1)
+                sb.Append(" ×").Append(count);
+            sb.Append(": ").AppendLine(Excerpt(incident.Message));
+        }
     }
+
+    private static List<(CheckIncident Incident, int Count)> CollapseIncidents(
+        IReadOnlyList<CheckIncident> incidents) =>
+        incidents
+            .GroupBy(i => (i.Severity, i.Kind, Excerpt: Excerpt(i.Message)))
+            .Select(g => (
+                Incident: g.OrderByDescending(i => i.CreatedAt).First(),
+                Count: g.Count()))
+            .OrderByDescending(g => g.Incident.CreatedAt)
+            .Take(IncidentLimit)
+            .ToList();
+
+    private static void AppendTranscriptLine(StringBuilder sb, CheckTranscriptLine line, int count)
+    {
+        sb.Append("  #").Append(line.Sequence).Append(' ').Append(line.Kind);
+
+        var input = Excerpt(line.ToolInput, ToolInputChars);
+        if (input is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(line.Excerpt))
+                sb.Append(' ').Append(line.Excerpt);
+            if (line.IsError == true)
+                sb.Append(" ERROR");
+            if (count > 1)
+                sb.Append(" ×").Append(count);
+            sb.Append(": ").Append(input);
+        }
+        else
+        {
+            // No ToolInput — today's shape, plus ERROR / ×N when they apply.
+            if (line.IsError == true)
+                sb.Append(" ERROR");
+            if (count > 1)
+                sb.Append(" ×").Append(count);
+            if (!string.IsNullOrWhiteSpace(line.Excerpt))
+                sb.Append(": ").Append(line.Excerpt);
+        }
+
+        sb.AppendLine();
+    }
+
+    private static List<(CheckTranscriptLine Line, int Count)> CollapseConsecutiveTranscript(
+        IReadOnlyList<CheckTranscriptLine> lines)
+    {
+        var result = new List<(CheckTranscriptLine Line, int Count)>();
+        foreach (var line in lines)
+        {
+            if (result.Count > 0 && TranscriptKey(result[^1].Line) == TranscriptKey(line))
+                result[^1] = (result[^1].Line, result[^1].Count + 1);
+            else
+                result.Add((line, 1));
+        }
+        return result;
+    }
+
+    private static (string Kind, string? ToolName, string? Detail, bool Error) TranscriptKey(
+        CheckTranscriptLine line) =>
+        (line.Kind,
+            line.Kind == TranscriptKinds.ToolCall ? line.Excerpt : null,
+            Excerpt(line.ToolInput, ToolInputChars) ?? (line.Kind == TranscriptKinds.ToolCall ? null : line.Excerpt),
+            line.IsError == true);
+
+    private static string QueueLabel(QueuedMessageOrigin origin, string body)
+    {
+        var trimmed = body.TrimStart();
+        // Pointer first, not a length/heuristic: a spilled brief must stay BRIEF even if a later
+        // rule would treat a short pointer as plumbing (CARD-0025).
+        if (origin == QueuedMessageOrigin.Delegation
+            && trimmed.StartsWith(TypedBodySpill.PointerHeadline, StringComparison.Ordinal))
+            return "BRIEF";
+
+        return origin switch
+        {
+            QueuedMessageOrigin.Delegation when StartsWithSlash(trimmed) => "control-plane",
+            QueuedMessageOrigin.Delegation => "BRIEF",
+            QueuedMessageOrigin.System or QueuedMessageOrigin.Supervision or QueuedMessageOrigin.Check
+                => "control-plane",
+            QueuedMessageOrigin.Ui or QueuedMessageOrigin.Channel => "human",
+            _ => origin.ToString(),
+        };
+    }
+
+    private static bool StartsWithSlash(string text)
+    {
+        foreach (var ch in text)
+        {
+            if (char.IsWhiteSpace(ch))
+                continue;
+            return ch == '/';
+        }
+        return false;
+    }
+
+    private static string Clock(DateTime at) =>
+        at.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + "Z";
 
     private static string Duration(TimeSpan? span)
     {
