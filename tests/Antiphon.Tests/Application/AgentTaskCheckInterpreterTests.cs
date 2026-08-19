@@ -64,6 +64,7 @@ public class AgentTaskCheckInterpreterTests
         (await run).ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldStartWith("[check ", customMessage: "the envelope is untouched by the interpretation");
+        note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker);
         note.ShouldContain("three commits in the last 6 minutes");
         note.ShouldNotContain("unverified digest", customMessage: "this one WAS read");
         note.ShouldNotContain("[antiphon-task:", customMessage:
@@ -254,6 +255,10 @@ public class AgentTaskCheckInterpreterTests
         note.ShouldStartWith("[check ");
         note.ShouldContain("(unverified digest — interpreter unavailable: no reading within 60s)");
         note.ShouldContain("TASK ", customMessage: "and it carries the whole digest, as it always did");
+        note.Split('\n')[0].ShouldContain(AgentTaskCheckService.InterpreterDownMarker,
+            customMessage: "a skim of the first line has to surface that the specialist is down");
+        (await h.InterpreterIncidentsAsync(specialist.Id)).ShouldHaveSingleItem().Severity
+            .ShouldBe(AlertSeverity.Warning);
 
         (await h.ReloadAsync(interpretation.Id)).Status.ShouldBe(
             AgentTaskStatus.Canceled,
@@ -277,7 +282,12 @@ public class AgentTaskCheckInterpreterTests
 
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldContain("(unverified digest — interpreter busy)");
+        note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker,
+            customMessage: "busy is load, not a dead specialist");
         (await h.InterpretationCountAsync(specialist.Id)).ShouldBe(2, "no third one was created");
+        (await h.InterpreterIncidentsAsync(specialist.Id)).ShouldBeEmpty(
+            "interpreter busy must not raise CheckInterpreterUnavailable");
+        (await h.InterpreterAlertsAsync(specialist.Id)).ShouldBeEmpty();
     }
 
     [Test]
@@ -296,6 +306,7 @@ public class AgentTaskCheckInterpreterTests
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldStartWith("[check ");
         note.ShouldNotContain("unverified digest", customMessage: "no prefix — nothing was skipped");
+        note.ShouldNotContain(AgentTaskCheckService.InterpreterDownMarker);
         note.ShouldContain("TASK ");
         await using var verify = CreateContext();
         (await verify.AgentTasks.AnyAsync(t => t.Role == AgentTaskRole.Check && t.CreatedAt >= h.StartedAt))
@@ -308,6 +319,9 @@ public class AgentTaskCheckInterpreterTests
     public async Task a_provisioner_that_throws_degrades()
     {
         using var h = new Harness();
+        // The specialist already exists — Ensure throws on reconcile, which is the live shape.
+        // Without a row there is nowhere to hang an AgentIncident (AgentId is required).
+        var specialist = await h.EnsureSpecialistAsync();
         var seed = await h.SeedDelegateAsync();
         await h.SeedDelegateTranscriptAsync(seed.DelegateSessionId, seed.Task.Id);
         await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
@@ -318,6 +332,14 @@ public class AgentTaskCheckInterpreterTests
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldContain("(unverified digest — interpreter unavailable: could not be provisioned)");
         note.ShouldContain("TASK ");
+        note.Split('\n')[0].ShouldContain(AgentTaskCheckService.InterpreterDownMarker);
+        var incident = (await h.InterpreterIncidentsAsync(specialist.Id)).ShouldHaveSingleItem();
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.Kind.ShouldBe(AgentIncidentKind.CheckInterpreterUnavailable);
+        incident.Message.ShouldContain("could not be provisioned");
+        var alert = (await h.InterpreterAlertsAsync(specialist.Id)).ShouldHaveSingleItem();
+        alert.Severity.ShouldBe(AlertSeverity.Warning);
+        alert.DedupKey.ShouldBe(AgentTaskCheckService.InterpreterUnavailableDedupKey(specialist.Id));
     }
 
     [Test]
@@ -342,6 +364,66 @@ public class AgentTaskCheckInterpreterTests
         var note = (await h.NotesToCallerAsync(seed.CallerSessionId)).ShouldHaveSingleItem();
         note.ShouldContain($"(unverified digest — interpreter unavailable: {expectedReason})");
         note.ShouldContain("TASK ", customMessage: "the digest is the floor and the floor never moves");
+        note.ShouldContain(AgentTaskCheckService.InterpreterDownMarker);
+        (await h.InterpreterIncidentsAsync(specialist.Id)).ShouldHaveSingleItem().Severity
+            .ShouldBe(AlertSeverity.Warning);
+    }
+
+    // ---- CARD-0079 slice 2: the fallback is an incident, not a parenthetical ---------------------
+
+    /// <summary>
+    /// A fleet of due checks against a dead specialist is one outage. One incident per check would
+    /// bury the first finding the way CARD-0003's uncorrelated-report log did.
+    /// </summary>
+    [Test]
+    public async Task a_burst_of_unavailable_checks_raises_one_incident_per_specialist()
+    {
+        using var h = new Harness();
+        var specialist = await h.EnsureSpecialistAsync();
+        var first = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(first.DelegateSessionId, first.Task.Id);
+        var second = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(second.DelegateSessionId, second.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var broken = h.BrokenProvisionerChecks();
+        (await broken.RunCheckAsync(first.Task.Id, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+        (await broken.RunCheckAsync(second.Task.Id, CancellationToken.None))
+            .ShouldBe(AgentTaskCheckService.CheckOutcome.Delivered);
+
+        (await h.InterpreterIncidentsAsync(specialist.Id)).Count.ShouldBe(1,
+            "two due checks in the same minute are one outage");
+        (await h.InterpreterAlertsAsync(specialist.Id)).Count.ShouldBe(1);
+
+        foreach (var caller in new[] { first.CallerSessionId, second.CallerSessionId })
+        {
+            var note = (await h.NotesToCallerAsync(caller)).ShouldHaveSingleItem();
+            note.ShouldContain("(unverified digest — interpreter unavailable: could not be provisioned)");
+            note.ShouldContain(AgentTaskCheckService.InterpreterDownMarker);
+        }
+    }
+
+    [Test]
+    public async Task the_unavailable_incident_re_fires_after_the_dedup_window()
+    {
+        using var h = new Harness();
+        var specialist = await h.EnsureSpecialistAsync();
+        var first = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(first.DelegateSessionId, first.Task.Id);
+        await h.Dispatcher.RunScheduledChecksAsync(CancellationToken.None);
+
+        var broken = h.BrokenProvisionerChecks();
+        await broken.RunCheckAsync(first.Task.Id, CancellationToken.None);
+        (await h.InterpreterIncidentsAsync(specialist.Id)).Count.ShouldBe(1);
+
+        h.Clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        var second = await h.SeedDelegateAsync();
+        await h.SeedDelegateTranscriptAsync(second.DelegateSessionId, second.Task.Id);
+        await broken.RunCheckAsync(second.Task.Id, CancellationToken.None);
+
+        (await h.InterpreterIncidentsAsync(specialist.Id)).Count.ShouldBe(2,
+            "a later outage after the window is a new finding, not a silent repeat");
     }
 
     // ---- recursion guards ------------------------------------------------------------------------
@@ -493,6 +575,8 @@ public class AgentTaskCheckInterpreterTests
             // No AgentControlService: the provisioner's start is best-effort and optional, and this
             // harness never launches anything.
             services.AddScoped<CheckInterpreterProvisioner>();
+            services.AddScoped<IAlertService, AlertService>();
+            services.AddScoped<IAlertRouter, NullAlertRouter>();
             services.AddScoped<AgentTaskCheckService>();
             services.AddSingleton<AgentTaskReplyService>();
             services.AddScoped<AgentTaskDispatcher>();
@@ -536,7 +620,29 @@ public class AgentTaskCheckInterpreterTests
                 ptyProfile: null,
                 interpreter: new CheckInterpreterProvisioner(
                     dead, Options.Create(_settings), Clock,
-                    NullLogger<CheckInterpreterProvisioner>.Instance));
+                    NullLogger<CheckInterpreterProvisioner>.Instance),
+                alerts: _provider.CreateScope().ServiceProvider.GetRequiredService<IAlertService>());
+        }
+
+        public async Task<List<AgentIncident>> InterpreterIncidentsAsync(Guid specialistId)
+        {
+            await using var db = CreateContext();
+            return await db.AgentIncidents.AsNoTracking()
+                .Where(i => i.AgentId == specialistId
+                    && i.Kind == AgentIncidentKind.CheckInterpreterUnavailable
+                    && i.CreatedAt >= StartedAt)
+                .OrderBy(i => i.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<List<Alert>> InterpreterAlertsAsync(Guid specialistId)
+        {
+            await using var db = CreateContext();
+            var key = AgentTaskCheckService.InterpreterUnavailableDedupKey(specialistId);
+            return await db.Alerts.AsNoTracking()
+                .Where(a => a.AgentId == specialistId && a.DedupKey == key && a.CreatedAt >= StartedAt)
+                .OrderBy(a => a.CreatedAt)
+                .ToListAsync();
         }
 
         public async Task<Agent> EnsureSpecialistAsync(bool withLiveSession = false)

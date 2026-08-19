@@ -64,6 +64,13 @@ public sealed class AgentTaskCheckService
     private readonly ILogger<AgentTaskCheckService> _logger;
     private readonly PtyDeliveryProfile? _ptyProfile;
     private readonly CheckInterpreterProvisioner? _interpreter;
+    private readonly IAlertService? _alerts;
+
+    /// <summary>
+    /// A burst of due checks against a dead specialist is one outage, not one incident per
+    /// check (CARD-0079). The window is the "one minute" the plan names.
+    /// </summary>
+    private static readonly TimeSpan InterpreterUnavailableDedupWindow = TimeSpan.FromMinutes(1);
 
     public AgentTaskCheckService(
         AppDbContext db,
@@ -77,7 +84,10 @@ public sealed class AgentTaskCheckService
         // Optional, and its ABSENCE is not a degraded interpretation — it is a host that never wired
         // the specialist in at all (every harness that predates CARD-0047 slice 4). Such a host gets
         // exactly the slice-3 note: digest, no prefix, no interpretation task.
-        CheckInterpreterProvisioner? interpreter = null)
+        CheckInterpreterProvisioner? interpreter = null,
+        // Optional so a harness that wires no alerting still delivers the digest. The incident is
+        // the record; the alert is what reaches someone.
+        IAlertService? alerts = null)
     {
         _db = db;
         _probe = probe;
@@ -88,6 +98,7 @@ public sealed class AgentTaskCheckService
         _logger = logger;
         _ptyProfile = ptyProfile;
         _interpreter = interpreter;
+        _alerts = alerts;
     }
 
     /// <summary>What one check did — for the worker's logging and for the tests.</summary>
@@ -305,7 +316,9 @@ public sealed class AgentTaskCheckService
         {
             _logger.LogWarning(ex, "Could not provision the check interpreter for task {ShortId}",
                 DelegationReportFormatter.Short(task.Id));
-            return Interpretation.Degraded("interpreter unavailable: could not be provisioned");
+            const string reason = "interpreter unavailable: could not be provisioned";
+            await RaiseInterpreterUnavailableAsync(specialist: null, reason, ct);
+            return Interpretation.Degraded(reason);
         }
 
         if (specialist is null)
@@ -337,7 +350,9 @@ public sealed class AgentTaskCheckService
         {
             _logger.LogWarning(ex, "Could not queue an interpretation for task {ShortId}",
                 DelegationReportFormatter.Short(task.Id));
-            return Interpretation.Degraded("interpreter unavailable: the interpretation could not be queued");
+            const string reason = "interpreter unavailable: the interpretation could not be queued";
+            await RaiseInterpreterUnavailableAsync(specialist, reason, ct);
+            return Interpretation.Degraded(reason);
         }
 
         var shortId = DelegationReportFormatter.Short(interpretation.Id);
@@ -354,20 +369,105 @@ public sealed class AgentTaskCheckService
                 "Check on task {ShortId} degraded: interpretation {InterpretationId} did not settle "
                 + "within {Seconds}s", DelegationReportFormatter.Short(task.Id), shortId,
                 _settings.CheckInterpreterWaitSeconds);
+            var timeoutReason =
+                $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s";
+            await RaiseInterpreterUnavailableAsync(specialist, timeoutReason, ct);
             return Interpretation.Degraded(
-                $"interpreter unavailable: no reading within {_settings.CheckInterpreterWaitSeconds}s",
+                timeoutReason,
                 $"interpreter: task {shortId}, timed out");
         }
 
         var line = $"interpreter: task {shortId}, ${settled.CostUsd:0.0000}";
 
         if (settled.Status is AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
-            return Interpretation.Degraded("interpreter unavailable: the interpretation failed", line);
+        {
+            const string failedReason = "interpreter unavailable: the interpretation failed";
+            await RaiseInterpreterUnavailableAsync(specialist, failedReason, ct);
+            return Interpretation.Degraded(failedReason, line);
+        }
 
         if (string.IsNullOrWhiteSpace(settled.Result))
-            return Interpretation.Degraded("interpreter unavailable: the interpretation was empty", line);
+        {
+            const string emptyReason = "interpreter unavailable: the interpretation was empty";
+            await RaiseInterpreterUnavailableAsync(specialist, emptyReason, ct);
+            return Interpretation.Degraded(emptyReason, line);
+        }
 
         return new Interpretation(settled.Result, null, line);
+    }
+
+    /// <summary>
+    /// The incident + alert behind CARD-0079 slice 2. Same shape as
+    /// <c>AgentTaskReplyService.RecordUncorrelatedReportAsync</c>: write the timeline row, then
+    /// optionally raise <see cref="IAlertService"/> — a host without alerting still records the
+    /// incident. Observability must never be able to break the check; the digest still ships.
+    /// </summary>
+    internal static string InterpreterUnavailableDedupKey(Guid agentId) =>
+        $"delegation:{AgentIncidentKind.CheckInterpreterUnavailable}:{agentId}";
+
+    private async Task RaiseInterpreterUnavailableAsync(
+        Domain.Entities.Agent? specialist, string reason, CancellationToken ct)
+    {
+        try
+        {
+            var agent = specialist;
+            if (agent is null)
+            {
+                var slug = CheckInterpreterProvisioner.Slug(_settings);
+                agent = await _db.Agents.AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.Slug == slug, ct);
+            }
+
+            if (agent is null)
+                return;
+
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var windowStart = now - InterpreterUnavailableDedupWindow;
+            var already = await _db.AgentIncidents.AnyAsync(
+                i => i.AgentId == agent.Id
+                    && i.Kind == AgentIncidentKind.CheckInterpreterUnavailable
+                    && i.CreatedAt >= windowStart,
+                ct);
+            if (already)
+                return;
+
+            Guid? sessionId = Guid.TryParse(agent.PersistentSessionId, out var parsed)
+                ? parsed
+                : null;
+            var message =
+                $"Check interpreter '{agent.Slug}' could not read a check ({reason}). "
+                + "The caller received the deterministic digest instead.";
+
+            _db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agent.Id,
+                SessionId = sessionId,
+                Kind = AgentIncidentKind.CheckInterpreterUnavailable,
+                Severity = AlertSeverity.Warning,
+                Message = message,
+                CreatedAt = now,
+            });
+            await _db.SaveChangesAsync(ct);
+
+            if (_alerts is null)
+                return;
+
+            await _alerts.RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Warning,
+                    Source: "delegation",
+                    Title: $"Check interpreter unavailable ({agent.Slug})",
+                    Detail: message,
+                    DedupKey: InterpreterUnavailableDedupKey(agent.Id),
+                    AgentId: agent.Id,
+                    SessionId: sessionId),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Could not record a check-interpreter-unavailable incident");
+        }
     }
 
     /// <summary>
@@ -501,6 +601,13 @@ public sealed class AgentTaskCheckService
     public const string HeaderPrefix = "[check ";
 
     /// <summary>
+    /// First-line marker when the specialist could not be reached (CARD-0079). Rides the header
+    /// so a skim of line 1 is enough; the <c>(unverified digest — …)</c> body line is unchanged.
+    /// Not used for "interpreter busy" — that is load, not a dead specialist.
+    /// </summary>
+    public const string InterpreterDownMarker = "INTERPRETER DOWN";
+
+    /// <summary>
     /// The note as the caller sees it. The first line has to be unmistakable at a glance: a check
     /// is an OBSERVATION about work still in flight, and a caller that read it as a completion
     /// would move on from a task that has not finished.
@@ -533,6 +640,9 @@ public sealed class AgentTaskCheckService
               .Append(" #").Append(facts.Task.CheckNumber).Append(']');
 
         var bits = new List<string>();
+        if (degradedReason is { Length: > 0 } down
+            && down.StartsWith("interpreter unavailable", StringComparison.Ordinal))
+            bits.Add(InterpreterDownMarker);
         if (!string.IsNullOrWhiteSpace(task.Title))
             bits.Add(task.Title.Trim().ReplaceLineEndings(" "));
         bits.Add($"{FormatAge(facts.Task.Age)} elapsed (expected {facts.Task.ExpectedDurationMinutes}m)");

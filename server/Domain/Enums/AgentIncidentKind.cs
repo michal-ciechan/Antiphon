@@ -212,4 +212,19 @@ public enum AgentIncidentKind
     /// Sent because identity matches the surviving head.
     /// </summary>
     TruncatedTerminalDelivery = 25,
+
+    /// <summary>
+    /// The standing check interpreter could not produce a reading — it could not be provisioned
+    /// or queued, it did not answer within the wait budget, or the settled interpretation was
+    /// failed/empty — so the caller received the deterministic digest instead.
+    ///
+    /// Live miss 2026-08-17–19 (CARD-0079): twenty timed-out interpretations over 48 hours, every
+    /// check falling back to <c>(unverified digest — interpreter unavailable: no reading within
+    /// 60s)</c>, and zero incidents after the specialist's last <see cref="Recovered"/>. The
+    /// digest still ships (CARD-0047's floor); this is what makes the fallback unmissable.
+    /// Warning; not raised for backlog ("interpreter busy"), which is load rather than a dead
+    /// specialist. Deduped per specialist so a burst of due checks is one incident, not one per
+    /// check.
+    /// </summary>
+    CheckInterpreterUnavailable = 26,
 }
