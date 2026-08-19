@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Badge, Group, Text, Box, ActionIcon, Tooltip } from '@mantine/core'
 import { TbTrash } from 'react-icons/tb'
 import { useNavigate } from 'react-router'
@@ -97,18 +97,20 @@ export function WorkflowCard({ workflow, highlight, fadeIn }: WorkflowCardProps)
   const navigate = useNavigate()
   const [isHighlighted, setIsHighlighted] = useState(!!highlight)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // When highlight prop becomes true, start the glow animation
+  // When the highlight prop turns on, start the glow — adjusted during render, not in an effect.
+  const [prevHighlight, setPrevHighlight] = useState(highlight)
+  if (highlight !== prevHighlight) {
+    setPrevHighlight(highlight)
+    if (highlight) setIsHighlighted(true)
+  }
+
+  // The glow always fades after its animation, even if the parent drops the prop first.
   useEffect(() => {
-    if (highlight) {
-      setIsHighlighted(true)
-      timeoutRef.current = setTimeout(() => setIsHighlighted(false), 1500)
-    }
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current)
-    }
-  }, [highlight])
+    if (!isHighlighted) return
+    const timer = setTimeout(() => setIsHighlighted(false), 1500)
+    return () => clearTimeout(timer)
+  }, [isHighlighted])
 
   const handleClick = useCallback(() => {
     navigate(`/workflow/${workflow.id}`)

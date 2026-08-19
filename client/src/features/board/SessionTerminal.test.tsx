@@ -2,7 +2,8 @@ import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
-import { SessionTerminal, createTerminalCopyKeyHandler } from './SessionTerminal'
+import { SessionTerminal } from './SessionTerminal'
+import { createTerminalCopyKeyHandler } from './terminalCopy'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 
 const xtermMock = vi.hoisted(() => ({

@@ -92,9 +92,6 @@ export function WorkflowDetailPage() {
   const [activeTab, setActiveTab] = useState<ContextTab | null>(null)
   const effectiveTab = activeTab ?? (hasOutputs ? 'outputs' : defaultTab(mode))
 
-  // Selected completed stage artifact (for clicking pipeline stages)
-  const [_selectedStage, setSelectedStage] = useState<StageDto | null>(null)
-
   // Version selection for artifact viewer
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
 
@@ -154,7 +151,6 @@ export function WorkflowDetailPage() {
 
   const handleStageClick = (stage: StageDto) => {
     if (stage.status === 'Completed') {
-      setSelectedStage(stage)
       setActiveTab('outputs')
     }
   }

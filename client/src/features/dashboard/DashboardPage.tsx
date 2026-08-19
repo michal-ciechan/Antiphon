@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { Container, Title, Button, Group, SimpleGrid, Loader, Box } from '@mantine/core'
 import {
   useWorkflows,
@@ -59,29 +59,28 @@ export function DashboardPage() {
   const [dialogOpened, setDialogOpened] = useState(false)
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS)
 
-  // Track workflow IDs for detecting new workflows and updates
-  const prevWorkflowMapRef = useRef<Map<string, WorkflowDto>>(new Map())
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
   const [newIds, setNewIds] = useState<Set<string>>(new Set())
 
   // Enable toast notifications for connection status
   useToastNotifications()
 
-  // Detect new and updated workflows for animations
-  useEffect(() => {
-    if (!workflows) return
+  // Detect new and updated workflows for animations. The comparison against the previous
+  // snapshot happens during render (not in an effect), so the highlight paints in the same
+  // frame as the change it highlights; only the timed clearing lives in effects below.
+  const [prevWorkflows, setPrevWorkflows] = useState<WorkflowDto[] | undefined>(undefined)
+  if (workflows && workflows !== prevWorkflows) {
+    setPrevWorkflows(workflows)
 
-    const prevMap = prevWorkflowMapRef.current
-    const currentMap = new Map(workflows.map((wf) => [wf.id, wf]))
+    const prevMap = new Map((prevWorkflows ?? []).map((wf) => [wf.id, wf]))
     const newHighlights = new Set<string>()
     const newEntries = new Set<string>()
 
     for (const wf of workflows) {
       const prev = prevMap.get(wf.id)
       if (!prev) {
-        // New workflow appeared
+        // New workflow appeared — only animate if this isn't the initial load
         if (prevMap.size > 0) {
-          // Only animate if this isn't the initial load
           newEntries.add(wf.id)
         }
       } else if (
@@ -94,20 +93,23 @@ export function DashboardPage() {
       }
     }
 
-    if (newHighlights.size > 0) {
-      setHighlightedIds(newHighlights)
-      // Clear highlights after animation completes
-      setTimeout(() => setHighlightedIds(new Set()), 1500)
-    }
+    if (newHighlights.size > 0) setHighlightedIds(newHighlights)
+    if (newEntries.size > 0) setNewIds(newEntries)
+  }
 
-    if (newEntries.size > 0) {
-      setNewIds(newEntries)
-      // Clear fade-in tracking after animation completes
-      setTimeout(() => setNewIds(new Set()), 500)
-    }
+  // Clear highlights after the animation completes
+  useEffect(() => {
+    if (highlightedIds.size === 0) return
+    const timer = setTimeout(() => setHighlightedIds(new Set()), 1500)
+    return () => clearTimeout(timer)
+  }, [highlightedIds])
 
-    prevWorkflowMapRef.current = currentMap
-  }, [workflows])
+  // Clear fade-in tracking after the animation completes
+  useEffect(() => {
+    if (newIds.size === 0) return
+    const timer = setTimeout(() => setNewIds(new Set()), 500)
+    return () => clearTimeout(timer)
+  }, [newIds])
 
   // Compute derived data
   const pendingReviewCount = useMemo(

@@ -330,7 +330,7 @@ export function WorkflowOutputsTab({ workflowId }: { workflowId?: string }) {
   const [selectedFilename, setSelectedFilename] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('rendered')
 
-  const files = branchDiff?.files ?? []
+  const files = useMemo(() => branchDiff?.files ?? [], [branchDiff])
   const reviewedFileState = useReviewedFiles(
     `workflow-outputs:${workflowId ?? 'missing'}:${branchDiff?.baseBranch ?? 'base'}:${branchDiff?.headBranch ?? 'head'}`,
     files,
@@ -338,19 +338,15 @@ export function WorkflowOutputsTab({ workflowId }: { workflowId?: string }) {
   const unreviewedTree = useMemo(() => buildTree(reviewedFileState.unreviewedFiles), [reviewedFileState.unreviewedFiles])
   const reviewedTree = useMemo(() => buildTree(reviewedFileState.reviewedFiles), [reviewedFileState.reviewedFiles])
 
-  // Auto-select first file
-  useEffect(() => {
-    if (files.length === 0) {
-      if (selectedFilename) {
-        setSelectedFilename(null)
-      }
-      return
+  // Auto-select the first (preferably unreviewed) file, and drop a selection whose file is gone —
+  // adjusted during render, not in an effect, so no frame paints with a dangling selection.
+  if (files.length === 0) {
+    if (selectedFilename) {
+      setSelectedFilename(null)
     }
-
-    if (!selectedFilename || !files.some((file) => file.filename === selectedFilename)) {
-      setSelectedFilename(reviewedFileState.unreviewedFiles[0]?.filename ?? files[0].filename)
-    }
-  }, [files, reviewedFileState.unreviewedFiles, selectedFilename])
+  } else if (!selectedFilename || !files.some((file) => file.filename === selectedFilename)) {
+    setSelectedFilename(reviewedFileState.unreviewedFiles[0]?.filename ?? files[0].filename)
+  }
 
   const selectedFile = files.find((f) => f.filename === selectedFilename) ?? null
   const selectedFileReviewed = selectedFile ? reviewedFileState.isReviewed(selectedFile) : false

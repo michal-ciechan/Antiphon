@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Alert,
   Badge,
@@ -83,8 +83,20 @@ export function AgentTuiProfileModal({
   const [secretValues, setSecretValues] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!opened) return
+  // (Re)populate the form when the modal opens or is pointed at a different profile — adjusted
+  // during render rather than in an effect, so the previous profile's values never flash.
+  const [prevKey, setPrevKey] = useState<{ opened: boolean; profile: AgentTuiProfileDto | null }>({
+    opened,
+    profile,
+  })
+  if (opened !== prevKey.opened || profile !== prevKey.profile) {
+    setPrevKey({ opened, profile })
+    if (opened) {
+      populateForm()
+    }
+  }
+
+  function populateForm() {
     if (profile) {
       setDisplayName(profile.displayName)
       setKind(profile.kind)
@@ -119,7 +131,7 @@ export function AgentTuiProfileModal({
       setSecretValues({})
     }
     setError(null)
-  }, [opened, profile])
+  }
 
   const selectedRunner = useMemo(
     () => runnerTypes?.find((runner) => runner.kind === kind),

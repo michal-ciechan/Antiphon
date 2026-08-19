@@ -15,7 +15,7 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { TbAlertCircle, TbCheck, TbGitPullRequest, TbMessage, TbRefresh } from 'react-icons/tb'
 import { VscAdd, VscChevronDown, VscChevronRight, VscDiff, VscRemove } from 'react-icons/vsc'
 import type { CardDiffFileDto, CardDto } from '../../api/boards'
@@ -297,13 +297,17 @@ function FileDiff({
   onMarkReviewed: (file: CardDiffFileDto) => void
   onMarkUnreviewed: (file: CardDiffFileDto) => void
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(!isReviewed)
   const lines = useMemo(() => parsePatch(file.filename, file.patch), [file.filename, file.patch])
   const fileTarget = selectedTarget?.filePath === file.filename ? selectedTarget : null
 
-  useEffect(() => {
+  // Collapse on review / reopen on new content — adjusted during render when the inputs change,
+  // not in an effect, so a manual toggle still wins until the diff or its mark moves.
+  const [prevOpenKey, setPrevOpenKey] = useState({ patch: file.patch, reviewed: isReviewed })
+  if (prevOpenKey.patch !== file.patch || prevOpenKey.reviewed !== isReviewed) {
+    setPrevOpenKey({ patch: file.patch, reviewed: isReviewed })
     setOpen(!isReviewed)
-  }, [file.patch, isReviewed])
+  }
 
   return (
     <Box

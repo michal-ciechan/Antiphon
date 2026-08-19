@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Alert,
   Button,
@@ -17,27 +17,7 @@ import { TbAlertTriangle } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../api/client'
 import { useAddIgnore, useIgnorePreview } from '../../api/review'
 
-export type IgnoreScope = 'name' | 'path'
-
-/**
- * The .gitignore line for a target, for each scope.
- *
- * - `name` — matches anywhere in the repo. Bare, unanchored: gitignore matches a pattern with no
- *   slash against the basename at every level, which is what "all the bin-check folders" means.
- * - `path` — matches only this one. Leading slash anchors it to the .gitignore's own directory,
- *   so `/server/bin` cannot also catch `client/server/bin`.
- *
- * Folders get a trailing slash so the pattern can never match a FILE that happens to share the
- * name. Exported for tests: getting these two lines right is the whole feature.
- */
-export function ignorePatternFor(path: string, isFolder: boolean, scope: IgnoreScope): string {
-  const clean = path.replace(/^\/+|\/+$/g, '')
-  if (scope === 'name') {
-    const name = clean.split('/').pop() ?? clean
-    return isFolder ? `${name}/` : name
-  }
-  return isFolder ? `/${clean}/` : `/${clean}`
-}
+import { ignorePatternFor, type IgnoreScope } from './ignorePattern'
 
 export interface IgnorePathModalProps {
   agentId: string
@@ -48,23 +28,27 @@ export interface IgnorePathModalProps {
 
 export function IgnorePathModal({ agentId, target, onClose }: IgnorePathModalProps) {
   const [scope, setScope] = useState<IgnoreScope>('name')
-  const [pattern, setPattern] = useState('')
+  const [pattern, setPattern] = useState(() =>
+    target ? ignorePatternFor(target.path, target.isFolder, 'name') : '',
+  )
   const [edited, setEdited] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const addIgnore = useAddIgnore(agentId)
 
-  // Re-derive when the target or scope changes, unless the user has typed their own line — their
-  // edit must survive a scope toggle being clicked by accident.
-  useEffect(() => {
-    if (!target) return
-    setPattern(ignorePatternFor(target.path, target.isFolder, scope))
-    setError(null)
-  }, [target?.path, target?.isFolder, scope]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    setEdited(false)
-    setScope('name')
-  }, [target?.path])
+  // A new target starts over: name scope, derived line, no stale error. Adjusted during render
+  // (not in an effect) so the previous target's line never flashes. Scope toggles re-derive in
+  // the SegmentedControl handler below.
+  const targetKey = target ? `${target.isFolder ? 'd' : 'f'}:${target.path}` : null
+  const [prevTargetKey, setPrevTargetKey] = useState(targetKey)
+  if (targetKey !== prevTargetKey) {
+    setPrevTargetKey(targetKey)
+    if (target) {
+      setScope('name')
+      setEdited(false)
+      setPattern(ignorePatternFor(target.path, target.isFolder, 'name'))
+      setError(null)
+    }
+  }
 
   // Debounced so typing a pattern doesn't fire a git call per keystroke.
   const [debounced] = useDebouncedValue(pattern.trim(), 250)
@@ -98,6 +82,10 @@ export function IgnorePathModal({ agentId, target, onClose }: IgnorePathModalPro
           onChange={(v) => {
             setScope(v as IgnoreScope)
             setEdited(false)
+            if (target) {
+              setPattern(ignorePatternFor(target.path, target.isFolder, v as IgnoreScope))
+              setError(null)
+            }
           }}
           data={[
             { value: 'name', label: `Anywhere named "${target?.path.split('/').pop() ?? ''}"` },

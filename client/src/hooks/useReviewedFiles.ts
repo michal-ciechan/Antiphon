@@ -82,31 +82,34 @@ export function useReviewedFiles<TFile extends ReviewableFile>(scope: string, fi
   )
 
   const updateRecords = useCallback((updater: (records: ReviewedFileRecords) => ReviewedFileRecords) => {
-    setRecords((current) => {
-      const next = updater(current)
-      if (next !== current) {
-        writeRecords(next)
-      }
-      return next
-    })
+    setRecords((current) => updater(current))
   }, [])
 
-  useEffect(() => {
-    updateRecords((current) => {
-      let changed = false
-      const next = { ...current }
-
-      for (const entry of fileEntries) {
-        const record = next[entry.storageKey]
-        if (record && record.fingerprint !== entry.fingerprint) {
-          delete next[entry.storageKey]
-          changed = true
-        }
+  // Drop marks whose file content changed out from under them, so a stale mark cannot linger in
+  // storage. Done as a state adjustment during render (keyed on the file signature), not in an
+  // effect — setState in an effect double-renders and can lose concurrent input on refetch.
+  const [prunedFor, setPrunedFor] = useState<string | null>(null)
+  if (prunedFor !== fileSignature) {
+    setPrunedFor(fileSignature)
+    let changed = false
+    const next = { ...records }
+    for (const entry of fileEntries) {
+      const record = next[entry.storageKey]
+      if (record && record.fingerprint !== entry.fingerprint) {
+        delete next[entry.storageKey]
+        changed = true
       }
+    }
+    if (changed) {
+      setRecords(next)
+    }
+  }
 
-      return changed ? next : current
-    })
-  }, [fileEntries, fileSignature, updateRecords])
+  // Persisting is a sync TO an external system — the one thing an effect is for. It never sets
+  // state, so records and localStorage converge after every commit.
+  useEffect(() => {
+    writeRecords(records)
+  }, [records])
 
   const isReviewed = useCallback((file: TFile) => {
     const fingerprint = reviewedFileFingerprint(file)

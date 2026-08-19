@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectDeletionImpactDto, ProjectDto } from '../../api/projects'
 import { server } from '../../test/mocks/server'
 import { renderWithProviders } from '../../test/utils'
-import { ProjectDeleteDialog, describeImpact } from './ProjectDeleteDialog'
+import { ProjectDeleteDialog } from './ProjectDeleteDialog'
+import { describeImpact } from './describeImpact'
 
 const PROJECT: ProjectDto = {
   id: 'p1',

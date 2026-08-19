@@ -4,7 +4,8 @@ import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { server } from '../../test/mocks/server'
 import { renderWithProviders } from '../../test/utils'
-import { IgnorePathModal, ignorePatternFor } from './IgnorePathModal'
+import { IgnorePathModal } from './IgnorePathModal'
+import { ignorePatternFor } from './ignorePattern'
 
 const AGENT = 'a1'
 

@@ -7,7 +7,7 @@ import {
   formatTokens,
   isWorking,
   mergeTranscriptEntries,
-} from './SessionTranscriptPanel'
+} from './transcriptModel'
 
 function entry(
   sequence: number,

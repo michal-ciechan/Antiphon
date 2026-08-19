@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Box, Stack, Text, Group, Badge, Collapse, UnstyledButton, Loader, Alert, Anchor, Button } from '@mantine/core'
 import { VscChevronDown, VscChevronRight, VscDiff, VscAdd, VscRemove } from 'react-icons/vsc'
 import { TbAlertCircle, TbCheck, TbGitPullRequest, TbRefresh } from 'react-icons/tb'
@@ -57,9 +57,13 @@ function FileDiff({
 }) {
   const [open, setOpen] = useState(!isReviewed)
 
-  useEffect(() => {
+  // Collapse on review / reopen on new content — adjusted during render when the inputs change,
+  // not in an effect, so a manual toggle still wins until the diff or its mark moves.
+  const [prevOpenKey, setPrevOpenKey] = useState({ patch: file.patch, reviewed: isReviewed })
+  if (prevOpenKey.patch !== file.patch || prevOpenKey.reviewed !== isReviewed) {
+    setPrevOpenKey({ patch: file.patch, reviewed: isReviewed })
     setOpen(!isReviewed)
-  }, [file.patch, isReviewed])
+  }
 
   return (
     <Box

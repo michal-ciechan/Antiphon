@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Alert, Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { TbAlertCircle, TbDeviceFloppy } from 'react-icons/tb'
@@ -18,18 +18,26 @@ export function WorkflowEditor({ boardId, opened, onClose }: WorkflowEditorProps
   const [content, setContent] = useState('')
   const [sourceContent, setSourceContent] = useState('')
 
-  useEffect(() => {
+  // Adopt fresh server content unless the user has unsaved edits, and clear everything on close.
+  // Adjusted during render (tracking the previous `opened`/`data`), not in an effect — the old
+  // effect double-rendered and could clobber a keystroke landing between fetch and setState.
+  const [prevOpened, setPrevOpened] = useState(opened)
+  const [prevData, setPrevData] = useState<typeof data>(undefined)
+  if (opened !== prevOpened) {
+    setPrevOpened(opened)
     if (!opened) {
       setContent('')
       setSourceContent('')
-      return
+      setPrevData(undefined)
     }
-
-    if (data) {
-      setContent((current) => (current === sourceContent ? data.content : current))
-      setSourceContent(data.content)
+  }
+  if (opened && data && data !== prevData) {
+    setPrevData(data)
+    if (content === sourceContent) {
+      setContent(data.content)
     }
-  }, [data, opened, sourceContent])
+    setSourceContent(data.content)
+  }
 
   const hasChanges = content !== sourceContent
 

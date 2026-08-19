@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentFileDto } from '../../api/review'
-import { buildTree, defaultViewMode, isUnviewed, mergeTreePaths, viewModesFor } from './FilesReviewPanel'
+import { buildTree, defaultViewMode, isUnviewed, mergeTreePaths, viewModesFor } from './filesReviewModel'
 
 function file(path: string, overrides: Partial<AgentFileDto> = {}): AgentFileDto {
   return {

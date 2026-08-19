@@ -1,42 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Alert, Button, Checkbox, Group, List, Loader, Modal, Stack, Text } from '@mantine/core'
 import { TbAlertTriangle } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../api/client'
 import {
   useDeleteProject,
   useProjectDeletionImpact,
-  type ProjectDeletionImpactDto,
   type ProjectDto,
 } from '../../api/projects'
 
-/**
- * Turns the impact counts into the sentence fragments the warning lists. Exported for tests —
- * getting "1 board" vs "2 boards" right matters more than it looks when the text is the only
- * thing standing between a click and an irreversible delete.
- */
-export function describeImpact(impact: ProjectDeletionImpactDto): string[] {
-  const lines: string[] = []
-  if (impact.boardCount > 0) lines.push(plural(impact.boardCount, 'board'))
-  if (impact.cardCount > 0) {
-    lines.push(
-      impact.openCardCount > 0
-        ? `${plural(impact.cardCount, 'card')} — ${impact.openCardCount} still open`
-        : plural(impact.cardCount, 'card'),
-    )
-  }
-  if (impact.runningSessionCount > 0) {
-    lines.push(`${plural(impact.runningSessionCount, 'running session')} will be killed`)
-  }
-  if (impact.detachedAgentCount > 0) {
-    // Agents survive — say so explicitly, or the list reads like they are being deleted too.
-    lines.push(`${plural(impact.detachedAgentCount, 'agent')} will be detached, not deleted`)
-  }
-  return lines
-}
-
-function plural(count: number, noun: string): string {
-  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`
-}
+import { describeImpact } from './describeImpact'
 
 export interface ProjectDeleteDialogProps {
   project: ProjectDto | null
@@ -55,11 +27,14 @@ export function ProjectDeleteDialog({ project, onClose, onDeleted }: ProjectDele
   const [acknowledged, setAcknowledged] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // A fresh dialog must never open with the previous project's tick still set.
-  useEffect(() => {
+  // A fresh dialog must never open with the previous project's tick still set — adjusted during
+  // render when the project changes, not in an effect, so the stale tick can never paint.
+  const [prevProjectId, setPrevProjectId] = useState(project?.id)
+  if (project?.id !== prevProjectId) {
+    setPrevProjectId(project?.id)
     setAcknowledged(false)
     setError(null)
-  }, [project?.id])
+  }
 
   const data = impact.data
   const lines = data ? describeImpact(data) : []

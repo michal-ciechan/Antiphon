@@ -29,19 +29,26 @@ interface Props {
 }
 
 export function MarkdownSectionTree({ content, workflowId, stageExecutionId }: Props) {
-	const [sections, setSections] = useState<Section[]>([])
-	const [hashing, setHashing] = useState(true)
+	// Hashing is async, so state holds the finished tree TOGETHER with the content it was built
+	// from — "still hashing" is then derived, instead of a synchronous setState in the effect.
+	// The cancellation flag stops a slow older hash overwriting a newer one.
+	const [hashed, setHashed] = useState<{ content: string; sections: Section[] } | null>(null)
 
 	const { data: reviews = [] } = useSectionReviews(workflowId, stageExecutionId)
 
 	useEffect(() => {
-		setHashing(true)
+		let cancelled = false
 		const tree = parseSections(content)
 		attachHashes(tree).then(() => {
-			setSections(tree)
-			setHashing(false)
+			if (!cancelled) setHashed({ content, sections: tree })
 		})
+		return () => {
+			cancelled = true
+		}
 	}, [content])
+
+	const hashing = hashed?.content !== content
+	const sections = hashed?.sections ?? []
 
 	const reviewMap = new Map<string, SectionReviewDto>(reviews.map(r => [r.sectionPath, r]))
 

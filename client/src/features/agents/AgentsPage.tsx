@@ -70,11 +70,11 @@ export function AgentsPage() {
   const stopAgent = useStopAgent(selectedAgentId ?? '')
   const incidents = useAgentIncidents(selectedAgentId, incidentsOpen)
 
-  useEffect(() => {
-    if (!selectedAgentId && agents.data?.[0]) {
-      setSelectedAgentId(agents.data[0].id)
-    }
-  }, [agents.data, selectedAgentId])
+  // Default to the first agent once the list arrives — adjusted during render, not in an effect,
+  // so the page never paints a frame with nothing selected.
+  if (!selectedAgentId && agents.data?.[0]) {
+    setSelectedAgentId(agents.data[0].id)
+  }
 
   const handleAgentDeleted = (agentId: string) => {
     if (selectedAgentId === agentId) {

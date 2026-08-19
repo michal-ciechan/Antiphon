@@ -1,6 +1,6 @@
 import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack, TextInput, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAssignAgentCard, useStartAgent } from '../../api/agents'
 import { useBoards, useCreateCard } from '../../api/boards'
@@ -22,17 +22,23 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState(0)
-  const [pickedBoardId, setPickedBoardId] = useState<string | null>(null)
+  const [pickedBoardId, setPickedBoardId] = useState<string | null>(agent.boardId)
   const [remoteControl, setRemoteControl] = useState(true)
 
-  useEffect(() => {
-    if (!opened) return
-    setTitle('')
-    setDescription('')
-    setPriority(0)
-    setPickedBoardId(agent.boardId)
-    setRemoteControl(true)
-  }, [opened, agent.boardId])
+  // Each open starts a fresh form — adjusted during render, not in an effect, so the previous
+  // card's text can never flash before the reset lands. Keyed on the agent's board too: the
+  // default board can arrive after the modal is already open, and must still pre-select.
+  const [prevKey, setPrevKey] = useState({ opened, boardId: agent.boardId })
+  if (opened !== prevKey.opened || agent.boardId !== prevKey.boardId) {
+    setPrevKey({ opened, boardId: agent.boardId })
+    if (opened) {
+      setTitle('')
+      setDescription('')
+      setPriority(0)
+      setPickedBoardId(agent.boardId)
+      setRemoteControl(true)
+    }
+  }
 
   const targetBoardId = pickedBoardId ?? ''
   const createCard = useCreateCard(targetBoardId)
