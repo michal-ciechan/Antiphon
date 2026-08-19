@@ -173,4 +173,14 @@ public enum AgentIncidentKind
     /// of a shared checkout so a human deciding about the dead task sees any uncommitted exposure.
     /// </summary>
     ApiErrorTurnDied = 22,
+
+    /// <summary>
+    /// An idle auto-compact (CARD-0082) did not produce a <c>(manual)</c> CompactBoundary within
+    /// <c>ContextCompactionSettings.BoundaryTimeoutMinutes</c> of confirmed submission, or a
+    /// Supervision-origin <c>/compact</c> spent its delivery attempts and was canceled rather than
+    /// parked. Warning: a later sweep re-derives the condition; this is the record that this
+    /// attempt did not take. Unclaimed sessions (no owning Agent) still raise this as a standalone
+    /// incident/alert with no session-targeted notification — there is no caller to tell.
+    /// </summary>
+    AutoCompactFailed = 23,
 }

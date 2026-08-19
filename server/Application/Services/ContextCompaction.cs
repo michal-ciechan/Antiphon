@@ -9,13 +9,19 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public static class ContextCompaction
 {
-    public static ResolvedContextCompaction Resolve(ContextCompactionSettings settings, Agent agent)
+    /// <summary>
+    /// Per-agent overrides apply only when <paramref name="agent"/> is non-null. An eligible
+    /// session nobody claims (CARD-0056 re-adoption; PersistentSessionId points elsewhere or
+    /// nowhere) uses <paramref name="settings"/> globally — there is no Agent row to read from.
+    /// </summary>
+    public static ResolvedContextCompaction Resolve(ContextCompactionSettings settings, Agent? agent)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(agent);
-        return settings.Resolve(
-            agent.AutoCompactEnabled,
-            agent.AutoCompactIdleMinutes,
-            agent.AutoCompactContextPercent);
+        return agent is null
+            ? new ResolvedContextCompaction(settings.Enabled, settings.IdleMinutes, settings.ContextPercent)
+            : settings.Resolve(
+                agent.AutoCompactEnabled,
+                agent.AutoCompactIdleMinutes,
+                agent.AutoCompactContextPercent);
     }
 }

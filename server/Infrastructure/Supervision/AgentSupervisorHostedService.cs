@@ -6,8 +6,8 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 
 /// <summary>
 /// Drives <see cref="AgentSupervisorService"/> on a fixed tick (same shape as the reconciliation
-/// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours and the
-/// channel-reply correlation sweep every minute.
+/// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours, the
+/// channel-reply correlation sweep every minute, and the idle auto-compact sweep every minute.
 /// </summary>
 public sealed class AgentSupervisorHostedService : BackgroundService
 {
@@ -20,21 +20,32 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     /// </summary>
     private static readonly TimeSpan ChannelReplySweepPeriod = TimeSpan.FromMinutes(1);
 
+    /// <summary>
+    /// CARD-0082: how often the idle auto-compact sweep runs. An idle session never ends a turn
+    /// to hook on, so only a global clock can notice idle ∧ full. Same shape as the CARD-0067
+    /// channel-reply pass sitting next to it.
+    /// </summary>
+    private static readonly TimeSpan ContextCompactionSweepPeriod = TimeSpan.FromMinutes(1);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ChannelReplyDispatcher _channelReplies;
+    private readonly ContextCompactionService _compaction;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
     private DateTime _lastChannelSweepUtc = DateTime.MinValue;
+    private DateTime _lastCompactionSweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
         ChannelReplyDispatcher channelReplies,
+        ContextCompactionService compaction,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _channelReplies = channelReplies;
+        _compaction = compaction;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -75,6 +86,17 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                             _logger.LogWarning(
                                 "Abandoned {Count} channel reply correlation(s) past their TTL; each is a "
                                 + "ChannelReplyLost incident", abandoned);
+                        }
+                    }
+
+                    if (DateTime.UtcNow - _lastCompactionSweepUtc >= ContextCompactionSweepPeriod)
+                    {
+                        _lastCompactionSweepUtc = DateTime.UtcNow;
+                        var compacted = await _compaction.SweepAsync(stoppingToken);
+                        if (compacted > 0)
+                        {
+                            _logger.LogInformation(
+                                "Enqueued idle auto-compact on {Count} session(s)", compacted);
                         }
                     }
                 }

@@ -34,4 +34,14 @@ public enum QueuedMessageOrigin
     /// mistaken for a report.</para>
     /// </summary>
     Check = 4,
+
+    /// <summary>
+    /// Injected by supervision (CARD-0082 idle auto-compact). Like <see cref="Ui"/> and
+    /// <see cref="System"/> it must NOT batch — one <c>/compact</c> is one delivery. The queue
+    /// rule for this origin is cancel, never strand / cancel, never park: an auto-compact that
+    /// cannot deliver right now is dropped and re-derived by a later sweep, not left Pending for
+    /// the next turn-end (which would compact a session that just became active) and not parked
+    /// for a human (parking exists for human-owed content).
+    /// </summary>
+    Supervision = 5,
 }

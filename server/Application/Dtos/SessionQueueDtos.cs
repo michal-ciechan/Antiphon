@@ -25,7 +25,7 @@ public sealed record EnqueueMessageRequest(string Body, MessageSendMode Mode = M
 /// parked means.</para>
 /// </summary>
 /// <param name="DeliveryAttempts">How many times this has been typed into a terminal (CARD-0055).</param>
-/// <param name="Origin">Who enqueued it — Ui, Channel, Check, Delegation (<c>QueuedMessageOrigin</c>).</param>
+/// <param name="Origin">Who enqueued it — Ui, Channel, Check, Delegation, Supervision (<c>QueuedMessageOrigin</c>).</param>
 /// <param name="Parked">Pending AND out of attempts: no automatic path will ever type it again.</param>
 public sealed record QueuedMessageDto(
     Guid Id,

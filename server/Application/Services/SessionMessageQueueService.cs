@@ -119,7 +119,7 @@ public sealed class SessionMessageQueueService
                 .Where(m => m.AgentSessionId == sessionId)
                 .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
 
-            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            var row = new SessionQueuedMessage
             {
                 Id = Guid.NewGuid(),
                 AgentSessionId = sessionId,
@@ -129,7 +129,8 @@ public sealed class SessionMessageQueueService
                 CreatedAt = now,
                 Origin = origin,
                 ConversationKey = conversationKey,
-            });
+            };
+            db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);
 
             // If the agent is already idle (waiting at the prompt), there is no upcoming turn-end to
@@ -140,11 +141,23 @@ public sealed class SessionMessageQueueService
             // already-working delegate (live miss 2026-08-09, session 429445c3, died mid-task at
             // 2m41s). A Starting session's messages stay Pending; the launch path flushes the
             // queue itself the moment boot completes (FlushSessionAsync).
+            var working = await IsWorkingAsync(db, sessionId, ct);
             if (_runtime.ListLiveSessions().Contains(sessionId)
                 && await IsAcceptingInputAsync(sessionId, ct)
-                && !await IsWorkingAsync(db, sessionId, ct))
+                && !working)
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
+            }
+            else if (origin == QueuedMessageOrigin.Supervision && working)
+            {
+                // Cancel-not-strand (CARD-0082): a Pending /compact flushed at the *next turn end*
+                // would compact a session that just became active. Drop it; a later sweep re-derives.
+                row.Status = QueuedMessageStatus.Canceled;
+                row.CanceledAt = UtcNow();
+                await db.SaveChangesAsync(ct);
+                _logger.LogInformation(
+                    "Canceled Supervision compact {MessageId} on session {SessionId}: session is working",
+                    row.Id, sessionId);
             }
         }
         finally
@@ -262,6 +275,8 @@ public sealed class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
+            await CancelPendingSupervisionLockedAsync(db, sessionId, "turn-end", ct);
             flush = await DeliverNextLockedAsync(db, sessionId, ct);
         }
         finally
@@ -335,7 +350,22 @@ public sealed class SessionMessageQueueService
                 .Select(m => m.AgentSessionId)
                 .Distinct()
                 .ToListAsync(ct);
-            candidates = alwaysOnKeys.Select(Guid.Parse).Union(delegationSessionIds).ToList();
+            // Supervision is the same shape as Delegation for the watchdog: no human is watching
+            // an auto-compact, and unclaimed sessions are not AlwaysOn, so without this arm a
+            // failed-under-cap compact on an unclaimed session would sit Pending forever.
+            var supervisionSessionIds = await db.SessionQueuedMessages
+                .AsNoTracking()
+                .Where(m => m.Status == QueuedMessageStatus.Pending
+                    && m.CreatedAt <= cutoff
+                    && m.DeliveryAttempts < maxAttempts
+                    && m.Origin == QueuedMessageOrigin.Supervision)
+                .Select(m => m.AgentSessionId)
+                .Distinct()
+                .ToListAsync(ct);
+            candidates = alwaysOnKeys.Select(Guid.Parse)
+                .Union(delegationSessionIds)
+                .Union(supervisionSessionIds)
+                .ToList();
         }
 
         if (candidates.Count == 0)
@@ -393,6 +423,8 @@ public sealed class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Boot is not the moment to compact — cancel-not-strand, a later sweep re-derives.
+            await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
             result = !await IsWorkingAsync(db, sessionId, ct)
                 ? await DeliverNextLockedAsync(db, sessionId, ct)
                 : FlushResult.Nothing;
@@ -431,7 +463,11 @@ public sealed class SessionMessageQueueService
             // Same Starting-session guard as the enqueue path: a boundary arriving while the TUI
             // still boots must not put text in front of the launch's ready probe.
             if (await IsAcceptingInputAsync(sessionId, ct) && !await IsWorkingAsync(db, sessionId, ct))
+            {
+                // A pending auto-compact after a *manual* compact is redundant; drop it.
+                await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
                 result = await DeliverNextLockedAsync(db, sessionId, ct);
+            }
         }
         finally
         {
@@ -440,6 +476,29 @@ public sealed class SessionMessageQueueService
 
         if (result != FlushResult.Nothing)
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+    }
+
+    private async Task CancelPendingSupervisionLockedAsync(
+        AppDbContext db, Guid sessionId, string reason, CancellationToken ct)
+    {
+        var pending = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Status == QueuedMessageStatus.Pending
+                && m.Origin == QueuedMessageOrigin.Supervision)
+            .ToListAsync(ct);
+        if (pending.Count == 0)
+            return;
+
+        var now = UtcNow();
+        foreach (var message in pending)
+        {
+            message.Status = QueuedMessageStatus.Canceled;
+            message.CanceledAt = now;
+        }
+        await db.SaveChangesAsync(ct);
+        _logger.LogInformation(
+            "Canceled {Count} Supervision compact(s) on session {SessionId} ({Reason})",
+            pending.Count, sessionId, reason);
     }
 
     // The DB session status is the ready gate: Starting means the launch's ready probe has not
@@ -1143,6 +1202,8 @@ public sealed class SessionMessageQueueService
             // anything the grace window just proved landed. The attempt metadata deliberately
             // survives the revert — it is the retry brake.
             var parked = 0;
+            var canceledSupervision = 0;
+            var allSupervision = false;
             if (messageIds is { Count: > 0 })
             {
                 var messages = await db.SessionQueuedMessages
@@ -1154,15 +1215,64 @@ public sealed class SessionMessageQueueService
                     message.Status = QueuedMessageStatus.Pending;
                     message.SentAt = null;
                 }
-                parked = messages.Count(m => m.DeliveryAttempts >= MaxAttempts);
+
+                allSupervision = messages.Count > 0
+                    && messages.All(m => m.Origin == QueuedMessageOrigin.Supervision);
+                foreach (var message in messages.Where(m =>
+                             m.Origin == QueuedMessageOrigin.Supervision
+                             && m.DeliveryAttempts >= MaxAttempts))
+                {
+                    // Cancel-not-park (CARD-0082): parking exists for human-owed content. An
+                    // auto-compact that spent its attempts is dropped; a later sweep re-derives.
+                    message.Status = QueuedMessageStatus.Canceled;
+                    message.CanceledAt = UtcNow();
+                    canceledSupervision++;
+                }
+
+                parked = messages.Count(m =>
+                    m.Origin != QueuedMessageOrigin.Supervision && m.DeliveryAttempts >= MaxAttempts);
             }
 
             // Asked before the kill decision AND before the incident text is written, so both tell
-            // the same story.
+            // the same story. Never kill over a Supervision compact — the session may be the
+            // operator's own live conversation (CARD-0056 re-adoption).
             var working = await IsWorkingAsync(db, sessionId, ct);
-            var kill = agent is { AlwaysOn: true } && !working;
+            var kill = agent is { AlwaysOn: true } && !working && !allSupervision;
 
-            if (agent is not null)
+            if (allSupervision && canceledSupervision > 0)
+            {
+                var compactMessage =
+                    $"Idle auto-compact delivery could not be verified ({Describe(verdict)}) after "
+                    + $"{MaxAttempts} attempt(s) and was canceled rather than parked.";
+                if (agent is not null)
+                {
+                    var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                    await supervisor.RecordIncidentAsync(
+                        agent.Id, sessionId, AgentIncidentKind.AutoCompactFailed, AlertSeverity.Warning,
+                        compactMessage, failureReason: "DeliveryFailed", ct: ct);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "AUTO-COMPACT FAILED on unclaimed session {SessionId}: {Message}",
+                        sessionId, compactMessage);
+                    var alerts = scope.ServiceProvider.GetService<IAlertService>();
+                    if (alerts is not null)
+                    {
+                        await alerts.RaiseAsync(
+                            new AlertRaise(
+                                AlertSeverity.Warning,
+                                Source: "supervisor",
+                                Title: $"{AgentIncidentKind.AutoCompactFailed}: idle auto-compact",
+                                Detail: compactMessage,
+                                DedupKey: ContextCompactionService.AutoCompactFailedDedupKey(sessionId),
+                                AgentId: null,
+                                SessionId: sessionId),
+                            ct);
+                    }
+                }
+            }
+            else if (agent is not null)
             {
                 var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
                 var severity = parked > 0 && channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
@@ -1202,8 +1312,10 @@ public sealed class SessionMessageQueueService
 
             _logger.LogWarning(
                 "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, "
-                + "alwaysOn={AlwaysOn}, working={Working}, killed={Killed}, parked={Parked}",
-                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false, working, kill, parked);
+                + "alwaysOn={AlwaysOn}, working={Working}, killed={Killed}, parked={Parked}, "
+                + "canceledSupervision={CanceledSupervision}",
+                sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false, working, kill,
+                parked, canceledSupervision);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

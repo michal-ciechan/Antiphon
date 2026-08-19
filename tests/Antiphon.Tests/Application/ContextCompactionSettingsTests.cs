@@ -97,4 +97,21 @@ public class ContextCompactionSettingsTests
         resolved.IdleMinutes.ShouldBe(480);
         resolved.ContextPercent.ShouldBe(50);
     }
+
+    [Test]
+    public void a_null_agent_uses_the_global_settings_directly()
+    {
+        var settings = new ContextCompactionSettings
+        {
+            Enabled = true,
+            IdleMinutes = 30,
+            ContextPercent = 75,
+        };
+
+        var resolved = ContextCompaction.Resolve(settings, agent: null);
+
+        resolved.Enabled.ShouldBeTrue();
+        resolved.IdleMinutes.ShouldBe(30);
+        resolved.ContextPercent.ShouldBe(75);
+    }
 }

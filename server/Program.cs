@@ -325,6 +325,9 @@ try
     // (CARD-0037). Must be registered before anything that types into a terminal.
     builder.Services.AddSingleton<PtyDeliveryProfile>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
+    // CARD-0082 S3: idle auto-compact sweep. Singleton because the in-memory per-session attempt
+    // stamp has to survive the supervisor hosted service's per-tick scope.
+    builder.Services.AddSingleton<ContextCompactionService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();
