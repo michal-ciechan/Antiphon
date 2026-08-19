@@ -121,7 +121,11 @@ public sealed record RunnerTranscriptEvent(
     // pty-hosts' shadow-copied binaries can lag with no lockstep deploy.
     bool? IsApiError = null,
     string? ApiErrorClass = null,
-    int? ApiErrorStatus = null);
+    int? ApiErrorStatus = null,
+    // message.model on assistant records (CARD-0082). Additive-optional ON PURPOSE — same
+    // old/new runner/server mix as the API-error fields above. Null on pre-carriage rows
+    // and on API-error stubs (whose raw model is "<synthetic>", which is not a ceiling key).
+    string? Model = null);
 
 /// <summary>Full ordered transcript snapshot for a session (used for catch-up after a missed stream).</summary>
 public sealed record RunnerTranscriptDto(

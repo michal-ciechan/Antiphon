@@ -2,11 +2,14 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
@@ -58,6 +61,8 @@ public sealed class CardService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly AgentReviewCheckpointService _reviewCheckpoints;
+    private readonly ContextWindowSettings _contextWindow;
+    private readonly ILogger<CardService>? _logger;
 
     public CardService(
         AppDbContext db,
@@ -67,7 +72,9 @@ public sealed class CardService
         IEventBus eventBus,
         TimeProvider timeProvider,
         AgentReviewCheckpointService reviewCheckpoints,
-        AgentTuiLaunchResolver? launchResolver = null)
+        AgentTuiLaunchResolver? launchResolver = null,
+        IOptions<ContextWindowSettings>? contextWindow = null,
+        ILogger<CardService>? logger = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -77,6 +84,8 @@ public sealed class CardService
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _reviewCheckpoints = reviewCheckpoints;
+        _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
+        _logger = logger;
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -122,7 +131,8 @@ public sealed class CardService
     public async Task<CardDto> GetByIdAsync(Guid id, CancellationToken ct)
     {
         var card = await LoadCardAsync(id, ct);
-        return BoardService.ToCardDto(card);
+        return await SessionContextUsage.AttachToCardAsync(
+            _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
     }
 
     /// <summary>

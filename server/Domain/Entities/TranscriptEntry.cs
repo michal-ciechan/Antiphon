@@ -68,6 +68,14 @@ public class TranscriptEntry
     /// <summary>The stub's <c>apiErrorStatus</c> HTTP status, when present (429, 529, 404 — absent on auth/connection-drop).</summary>
     public int? ApiErrorStatus { get; set; }
 
+    /// <summary>
+    /// <c>message.model</c> from the assistant record this entry was parsed from (CARD-0082).
+    /// Null on rows persisted before the column existed (deliberately no backfill), on
+    /// non-assistant kinds, and on API-error stubs (whose raw model is <c>&lt;synthetic&gt;</c>).
+    /// The live model id a mid-session <c>/model</c> switch actually ran — not launch intent.
+    /// </summary>
+    public string? Model { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public AgentSession AgentSession { get; set; } = null!;

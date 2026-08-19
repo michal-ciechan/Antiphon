@@ -2,10 +2,13 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -16,12 +19,21 @@ public sealed class BoardService
     private readonly AppDbContext _db;
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
+    private readonly ContextWindowSettings _contextWindow;
+    private readonly ILogger<BoardService>? _logger;
 
-    public BoardService(AppDbContext db, IEventBus eventBus, TimeProvider timeProvider)
+    public BoardService(
+        AppDbContext db,
+        IEventBus eventBus,
+        TimeProvider timeProvider,
+        IOptions<ContextWindowSettings>? contextWindow = null,
+        ILogger<BoardService>? logger = null)
     {
         _db = db;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -54,7 +66,8 @@ public sealed class BoardService
     public async Task<BoardDetailDto> GetByIdAsync(Guid id, bool includeArchived, CancellationToken ct)
     {
         var board = await LoadBoardAsync(id, ct);
-        return ToDetailDto(board, includeArchived);
+        return await SessionContextUsage.AttachToBoardAsync(
+            _db, ToDetailDto(board, includeArchived), _contextWindow, _logger, ct);
     }
 
     /// <summary>

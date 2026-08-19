@@ -568,6 +568,7 @@ public sealed class AgentSessionRuntime
                     IsApiError = e.IsApiError,
                     ApiErrorClass = e.ApiErrorClass,
                     ApiErrorStatus = e.ApiErrorStatus,
+                    Model = e.Model,
                     CreatedAt = now,
                 });
                 added = true;
@@ -610,6 +611,7 @@ public sealed class AgentSessionRuntime
         isApiError = e.IsApiError,
         apiErrorClass = e.ApiErrorClass,
         apiErrorStatus = e.ApiErrorStatus,
+        model = e.Model,
     };
 
     public async Task<bool> WaitForFirstDeltaAsync(Guid sessionId, TimeSpan timeout, CancellationToken ct)

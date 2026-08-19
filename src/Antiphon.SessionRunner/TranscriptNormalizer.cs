@@ -34,7 +34,11 @@ public readonly record struct TranscriptPart(
     // apiErrorStatus, stamped on the stub's AssistantText and TurnEnd parts (null everywhere else).
     bool? IsApiError = null,
     string? ApiErrorClass = null,
-    int? ApiErrorStatus = null);
+    int? ApiErrorStatus = null,
+    // message.model on assistant records (CARD-0082). Additive-optional so a lagging pty-host
+    // stays compatible. "<synthetic>" (API-error stubs) is deliberately NOT carried — those
+    // records are not a real model and must not win the context-window ceiling lookup.
+    string? Model = null);
 
 /// <summary>
 /// Normalizes one line of a Claude Code session JSONL transcript into zero or more
@@ -88,6 +92,7 @@ public static class TranscriptNormalizer
         var stopReason = GetString(msg, "stop_reason");
         var apiCallId = GetString(msg, "id");
         var (inTok, outTok, cacheRead, cacheCreate) = GetUsage(msg);
+        var model = ReadModel(msg);
         // API-error stub fields (CARD-0072), TOP-LEVEL on the record, carried verbatim: a dead turn
         // is one synthetic assistant line with error ("rate_limit"/"server_error"/…),
         // isApiErrorMessage:true and (sometimes) a numeric apiErrorStatus. The benign
@@ -109,12 +114,12 @@ public static class TranscriptNormalizer
                             parts.Add(new TranscriptPart(
                                 TranscriptKinds.AssistantText, uuid, parent, ts, role, text, null, null, null, null, null,
                                 apiCallId, inTok, outTok, cacheRead, cacheCreate,
-                                isApiError, apiErrorClass, apiErrorStatus));
+                                isApiError, apiErrorClass, apiErrorStatus, model));
                         break;
                     case "thinking":
                         var thinking = GetString(block, "thinking");
                         if (!string.IsNullOrWhiteSpace(thinking))
-                            parts.Add(new TranscriptPart(TranscriptKinds.Thinking, uuid, parent, ts, role, thinking, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate));
+                            parts.Add(new TranscriptPart(TranscriptKinds.Thinking, uuid, parent, ts, role, thinking, null, null, null, null, null, apiCallId, inTok, outTok, cacheRead, cacheCreate, Model: model));
                         break;
                     case "tool_use":
                         var input = block.TryGetProperty("input", out var inp)
@@ -123,7 +128,7 @@ public static class TranscriptNormalizer
                         parts.Add(new TranscriptPart(
                             TranscriptKinds.ToolCall, uuid, parent, ts, role,
                             null, GetString(block, "name"), input, GetString(block, "id"), null, null,
-                            apiCallId, inTok, outTok, cacheRead, cacheCreate));
+                            apiCallId, inTok, outTok, cacheRead, cacheCreate, Model: model));
                         break;
                 }
             }
@@ -135,7 +140,7 @@ public static class TranscriptNormalizer
             parts.Add(new TranscriptPart(
                 TranscriptKinds.TurnEnd, uuid, parent, ts, role, null, null, null, null, null, stopReason,
                 apiCallId, inTok, outTok, cacheRead, cacheCreate,
-                isApiError, apiErrorClass, apiErrorStatus));
+                isApiError, apiErrorClass, apiErrorStatus, model));
 
         return parts;
     }
@@ -240,6 +245,18 @@ public static class TranscriptNormalizer
             return Truncate(sb.ToString(), MaxToolResultChars);
         }
         return null;
+    }
+
+    /// <summary>
+    /// The model id Claude writes on a synthetic API-error stub. Not a real model, so it is never
+    /// carried onto <see cref="TranscriptPart.Model"/> (CARD-0082).
+    /// </summary>
+    public const string SyntheticModelId = "<synthetic>";
+
+    private static string? ReadModel(JsonElement msg)
+    {
+        var model = GetString(msg, "model");
+        return string.Equals(model, SyntheticModelId, StringComparison.Ordinal) ? null : model;
     }
 
     // message.usage on assistant records: {input_tokens, output_tokens, cache_read_input_tokens,

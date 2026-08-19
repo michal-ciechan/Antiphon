@@ -2340,6 +2340,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
+                    b.Property<string>("Model")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<int?>("OutputTokens")
                         .HasColumnType("integer");
 

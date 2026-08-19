@@ -569,6 +569,10 @@ internal static class Program
         message = new { role = "user", content = text },
     });
 
+    // Real Claude writes message.model on every assistant record (CARD-0082). The synthetic
+    // API-error stub below keeps model:"<synthetic>"; this is the real-model path.
+    private const string FakeModelId = "claude-opus-4";
+
     private static string JsonAssistantLine(string text, string? apiCallId = null) => JsonSerializer.Serialize(new
     {
         type = "assistant",
@@ -579,6 +583,7 @@ internal static class Program
             // The Anthropic message id, always present on a real assistant record. Emitting it is
             // what lets anything below the service layer exercise same-response identity at all.
             id = apiCallId ?? NewApiCallId(),
+            model = FakeModelId,
             role = "assistant",
             stop_reason = "end_turn",
             content = new object[] { new { type = "text", text } },
@@ -601,6 +606,7 @@ internal static class Program
         message = new
         {
             id = apiCallId,
+            model = FakeModelId,
             role = "assistant",
             stop_reason = "end_turn",
             content = new object[]

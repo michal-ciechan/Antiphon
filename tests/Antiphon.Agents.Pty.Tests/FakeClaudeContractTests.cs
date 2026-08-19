@@ -333,6 +333,7 @@ public class FakeClaudeContractTests
             lines[0].ShouldContain("hello transcript");
             lines[1].ShouldContain("\"type\":\"assistant\"");
             lines[1].ShouldContain("\"stop_reason\":\"end_turn\"");
+            lines[1].ShouldContain("\"model\":\"claude-opus-4\"");
             lines[3].ShouldContain("\"subtype\":\"compact_boundary\"");
         }
         finally

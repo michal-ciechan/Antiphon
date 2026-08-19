@@ -63,7 +63,9 @@ public sealed record SessionRunnerTranscriptEvent(
     // lagging runner (nulls) or a lagging server (ignored members) stays compatible.
     bool? IsApiError = null,
     string? ApiErrorClass = null,
-    int? ApiErrorStatus = null);
+    int? ApiErrorStatus = null,
+    // message.model (CARD-0082) — additive-optional, same lag-safe mix as the API-error fields.
+    string? Model = null);
 
 public sealed record SessionRunnerTranscriptDto(
     Guid SessionId,

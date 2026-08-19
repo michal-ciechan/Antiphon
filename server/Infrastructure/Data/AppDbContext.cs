@@ -1027,6 +1027,7 @@ public class AppDbContext : DbContext
             entity.Property(t => t.StopReason).HasMaxLength(60);
             entity.Property(t => t.ApiCallId).HasMaxLength(120);
             entity.Property(t => t.ApiErrorClass).HasMaxLength(60);
+            entity.Property(t => t.Model).HasMaxLength(200);
             entity.Property(t => t.CreatedAt).IsRequired();
 
             // (AgentSessionId, Sequence) is the natural idempotency key for ingestion.

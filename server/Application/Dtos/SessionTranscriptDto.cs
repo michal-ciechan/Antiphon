@@ -29,4 +29,6 @@ public sealed record TranscriptEntryDto(
     // API-error stub evidence (CARD-0072), for optional client rendering (S7) — cosmetic, may lag.
     bool? IsApiError = null,
     string? ApiErrorClass = null,
-    int? ApiErrorStatus = null);
+    int? ApiErrorStatus = null,
+    // message.model (CARD-0082) — null on pre-carriage rows and on API-error stubs.
+    string? Model = null);

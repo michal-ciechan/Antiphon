@@ -82,7 +82,11 @@ public sealed record AgentSessionSummaryDto(
     int? ExitCode,
     string? FailureReason,
     Guid? TuiProfileRevisionId = null,
-    string? EffectiveModelId = null);
+    string? EffectiveModelId = null,
+    // Newest-usage-row fullness (tokens / ceiling). Null = unknown: no usage yet, or a
+    // CompactBoundary / /clear landed after the last usage-bearing row (CARD-0082). Computed
+    // on read; never persisted.
+    double? ContextFullness = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

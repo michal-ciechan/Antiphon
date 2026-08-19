@@ -163,6 +163,7 @@ public class TranscriptNormalizerTests
             part.IsApiError.ShouldBe(true);
             part.ApiErrorClass.ShouldBe("rate_limit");
             part.ApiErrorStatus.ShouldBe(429);
+            part.Model.ShouldBeNull("the stub's message.model is <synthetic> — not a ceiling key");
             TranscriptKinds.IsApiErrorStub(part.Kind, part.IsApiError).ShouldBeTrue();
         }
     }
@@ -263,8 +264,10 @@ public class TranscriptNormalizerTests
         parts[0].Kind.ShouldBe(TranscriptKinds.AssistantText);
         parts[0].Text.ShouldBe("Let me check.");
         parts[0].Uuid.ShouldBe("u1");
+        parts[0].Model.ShouldBe("claude-opus-4-8");
         parts[1].Kind.ShouldBe(TranscriptKinds.ToolCall);
         parts[1].ToolName.ShouldBe("Bash");
+        parts[1].Model.ShouldBe("claude-opus-4-8");
         parts[1].ToolUseId.ShouldBe("toolu_1");
         parts[1].ToolInput.ShouldNotBeNull();
         parts[1].ToolInput!.ShouldContain("npm run dev");
@@ -332,6 +335,26 @@ public class TranscriptNormalizerTests
         parts.Count.ShouldBe(1);
         parts[0].Kind.ShouldBe(TranscriptKinds.TurnTitle);
         parts[0].Text.ShouldBe("Run the app");
+    }
+
+    [Test]
+    public void Assistant_message_model_is_stamped_on_every_assistant_part()
+    {
+        const string line = """{"type":"assistant","uuid":"u1","message":{"role":"assistant","model":"claude-fable-5","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Done."}]}}""";
+
+        var parts = TranscriptNormalizer.Normalize(line);
+
+        parts.Count.ShouldBe(3); // thinking + text + turn end
+        parts.ShouldAllBe(p => p.Model == "claude-fable-5");
+    }
+
+    [Test]
+    public void A_synthetic_api_error_stub_carries_no_model()
+    {
+        var parts = TranscriptNormalizer.Normalize(ApiErrorFixtureLines()[0]);
+
+        parts.ShouldNotBeEmpty();
+        parts.ShouldAllBe(p => p.Model == null);
     }
 
     [Test]

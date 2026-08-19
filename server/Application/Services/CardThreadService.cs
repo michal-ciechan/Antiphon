@@ -1,10 +1,12 @@
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -50,19 +52,22 @@ public sealed class CardThreadService
     private readonly GitWorkspaceService _git;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CardThreadService> _logger;
+    private readonly ContextWindowSettings _contextWindow;
 
     public CardThreadService(
         AppDbContext db,
         PlanCatalogService plans,
         GitWorkspaceService git,
         TimeProvider timeProvider,
-        ILogger<CardThreadService> logger)
+        ILogger<CardThreadService> logger,
+        IOptions<ContextWindowSettings>? contextWindow = null)
     {
         _db = db;
         _plans = plans;
         _git = git;
         _timeProvider = timeProvider;
         _logger = logger;
+        _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
     }
 
     public async Task<CardThreadDto> GetAsync(Guid cardId, CancellationToken ct)
@@ -119,8 +124,10 @@ public sealed class CardThreadService
             }
         }
 
+        var cardDto = await SessionContextUsage.AttachToCardAsync(
+            _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
         return new CardThreadDto(
-            BoardService.ToCardDto(card),
+            cardDto,
             identifier,
             consulted ? root : null,
             consulted,

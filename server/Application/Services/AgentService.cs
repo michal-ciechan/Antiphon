@@ -2,11 +2,13 @@ using System.Data;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
@@ -32,6 +34,7 @@ public sealed class AgentService
     private readonly IDirectoryWriter _directoryWriter;
     private readonly ILogger<AgentService> _logger;
     private readonly AgentWorkspaceProvisioner? _workspace;
+    private readonly ContextWindowSettings _contextWindow;
 
     public AgentService(
         AppDbContext db,
@@ -42,7 +45,8 @@ public sealed class AgentService
         ILogger<AgentService> logger,
         // Optional so the many harnesses that construct this service by hand keep compiling; without
         // it an agent is simply created without its CLAUDE.md floor, which the next launch writes.
-        AgentWorkspaceProvisioner? workspace = null)
+        AgentWorkspaceProvisioner? workspace = null,
+        IOptions<ContextWindowSettings>? contextWindow = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -51,6 +55,7 @@ public sealed class AgentService
         _directoryWriter = directoryWriter;
         _logger = logger;
         _workspace = workspace;
+        _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -192,11 +197,21 @@ public sealed class AgentService
                     s.ExitCode,
                     s.FailureReason,
                     s.TuiProfileRevisionId,
-                    s.EffectiveModelId),
+                    s.EffectiveModelId,
+                    null),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
 
-        return sessions.ToDictionary(s => s.Dto.Id);
+        var fullness = await SessionContextUsage.LoadFullnessAsync(
+            _db,
+            sessions.Select(s => (s.Dto.Id, s.Dto.EffectiveModelId)).ToList(),
+            _contextWindow,
+            _logger,
+            ct);
+
+        return sessions.ToDictionary(
+            s => s.Dto.Id,
+            s => s with { Dto = s.Dto with { ContextFullness = fullness.GetValueOrDefault(s.Dto.Id) } });
     }
 
     private static LiveSession? ResolveLiveSession(

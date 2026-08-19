@@ -39,6 +39,10 @@
     "EnableFullContent": true,
     "EnableIpLogging": true
   },
+  "ContextWindow": {
+    "DefaultContextTokens": 200000,
+    "ModelOverrides": {}
+  },
   "Retention": {
     "TranscriptRetentionDays": 30,
     "QueuedMessageRetentionDays": 30,
