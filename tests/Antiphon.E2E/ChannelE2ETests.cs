@@ -144,6 +144,8 @@ public sealed class ChannelE2ETests
 
     private async Task WaitForSessionRunningAsync(Guid boardId, Guid sessionId)
     {
+        _appFixture.EnsureSessionRunnerReachable();
+
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {

@@ -243,7 +243,7 @@ Not the default. Use this only when you are deliberately not running Aspire.
 | Restart | `pwsh -File scripts/restart-apphost.ps1` | `.\restart.ps1` |
 | API | 17202 | 17281 |
 | Client | 17203 | 17282 |
-| Session-runner | 17204 | 17283 |
+| Session-runner | 17204 | 17204 |
 | Postgres | 17280 (`antiphon-postgres`) | 17280 (same container) |
 | Health | `pwsh -File verify-dev-stack.ps1 -SkipBrowser` | `pwsh -File verify-dev-stack.ps1 -SimpleMode` |
 

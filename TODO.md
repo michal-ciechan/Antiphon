@@ -63,15 +63,6 @@ exists **unsupervised** — if the process dies between create and the always-on
 restarts it, which is precisely the failure always-on exists to prevent. Scripted provisioning needs
 two round-trips and has to handle the second one failing, leaving a half-configured agent.
 
-### E2E: session-runner port is ambiguous, and E2E targets the one nothing runs on
-`Antiphon.AppHost/Program.cs` starts the runner on **17204** and overrides `SessionRunner__BaseUrl`
-to match. `server/appsettings.json` defaults `SessionRunner:BaseUrl` to **17283**, and so does
-`scripts/restart-session-runner.ps1 -Url`. The E2E fixture runs the server from plain appsettings and
-starts no runner, so every session-dependent E2E test targets 17283 and fails ~30-60s later with
-"did not reach Running status". `AntiphonAppFixture` now probes the URL and writes the verdict to
-`notes.log`, but the underlying question is undecided: **which port is canonical?** Pick one, then
-make appsettings, the AppHost override, and the restart script agree.
-
 ### E2E failures needing a product decision (13)
 Not flakes — each needs a call, not a retry:
 - Session-dependent tests: should the E2E fixture start a session runner, or should those tests be

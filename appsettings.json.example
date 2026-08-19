@@ -43,7 +43,7 @@
     "BaseUrl": "https://api.github.com"
   },
   "SessionRunner": {
-    "BaseUrl": "http://localhost:17283",
+    "BaseUrl": "http://localhost:17204",
     "Enabled": true,
     "EventReconnectDelayMs": 1000,
     "RequestTimeoutSeconds": 100,

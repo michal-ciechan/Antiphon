@@ -70,7 +70,7 @@ dashboard pinned at `http://localhost:17205`.
 `pwsh -File verify-dev-stack.ps1 -SkipBrowser` is the health check.
 
 Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
-17281 (API) / 17282 (Vite) / 17283 (session-runner). Postgres is still 17280.
+17281 (API) / 17282 (Vite) / 17204 (session-runner, the always-on daemon). Postgres is still 17280.
 `pwsh -File verify-dev-stack.ps1 -SimpleMode`.
 
 ### Manual backend fallback (ASP.NET Core — port 17281)

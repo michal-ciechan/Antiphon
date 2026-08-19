@@ -167,6 +167,8 @@ public class BoardE2ETests
     [Test]
     public async Task Board_user_can_drag_backlog_card_to_in_progress_and_open_terminal_session()
     {
+        _appFixture.EnsureSessionRunnerReachable();
+
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var repoPath = await CreateLocalGitRepositoryAsync();
         var projectId = await CreateProjectAsync($"E08 Spawn Project {suffix}", repoPath);
@@ -295,6 +297,8 @@ public class BoardE2ETests
     [Test]
     public async Task Board_spawn_reuses_existing_worktree_outside_current_worktree_root()
     {
+        _appFixture.EnsureSessionRunnerReachable();
+
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var repoPath = await CreateLocalGitRepositoryAsync();
         var projectId = await CreateProjectAsync($"Legacy Worktree Spawn Project {suffix}", repoPath);
@@ -891,6 +895,8 @@ public class BoardE2ETests
 
     private async Task WaitForSessionRunningAsync(Guid boardId, Guid sessionId)
     {
+        _appFixture.EnsureSessionRunnerReachable();
+
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {

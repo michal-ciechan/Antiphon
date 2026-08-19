@@ -32,7 +32,7 @@ param(
     [string]$ExpectedReply = "Atlas OpenCode default verified.",
     [string]$Canary = "",
     [string]$OcgPath = "C:\Users\mike.ciechan\.local\bin\ocg.ps1",
-    [string]$SessionRunnerUrl = "http://localhost:17283",
+    [string]$SessionRunnerUrl = "http://localhost:17204",
     [switch]$SkipLiveMessage,
     [string]$EvidenceDir = ""
 )

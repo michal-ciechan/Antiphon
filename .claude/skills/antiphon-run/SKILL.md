@@ -35,7 +35,7 @@ the default. Postgres is the always-on `antiphon-postgres` container on **17280*
 | 17280 | PostgreSQL           | same `antiphon-postgres` container |
 | 17281 | .NET API server      | `dotnet run`       |
 | 17282 | React/Vite client    | `npm run dev`      |
-| 17283 | Session runner       | simple-mode runner |
+| 17204 | Session runner       | always-on daemon (same process as Aspire) |
 | 17209 | Storybook (optional) | `npm run storybook`|
 
 ---
@@ -68,7 +68,7 @@ Start-Process pwsh -ArgumentList @('-NoLogo', '-File', 'C:\src\antiphon\dev-aspi
 |----------------------|---------------------------------------------------|
 | `scripts/restart-apphost.ps1` | Canonical Aspire restart. Use whenever an AppHost may already exist. |
 | `.\dev-aspire.ps1`   | First Aspire launch only if nothing is listening. Never a second copy. |
-| `.\dev-start.ps1`    | Simple-mode fallback (ports 17281–17283).         |
+| `.\dev-start.ps1`    | Simple-mode fallback (API 17281 / client 17282; runner 17204). |
 | `.\dev-stop.ps1`     | Stop server + client; postgres stays up.          |
 | `.\dev-stop.ps1 -IncludePostgres` | Stop everything.                   |
 | `.\dev-fresh.ps1`    | Nuclear reset (all data lost). Prompts to confirm.|
@@ -152,7 +152,7 @@ Check what's listening (Aspire mode; Postgres is 17280):
 Check what's listening (simple mode):
 ```powershell
 Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.LocalPort -in 17280,17281,17282,17283 } |
+    Where-Object { $_.LocalPort -in 17280,17281,17282,17204 } |
     Select-Object LocalPort, OwningProcess
 ```
 

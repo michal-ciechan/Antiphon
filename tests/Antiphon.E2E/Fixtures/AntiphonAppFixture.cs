@@ -68,6 +68,18 @@ public class AntiphonAppFixture
 
     public HttpClient HttpClient { get; private set; } = null!;
 
+    /// <summary>
+    /// True when <c>GET {SessionRunner:BaseUrl}/sessions</c> returned 2xx at fixture startup.
+    /// </summary>
+    public bool SessionRunnerReachable { get; private set; }
+
+    /// <summary>
+    /// Probe text (URL + status or exception) written to notes.log and thrown by
+    /// <see cref="EnsureSessionRunnerReachable"/>.
+    /// </summary>
+    public string SessionRunnerReachabilityVerdict { get; private set; } =
+        "[session-runner] reachability was not recorded";
+
     public async Task InitializeAsync()
     {
         // Opt-out, not opt-in: a test that never thought about diagnostics still gets them.
@@ -119,24 +131,38 @@ public class AntiphonAppFixture
     }
 
     /// <summary>
+    /// Fail immediately with the startup probe verdict when <c>/sessions</c> was not 2xx.
+    /// Session-dependent tests call this instead of burning a 30–60s Running-status timeout.
+    /// This fixture does not start a runner.
+    /// </summary>
+    public void EnsureSessionRunnerReachable()
+    {
+        if (SessionRunnerReachable)
+            return;
+
+        throw new InvalidOperationException(SessionRunnerReachabilityVerdict);
+    }
+
+    /// <summary>
     /// Records whether the configured session runner is actually there.
     ///
-    /// This fixture does NOT start one — it uses the <c>SessionRunner:BaseUrl</c> from
-    /// appsettings.json and talks to whatever happens to be listening. When nothing is (or when an
-    /// unrelated process has taken the port — a stray node dev server was squatting it, answering
-    /// 404), every test that needs a live session fails 30-60s later with "did not reach Running
-    /// status" and no hint as to why. One line up front turns that into an obvious answer.
+    /// This fixture does NOT start one — it pins <c>SessionRunner:BaseUrl</c> to
+    /// <c>http://localhost:17204</c> (the always-on daemon) and talks to whatever is listening.
+    /// When nothing is (or when an unrelated process has taken the port — a stray node.exe was
+    /// squatting 17283 on 2026-08-08, answering 404), every test that needs a live session used
+    /// to fail 30-60s later with "did not reach Running status" and no hint as to why. The
+    /// verdict is stored so <see cref="EnsureSessionRunnerReachable"/> can fail those tests in
+    /// seconds with the URL and status or exception.
     /// </summary>
     private async Task RecordSessionRunnerReachabilityAsync()
     {
-        if (_diagnostics is null || _kestrelHost is null)
-            return;
-
-        var baseUrl = _kestrelHost.Services
+        var baseUrl = _kestrelHost?.Services
             .GetRequiredService<IConfiguration>()["SessionRunner:BaseUrl"];
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            _diagnostics.Note("[session-runner] no SessionRunner:BaseUrl configured");
+            SessionRunnerReachable = false;
+            SessionRunnerReachabilityVerdict = "[session-runner] no SessionRunner:BaseUrl configured";
+            _diagnostics?.Note(SessionRunnerReachabilityVerdict);
             return;
         }
 
@@ -144,17 +170,30 @@ public class AntiphonAppFixture
         try
         {
             var response = await probe.GetAsync($"{baseUrl.TrimEnd('/')}/sessions");
-            _diagnostics.Note(response.IsSuccessStatusCode
-                ? $"[session-runner] {baseUrl} responding ({(int)response.StatusCode})"
-                : $"[session-runner] {baseUrl} answered {(int)response.StatusCode} for /sessions — "
+            if (response.IsSuccessStatusCode)
+            {
+                SessionRunnerReachable = true;
+                SessionRunnerReachabilityVerdict =
+                    $"[session-runner] {baseUrl} responding ({(int)response.StatusCode})";
+            }
+            else
+            {
+                SessionRunnerReachable = false;
+                SessionRunnerReachabilityVerdict =
+                    $"[session-runner] {baseUrl} answered {(int)response.StatusCode} for /sessions — "
                     + "something is on that port but it is not a session runner. "
-                    + "Tests needing a live agent session will fail.");
+                    + "Tests needing a live agent session will fail.";
+            }
+
+            _diagnostics?.Note(SessionRunnerReachabilityVerdict);
         }
         catch (Exception ex)
         {
-            _diagnostics.Note(
+            SessionRunnerReachable = false;
+            SessionRunnerReachabilityVerdict =
                 $"[session-runner] {baseUrl} unreachable ({ex.GetBaseException().Message}). "
-                + "Tests needing a live agent session will fail.");
+                + "Tests needing a live agent session will fail.";
+            _diagnostics?.Note(SessionRunnerReachabilityVerdict);
         }
     }
 
@@ -345,7 +384,8 @@ public class AntiphonAppFixture
                     ["GitHub:Enabled"] = "false",
                     ["Agents:DefaultDefinition"] = "e2e-raw",
                     ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
-                    ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                    ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                    ["SessionRunner:BaseUrl"] = "http://localhost:17204"
                 };
 
                 if (_diagnosticsDirectory is not null)

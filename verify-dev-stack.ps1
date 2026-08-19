@@ -5,12 +5,13 @@
     stack is up.
 
     Defaults to Aspire AppHost mode (dev-aspire.ps1 — ports 1720x).
-    Use -SimpleMode for the docker-compose stack (dev-start.ps1 — ports 1728x).
+    Use -SimpleMode for the docker-compose stack (dev-start.ps1 — API 17281 / client 17282;
+    session-runner is the always-on daemon on 17204).
 
     Reports a full status table and only throws at the end if something core
     is down — so you get the whole picture in one run, not a death on the
     first failure.
-.PARAMETER SimpleMode   Check the docker-compose stack (17281/82/83) instead of Aspire.
+.PARAMETER SimpleMode   Check the docker-compose stack (API 17281 / client 17282; runner 17204) instead of Aspire.
 .PARAMETER SkipBrowser  Skip the Playwright browser smoke test.
 .PARAMETER TimeoutSec   Per-request HTTP timeout (default 10).
 #>
@@ -27,7 +28,7 @@ $RepoRoot = $PSScriptRoot
 if ($SimpleMode) {
     $BackendUrl  = "http://localhost:17281"
     $FrontendUrl = "http://localhost:17282"
-    $RunnerUrl   = "http://localhost:17283"
+    $RunnerUrl   = "http://localhost:17204"
     $corePorts   = 17280, 17281, 17282
     $dashboardUrl = $null
 } else {
