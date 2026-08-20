@@ -7,8 +7,9 @@
     scripts/restart-apphost.ps1 so the session-runner on 17204 is preserved.
 
     One fire does, in order:
-      1. Bail if a launch is in flight (logs/apphost.launch.lock under 15 min old,
-         or the "Antiphon AppHost" logon task currently Running).
+      1. Bail if a launch or restart is in flight (logs/apphost.launch.lock or
+         logs/apphost.restart.lock under 15 min old with a live holder, or the
+         "Antiphon AppHost" logon task currently Running).
       2. GET /health on 17202 (expect 200) and GET / on 17203 (expect 2xx/3xx).
          On any failure, re-probe twice more at IntervalSeconds (15) spacing.
          Restart only if all three rounds fail.
@@ -16,12 +17,19 @@
       4. Cooldown: skip if a restart was stamped under CooldownMinutes (10) ago.
       5. Flap cap: skip and ERROR if MaxRestartsPerWindow (3) restarts sit inside
          the last 60 minutes.
-      6. Invoke restart-apphost.ps1, then stamp logs/apphost-watchdog.state.
+      6. Re-check the locks (CARD-0075: step 1 ran up to ~60s of probing ago, and
+         a restart that started inside that window must not be raced).
+      7. Invoke restart-apphost.ps1, then stamp logs/apphost-watchdog.state -
+         UNLESS it exits 3 (refused, nothing killed), which spends no flap budget
+         and so must not be stamped.
 
     -ProbeOnly probes and logs, never restarts (the safe acceptance check).
+    -RestartScript overrides which script step 7 invokes; it exists so the refusal
+    path can be exercised against a stub without tearing down a live stack.
     Disable the task to keep the stack down on purpose:
       Disable-ScheduledTask -TaskName "Antiphon AppHost Watchdog"
 .NOTES
+    Requires scripts/apphost-common.ps1 (dot-sourced) for the shared lock parser.
     Keep this file ASCII-only: it may run under Windows PowerShell 5.1, which reads
     no-BOM .ps1 as CP1252 and mangles non-ASCII characters into parse errors.
 #>
@@ -34,17 +42,21 @@ param(
     [int]$LockMaxAgeMinutes = 15,
     [int]$ProbeTimeoutSec = 5,
     [string]$HealthUrl = 'http://localhost:17202/health',
-    [string]$ClientUrl = 'http://localhost:17203/'
+    [string]$ClientUrl = 'http://localhost:17203/',
+    [string]$RestartScript
 )
 
 $ErrorActionPreference = 'Continue'
+
+. (Join-Path $PSScriptRoot 'apphost-common.ps1')
 
 $root     = Split-Path $PSScriptRoot -Parent
 $logDir   = Join-Path $root 'logs'
 $logFile  = Join-Path $logDir 'watchdog-apphost.log'
 $lockFile = Join-Path $logDir 'apphost.launch.lock'
+$restartLockFile = Join-Path $logDir 'apphost.restart.lock'
 $stateFile = Join-Path $logDir 'apphost-watchdog.state'
-$restartScript = Join-Path $PSScriptRoot 'restart-apphost.ps1'
+if (-not $RestartScript) { $RestartScript = Join-Path $PSScriptRoot 'restart-apphost.ps1' }
 $appHostTaskName = 'Antiphon AppHost'
 $flapWindowMinutes = 60
 
@@ -92,15 +104,6 @@ function Write-WatchdogState($state) {
     $payload | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $stateFile -Encoding UTF8
 }
 
-function Parse-UtcStamp([string]$text) {
-    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
-    try {
-        return [datetime]::Parse($text, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
-    } catch {
-        return $null
-    }
-}
-
 function Test-HttpOk([string]$url, [int[]]$okCodes) {
     try {
         $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec $ProbeTimeoutSec
@@ -134,27 +137,23 @@ function Test-Round {
 }
 
 function Test-LaunchInFlight {
+    # CARD-0075: BOTH locks, not just the launch one. restart-apphost.ps1 tears the
+    # stack down before dev-aspire.ps1 (and its launch lock) exists, so a fire that
+    # begins inside that window sees no lock, three failed rounds, and calls a
+    # second restart over the top of the first.
     $ah = Get-ScheduledTask -TaskName $appHostTaskName -ErrorAction SilentlyContinue
     if ($ah -and $ah.State -eq 'Running') {
         return "AppHost logon task '$appHostTaskName' is Running"
     }
-    if (-not (Test-Path $lockFile)) { return $null }
-    $stamp = $null
-    try {
-        $raw = (Get-Content -LiteralPath $lockFile -Raw -ErrorAction Stop).Trim()
-        if ($raw -match '^\d+\s+(\S+)') {
-            $stamp = Parse-UtcStamp $Matches[1]
+    foreach ($pair in @(
+        @{ Path = $restartLockFile; Label = 'restart lock' },
+        @{ Path = $lockFile;        Label = 'launch lock'  })) {
+        $held = Test-AppHostLockActive -Path $pair.Path -MaxAgeMinutes $LockMaxAgeMinutes -Label $pair.Label
+        if ($held) { return $held }
+        if (Test-Path -LiteralPath $pair.Path) {
+            Write-Log 'INFO' ("stale {0} - ignoring ({1})" -f $pair.Label, $pair.Path)
         }
-    } catch { }
-    if (-not $stamp) {
-        try { $stamp = (Get-Item -LiteralPath $lockFile).LastWriteTimeUtc } catch { }
     }
-    if (-not $stamp) { return "launch lock present (unreadable stamp)" }
-    $ageMin = ([datetime]::UtcNow - $stamp.ToUniversalTime()).TotalMinutes
-    if ($ageMin -lt $LockMaxAgeMinutes) {
-        return ("launch lock is {0:N1} min old (pid+stamp in {1})" -f $ageMin, $lockFile)
-    }
-    Write-Log 'INFO' ("stale launch lock ({0:N1} min old) - ignoring" -f $ageMin)
     return $null
 }
 
@@ -165,6 +164,7 @@ if ($inFlight) {
     Write-Log 'INFO' "skip: launch in flight - $inFlight"
     exit 0
 }
+
 
 $roundsNeeded = 3
 $failedRounds = 0
@@ -177,7 +177,7 @@ for ($i = 1; $i -le $roundsNeeded; $i++) {
             Write-Log 'INFO' "probe round $i/$roundsNeeded recovered: $lastSummary"
         }
         $state = Read-WatchdogState
-        $lastOk = Parse-UtcStamp $state.lastOkUtc
+        $lastOk = ConvertTo-UtcStamp $state.lastOkUtc
         $now = [datetime]::UtcNow
         $logHeartbeat = $ProbeOnly -or (-not $lastOk) -or (($now - $lastOk).TotalHours -ge 1)
         if ($logHeartbeat) {
@@ -207,7 +207,7 @@ $state = Read-WatchdogState
 $now = [datetime]::UtcNow
 $restartTimes = @()
 foreach ($stampText in @($state.restartsUtc)) {
-    $t = Parse-UtcStamp $stampText
+    $t = ConvertTo-UtcStamp $stampText
     if ($t) { $restartTimes += $t }
 }
 $recent = @($restartTimes | Where-Object { ($now - $_).TotalMinutes -lt $flapWindowMinutes } | Sort-Object)
@@ -236,6 +236,15 @@ if (-not (Test-Path $restartScript)) {
     exit 1
 }
 
+# CARD-0075: the check at the top of this fire is up to ~60s old by now (three
+# probe rounds at IntervalSeconds, plus docker info). Re-check immediately before
+# doing anything destructive - one call closes the whole TOCTOU window.
+$inFlight = Test-LaunchInFlight
+if ($inFlight) {
+    Write-Log 'INFO' "skip: launch in flight at restart time - $inFlight"
+    exit 0
+}
+
 Write-Log 'WARN' "restarting AppHost via $restartScript"
 $psExe = $null
 try { $psExe = (Get-Process -Id $PID).Path } catch { }
@@ -243,10 +252,18 @@ if (-not $psExe) { $psExe = 'pwsh' }
 & $psExe -NoLogo -NonInteractive -File $restartScript
 $restartExit = $LASTEXITCODE
 
+# Exit 3 = refused, nothing was killed. Stamping it would burn flap-cooldown
+# budget on a restart that never happened, so the next real failure would be
+# skipped by the cooldown.
+if ($restartExit -eq 3) {
+    Write-Log 'INFO' "restart-apphost.ps1 REFUSED (exit 3, nothing killed) - not stamping a restart"
+    exit 0
+}
+
 $state = Read-WatchdogState
 $restartTimes = @()
 foreach ($stampText in @($state.restartsUtc)) {
-    $t = Parse-UtcStamp $stampText
+    $t = ConvertTo-UtcStamp $stampText
     if ($t -and ($now - $t).TotalMinutes -lt $flapWindowMinutes) { $restartTimes += $t.ToString('o') }
 }
 $restartTimes += [datetime]::UtcNow.ToString('o')
