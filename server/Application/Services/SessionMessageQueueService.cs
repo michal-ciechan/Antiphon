@@ -1525,6 +1525,15 @@ public sealed class SessionMessageQueueService
     // And a message that has hit MaxDeliveryAttempts PARKS: still Pending and visible in the queue
     // UI, but no automatic path types it again, and the incident escalates to Critical when the
     // agent is channel-bound, because a parked channel reply is a human waiting on a dead line.
+    //
+    // CARD-0103 adds a THIRD brake, narrower than both: a NoComposerEvidence verdict on a session
+    // that has never produced a transcript row, inside PreFirstTurnNoEvidenceGraceMinutes of the
+    // message being enqueued, refunds the attempt, withholds the kill and reports ONE Warning. That
+    // is not a wedged session, it is a Claude TUI that is painted but not yet draining stdin — a
+    // state measured at 48-200 seconds under load, i.e. wide enough to swallow the whole 3-attempt
+    // budget in ~2.5 minutes and park a brief in a session that was healthy the entire time. The
+    // refund only ever applies to that triple condition; "started working and then stalled" keeps
+    // CARD-0055's behaviour exactly, because that session HAS a baseline.
     private async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct)
     {
@@ -1575,6 +1584,9 @@ public sealed class SessionMessageQueueService
             var parked = 0;
             var canceledSupervision = 0;
             var allSupervision = false;
+            var refunded = 0;
+            var preFirstTurn = false;
+            DateTime? refundOldestCreatedAt = null;
             if (messageIds is { Count: > 0 })
             {
                 var messages = await db.SessionQueuedMessages
@@ -1583,10 +1595,49 @@ public sealed class SessionMessageQueueService
                 messages = messages
                     .Where(m => !lateConfirmed.Contains(m.Id) && !lateTruncated.Contains(m.Id))
                     .ToList();
-                foreach (var message in messages.Where(m => m.Status == QueuedMessageStatus.Sent))
+                var reverting = messages.Where(m => m.Status == QueuedMessageStatus.Sent).ToList();
+                foreach (var message in reverting)
                 {
                     message.Status = QueuedMessageStatus.Pending;
                     message.SentAt = null;
+                }
+
+                // CARD-0103: the attempt is REFUNDED on the same revert, for one shape only. The
+                // stamp-before-type crash-safety is untouched — a crash still leaves the attempt
+                // charged, because only an OBSERVED verdict can reach here — and the counter stays
+                // the honest thing every DeliveryAttempts < MaxAttempts predicate reads.
+                //
+                // Why it is safe on this verdict and no other: NoComposerEvidence means the body
+                // never rendered, so the submitting Enter was withheld and nothing can have been
+                // submitted. Why it is right: a session with zero transcript rows at type time has
+                // not taken a single turn yet, and a Claude TUI that is painted but not yet draining
+                // stdin was measured deaf for 48-200 seconds (2026-08-20) — long enough to spend all
+                // three attempts on a session that is perfectly healthy and merely still waking.
+                // A session that DID start working and then stalled has a non-null baseline and is
+                // deliberately left to CARD-0055's original design.
+                if (verdict == DeliveryVerdict.NoComposerEvidence)
+                {
+                    var grace = TimeSpan.FromMinutes(
+                        Math.Max(0, _verification.PreFirstTurnNoEvidenceGraceMinutes));
+                    var now = UtcNow();
+                    foreach (var message in reverting)
+                    {
+                        if (message.LastDeliveryBaselineSequence is not null
+                            || message.DeliveryAttempts <= 0
+                            || now - message.CreatedAt >= grace)
+                            continue;
+
+                        message.DeliveryAttempts--;
+                        refunded++;
+                        refundOldestCreatedAt = refundOldestCreatedAt is { } oldest && oldest < message.CreatedAt
+                            ? oldest
+                            : message.CreatedAt;
+                    }
+
+                    // All-or-nothing for the kill and the incident: a mixed run (one pre-first-turn
+                    // row batched with one that is past its grace) is not the shape this covers, and
+                    // the destructive default is the safer place to land.
+                    preFirstTurn = reverting.Count > 0 && refunded == reverting.Count;
                 }
 
                 allSupervision = messages.Count > 0
@@ -1610,7 +1661,11 @@ public sealed class SessionMessageQueueService
             // the same story. Never kill over a Supervision compact — the session may be the
             // operator's own live conversation (CARD-0056 re-adoption).
             var working = await IsWorkingAsync(db, sessionId, ct);
-            var kill = agent is { AlwaysOn: true } && !working && !allSupervision;
+            // CARD-0103 withholds the always-on kill for the refunded shape too: the fresh composer
+            // a kill buys is worthless against a TUI that has not started reading, and killing and
+            // relaunching straight back into the same race is CARD-0047's restart loop by another
+            // route. The message stays Pending and the 60s stranded sweep retries it.
+            var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn;
 
             if (allSupervision && canceledSupervision > 0)
             {
@@ -1643,6 +1698,33 @@ public sealed class SessionMessageQueueService
                                 SessionId: sessionId),
                             ct);
                     }
+                }
+            }
+            else if (preFirstTurn && agent is not null)
+            {
+                // One Warning, not one Error per attempt. Today's signature was six sessions x 3
+                // attempts of Error spam describing a race none of them caused; the fault is real
+                // but it is ONE fault per message, and it self-heals on the next sweep.
+                var since = refundOldestCreatedAt ?? UtcNow();
+                var alreadyReported = await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId
+                        && i.Kind == AgentIncidentKind.DeliveryVerificationFailed
+                        && i.CreatedAt >= since,
+                    ct);
+                if (!alreadyReported)
+                {
+                    var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                    await supervisor.RecordIncidentAsync(
+                        agent.Id, sessionId, AgentIncidentKind.DeliveryVerificationFailed,
+                        AlertSeverity.Warning,
+                        $"Message delivery could not be verified: {Describe(verdict)}. The session has "
+                        + "produced no transcript activity at all, so it is still becoming "
+                        + "input-responsive rather than wedged (CARD-0103): the attempt was refunded "
+                        + "instead of charged, the session was NOT restarted, and the stranded-queue "
+                        + $"watchdog retries within ~{Math.Max(1, _verification.StrandedAgeSeconds)}s. "
+                        + $"Past {Math.Max(0, _verification.PreFirstTurnNoEvidenceGraceMinutes)} minutes "
+                        + "from enqueue, attempts charge normally and the message parks.",
+                        ct: ct);
                 }
             }
             else if (agent is not null)
@@ -1686,9 +1768,9 @@ public sealed class SessionMessageQueueService
             _logger.LogWarning(
                 "Delivery to session {SessionId} failed verification ({Verdict}); agent={AgentName}, "
                 + "alwaysOn={AlwaysOn}, working={Working}, killed={Killed}, parked={Parked}, "
-                + "canceledSupervision={CanceledSupervision}",
+                + "canceledSupervision={CanceledSupervision}, refundedAttempts={Refunded}",
                 sessionId, verdict, agent?.Name ?? "<none>", agent?.AlwaysOn ?? false, working, kill,
-                parked, canceledSupervision);
+                parked, canceledSupervision, refunded);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

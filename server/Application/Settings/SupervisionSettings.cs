@@ -216,6 +216,39 @@ public sealed class DeliveryVerificationSettings
     public int MaxDeliveryAttempts { get; set; } = 3;
 
     /// <summary>
+    /// CARD-0103. How long after a message was ENQUEUED a <c>NoComposerEvidence</c> verdict on a
+    /// session that has never produced a single transcript row is treated as "still becoming
+    /// input-responsive" rather than as a spent attempt.
+    ///
+    /// <para>The budget arithmetic is the defect this repairs: 3 attempts on a ~60s watchdog cadence
+    /// is ~2.5 minutes, and the measured dead zone in which a painted Claude TUI is not yet draining
+    /// stdin ran 48-200 seconds (2026-08-20). The whole retry budget was therefore spendable INSIDE
+    /// one stall, after which the message parked silently in a session everyone believed was healthy
+    /// and the dispatcher failed the task at 10 minutes with "Boot prompt was never delivered."</para>
+    ///
+    /// <para>Inside this window the attempt is REFUNDED (see
+    /// <c>SessionMessageQueueService.HandleDeliveryFailureAsync</c>), the always-on fresh-composer
+    /// kill is withheld — killing and relaunching a session that is merely still waking restarts the
+    /// same race, which is CARD-0047's restart-loop shape — and the incident drops to a single
+    /// Warning instead of one Error per attempt. Retries then ride the 60s stranded sweep, so a
+    /// pre-first-turn message gets roughly 8 chances inside the dispatcher's watchdog instead of 3.</para>
+    ///
+    /// <para>8 minutes, deliberately INSIDE the dispatcher's 10-minute <c>FailNeverStartedAsync</c>
+    /// clock: a genuinely dead session still charges its last two attempts and still fails loudly on
+    /// schedule. This changes what an attempt MEANS pre-first-turn; it does not raise
+    /// <see cref="MaxDeliveryAttempts"/>, and every <c>DeliveryAttempts &lt; MaxDeliveryAttempts</c>
+    /// predicate keeps its existing meaning because the counter itself is kept honest.</para>
+    ///
+    /// <para>Scope is the triple condition and nothing wider: the verdict must be
+    /// <c>NoComposerEvidence</c> (the Enter was never sent, so nothing can have been submitted — the
+    /// one verdict where not charging is provably safe), the attempt's stamped baseline must be
+    /// unobservable (<c>LastDeliveryBaselineSequence == null</c>, i.e. zero transcript rows at type
+    /// time), and the message must be younger than this. A session that started working and THEN
+    /// stalled has a non-null baseline and is left entirely to CARD-0055's original design.</para>
+    /// </summary>
+    public int PreFirstTurnNoEvidenceGraceMinutes { get; set; } = 8;
+
+    /// <summary>
     /// Total attempts at a BOOT prompt — the launch-time writes (<c>/remote-control</c>,
     /// <c>/rename</c>, a card's work prompt) that run before the queue exists (CARD-0056).
     ///

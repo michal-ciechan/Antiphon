@@ -23,6 +23,38 @@ public class AgentRegistrySettings
     /// </summary>
     public int ClaudeTrustPromptSettleMs { get; set; } = 15000;
 
+    /// <summary>
+    /// CARD-0103. Budget for the input-responsiveness probe — the final ready gate, which writes a
+    /// short token, requires it to RENDER, and clears it again. Quiet is not reading: measured
+    /// 2026-08-20, the same body took 48.8s to render when written ~2s after "ready" and 0.74s when
+    /// written 45s after it, on the same runner, three times. 90s because the measured dead zone ran
+    /// 48-200s and the 15s evidence window that failed sat entirely inside it; a healthy launch pays
+    /// ~1s of it. Zero or negative disables the probe (the kill switch — readiness then means what
+    /// it meant before, which is why it is off only deliberately).
+    /// </summary>
+    public int ClaudeInputProbeTimeoutMs { get; set; } = 90000;
+
+    /// <summary>Screen polling cadence for the input probe.</summary>
+    public int ClaudeInputProbePollIntervalMs { get; set; } = 250;
+
+    /// <summary>
+    /// How long a written probe token may go unrendered before it is written again (at most
+    /// <see cref="ClaudeInputProbeMaxWrites"/> writes in total). A belt only: the measured shape is a
+    /// RETAINED ConPTY buffer that drains in order on wake, so the first token is expected to arrive
+    /// late rather than to be lost.
+    /// </summary>
+    public int ClaudeInputProbeRetypeIntervalMs { get; set; } = 30000;
+
+    /// <summary>Total probe-token writes inside the budget, including the first.</summary>
+    public int ClaudeInputProbeMaxWrites { get; set; } = 3;
+
+    /// <summary>
+    /// How long the composer has to lose the probe token after Ctrl+U. A composer that will not
+    /// empty fails the launch: appending a boot prompt to a line we could not clear is how a body
+    /// arrives spliced onto junk.
+    /// </summary>
+    public int ClaudeInputProbeClearTimeoutMs { get; set; } = 10000;
+
     public int ClaudeDoneMaxWaitMs { get; set; } = 300000;
     public int CodexReadyQuietPeriodMs { get; set; } = 1000;
     public int CodexReadyMaxWaitMs { get; set; } = 60000;

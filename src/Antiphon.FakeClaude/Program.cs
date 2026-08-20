@@ -62,6 +62,18 @@ namespace Antiphon.FakeClaude;
 ///    from the measured records). <c>ANTIPHON_FAKE_API_ERROR_AFTER_TURNS=N</c> (default 1) kills
 ///    the Nth submitted turn ONLY; later turns respond normally, modelling the measured revival —
 ///    a typed "Continue" into exactly this state worked immediately, six times across the sweep.
+///  * <b>Kill line</b> (Ctrl+U, <c>0x15</c>) — empties the composer and erases the rendered row, the
+///    keystroke <c>ClaudeHarness</c> has used against real Claude to clear a composer before a
+///    re-type. Always on: it is an input primitive, not a failure mode. Modelled for a SINGLE typed
+///    line only, which is what has been measured — what empties a composer holding a multi-line body
+///    or a collapsed <c>[Pasted text #N]</c> placeholder is unmeasured and deliberately not guessed
+///    at here (CARD-0103 slice 3 is gated on measuring it).
+///  * <b>Deaf start</b> (OPT-IN, <c>ANTIPHON_FAKE_DEAF_START_MS=N</c>) — paint the banner, then do
+///    not READ stdin for N ms. Input written meanwhile stays buffered in the pty and is processed in
+///    order on wake, which is the measured shape (CARD-0103: the deaf TUI processed all three
+///    buffered pastes when it woke, in order, minutes late). This is the state every output-side
+///    readiness signal calls "ready": no output, no modal, a painted composer — and every byte
+///    written into it looks lost until it isn't. Default OFF.
 ///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
 ///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
 ///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
@@ -117,6 +129,11 @@ internal static class Program
         // state in which a delivery was marked Sent on a redraw and the body sat in the composer for
         // 104 minutes. Default OFF: our Enters are not eaten, and every other test submits on the first.
         var swallow = SwallowEnterModel.FromEnvironment();
+        // OPT-IN (CARD-0103): go input-DEAF for N ms after painting. The banner is already out by
+        // the time the reader starts, so every output-side ready signal reads this as a healthy,
+        // settled session — which is exactly the lie the input probe exists to catch.
+        var deafStartMs = int.TryParse(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEAF_START_MS"), out var ds) && ds > 0 ? ds : 0;
         TryEnableRawConsole();
 
         var stdout = Console.OpenStandardOutput();
@@ -139,6 +156,7 @@ internal static class Program
         if (clip is not null) Write(clip.Describe() + "\r\n");
         if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
         if (swallow is not null) Write(swallow.Describe() + "\r\n");
+        if (deafStartMs > 0) Write($"DEAFSTART:ms={deafStartMs}\r\n");
         if (debugInput)
         {
             var h = GetStdHandle(STD_INPUT_HANDLE);
@@ -173,6 +191,12 @@ internal static class Program
         var stdin = Console.OpenStandardInput();
         var reader = new Thread(() =>
         {
+            // The deaf window is on the READ side, not the write side: bytes written during it stay
+            // in the pty's input buffer and are drained here, in order, when the sleep ends. That is
+            // the measured behaviour — input into a deaf TUI is LATE, never lost — and it is what
+            // makes both the probe (wait longer than the dead zone) and an ordered clear keystroke
+            // sound.
+            if (deafStartMs > 0) Thread.Sleep(deafStartMs);
             var buf = new byte[8192];
             while (true)
             {
@@ -254,6 +278,20 @@ internal static class Program
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
+
+            // Ctrl+U (NAK, 0x15) — kill line. Empties the composer AND erases the rendered row, which
+            // is the half that matters to a caller: the verification everything here exists to serve
+            // reads the RENDERED SCREEN, so a model that dropped the buffer while leaving the text
+            // painted would report a composer that will not clear. Not applied inside a bracketed
+            // paste — wrapped content is literal, control bytes included.
+            if (!inPaste && !Contains(burst, PasteStartBytes) && Array.IndexOf(burst, (byte)0x15) >= 0)
+            {
+                composer.Clear();
+                // CR home + erase the whole row. Single-line only, matching what has been measured
+                // against real Claude; see the class doc.
+                Write("\r\x1b[2K");
+                return true;
+            }
 
             // WHICH INPUT PATH this burst is on, decided before the clip model sees a byte.
             //

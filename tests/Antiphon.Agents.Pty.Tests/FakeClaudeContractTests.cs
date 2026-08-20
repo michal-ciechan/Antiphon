@@ -1377,6 +1377,152 @@ public class FakeClaudeContractTests
         }
     }
 
+    // ---- CARD-0103: readiness must prove the TUI reads input -------------------------------
+    //
+    // The measured defect: Claude paints its banner and composer within seconds, then is NOT
+    // input-responsive for tens of seconds on a loaded machine. An unresponsive TUI emits nothing,
+    // and "nothing" is exactly what a quiet-period ready detector reads as ready — the same failure
+    // genre as CARD-0047's silent modal and CARD-0048's silent DA1 stall. ANTIPHON_FAKE_DEAF_START_MS
+    // models it: banner out, stdin unread for N ms, then everything buffered is processed IN ORDER.
+
+    /// <summary>Ctrl+U is the probe's clear keystroke; the fake has to model both halves of it.</summary>
+    [Test]
+    public async Task Ctrl_u_empties_the_composer_and_the_rendered_screen()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        await runner.WriteAsync("zzprobetoken");
+        (await runner.WaitForScreenAsync(
+            screen => ComposerDeliveryEvidence.FragmentIsVisible(screen, "zzprobetoken"),
+            TimeSpan.FromSeconds(10)))
+            .ShouldBeTrue("the composer echo must render the typed token. Screen:\n" + runner.SnapshotScreen());
+
+        await runner.WriteAsync(ComposerInputProbe.KillLine);
+
+        (await runner.WaitForScreenAsync(
+            screen => !ComposerDeliveryEvidence.FragmentIsVisible(screen, "zzprobetoken"),
+            TimeSpan.FromSeconds(10)))
+            .ShouldBeTrue(
+                "Ctrl+U must clear the RENDERED screen, not just an internal buffer — the probe's "
+                + "clear check reads the screen, so a model that dropped only the buffer would report "
+                + "a composer that will not empty. Screen:\n" + runner.SnapshotScreen());
+
+        // And the killed line is really gone: a following Enter submits nothing.
+        await runner.WriteAsync("\r");
+        await Task.Delay(500);
+        runner.SnapshotText().ShouldNotContain("SUBMITTED:zzprobetoken",
+            customMessage: "Ctrl+U must remove the body, not merely hide it");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// The whole point, in one test: a TUI that is deaf for LONGER than the probe budget must make
+    /// the probe say NO. Today's readiness rule says yes to this session, every time, and the brief
+    /// typed into it lands nowhere for minutes. A 60s deaf window against a 3s budget is
+    /// deterministic — no launch takes a minute.
+    /// </summary>
+    [Test]
+    public async Task A_tui_that_is_not_reading_fails_the_probe_instead_of_passing_quietly()
+    {
+        SkipIfUnavailable();
+        // Launched directly rather than through LaunchReadyFakeAsync: that helper clears the live
+        // buffer once the banner lands, and the OLD readiness rule below needs the banner still in
+        // it (visible output, THEN quiet — CARD-0052). A deaf fake writes nothing else, ever, so a
+        // cleared buffer would make the rule fail for the wrong reason.
+        await using var runner = new PtyAgentRunner("inbox");
+        await runner.StartAsync(
+            FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30,
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_DEAF_START_MS"] = "60000" });
+        ShouldBeInbox(runner);
+        (await runner.WaitForOutputAsync(s => s.Contains("DEAFSTART:"), TimeSpan.FromSeconds(45)))
+            .ShouldBeTrue("the deaf-start model must announce that it armed");
+
+        // The OLD rule's verdict on this exact session, asserted first so the test says what it is
+        // about: visible output, then quiet, is entirely satisfied by a TUI that reads nothing.
+        (await runner.WaitForQuietAfterVisibleAsync(TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(15)))
+            .ShouldBeTrue("a deaf TUI is the quietest possible session — that is the lie being fixed");
+
+        var result = await ComposerInputProbe.RunAsync(
+            ComposerInputProbe.TokenFor(Guid.NewGuid()),
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            (input, token) => runner.WriteAsync(input, token),
+            ComposerProbeOptions.FromMilliseconds(
+                timeoutMs: 3000, pollIntervalMs: 100, retypeIntervalMs: 30_000, clearTimeoutMs: 2000),
+            null,
+            CancellationToken.None);
+
+        result.Outcome.ShouldBe(ComposerProbeOutcome.NeverAppeared,
+            "ready must be FALSE on a TUI that is not reading. Screen:\n" + runner.SnapshotScreen());
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// And the other half: the probe must not give up on a session that is merely LATE. Input into a
+    /// deaf TUI is buffered, not lost (measured: all three pastes landed on wake, in order), so a
+    /// budget wider than the dead zone turns a parked brief into a slow launch.
+    /// </summary>
+    [Test]
+    public async Task A_tui_that_wakes_inside_the_budget_passes_and_the_probe_waited_for_it()
+    {
+        SkipIfUnavailable();
+        const int deafMs = 10_000;
+        await using var runner = await LaunchReadyFakeAsync(
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_DEAF_START_MS"] = deafMs.ToString() },
+            alsoAwaitBanner: "DEAFSTART:");
+
+        // Honest rather than flaky: if the launch itself ate the deaf window there is nothing left to
+        // measure, and asserting on it anyway would make this a load detector.
+        var sinceStart = DateTime.UtcNow - runner.StartedAt;
+        if (sinceStart > TimeSpan.FromMilliseconds(deafMs - 3000))
+            throw new SkipTestException(
+                $"launch took {sinceStart.TotalSeconds:F1}s of the {deafMs}ms deaf window — nothing left to wait for");
+
+        var result = await ComposerInputProbe.RunAsync(
+            ComposerInputProbe.TokenFor(Guid.NewGuid()),
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            (input, token) => runner.WriteAsync(input, token),
+            ComposerProbeOptions.FromMilliseconds(
+                timeoutMs: 60_000, pollIntervalMs: 100, retypeIntervalMs: 30_000, clearTimeoutMs: 10_000),
+            null,
+            CancellationToken.None);
+
+        result.Outcome.ShouldBe(ComposerProbeOutcome.Responsive,
+            "the buffered token is processed on wake. Screen:\n" + runner.SnapshotScreen());
+        result.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(1),
+            "a healthy fake answers in milliseconds; this one had to be waited for, which is the point");
+        result.Writes.ShouldBe(1, "the retype belt must not fire inside a 10s stall — the buffer keeps it");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>The control: an ordinary launch answers the probe at once and costs ~nothing.</summary>
+    [Test]
+    public async Task A_reading_tui_answers_the_probe_immediately()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync();
+
+        var result = await ComposerInputProbe.RunAsync(
+            ComposerInputProbe.TokenFor(Guid.NewGuid()),
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            (input, token) => runner.WriteAsync(input, token),
+            ComposerProbeOptions.FromMilliseconds(
+                timeoutMs: 30_000, pollIntervalMs: 100, retypeIntervalMs: 30_000, clearTimeoutMs: 10_000),
+            null,
+            CancellationToken.None);
+
+        result.Outcome.ShouldBe(ComposerProbeOutcome.Responsive,
+            "Screen:\n" + runner.SnapshotScreen());
+        result.Writes.ShouldBe(1);
+        result.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10),
+            "the probe is a per-launch cost, so a healthy one has to be cheap");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     // Two queued messages, each submitted on its own turn — the queue flushes one message per turn-end,
     // so each must round-trip independently when delivered the correct (two-write) way.
     [Test]

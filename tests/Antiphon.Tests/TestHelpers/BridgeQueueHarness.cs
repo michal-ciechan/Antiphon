@@ -328,11 +328,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     /// (CARD-0055): attempts is the retry brake, and the baseline is the transcript floor the
     /// late-confirm re-runs the matcher over before anything re-types it.
     /// </summary>
+    /// <param name="createdAtUtc">
+    /// When the message was ENQUEUED. Default is five minutes ago; pass it when the test is about a
+    /// wall-clock grace measured from enqueue (CARD-0103's pre-first-turn refund window).
+    /// </param>
     public async Task<Guid> SeedPendingMessageAsync(
         string body,
         Guid? sessionId = null,
         int deliveryAttempts = 0,
-        long? baselineSequence = null)
+        long? baselineSequence = null,
+        DateTime? createdAtUtc = null)
     {
         var sid = sessionId ?? SessionId;
         await using var db = CreateContext();
@@ -348,7 +353,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             Body = body,
             Status = QueuedMessageStatus.Pending,
             Sequence = seq,
-            CreatedAt = DateTime.UtcNow - TimeSpan.FromMinutes(5),
+            CreatedAt = createdAtUtc ?? DateTime.UtcNow - TimeSpan.FromMinutes(5),
             DeliveryAttempts = deliveryAttempts,
             LastDeliveryStartedAt = deliveryAttempts > 0 ? DateTime.UtcNow - TimeSpan.FromMinutes(4) : null,
             LastDeliveryBaselineSequence = baselineSequence,

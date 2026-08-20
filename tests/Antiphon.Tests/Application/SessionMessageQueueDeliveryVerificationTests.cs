@@ -52,7 +52,11 @@ public class SessionMessageQueueDeliveryVerificationTests
     [Test]
     public async Task Wedged_composer_withholds_enter_reverts_message_and_restarts_always_on_agent()
     {
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        // A session that has TAKEN A TURN and then wedged — the shape CARD-0055 was designed for and
+        // the one the kill is right about. CARD-0103's refund covers the opposite shape (a session
+        // that has produced nothing yet, i.e. is still becoming input-responsive) and must not reach
+        // in here; the transcript entry is what tells them apart, so this test states it outright.
+        await using var h = await ObservableHarnessAsync();
         h.Adapter.EchoTypedInputToScreen = false; // typed text never renders: wedged terminal
 
         var dto = await h.Queue.EnqueueAsync(
@@ -965,5 +969,172 @@ public class SessionMessageQueueDeliveryVerificationTests
         (await again.AgentIncidents.CountAsync(
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery))
             .ShouldBe(1, "deduped on the message id — late-confirm must not raise a second row");
+    }
+
+    // ---- CARD-0103 slice 2: a pre-first-turn NoComposerEvidence does not consume an attempt ----
+    //
+    // The budget arithmetic was the defect. Three attempts on a ~60s watchdog cadence is ~2.5
+    // minutes, and a Claude TUI that is painted but not yet draining stdin was measured deaf for
+    // 48-200 seconds (2026-08-20). So the whole retry budget was spendable INSIDE one stall: the
+    // brief parked at 2:30 in a session that was perfectly healthy, and the dispatcher failed the
+    // task at 10:00 with "Boot prompt was never delivered."
+    //
+    // The refund is scoped to the triple condition and every leg is negated below, because the leak
+    // that matters is into the "started working and then got stuck" case CARD-0055 already handles.
+
+    [Test]
+    public async Task A_pre_first_turn_no_evidence_refunds_the_attempt_and_withholds_the_kill()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.EchoTypedInputToScreen = false; // painted, but not reading
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the delegate brief", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["the delegate brief"], "the Enter is still withheld — that is unchanged");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(0,
+            "the attempt is refunded: nothing was submitted (the Enter was withheld) and the session "
+            + "has produced no transcript row at all, so it is still waking rather than wedged");
+        message.LastDeliveryStartedAt.ShouldNotBeNull(
+            "the attempt still HAPPENED — only the charge is refunded, and the timestamp is what says so");
+        message.LastDeliveryBaselineSequence.ShouldBeNull("the pre-first-turn signal itself");
+
+        h.Adapter.Killed.ShouldBeFalse(
+            "killing a session that is merely still becoming ready relaunches it straight into the "
+            + "same race — CARD-0047's restart loop by another route");
+    }
+
+    [Test]
+    public async Task The_refunded_failure_reports_one_warning_not_an_error_per_attempt()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the delegate brief", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var incident = (await db.AgentIncidents
+            .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed)
+            .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.Severity.ShouldBe(AlertSeverity.Warning,
+            "not an Error: the session is healthy and the message is coming back round");
+        incident.Message.ShouldContain("no transcript activity");
+        incident.Message.ShouldContain("refunded");
+    }
+
+    // The point of the refund: the message stays eligible for the 60s stranded sweep instead of
+    // parking after three tries, so it gets ~8 chances inside the dispatcher's 10-minute watchdog.
+    [Test]
+    public async Task A_refunded_message_survives_more_sweeps_than_the_attempt_cap_allows()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the delegate brief", MessageSendMode.WhenIdle, CancellationToken.None);
+        for (var sweep = 0; sweep < 4; sweep++)
+            await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.Count.ShouldBe(5,
+            "the first delivery plus four sweeps — under the old accounting the message would have "
+            + "parked after three and the last two sweeps would have skipped it entirely");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(0, "every one of them was refunded");
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBe(1, "one fault per message, not one incident per attempt");
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // THE negative case. A session that started working and then stalled has a transcript, so its
+    // stamped baseline is non-null, so nothing here is refunded and CARD-0055's design is untouched.
+    [Test]
+    public async Task A_session_that_worked_and_then_stalled_still_charges_the_attempt_and_is_killed()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "into a stalled composer", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.DeliveryAttempts.ShouldBe(1,
+            "this session HAS taken a turn: no-evidence here is a wedge, and the attempt is spent");
+        message.LastDeliveryBaselineSequence.ShouldNotBeNull();
+        h.Adapter.Killed.ShouldBeTrue("the wedged-composer kill is unchanged for the shape it was built for");
+
+        var incident = (await db.AgentIncidents
+            .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed)
+            .ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+    }
+
+    // The grace is a wall clock from ENQUEUE, and it is deliberately inside the dispatcher's
+    // 10-minute watchdog: a genuinely dead session still spends its attempts and still fails loudly.
+    [Test]
+    public async Task A_pre_first_turn_message_past_its_grace_charges_normally_and_is_killed()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.EchoTypedInputToScreen = false;
+        await h.SeedPendingMessageAsync(
+            "a brief that has been failing for twenty minutes",
+            createdAtUtc: DateTime.UtcNow - TimeSpan.FromMinutes(20));
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.DeliveryAttempts.ShouldBe(1, "past the grace the counter is honest again");
+        message.LastDeliveryBaselineSequence.ShouldBeNull("still pre-first-turn — only the clock differs");
+        h.Adapter.Killed.ShouldBeTrue();
+        (await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .Severity.ShouldBe(AlertSeverity.Error);
+    }
+
+    // Refund only on THIS verdict. NoSubmitOutput means the Enter went out, so something may have
+    // been submitted — "not charged" is not provably safe there and is not offered.
+    [Test]
+    public async Task A_pre_first_turn_swallowed_submit_still_charges_the_attempt()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.SubmitAck = ""; // Enter lands, produces no output: NoSubmitOutput, not NoComposerEvidence
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "a body whose enter went out", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.DeliveryAttempts.ShouldBe(1, "the Enter was sent; the attempt is not refundable");
+        message.LastDeliveryBaselineSequence.ShouldBeNull();
+        h.Adapter.Killed.ShouldBeTrue();
+    }
+
+    // Not always-on: no kill either way, but the accounting still has to be right, because the
+    // attempt counter is what the queue UI and every flush predicate read.
+    [Test]
+    public async Task The_refund_applies_to_non_always_on_agents_too()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "a manual agent's first message", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .DeliveryAttempts.ShouldBe(0);
+        h.Adapter.Killed.ShouldBeFalse();
     }
 }

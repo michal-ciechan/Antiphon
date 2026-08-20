@@ -93,6 +93,30 @@ public static class ComposerDeliveryEvidence
     }
 
     /// <summary>
+    /// Is a short, self-chosen <paramref name="fragment"/> on the rendered screen, by the SAME
+    /// normalisation and window matching <see cref="IsVisible"/> applies to a body's head/tail?
+    ///
+    /// <para>CARD-0103's input probe is the caller: it writes a ~10-character token and asks whether
+    /// the TUI actually rendered it, which is the only signal that distinguishes a composer that is
+    /// painted from one that is READING. A token that short takes the direct-contains arm of
+    /// <see cref="FragmentVisible"/>, so this is <see cref="IsVisible"/>'s first arm and nothing
+    /// else — deliberately without the paste-placeholder arms, which exist for a collapsed body and
+    /// would answer "yes" to a placeholder left over from someone else's paste.</para>
+    ///
+    /// <para>Exposed rather than reimplemented: the matching rules were replayed correct against
+    /// the failing session's own ANSI log (CARD-0103's investigation) and there must not be a second
+    /// copy of them to drift.</para>
+    /// </summary>
+    public static bool FragmentIsVisible(string screen, string fragment)
+    {
+        var needle = Normalize(fragment);
+        if (needle.Length == 0)
+            return true;
+        var haystack = Normalize(screen);
+        return haystack.Length != 0 && FragmentVisible(haystack, needle);
+    }
+
+    /// <summary>
     /// The <c>#N</c> of every <c>[Pasted text #N +M lines]</c> on a rendered screen. Read from the
     /// RAW screen, not the whitespace-stripped form, because the number is what identifies the
     /// paste and the surrounding spaces are what delimit it. Tolerant of the composer's wrapping:

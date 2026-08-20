@@ -23,6 +23,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     private readonly ILogger? _logger;
     private TaskCompletionSource? _firstPromptOutput;
     private bool _started;
+    private Guid _sessionId;
 
     public ClaudeAdapter(IOptions<AgentRegistrySettings> options, ILogger? logger = null)
     {
@@ -51,6 +52,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     {
         if (_started) throw new InvalidOperationException("ClaudeAdapter already started.");
         _started = true;
+        _sessionId = spec.SessionId ?? Guid.NewGuid();
 
         _runner.OnData += ForwardData;
 
@@ -108,6 +110,9 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
+        // Visible output, then quiet, then the ClaudeReadyMinTotalWaitMs floor — all three inside
+        // ClaudeReadyDetector, so the probe below is still strictly after the floor (the one window
+        // where writes are accepted and silently DROPPED rather than buffered).
         if (!await _readyDetector.WaitAsync(_runner, ct))
             return false;
 
@@ -127,7 +132,62 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
                 "Blocked on a modal that will not be auto-answered ({Kind}): {Title}",
                 resolution.Prompt?.Kind, resolution.Prompt?.Title);
 
-        return resolution.Outcome is not ClaudeStartupBlockOutcome.TrustNotCleared;
+        if (resolution.Outcome is ClaudeStartupBlockOutcome.TrustNotCleared)
+            return false;
+
+        // CARD-0103's input-responsiveness probe, in lockstep with RunnerClaudeAdapter — quiet is
+        // not reading, and this is the only step that proves the difference. SKIPPED on the
+        // NotAnswerable arm: typing into a modal we deliberately refuse to answer is exactly the
+        // keystroke CARD-0047 declined to send.
+        if (resolution.Outcome is ClaudeStartupBlockOutcome.NotAnswerable)
+        {
+            _logger?.LogWarning(
+                "Skipping the input-responsiveness probe: an un-auto-answerable modal is standing.");
+            return true;
+        }
+
+        return await ProbeComposerInputAsync(ct);
+    }
+
+    /// <inheritdoc cref="ComposerInputProbe"/>
+    private async Task<bool> ProbeComposerInputAsync(CancellationToken ct)
+    {
+        if (_settings.ClaudeInputProbeTimeoutMs <= 0)
+            return true;
+
+        var result = await ComposerInputProbe.RunAsync(
+            ComposerInputProbe.TokenFor(_sessionId),
+            _ => Task.FromResult(_runner.SnapshotScreen()),
+            (input, token) => _runner.WriteAsync(input, token),
+            ComposerProbeOptions.FromMilliseconds(
+                _settings.ClaudeInputProbeTimeoutMs,
+                _settings.ClaudeInputProbePollIntervalMs,
+                _settings.ClaudeInputProbeRetypeIntervalMs,
+                _settings.ClaudeInputProbeClearTimeoutMs,
+                _settings.ClaudeInputProbeMaxWrites),
+            message => _logger?.LogWarning("Input probe: {Message}", message),
+            ct);
+
+        if (result.Responsive)
+        {
+            if (result.Writes > 1 || result.Elapsed > TimeSpan.FromSeconds(5))
+                _logger?.LogWarning(
+                    "The TUI took {Elapsed:F1}s and {Writes} write(s) to answer the input probe; "
+                    + "anything typed in that window would have looked like a wedged composer.",
+                    result.Elapsed.TotalSeconds, result.Writes);
+            return true;
+        }
+
+        _logger?.LogError(
+            "The TUI is NOT reading input: probe token '{Token}' {Failure} after {Elapsed:F1}s and "
+            + "{Writes} write(s). Reporting the launch as not ready rather than typing into it.",
+            result.Token,
+            result.Outcome == ComposerProbeOutcome.NeverAppeared
+                ? "never rendered"
+                : "rendered but could not be cleared",
+            result.Elapsed.TotalSeconds,
+            result.Writes);
+        return false;
     }
 
     public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
