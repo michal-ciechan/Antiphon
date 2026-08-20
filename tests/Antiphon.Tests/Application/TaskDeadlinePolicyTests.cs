@@ -262,6 +262,81 @@ public class TaskDeadlinePolicyTests
             "the row still REPORTS the real age — it just is not charged for it");
     }
 
+    // ---- section 3.3: arrival order is not time order --------------------------------------------
+
+    [Test]
+    public async Task the_last_entry_is_the_newest_by_TIME_not_by_sequence()
+    {
+        // Stored sequences are ARRIVAL-ordered: a catch-up sync rebases entries it missed PAST the
+        // session's max, so the highest Sequence is not always the newest record. Measured over the
+        // live corpus 2026-08-20: 195 of 71 801 adjacent pairs (0.27%) run backwards in time, 72 of
+        // them by more than a minute. Here the ToolCall arrived last and so holds the top sequence,
+        // but its own timestamp is 40 minutes old while the real tail is 2 minutes old.
+        await using var scenario = new Scenario();
+        await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 60),
+            (TranscriptKinds.AssistantText, "still going", 2),
+            (TranscriptKinds.ToolCall, null, 40));
+
+        var last = await scenario.LastEntryAsync();
+
+        last.ShouldNotBeNull();
+        last.Kind.ShouldBe(
+            TranscriptKinds.AssistantText,
+            "the record's own timestamp survives reordering; its stored sequence does not");
+    }
+
+    [Test]
+    public async Task a_backfilled_sequence_cannot_manufacture_a_stall()
+    {
+        // The same shape through the whole policy, with the local-execution deadline pulled down to
+        // 5 minutes so that reading Sequence alone WOULD breach: a 40-minute-old ToolCall against a
+        // 5-minute limit. The tie-break is the only thing standing between this healthy session and
+        // a failed task, and the override direction is safe by construction — a strictly later
+        // timestamp can only ever make a stall look younger, never older.
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.UserPrompt, "the brief", 60),
+            (TranscriptKinds.AssistantText, "still going", 2),
+            (TranscriptKinds.ToolCall, null, 40));
+
+        var verdict = await scenario.EvaluateAsync(
+            task, new DelegationSettings { LocalExecutionDeadlineMinutes = 5 });
+
+        verdict.ShouldBeNull(
+            "the real tail is two minutes old, and nothing here is within 80% of any deadline");
+    }
+
+    // ---- the numbers themselves ------------------------------------------------------------------
+
+    [Test]
+    public void the_shipped_deadlines_are_the_measured_ones_and_the_ceiling_is_not_60()
+    {
+        var settings = new DelegationSettings();
+
+        // 240 = ~3x the measured p99 of 88.6 minutes. Emphatically NOT the 60 this field declared
+        // for a year while being read NOWHERE: 5 of 247 successful tasks (2.0%) ran past 60 minutes
+        // and the longest Succeeded task ran 2 732, so giving the dead default teeth would have
+        // killed real work on the day it shipped. This is the one decision on this card that a
+        // future edit is most likely to make casually, so it is pinned.
+        settings.RolePolicy["Code"].TimeoutMinutes.ShouldBe(240);
+        settings.RolePolicy["Debug"].TimeoutMinutes.ShouldBe(240);
+        settings.DefaultTimeoutMinutes.ShouldBe(
+            240, "Custom and Check have no RolePolicy entry — unconfigured is not unwatched");
+
+        // ~3x the measured maxima: 217 s for a first token after a prompt, 1 478 s after a tool
+        // result, 5 311 s for a local tool. The card's own proposal of ~60 s sits between p95 (41 s)
+        // and p99 (163 s) — roughly 1 turn in 25.
+        settings.ModelWaitDeadlineMinutes.ShouldBe(20);
+        settings.LocalExecutionDeadlineMinutes.ShouldBe(90);
+
+        // And the preview band the attention row uses, which is what makes Overdue a warning a human
+        // can still act on rather than a report of a task that has already been failed.
+        TaskDeadlinePolicy.PreviewFraction.ShouldBe(0.8);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private sealed class Scenario : IAsyncDisposable
@@ -337,6 +412,12 @@ public class TaskDeadlinePolicyTests
             }
 
             await db.SaveChangesAsync();
+        }
+
+        public async Task<TaskDeadlinePolicy.LastEntry?> LastEntryAsync()
+        {
+            await using var db = CreateContext();
+            return await TaskDeadlinePolicy.LoadLastEntryAsync(db, _sessionId, CancellationToken.None);
         }
 
         public async Task<TaskDeadlinePolicy.Verdict?> EvaluateAsync(

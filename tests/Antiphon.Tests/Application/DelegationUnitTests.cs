@@ -157,6 +157,66 @@ public class DelegationWorkspaceBoundaryTests
         }
     }
 
+    [Test]
+    public async Task a_caller_with_no_directory_of_its_own_is_told_it_inherits_nothing()
+    {
+        // CARD-0020 S1: an EMPTY parentDirectory is exactly the token-less caller. It used to be the
+        // server process's own cwd, so this branch was unreachable and the refusal never had to say
+        // anything useful.
+        var resolver = new DelegationWorkspaceResolver(NullLoggerFor<DelegationWorkspaceResolver>());
+
+        var ex = await Should.ThrowAsync<DelegationWorkspaceResolver.RejectedException>(
+            () => resolver.ResolveAsync(null, string.Empty, [], CancellationToken.None));
+
+        ex.Message.ShouldContain("none to inherit");
+        ex.Message.ShouldContain("X-Antiphon-Task-Token");
+    }
+
+    [Test]
+    public async Task an_outside_root_rejection_says_why_a_token_less_caller_has_no_root()
+    {
+        // The live 422 read "Add it to Delegation:AllowedRoots to permit it" and nothing else, which
+        // an agent reads as "your path is wrong" — and the fix it suggests is editing a security
+        // boundary the caller may not need to touch.
+        var resolver = new DelegationWorkspaceResolver(NullLoggerFor<DelegationWorkspaceResolver>());
+        var stranger = Directory.CreateTempSubdirectory("antiphon-stranger");
+        try
+        {
+            var ex = await Should.ThrowAsync<DelegationWorkspaceResolver.RejectedException>(
+                () => resolver.ResolveAsync(stranger.FullName, string.Empty, [], CancellationToken.None));
+
+            ex.Message.ShouldContain("outside the allowed roots");
+            ex.Message.ShouldContain("inherits NOTHING");
+        }
+        finally
+        {
+            stranger.Delete(true);
+        }
+    }
+
+    [Test]
+    public async Task an_outside_root_rejection_stays_short_for_a_caller_that_does_have_a_root()
+    {
+        // The token path is unchanged: it HAS a tree of its own, so the AllowedRoots advice is the
+        // whole story and the extra paragraph would be noise.
+        var resolver = new DelegationWorkspaceResolver(NullLoggerFor<DelegationWorkspaceResolver>());
+        var parent = Directory.CreateTempSubdirectory("antiphon-parent");
+        var stranger = Directory.CreateTempSubdirectory("antiphon-stranger");
+        try
+        {
+            var ex = await Should.ThrowAsync<DelegationWorkspaceResolver.RejectedException>(
+                () => resolver.ResolveAsync(stranger.FullName, parent.FullName, [], CancellationToken.None));
+
+            ex.Message.ShouldContain("outside the allowed roots");
+            ex.Message.ShouldNotContain("inherits NOTHING");
+        }
+        finally
+        {
+            parent.Delete(true);
+            stranger.Delete(true);
+        }
+    }
+
     internal static Microsoft.Extensions.Logging.ILogger<T> NullLoggerFor<T>() =>
         Microsoft.Extensions.Logging.Abstractions.NullLogger<T>.Instance;
 }
