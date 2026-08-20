@@ -29,17 +29,55 @@ public sealed class AgentTuiDiscoveryTests
     private static readonly Guid TestActorId =
         new("a0000000-0000-0000-0000-000000000004");
     private const string WrapperPath = @"C:\synthetic\ocg.ps1";
-    private readonly TestDbFixture _fixture;
+    /// <summary>
+    /// One migrated schema for this whole class, so nothing it writes is visible to the rest of
+    /// the assembly. Every other AgentTui suite already isolates (AgentTuiProfileServiceTests,
+    /// AgentTuiProfileConcurrencyTests, AgentTuiLaunchResolverTests, AgentTuiApiWebAppFactory);
+    /// this one wrote its profiles straight into the shared public schema, and that leaked.
+    ///
+    /// AgentTuiProfileService.CreateAsync makes the FIRST profile in a schema the INSTALLATION
+    /// DEFAULT whatever the request said ("makeDefault = request.IsDefault || !hasDefault"), and
+    /// AgentService.CreateAsync then hands that default to every agent any other suite creates —
+    /// its lookup is an unscoped SingleOrDefaultAsync(p => p.IsDefault). A harness that wires no
+    /// AgentTuiLaunchResolver (AgentSupervisionTests, among others) then dies on ConflictException
+    /// "The selected runner profile cannot be resolved by this installation."
+    ///
+    /// CleanupProfilesAsync could not be relied on to close that window: once a concurrently
+    /// running suite's agent row points at the profile, deleting it is an FK violation, the
+    /// cleanup throws, and the default stands for the rest of the session.
+    ///
+    /// Per CLASS, not per test: an isolated schema runs every migration, and ~40 of those would
+    /// dominate the run — the same DDL cost AgentTuiProfileServiceTests serializes itself for.
+    /// </summary>
+    private static IsolatedTestSchema? _schema;
+
+    private static string SchemaConnectionString =>
+        _schema?.ConnectionString
+        ?? throw new InvalidOperationException("The isolated schema was not created.");
+
+    private static AppDbContext CreateDbContext() =>
+        new(TestDbFixture.CreateDbContextOptions(SchemaConnectionString));
+
+    [Before(Class)]
+    public static async Task CreateSchemaAsync() =>
+        _schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+
+    [After(Class)]
+    public static async Task DropSchemaAsync()
+    {
+        if (_schema is not null)
+            await _schema.DisposeAsync();
+        _schema = null;
+    }
 
     public AgentTuiDiscoveryTests(TestDbFixture fixture)
     {
-        _fixture = fixture;
     }
 
     [After(Test)]
     public async Task CleanupProfilesAsync()
     {
-        await using var db = _fixture.CreateDbContext();
+        await using var db = CreateDbContext();
         var profileIds = await db.AgentTuiProfiles
             .Where(profile => profile.DisplayName.StartsWith("Task 4 "))
             .Select(profile => profile.Id)
@@ -731,7 +769,7 @@ public sealed class AgentTuiDiscoveryTests
         (await ReadModelsAsync(provider, profile.Id))
             .Single(model => model.Identifier == "provider/rejected-version")
             .RunnerVersion.ShouldBeNull();
-        await using var db = _fixture.CreateDbContext();
+        await using var db = CreateDbContext();
         (await db.AgentTuiValidationRuns.AsNoTracking().SingleAsync(candidate => candidate.Id == run.Id))
             .RunnerVersion.ShouldBeNull();
     }
@@ -760,7 +798,7 @@ public sealed class AgentTuiDiscoveryTests
         (await ReadModelsAsync(provider, profile.Id))
             .Single(model => model.Identifier == "provider/no-diagnostic-version")
             .RunnerVersion.ShouldBeNull();
-        await using var db = _fixture.CreateDbContext();
+        await using var db = CreateDbContext();
         (await db.AgentTuiValidationRuns.AsNoTracking().SingleAsync(candidate => candidate.Id == run.Id))
             .RunnerVersion.ShouldBeNull();
     }
@@ -885,7 +923,7 @@ public sealed class AgentTuiDiscoveryTests
         probe.Enqueue(Success("llmgateway/grok-4-5\noperator/custom-model\n"));
         await using var provider = BuildProvider(probe);
         var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
-        await using (var db = _fixture.CreateDbContext())
+        await using (var db = CreateDbContext())
         {
             db.AgentTuiModels.Add(new AgentTuiModel
             {
@@ -906,7 +944,7 @@ public sealed class AgentTuiDiscoveryTests
             .ShouldBe(AgentTuiModelAvailability.Verified);
         verified.Single(model => model.Identifier == "operator/custom-model").Availability
             .ShouldBe(AgentTuiModelAvailability.Verified);
-        await using (var db = _fixture.CreateDbContext())
+        await using (var db = CreateDbContext())
         {
             db.AgentTuiModels.Add(new AgentTuiModel
             {
@@ -970,7 +1008,7 @@ public sealed class AgentTuiDiscoveryTests
         var profile = await CreateProfileAsync(provider, AgentKind.OpenCode);
         await RefreshAsync(provider, profile.Id);
         Guid discoveredId;
-        await using (var db = _fixture.CreateDbContext())
+        await using (var db = CreateDbContext())
         {
             discoveredId = await db.AgentTuiModels
                 .Where(model => model.ProfileId == profile.Id
@@ -991,7 +1029,7 @@ public sealed class AgentTuiDiscoveryTests
                 CancellationToken.None);
         }
 
-        await using var verifyDb = _fixture.CreateDbContext();
+        await using var verifyDb = CreateDbContext();
         var persisted = await verifyDb.AgentTuiModels.AsNoTracking()
             .Where(model => model.ProfileId == profile.Id
                             && model.Identifier == "provider/promoted-model")
@@ -1076,7 +1114,7 @@ public sealed class AgentTuiDiscoveryTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("Unreachable.");
         };
-        await using var lockingDb = _fixture.CreateDbContext();
+        await using var lockingDb = CreateDbContext();
         await using var transaction = await lockingDb.Database.BeginTransactionAsync();
         var locked = await lockingDb.AgentTuiModels
             .SingleAsync(model => model.ProfileId == profile.Id
@@ -1094,7 +1132,7 @@ public sealed class AgentTuiDiscoveryTests
         probe.Handler = null;
         probe.Enqueue(Success("provider/recovered\n"));
         await RefreshAsync(provider, profile.Id);
-        await using var verifyDb = _fixture.CreateDbContext();
+        await using var verifyDb = CreateDbContext();
         (await verifyDb.AgentTuiValidationRuns.AsNoTracking()
             .CountAsync(run => run.ProfileId == profile.Id
                                && run.Operation == "discovery"
@@ -1382,7 +1420,7 @@ public sealed class AgentTuiDiscoveryTests
 
         var validation = ValidateAsync(provider, profile.Id);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await using var lockingDb = _fixture.CreateDbContext();
+        await using var lockingDb = CreateDbContext();
         await using var transaction = await lockingDb.Database.BeginTransactionAsync();
         var running = await lockingDb.AgentTuiValidationRuns
             .SingleAsync(run => run.ProfileId == profile.Id
@@ -1404,7 +1442,7 @@ public sealed class AgentTuiDiscoveryTests
 
         reconciled.Status.ShouldBe(AgentTuiValidationStatus.TimedOut);
         reconciled.CompletedAt.ShouldNotBeNull();
-        await using var verifyDb = _fixture.CreateDbContext();
+        await using var verifyDb = CreateDbContext();
         (await verifyDb.AgentTuiValidationRuns.AsNoTracking()
             .SingleAsync(run => run.Id == running.Id)).Status
             .ShouldBe(AgentTuiValidationStatus.TimedOut);
@@ -1508,7 +1546,7 @@ public sealed class AgentTuiDiscoveryTests
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options => options.UseNpgsql(
-            TestDbFixture.ConnectionString,
+            SchemaConnectionString,
             npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");

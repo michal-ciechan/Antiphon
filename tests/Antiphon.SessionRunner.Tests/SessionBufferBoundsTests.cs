@@ -18,11 +18,23 @@ namespace Antiphon.SessionRunner.Tests;
 /// were unbounded.
 ///
 /// These tests use a deliberately tiny ReplayBufferMaxChars so a few KB of output crosses the cap.
+///
+/// The cap and the filler volume are both deliberately small, and the volume is SIZED, not picked.
+/// What these tests have to prove is a ratio — output well past the cap, head evicted, tail kept —
+/// and the cheapest output that proves it is the right amount. 600 lines was not: cmd's `for /l`
+/// rewrites the window title on every iteration, so the pty carries ~3x the bytes of the text and
+/// this measured 7-14 lines/sec on a loaded box. The 30s WaitForSnapshotAsync deadline then
+/// expired mid-loop and Live_buffer_stays_bounded_and_keeps_the_newest_output failed with the
+/// mirror sitting at filler-431 of 600 — nothing wrong with the buffer, the shell was simply
+/// still typing. 100 lines (~5 KB) is 2.5x the live buffer's 2x-cap trim ceiling, 5x the /buffer
+/// cap and 1.3x the on-disk log floor, and finishes in ~14s at the worst rate measured. Raising
+/// the deadline instead would have kept the cost and hidden the next real regression behind it.
 /// </summary>
 [NotInParallel("SessionLiveness")]
 public class SessionBufferBoundsTests
 {
-    private const int Cap = 4096;
+    private const int Cap = 1024;
+    private const int FillerLines = 100;
 
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
 
@@ -37,10 +49,10 @@ public class SessionBufferBoundsTests
         var dto = await StartInteractiveSessionAsync(runtime, sessionId);
         try
         {
-            // ~60KB of output - many times the 4KB cap.
+            // ~5KB of output - many times the 1KB cap, and well past the 2x-cap trim ceiling.
             await runtime.SendInputAsync(
                 sessionId,
-                "for /l %i in (1,1,600) do @echo filler-%i-0123456789012345678901234567890123456789\r",
+                $"for /l %i in (1,1,{FillerLines}) do @echo filler-%i-0123456789012345678901234567890123456789\r",
                 CancellationToken.None);
             await runtime.SendInputAsync(sessionId, "echo NEWEST-MARKER\r", CancellationToken.None);
             await WaitForSnapshotAsync(runtime, sessionId, text => text.Contains("NEWEST-MARKER"));
@@ -76,7 +88,7 @@ public class SessionBufferBoundsTests
         {
             await runtime.SendInputAsync(
                 sessionId,
-                "for /l %i in (1,1,600) do @echo filler-%i-0123456789012345678901234567890123456789\r",
+                $"for /l %i in (1,1,{FillerLines}) do @echo filler-%i-0123456789012345678901234567890123456789\r",
                 CancellationToken.None);
             await runtime.SendInputAsync(sessionId, "echo NEWEST-MARKER\r", CancellationToken.None);
             await WaitForSnapshotAsync(runtime, sessionId, text => text.Contains("NEWEST-MARKER"));
@@ -134,18 +146,58 @@ public class SessionBufferBoundsTests
         return dto;
     }
 
+    /// <summary>
+    /// Waits on PROGRESS, not on a wall clock.
+    ///
+    /// A fixed 30s deadline here could not tell the two things apart that it needed to: a mirror
+    /// that is STUCK, which is the defect these tests exist to catch, and a shell that is merely
+    /// SLOW, which says nothing about the buffer at all. Measured on this box, cmd pushed anywhere
+    /// from ~1 to over 100 filler lines a second through the pty depending on what else was
+    /// running — the title escape it rewrites every iteration costs more than the text — so no
+    /// choice of volume or deadline is safe on both. The failure it produced was a plain timeout
+    /// with the mirror sitting mid-loop at filler-431 of 600, and the test was green on its own.
+    ///
+    /// So the stall clock resets whenever the mirror's CONTENT changes. Length cannot be the
+    /// signal: the buffer under test is trimmed at 2x the cap, so it plateaus while output is
+    /// still flowing. The hard ceiling stays as a backstop for a session that dies outright.
+    /// </summary>
     private static async Task WaitForSnapshotAsync(
         SessionRunnerRuntime runtime, Guid sessionId, Func<string, bool> predicate)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-        while (DateTime.UtcNow < deadline)
+        var hardDeadline = DateTime.UtcNow + TimeSpan.FromMinutes(3);
+        var stallLimit = TimeSpan.FromSeconds(20);
+        var lastChange = DateTime.UtcNow;
+        string? previous = null;
+        var stalled = false;
+
+        while (DateTime.UtcNow < hardDeadline)
         {
-            if (predicate(runtime.GetSnapshot(sessionId).RawOutput))
+            var raw = runtime.GetSnapshot(sessionId).RawOutput;
+            if (predicate(raw))
                 return;
+
+            if (!string.Equals(raw, previous, StringComparison.Ordinal))
+            {
+                previous = raw;
+                lastChange = DateTime.UtcNow;
+            }
+            else if (DateTime.UtcNow - lastChange > stallLimit)
+            {
+                stalled = true;
+                break;
+            }
+
             await Task.Delay(100);
         }
 
-        throw new System.TimeoutException("Snapshot predicate not satisfied before the deadline.");
+        // Say WHAT the mirror held, and which of the two failures this was.
+        var final = runtime.GetSnapshot(sessionId).RawOutput;
+        var tail = final.Length <= 400 ? final : final[^400..];
+        throw new System.TimeoutException(
+            (stalled
+                ? $"Mirror stopped changing for {stallLimit.TotalSeconds:N0}s before the predicate was satisfied. "
+                : "Predicate never satisfied inside the hard ceiling. ")
+            + $"RawOutput was {final.Length} chars; tail: {tail}");
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)

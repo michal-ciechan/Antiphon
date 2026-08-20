@@ -819,6 +819,9 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
     private string IsolatedConnectionString => _isolatedSchema?.ConnectionString
         ?? throw new InvalidOperationException("The API test schema must be created before the host starts.");
 
+    /// <summary>This factory owns its schema already; do not let the base create a second one.</summary>
+    protected override string ConnectionString => IsolatedConnectionString;
+
     private async Task EnsureIsolatedSchemaAsync()
     {
         if (_isolatedSchema is not null)

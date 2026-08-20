@@ -28,6 +28,28 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 public class AntiphonWebAppFactory : WebApplicationFactory<Program>
 {
+    /// <summary>
+    /// This host's own migrated schema. It must NOT be the shared public one, because booting the
+    /// real app is not a read-only act: Program.cs runs AgentTuiProfileImporter.ImportAsync at
+    /// startup, which materialises a profile per configured agent definition and marks one the
+    /// INSTALLATION DEFAULT. AgentService.CreateAsync then hands that default to every agent any
+    /// other suite creates — its lookup is an unscoped SingleOrDefaultAsync(p => p.IsDefault) —
+    /// and a harness that wires no AgentTuiLaunchResolver (AgentSupervisionTests, among others)
+    /// then dies on ConflictException "The selected runner profile cannot be resolved by this
+    /// installation." Whether that happened depended purely on whether this host had booted yet,
+    /// so it moved with scheduling order rather than with any test's own behaviour.
+    ///
+    /// Lazy and blocking because ConfigureWebHost is synchronous and runs inside
+    /// WebApplicationFactory.EnsureServer(); one schema per factory instance, one migration run.
+    /// Subclasses that already own a schema override <see cref="ConnectionString"/> and this is
+    /// never created.
+    /// </summary>
+    private readonly Lazy<IsolatedTestSchema> _schema = new(() =>
+        TestDbFixture.CreateIsolatedSchemaAsync().GetAwaiter().GetResult());
+
+    /// <summary>The database this host runs against. Override to supply your own schema.</summary>
+    protected virtual string ConnectionString => _schema.Value.ConnectionString;
+
     private readonly string _workspacePath =
         Path.Combine(Path.GetTempPath(), "antiphon-waf", Guid.NewGuid().ToString("N"));
 
@@ -39,7 +61,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DefaultConnection"] = TestDbFixture.ConnectionString,
+                ["ConnectionStrings:DefaultConnection"] = ConnectionString,
                 ["Git:WorkspacePath"] = _workspacePath,
                 ["Git:WorktreeBasePath"] = Path.Combine(_workspacePath, "worktrees"),
                 ["AgentTui:KeyRingPath"] = Path.Combine(_workspacePath, "data-protection-keys"),
@@ -69,7 +91,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 services.Remove(descriptor);
 
             services.AddDbContext<AppDbContext>(options =>
-                options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+                options.UseNpgsql(ConnectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly("Antiphon.Server");
                     npgsql.SetPostgresVersion(16, 0);
@@ -93,6 +115,13 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
         foreach (var cache in scope.ServiceProvider.GetServices<IResettableCache>())
             cache.Clear();
         return Task.CompletedTask;
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        if (_schema.IsValueCreated)
+            await _schema.Value.DisposeAsync();
     }
 
     protected override void Dispose(bool disposing)

@@ -454,8 +454,18 @@ public class AgentTaskOverdueDeadlineTests
 /// — so a missing registration in the real container would not throw. It would leave the two sweeps
 /// that make irreversible decisions judging whatever happened to stream, forever, with no symptom
 /// anywhere. That is exactly the CARD-0055 failure the pull exists to prevent.
+///
+/// <c>[NotInParallel]</c> is REQUIRED here, not stylistic: the session-shared
+/// <see cref="AntiphonWebAppFactory"/> is a <c>WebApplicationFactory</c>, whose first-touch
+/// <c>EnsureServer()</c> is not thread-safe. Every other consumer of the same shared instance
+/// carries <c>[NotInParallel]</c>, so this class was the only one that could touch it
+/// concurrently — and when it won that race the shared factory was left holding a TestServer
+/// that had never been started, failing all 32 tests across the other six classes with
+/// "The server has not been started or no web application was configured." while this one
+/// passed. Any new class taking the shared factory must carry this attribute too.
 /// </summary>
 [Category("Integration")]
+[NotInParallel]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
 public class AgentTaskDispatcherWiringTests
 {
