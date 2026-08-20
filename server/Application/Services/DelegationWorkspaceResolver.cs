@@ -23,6 +23,19 @@ public sealed class DelegationWorkspaceResolver
     public sealed class RejectedException(string message) : Exception(message);
 
     /// <summary>
+    /// Appended whenever <c>parentDirectory</c> is empty — which is exactly the token-less caller
+    /// (CARD-0020 S1). A request with no <c>X-Antiphon-Task-Token</c> has no parent task and no
+    /// parent session, so it has no directory to inherit and no implicit permission. It used to
+    /// inherit the SERVER PROCESS's own cwd instead, which silently authorised a folder nobody
+    /// named and refused that folder's parent — the repo root — as "outside the allowed roots".
+    /// </summary>
+    internal const string NothingToInherit =
+        "A request with no delegation token (X-Antiphon-Task-Token) has no parent to inherit a "
+        + "working directory from, so it inherits NOTHING: workingDirectory is required and must "
+        + "name a directory that Delegation:AllowedRoots already permits. Sending the request with "
+        + "a task or session token instead makes that task's own directory the implicit root.";
+
+    /// <summary>
     /// Resolve the requested directory (or fall back to the parent's), verify it exists and sits
     /// under an allowed root, and derive the git toplevel.
     /// </summary>
@@ -34,7 +47,10 @@ public sealed class DelegationWorkspaceResolver
     {
         var target = string.IsNullOrWhiteSpace(requestedDirectory) ? parentDirectory : requestedDirectory.Trim();
         if (string.IsNullOrWhiteSpace(target))
-            throw new RejectedException("No working directory was given and the caller has none to inherit.");
+        {
+            throw new RejectedException(
+                "No working directory was given and the caller has none to inherit. " + NothingToInherit);
+        }
 
         string full;
         try
@@ -57,8 +73,17 @@ public sealed class DelegationWorkspaceResolver
 
         if (!roots.Any(root => IsWithinRoot(full, root)))
         {
+            // WHY the caller has no root of its own matters more than the rule it broke. With a
+            // parent directory the ordinary fix is Delegation:AllowedRoots. WITHOUT one — the
+            // token-less path since CARD-0020 S1 — the caller has no tree of its own to fall back
+            // on, so "add it to AllowedRoots" alone reads as "your path is wrong" and sends an
+            // agent to edit a security boundary it may not need to touch.
+            var why = string.IsNullOrWhiteSpace(parentDirectory)
+                ? " " + NothingToInherit
+                : string.Empty;
             throw new RejectedException(
-                $"Directory '{full}' is outside the allowed roots. Add it to Delegation:AllowedRoots to permit it.");
+                $"Directory '{full}' is outside the allowed roots. "
+                + $"Add it to Delegation:AllowedRoots to permit it.{why}");
         }
 
         return new Resolution(full, await GetRepoToplevelAsync(full, ct));

@@ -93,13 +93,28 @@ public static class AgentTaskEndpoints
     /// A request with no token is the MANUAL path (the UI, already authenticated by the app's own
     /// auth): no parent, no reply routing, result lands on the board. A request WITH one is an
     /// agent delegating, and the token decides whether it is allowed to.
+    ///
+    /// <para><b>A token-less caller inherits NOTHING</b> (CARD-0020 S1). This used to hand back
+    /// <c>Directory.GetCurrentDirectory()</c> — the SERVER PROCESS's own cwd, which on this
+    /// deployment is <c>&lt;repo&gt;\server</c>. That is not the caller's directory in any sense,
+    /// and it silently became the one implicit permission
+    /// <see cref="DelegationWorkspaceResolver"/> grants ("the parent's OWN tree"), so a shell
+    /// <c>curl</c> with no token either authorised the server's own folder without anyone asking
+    /// for it, or — for the repo root, which is that folder's PARENT — was refused as "outside the
+    /// allowed roots" and told to edit config it did not need to edit (reproduced live twice,
+    /// 2026-08-20). An empty directory makes <c>workingDirectory</c> effectively mandatory on this
+    /// path and turns both silences into one explicit refusal.</para>
+    ///
+    /// <para>Internal rather than private so <c>AgentTaskCallerResolutionTests</c> can pin the
+    /// no-token shape directly; there is nothing else to assert it through short of an HTTP round
+    /// trip against a configured server.</para>
     /// </summary>
-    private static async Task<AgentTaskService.Caller> ResolveCallerAsync(
+    internal static async Task<AgentTaskService.Caller> ResolveCallerAsync(
         HttpContext http, AgentTaskService service, CancellationToken ct)
     {
         var token = http.Request.Headers[TokenHeader].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token))
-            return new AgentTaskService.Caller(null, null, Directory.GetCurrentDirectory());
+            return new AgentTaskService.Caller(null, null, string.Empty);
 
         return await service.AuthenticateAsync(token, ct);
     }

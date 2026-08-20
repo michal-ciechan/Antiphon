@@ -129,7 +129,16 @@ public sealed record AgentTaskEventDto(
 public sealed record AgentTaskCreatedDto(
     Guid Id, string ShortId, AgentTaskStatus Status, AgentModelLevel ModelLevel, string? Warning = null,
     /// <summary>The resolved agent kind — the script echoes it so a Grok delegate is never a surprise.</summary>
-    AgentKind AgentKind = Domain.Enums.AgentKind.ClaudeCode);
+    AgentKind AgentKind = Domain.Enums.AgentKind.ClaudeCode,
+    /// <summary>
+    /// True when this task's report will NOT be routed back to anybody — <c>ReplyTo == None</c>,
+    /// which is every token-less caller (CARD-0020 S1): no token means no parent task and no parent
+    /// session, so there is nowhere for the completion note to go and the result only ever lands on
+    /// the board. That was previously stated ONLY in a comment on the endpoint, so a shell caller
+    /// pasting a <c>curl</c> learned it by never receiving the report. Said here, at creation, it
+    /// is the one moment the caller can still decide to send a token instead.
+    /// </summary>
+    bool NoReplyRouting = false);
 
 public sealed record ReplyToAgentTaskRequest(string Message);
 

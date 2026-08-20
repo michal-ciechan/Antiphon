@@ -163,6 +163,12 @@ export interface AgentTaskCreatedDto {
   modelLevel: AgentModelLevel
   /** Set when the creation was legal but risky — surface it, the caller can still reconsider. */
   warning: string | null
+  /**
+   * True when the report will not be routed anywhere — `ReplyTo == None`, i.e. the caller had no
+   * token and so no parent task or session to report back to. The result only lands on the board
+   * (CARD-0020 S1). Optional: a server that predates the field simply omits it.
+   */
+  noReplyRouting?: boolean
 }
 
 /** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */

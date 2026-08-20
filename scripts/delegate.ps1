@@ -189,8 +189,17 @@ switch ($PSCmdlet.ParameterSetName) {
         # config is exactly the case where the caller asked for nothing and should still see it.
         $kindNote = ''
         if ($created.agentKind -and $created.agentKind -ne 'ClaudeCode') { $kindNote = " [$($created.agentKind)]" }
-        Write-Output ("queued task {0} ({1} {2} on {3}{4}) - its report will arrive in your session" -f `
-                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote)
+        # Where the report goes is a fact about THIS task, not a constant. A token-less caller has
+        # no parent task and no parent session, so nothing is routed anywhere and the result only
+        # lands on the board - saying "its report will arrive in your session" there is a lie the
+        # caller can only discover by waiting forever (CARD-0020 S1).
+        $routing = if ($created.noReplyRouting) {
+            " - NO REPLY WILL BE ROUTED: read the result on the board (antiphon task get {0})" -f $created.shortId
+        } else {
+            " - its report will arrive in your session"
+        }
+        Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}" -f `
+                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
         return

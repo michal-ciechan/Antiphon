@@ -269,13 +269,60 @@ public sealed class DelegationSettings
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
 
     /// <summary>
-    /// A Dispatched task whose session has ZERO transcript entries after this long never received
-    /// its brief — it fails loudly instead of sitting Dispatched forever (CARD-0003/CARD-0020).
-    /// Long enough for the stranded-queue watchdog (60s cadence) to redeliver a reverted brief
-    /// several times first; a genuinely slow FIRST TURN still counts as started the moment any
-    /// transcript entry lands, so this never fires on slow work.
+    /// A Dispatched task whose session has written no TURN PROMPT of its own after this long never
+    /// received its brief — it fails loudly instead of sitting Dispatched forever
+    /// (CARD-0003/CARD-0020). Long enough for the stranded-queue watchdog (60s cadence) to
+    /// redeliver a reverted brief several times first; a genuinely slow FIRST TURN still counts as
+    /// started the moment its prompt lands, so this never fires on slow work.
+    ///
+    /// <para>The predicate is <c>TranscriptPromptSpan.HasTurnPromptSinceAsync</c>, NOT "zero
+    /// transcript entries" — that was true until CARD-0077 and is what this comment used to say. A
+    /// REUSED warm-pool session inherits the previous task's history, so "any entry at all" was
+    /// always true on one and this whole clock was unreachable for it, however completely the new
+    /// brief was lost. Compaction's own housekeeping records do not count as a prompt either.</para>
+    ///
+    /// <para>This is the DELIVERY clock and nothing else: it only ever asks whether work STARTED. A
+    /// task that started and then ran forever is <see cref="DefaultTimeoutMinutes"/> /
+    /// <c>RolePolicyEntry.TimeoutMinutes</c> and
+    /// <see cref="ModelWaitDeadlineMinutes"/>/<see cref="LocalExecutionDeadlineMinutes"/>
+    /// (CARD-0020 S2/S3).</para>
     /// </summary>
     public int DeliveryFailTimeoutMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// The hard wall-clock ceiling (minutes, from <c>DispatchedAt</c>) for a role that has no
+    /// <see cref="RolePolicyEntry"/> of its own — <c>Custom</c> and <c>Check</c> in the shipped
+    /// defaults. Mirrors <see cref="DefaultLevel"/>: an unlisted role is a role nobody configured,
+    /// not a role nobody watches. <c>&lt;= 0</c> turns the ceiling off for those roles.
+    /// </summary>
+    public int DefaultTimeoutMinutes { get; set; } = 240;
+
+    /// <summary>
+    /// How long a WORKING session may sit with a model-wait phase as its last transcript entry
+    /// before <c>AgentTaskDispatcher.FailOverdueTasksAsync</c> fails the task (CARD-0020 S3).
+    /// Model-wait is <c>UserPrompt</c>, <c>ToolResult</c>, <c>Thinking</c> or <c>AssistantText</c>
+    /// last: in all four the next thing that should happen is the model answering.
+    ///
+    /// <para><b>20 minutes is measured, not chosen.</b> Over the live corpus (10 days, queried
+    /// 2026-08-20) the gap after a real prompt ran to p99 163 s, max 217 s; after a tool result,
+    /// p99 60 s, max 1 478 s. 20 min is ~3x the observed maximum, so a single slow day is not an
+    /// incident. The card's original proposal of ~60 s would have fired on roughly 1 turn in 25.
+    /// <c>&lt;= 0</c> disables the model-wait deadline.</para>
+    /// </summary>
+    public int ModelWaitDeadlineMinutes { get; set; } = 20;
+
+    /// <summary>
+    /// The same clock for a WORKING session whose last entry is a <c>ToolCall</c> — the model has
+    /// answered and a LOCAL tool (a build, a test suite, a long grep) is running (CARD-0020 S3).
+    ///
+    /// <para>Also measured: <c>ToolCall</c> to <c>ToolResult</c> ran to p99 134 s and max 5 311 s
+    /// over 15 210 transitions, so 90 minutes is ~1x the observed maximum with half an hour of
+    /// headroom. Note how little the phases actually separate — ~3.6x, not orders of magnitude —
+    /// which is why phase-awareness is a TIGHTENING of the ceiling rather than the "catch a hung
+    /// upstream call in a minute" mechanism the card imagined. <c>&lt;= 0</c> disables the
+    /// local-execution deadline.</para>
+    /// </summary>
+    public int LocalExecutionDeadlineMinutes { get; set; } = 90;
 
     /// <summary>
     /// How long settlement waits for the turn-ending response's OWN text before giving up and
@@ -451,9 +498,57 @@ public sealed class DelegationSettings
     public sealed class RolePolicyEntry
     {
         public AgentModelLevel Level { get; set; } = AgentModelLevel.High;
+
+        /// <summary>
+        /// The tier <c>AgentTaskDispatcher.AutoEscalateStalledAsync</c> re-runs a stalled task at.
+        /// Set it together with <see cref="EscalateAfterMinutes"/> — the sweep drops any role
+        /// missing either, so a half-configured role is silently never scanned.
+        ///
+        /// <para><b>This ladder is a deliberate, narrow tier bump and NOT a health check</b>
+        /// (CARD-0020 S4). Only <c>Debug</c> ships with both fields, so it is the only role the
+        /// scan looks at; a second gate skips any task already at or above the target, and Frontier
+        /// is the top, so the most expensive work in the fleet is out of scope by construction.
+        /// Measured on the live database 2026-08-20: 13 of 299 tasks all-time were Debug, 11 of
+        /// those were below Frontier, and the scan has recorded <b>0</b> escalations ever.</para>
+        ///
+        /// <para><b>That narrowness is the design.</b> The usual cause of a stalled delegate is a
+        /// LOST PROMPT, and escalating one launders an undelivered brief into a billed re-run on a
+        /// bigger model — the same argument <c>FailNeverStartedAsync</c> makes in its own
+        /// doc-comment. Do not widen this to Plan/Code/Review to get health coverage. Health is
+        /// <see cref="TimeoutMinutes"/> / <see cref="DelegationSettings.DefaultTimeoutMinutes"/>
+        /// (the hard ceiling) and <see cref="DelegationSettings.ModelWaitDeadlineMinutes"/> /
+        /// <see cref="DelegationSettings.LocalExecutionDeadlineMinutes"/> (the phase-aware
+        /// deadline) — both run for EVERY role in <c>FailOverdueTasksAsync</c>, and both FAIL and
+        /// report rather than re-spending money.</para>
+        /// </summary>
         public AgentModelLevel? EscalateTo { get; set; }
+
+        /// <summary>
+        /// Minutes with no transcript progress before <see cref="EscalateTo"/> applies. See that
+        /// property for why this ladder covers one role, and why widening it is the wrong fix for a
+        /// task that has gone quiet.
+        /// </summary>
         public int? EscalateAfterMinutes { get; set; }
-        public int TimeoutMinutes { get; set; } = 60;
+
+        /// <summary>
+        /// Hard wall-clock ceiling in minutes, from <c>DispatchedAt</c>, on a Dispatched or Working
+        /// task of this role. Past it <c>AgentTaskDispatcher.FailOverdueTasksAsync</c> FAILS the
+        /// task — it never escalates it, never kills its session and never retries it (CARD-0020
+        /// S2). <c>&lt;= 0</c> turns the ceiling off for this role.
+        ///
+        /// <para><b>Dead config until CARD-0020 S2</b>: declared here, defaulted to 60, and read
+        /// nowhere in <c>server/</c> or <c>src/</c> — so a task that started and then ran forever
+        /// had no deadline of any kind, which is the one claim of CARD-0020 that survived
+        /// measurement.</para>
+        ///
+        /// <para><b>240, and specifically not the 60 it used to declare.</b> On the live database 5
+        /// of 247 successful tasks (2.0%) ran past 60 minutes and the longest Succeeded task ran
+        /// 2 732 minutes, so enabling the old default would have killed real work on day one. 240
+        /// is ~3x the measured p99 of 88.6 minutes: high enough that crossing it is evidence of a
+        /// stall rather than of a big job, low enough that nothing sits open for two days
+        /// unnoticed.</para>
+        /// </summary>
+        public int TimeoutMinutes { get; set; } = 240;
 
         /// <summary>
         /// Which agent program this role's tasks run on. UNSET everywhere on purpose (CARD-0084 S2):

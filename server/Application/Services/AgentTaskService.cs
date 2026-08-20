@@ -274,7 +274,8 @@ public sealed class AgentTaskService
         // never persisted and never readable again.
         RawTokens[id] = token;
         return new AgentTaskCreatedDto(
-            id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind);
+            id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind,
+            NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None);
     }
 
     /// <summary>
