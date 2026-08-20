@@ -27,6 +27,63 @@ public sealed class SupervisionSettings
 
     public RcWatchSettings RcWatch { get; set; } = new();
     public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
+    public ApiErrorRecoverySettings ApiErrorRecovery { get; set; } = new();
+}
+
+/// <summary>
+/// Timed retry of a turn killed by an API-error stub (CARD-0072 S5a). A one-minute sweep against
+/// a one-minute first rung means the first retry lands 1–2 minutes after the stub; against a
+/// 31-minute silence that is acceptable — do not "fix" the ladder's first rung wondering why it
+/// is late.
+/// </summary>
+public sealed class ApiErrorRecoverySettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// How often the supervisor tick piggy-backs the adopt+fire pass. Default 60s matches the
+    /// CARD-0067 / CARD-0082 sweeps sitting next to it.
+    /// </summary>
+    public int SweepPeriodSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Only TurnEnd stubs this recent are adopted. Older deaths are left alone — the fields are
+    /// not retroactive, and a 71k-row scan of history is not this sweep's job.
+    /// </summary>
+    public int AdoptWindowMinutes { get; set; } = 180;
+
+    /// <summary>Unknown class: enqueue this many resumes, then park (§D8).</summary>
+    public int UnknownAttemptCap { get; set; } = 3;
+
+    /// <summary>
+    /// Transient: the ladder runs hourly indefinitely, but a Warning incident (Critical when
+    /// channel-bound) fires once total dead time crosses this threshold.
+    /// </summary>
+    public int DeadTimeWarningHours { get; set; } = 2;
+
+    /// <summary>
+    /// Consecutive Wall deaths on one session before the resume parks and escalates Critical.
+    /// A 30-minute nudge at a five-hour quota wall then costs at most three cheap deliveries.
+    /// </summary>
+    public int WallDeathCap { get; set; } = 3;
+
+    /// <summary>
+    /// Enqueued WhenIdle on a Transient / Unknown death. Same shape as
+    /// <c>AgentSessionSettings.ResumeContinuePrompt</c>.
+    /// </summary>
+    public string TransientPrompt { get; set; } =
+        "Your previous turn was killed by a transient API error. Review where you got to and "
+        + "continue the work you were doing; if it was already complete, briefly confirm that instead.";
+
+    /// <summary>
+    /// Enqueued WhenIdle on a Wall death (degraded 30-minute rung until CARD-0022's parser).
+    /// The commit-first sentence is spec §D6's answer to a dirty shared checkout: the session
+    /// that made the mess still holds the context to attribute it.
+    /// </summary>
+    public string WallPrompt { get; set; } =
+        "Your previous turn was killed by a usage-limit wall. Commit any in-progress work to a "
+        + "branch first, then review where you got to and continue. If the work was already "
+        + "complete, briefly confirm that instead.";
 }
 
 /// <summary>

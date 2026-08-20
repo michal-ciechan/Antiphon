@@ -1514,14 +1514,14 @@ public class AgentTaskReplyIntegrationTests
     // ---- a turn killed by an API error must never settle as done (CARD-0071 S3) ------------
 
     /// <summary>
-    /// The 2026-08-17 live miss, replayed: tasks ee0a18a5 and 27e20988 were killed by the account
-    /// session limit, and both settled <c>Succeeded</c> with "You've hit your usage limit…" stored
-    /// as their Result — the limit message WAS the report, and every surface said the work was
-    /// done. The error text is not a report: the task must FAIL, with a reason naming the class,
-    /// and the error text must never land in Result.
+    /// The 2026-08-17 live miss, replayed under S5a-3: tasks ee0a18a5 and 27e20988 were killed by
+    /// the account session limit, and both settled <c>Succeeded</c> with "You've hit your usage
+    /// limit…" stored as their Result. The error text is still not a report. A retryable class
+    /// (Wall) now defers: the task stays Working, no parent failure note, the delegate is not
+    /// released.
     /// </summary>
     [Test]
-    public async Task a_turn_killed_by_an_api_error_fails_the_task_and_never_stores_the_error_text()
+    public async Task a_retryable_api_error_defers_the_task_and_never_stores_the_error_text()
     {
         using var workspace = new TempWorkspace();
         var parentSessionId = await SeedSessionAsync(workspace.Path);
@@ -1534,33 +1534,27 @@ public class AgentTaskReplyIntegrationTests
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        failed.Status.ShouldBe(AgentTaskStatus.Failed, "visibly dead beats invisibly Succeeded");
-        failed.Result.ShouldBeNull("the error text is not a report and must never be stored as one");
-        failed.FailureReason.ShouldNotBeNull();
-        failed.FailureReason!.ShouldContain("rate_limit");
-        failed.FailureReason.ShouldContain("usage limit", customMessage: "the reason names the error itself");
-        failed.FailureReason.ShouldContain(
-            sessionId.ToString(), customMessage: "the work may be real — name where to read it");
-        failed.CompletedAt.ShouldNotBeNull();
+        var deferred = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        deferred.Status.ShouldBe(AgentTaskStatus.Working, "a retryable death keeps the task; the resume owns it");
+        deferred.Result.ShouldBeNull("the error text is not a report and must never be stored as one");
+        deferred.FailureReason.ShouldBeNull();
+        deferred.CompletedAt.ShouldBeNull();
 
-        (await verify.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        var ev = (await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.ApiErrorDeferred)
+            .ToListAsync()).ShouldHaveSingleItem();
+        ev.Detail.ShouldContain("Wall");
+        ev.Detail.ShouldContain("resume scheduled");
 
-        // The caller must HEAR about the death, not discover it on the board.
-        var note = await verify.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == parentSessionId)
-            .SingleAsync();
-        note.Body.ShouldContain("killed by an API error");
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == parentSessionId))
+            .ShouldBe(0, "do not tell the parent the task failed while a resume is scheduled");
 
-        // The API refused one response; the SESSION is structurally healthy. A live Shared
-        // delegate pools warm exactly as after FailUnreportedTurnAsync — anything else leaks it
-        // Busy forever.
-        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Idle);
+        // The delegate still owns the session for the resumed turn.
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
     }
 
     [Test]
-    public async Task real_narration_beside_the_stub_still_fails_rather_than_settling_on_it()
+    public async Task real_narration_beside_the_stub_still_does_not_settle_on_it()
     {
         // A turn that did real visible work and THEN died on the API: the narration is not the
         // verdict (CARD-0046 already established that) and the death outranks it — settling
@@ -1574,10 +1568,28 @@ public class AgentTaskReplyIntegrationTests
         await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
 
         await using var verify = CreateContext();
-        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
-        failed.Status.ShouldBe(AgentTaskStatus.Failed);
-        failed.Result.ShouldBeNull("neither the error text nor the narration is this turn's report");
-        failed.FailureReason!.ShouldContain("rate_limit");
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(AgentTaskStatus.Working);
+        stored.Result.ShouldBeNull("neither the error text nor the narration is this turn's report");
+    }
+
+    [Test]
+    public async Task a_second_on_turn_end_on_the_same_stub_adds_nothing()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        var svc = CreateService();
+        await svc.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await svc.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.ApiErrorDeferred))
+            .ShouldBe(1, "the recovery row is the idempotency marker; a second pass must not re-enter");
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Working);
     }
 
     [Test]
@@ -1655,6 +1667,46 @@ public class AgentTaskReplyIntegrationTests
         incident.Severity.ShouldBe(AlertSeverity.Critical);
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
             .FailureReason!.ShouldContain("NeedsHuman");
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Failed, "NeedsHuman never schedules a resume");
+    }
+
+    [Test]
+    public async Task a_parked_recovery_fails_the_task_naming_exhaustion()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await using (var db = CreateContext())
+        {
+            var now = DateTime.UtcNow;
+            for (var i = 0; i < 2; i++)
+            {
+                db.ApiErrorRecoveries.Add(new ApiErrorRecovery
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    StubSequence = i + 1,
+                    Classification = ApiErrorClassification.Wall,
+                    ApiErrorClass = "rate_limit",
+                    ApiErrorStatus = 429,
+                    DetectedAt = now.AddMinutes(-60 * (2 - i)),
+                    AttemptCount = 1,
+                    ResolvedAt = now,
+                    ResolvedReason = ApiErrorRecoveryReasons.Replaced,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        await SeedApiErrorStubTurnAsync(sessionId, DelegationReportFormatter.TaskMarker(task.Id));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason!.ShouldContain("WallParked");
+        failed.Result.ShouldBeNull();
     }
 
     [Test]
@@ -2161,8 +2213,10 @@ public class AgentTaskReplyIntegrationTests
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings()));
             services.AddSingleton(TimeProvider.System);
+            services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
+            services.AddSingleton<ApiErrorRecoveryService>();
             // The settle path's collaborators: merge-back, the Merge-task spawner, ephemeral cleanup.
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IDelegateSessionStopper>(Stopper);
             services.AddSingleton<DelegationWorkspaceResolver>();

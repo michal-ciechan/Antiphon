@@ -33,6 +33,7 @@ public class AppDbContext : DbContext
     public DbSet<CardWorkflowStage> CardWorkflowStages => Set<CardWorkflowStage>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
+    public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
     public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
     public DbSet<RunAttempt> RunAttempts => Set<RunAttempt>();
     public DbSet<Worktree> Worktrees => Set<Worktree>();
@@ -1036,9 +1037,40 @@ public class AppDbContext : DbContext
                 .IsUnique()
                 .HasDatabaseName("IX_TranscriptEntries_AgentSessionId_Sequence");
 
+            // CARD-0072: the recovery sweep adopts IsApiError = true TurnEnd rows. Without a
+            // partial index that is a growing full-table scan every minute.
+            entity.HasIndex(t => t.IsApiError)
+                .HasDatabaseName("IX_TranscriptEntries_IsApiError")
+                .HasFilter("\"IsApiError\" = true");
+
             entity.HasOne(t => t.AgentSession)
                 .WithMany()
                 .HasForeignKey(t => t.AgentSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ApiErrorRecovery>(entity =>
+        {
+            entity.ToTable("ApiErrorRecoveries");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.AgentSessionId).IsRequired();
+            entity.Property(r => r.StubSequence).IsRequired();
+            entity.Property(r => r.StubUuid).HasMaxLength(64);
+            entity.Property(r => r.Classification).IsRequired();
+            entity.Property(r => r.ApiErrorClass).HasMaxLength(60);
+            entity.Property(r => r.DetectedAt).IsRequired();
+            entity.Property(r => r.AttemptCount).IsRequired();
+            entity.Property(r => r.ResolvedReason).HasMaxLength(80);
+
+            entity.HasIndex(r => new { r.AgentSessionId, r.StubSequence })
+                .IsUnique()
+                .HasDatabaseName("IX_ApiErrorRecoveries_AgentSessionId_StubSequence");
+            entity.HasIndex(r => r.NextAttemptAt)
+                .HasDatabaseName("IX_ApiErrorRecoveries_NextAttemptAt");
+
+            entity.HasOne(r => r.AgentSession)
+                .WithMany()
+                .HasForeignKey(r => r.AgentSessionId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

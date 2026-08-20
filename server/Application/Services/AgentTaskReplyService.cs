@@ -78,12 +78,10 @@ public sealed class AgentTaskReplyService
 
             if (turn.ApiErrorStub is { } stub)
             {
-                // CARD-0071 S3: the marked turn was killed by the API itself. The error text is NOT
-                // a report — two limit-killed delegates settled Succeeded with "You've hit your
-                // usage limit…" stored as their Result on 2026-08-17, and every surface said the
-                // work was done. Checked before every other verdict about the turn: nothing further
-                // is coming from a dead turn, so there is nothing to defer on or settle with.
-                await FailApiErrorTurnAsync(scope.ServiceProvider, db, task, sessionId, stub, ct);
+                // CARD-0071 S3 / CARD-0072 S5a-3: the marked turn was killed by the API itself.
+                // The error text is NOT a report. A retryable class defers (task stays Working,
+                // resume scheduled); NeedsHuman / exhausted / wall-parked still Fail.
+                await HandleApiErrorTurnAsync(scope.ServiceProvider, db, task, sessionId, stub, ct);
                 return;
             }
 
@@ -630,21 +628,18 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// The marked turn was ended by an API-error stub (CARD-0071 S3, spec §D6): the API killed the
-    /// turn — usage limit, 5xx, auth-expired — after Claude Code's own retry was exhausted, and the
-    /// stub's error string is the only "text" the turn-ending response wrote. It is NOT a report and
-    /// is never stored as <see cref="AgentTask.Result"/>; the task FAILS with a reason naming the
-    /// class and the error, because visibly dead beats invisibly "Succeeded" (both 2026-08-17
-    /// limit-killed delegates settled Succeeded with the limit message as their report). When S5's
-    /// resume machinery lands, a scheduled resume will keep the task Working instead — this arm is
-    /// the no-resume-coming half of §D6 and stays as the NeedsHuman/retries-exhausted terminal.
+    /// The marked turn was ended by an API-error stub (CARD-0071 S3 / CARD-0072 S5a-3, spec §D6):
+    /// the API killed the turn after Claude Code's own retry was exhausted, and the stub's error
+    /// string is not a report. A retryable class leaves the task <see cref="AgentTaskStatus.Working"/>
+    /// with a scheduled resume (do not release the delegate, do not tell the parent it failed).
+    /// NeedsHuman, Unknown-exhausted, and wall-parked still Fail — visibly dead beats invisibly
+    /// "Succeeded".
     ///
-    /// <para>The delegate goes through the ordinary release path for the same reason
-    /// <see cref="FailUnreportedTurnAsync"/> does: the SESSION is structurally healthy (idle, its
-    /// own TurnEnd written) — the API refused one response, not the agent — and skipping the
-    /// release would leak the agent Busy forever, since only settlement frees it.</para>
+    /// <para>Idempotency is the <see cref="ApiErrorRecovery"/> row: SettleDeferredReportsAsync
+    /// re-triggers this on every pass while the task stays Working, and without the marker it
+    /// would write an event and re-enter forever. The event is written exactly once per stub.</para>
     /// </summary>
-    private async Task FailApiErrorTurnAsync(
+    private async Task HandleApiErrorTurnAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId,
         ApiErrorStubFacts stub, CancellationToken ct)
     {
@@ -656,11 +651,28 @@ public sealed class AgentTaskReplyService
         if (errorText.Length > 600)
             errorText = errorText[..600] + "…";
 
+        var recovery = services.GetService<ApiErrorRecoveryService>() is { } recoveryService
+            ? await recoveryService.EnsureAdoptedAsync(
+                sessionId, stub.Sequence, stub.Uuid, stub.ErrorClass, stub.ErrorStatus, stub.ErrorText,
+                ct, raiseIncident: false)
+            : null;
+
+        if (recovery is { ResolvedAt: null })
+        {
+            await DeferApiErrorTurnAsync(services, db, task, sessionId, stub, classification, recovery, errorText, now, ct);
+            return;
+        }
+
+        var terminalReason = recovery?.ResolvedReason;
         var reason =
             $"The delegate's turn was killed by an API error ({classification}: "
             + (stub.ErrorClass ?? "no error class")
             + (stub.ErrorStatus is int status ? $", HTTP {status}" : string.Empty)
-            + $") — {errorText} The error text is not a report and no report exists. The work may "
+            + $") — {errorText}"
+            + (terminalReason is null
+                ? string.Empty
+                : $" Recovery ended ({terminalReason}).")
+            + " The error text is not a report and no report exists. The work may "
             + $"well be real — read session {sessionId} before re-running this task.";
 
         task.Status = AgentTaskStatus.Failed;
@@ -709,6 +721,73 @@ public sealed class AgentTaskReplyService
 
         await DeliverToParentAsync(task, reason, ct);
         await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// Retryable death: keep the task Working, write the timeline event once, do not release the
+    /// delegate (it still owns the session for the resumed turn), do not deliver a failure to the
+    /// parent. A second pass on the same stub is a no-op besides the already-recorded incident.
+    /// </summary>
+    private async Task DeferApiErrorTurnAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId,
+        ApiErrorStubFacts stub, ApiErrorClassification classification, ApiErrorRecovery recovery,
+        string errorText, DateTime now, CancellationToken ct)
+    {
+        if (task.Status == AgentTaskStatus.Dispatched)
+            task.Status = AgentTaskStatus.Working;
+
+        var seqNeedle = $"seq {stub.Sequence}";
+        var alreadyDeferred = await db.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.ApiErrorDeferred
+                && e.Detail.Contains(seqNeedle), ct);
+        if (!alreadyDeferred)
+        {
+            var when = recovery.NextAttemptAt is DateTime fire
+                ? $"resume scheduled {fire:u}"
+                : "resume pending";
+            db.AgentTaskEvents.Add(NewEvent(
+                task.Id, AgentTaskEventType.ApiErrorDeferred,
+                $"turn killed by {classification} — {when} ({seqNeedle})", now));
+        }
+
+        await db.SaveChangesAsync(ct);
+        if (!alreadyDeferred)
+            await PublishAsync(task, ct);
+
+        var channelBound = task.AgentId is Guid boundAgentId
+            && await db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == boundAgentId, ct);
+        var severity = channelBound || classification == ApiErrorClassification.NeedsHuman
+            ? AlertSeverity.Critical
+            : AlertSeverity.Warning;
+
+        var dirt = task.Workspace == WorkspaceMode.Shared
+            ? await TryReadGitStatusShortAsync(task.WorkingDirectory, ct)
+            : null;
+
+        await RecordIncidentOnceAsync(
+            services, db, task, sessionId, AgentIncidentKind.ApiErrorTurnDied,
+            $"Delegate task {DelegationReportFormatter.Short(task.Id)} died on an API error ({classification})",
+            $"Task {DelegationReportFormatter.Short(task.Id)} was killed by an API error, not "
+            + $"finished: {classification} ({stub.ErrorClass ?? "no error class"}"
+            + (stub.ErrorStatus is int s ? $", HTTP {s}" : string.Empty)
+            + $"). A timed resume is scheduled"
+            + (recovery.NextAttemptAt is DateTime at ? $" for {at:u}" : string.Empty)
+            + $". The error text was NOT stored as its result: {errorText}"
+            + (string.IsNullOrWhiteSpace(dirt)
+                ? string.Empty
+                : $"\n\nThe shared checkout at {task.WorkingDirectory} has uncommitted changes the "
+                  + $"dead task may own (git status --short):\n{dirt}"),
+            ct, severity);
+
+        if (!alreadyDeferred)
+        {
+            _logger.LogWarning(
+                "Task {ShortId} deferred: session {SessionId}'s turn was killed by an API error "
+                + "({Classification}: {Class}/{Status}); resume at {Next:u}",
+                DelegationReportFormatter.Short(task.Id), sessionId, classification,
+                stub.ErrorClass, stub.ErrorStatus, recovery.NextAttemptAt);
+        }
     }
 
     /// <summary>
@@ -1056,9 +1135,10 @@ public sealed class AgentTaskReplyService
     /// and at worst the announcement of work that never landed.
     /// </param>
     /// <param name="ApiErrorStub">
-    /// Non-null when the marked turn was ENDED by an API-error stub (CARD-0071 S3): the API killed
-    /// the turn and the stub's error string is not a report. Outranks every other verdict — the
-    /// task fails with a reason naming the class, and the error text is never stored as Result.
+    /// Non-null when the marked turn was ENDED by an API-error stub (CARD-0071 S3 / CARD-0072
+    /// S5a-3): the API killed the turn and the stub's error string is not a report. Outranks
+    /// every other verdict — retryable classes defer; terminal classes fail. The error text is
+    /// never stored as Result.
     /// </param>
     private readonly record struct TurnOutcome(
         string? Report,
@@ -1077,7 +1157,8 @@ public sealed class AgentTaskReplyService
     /// What the stub itself carried (S1's three fields plus its error string) — everything the
     /// fail arm needs to classify and to name the death, straight off the turn-ending row.
     /// </summary>
-    private readonly record struct ApiErrorStubFacts(string? ErrorClass, int? ErrorStatus, string? ErrorText);
+    private readonly record struct ApiErrorStubFacts(
+        string? ErrorClass, int? ErrorStatus, string? ErrorText, long Sequence, string? Uuid);
 
     /// <summary>
     /// The turn's assistant text, but only if the turn was the one we asked for — its prompt must
@@ -1149,7 +1230,8 @@ public sealed class AgentTaskReplyService
                 null, false,
                 ApiErrorStub: new ApiErrorStubFacts(
                     end.ApiErrorClass, end.ApiErrorStatus,
-                    stubText.Length > 0 ? stubText : null));
+                    stubText.Length > 0 ? stubText : null,
+                    end.Sequence, end.Uuid));
         }
 
         // CARD-0046 slice 4. The turn is ours and it ended — but a turn that handed its work to

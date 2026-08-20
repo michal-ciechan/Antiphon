@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 

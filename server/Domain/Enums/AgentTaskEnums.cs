@@ -120,4 +120,12 @@ public enum AgentTaskEventType
     /// Never a state change: the task keeps working.
     /// </summary>
     Refined = 14,
+
+    /// <summary>
+    /// The marked turn was killed by a retryable API-error stub (CARD-0072 S5a-3). The task stays
+    /// Working with a resume scheduled; this event names the class and the fire time. Written
+    /// exactly once per stub — the ApiErrorRecovery row is the idempotency marker that stops
+    /// SettleDeferredReportsAsync from re-entering the defer arm forever.
+    /// </summary>
+    ApiErrorDeferred = 15,
 }

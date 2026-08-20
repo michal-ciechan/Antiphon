@@ -7,7 +7,8 @@ namespace Antiphon.Server.Infrastructure.Supervision;
 /// <summary>
 /// Drives <see cref="AgentSupervisorService"/> on a fixed tick (same shape as the reconciliation
 /// and orchestrator hosted services), plus a slow incident-retention pass every 6 hours, the
-/// channel-reply correlation sweep every minute, and the idle auto-compact sweep every minute.
+/// channel-reply correlation sweep every minute, the idle auto-compact sweep every minute,
+/// and the API-error recovery sweep every minute.
 /// </summary>
 public sealed class AgentSupervisorHostedService : BackgroundService
 {
@@ -30,22 +31,26 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ChannelReplyDispatcher _channelReplies;
     private readonly ContextCompactionService _compaction;
+    private readonly ApiErrorRecoveryService _apiErrorRecovery;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
     private DateTime _lastChannelSweepUtc = DateTime.MinValue;
     private DateTime _lastCompactionSweepUtc = DateTime.MinValue;
+    private DateTime _lastApiErrorRecoverySweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
         ChannelReplyDispatcher channelReplies,
         ContextCompactionService compaction,
+        ApiErrorRecoveryService apiErrorRecovery,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _channelReplies = channelReplies;
         _compaction = compaction;
+        _apiErrorRecovery = apiErrorRecovery;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -97,6 +102,20 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                         {
                             _logger.LogInformation(
                                 "Enqueued idle auto-compact on {Count} session(s)", compacted);
+                        }
+                    }
+
+                    var apiErrorPeriod = TimeSpan.FromSeconds(
+                        Math.Max(1, _settings.ApiErrorRecovery.SweepPeriodSeconds));
+                    if (_settings.ApiErrorRecovery.Enabled
+                        && DateTime.UtcNow - _lastApiErrorRecoverySweepUtc >= apiErrorPeriod)
+                    {
+                        _lastApiErrorRecoverySweepUtc = DateTime.UtcNow;
+                        var resumed = await _apiErrorRecovery.SweepAsync(stoppingToken);
+                        if (resumed > 0)
+                        {
+                            _logger.LogInformation(
+                                "Enqueued API-error resume on {Count} session(s)", resumed);
                         }
                     }
                 }
