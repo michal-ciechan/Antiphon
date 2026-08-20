@@ -606,7 +606,8 @@ public class AgentTaskDeadSessionReconciliationTests
         {
             var service = new AttentionService(
                 CreateContext(), new FakeRunnerClient(), Options.Create(new SupervisionSettings()),
-                TimeProvider.System, NullLogger<AttentionService>.Instance);
+                Options.Create(new DelegationSettings()), TimeProvider.System,
+                NullLogger<AttentionService>.Instance);
             var result = await service.GetAsync(CancellationToken.None);
             return result.Items.Where(i => i.TaskId is { } t && _tasks.Contains(t)).ToList();
         }

@@ -61,6 +61,21 @@ public enum AttentionKind
 
     /// <summary>Context, not an alarm: tasks that Failed inside the recency window.</summary>
     RecentFailure = 9,
+
+    /// <summary>
+    /// Closing on a deadline that will FAIL the task: the role's hard wall-clock ceiling, or — while
+    /// the session is mid-turn — the phase-aware model-wait / local-execution deadline (CARD-0020
+    /// S2/S3, <see cref="TaskDeadlinePolicy"/>). Surfaced from 80% of the limit, the way
+    /// <c>NeverStartedGrace</c> previews the delivery watchdog, so the operator sees it while a
+    /// human still has the option of a reply, a check or a cancel.
+    ///
+    /// <para>It sits BELOW <see cref="PastExpectedIdle"/> in the first-match order on purpose. That
+    /// condition covers "past the estimate and NOT mid-turn" and explicitly declines the mid-turn
+    /// case — a session that is working is "never listed for being slow, however far past the
+    /// estimate it has run" — and the mid-turn case is exactly the hole this fills. An idle task
+    /// keeps the more explanatory row; a working one falls through to this.</para>
+    /// </summary>
+    Overdue = 10,
 }
 
 /// <summary>

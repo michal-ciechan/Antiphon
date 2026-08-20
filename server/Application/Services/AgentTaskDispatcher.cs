@@ -38,6 +38,7 @@ public sealed class AgentTaskDispatcher
     private readonly ISessionRunnerClient? _runnerClient;
     private readonly DeadSessionFirstSeenState? _deadSessions;
     private readonly DelegateBindRefusalRecovery? _bindRefusalRecovery;
+    private readonly AgentSessionRuntime? _runtime;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -66,8 +67,16 @@ public sealed class AgentTaskDispatcher
         DeadSessionFirstSeenState? deadSessions = null,
         // CARD-0085: optional so predating harnesses keep today's Failed on an empty transcript
         // table. Recovery also needs _replies (it owns settlement); either missing skips the gate.
-        DelegateBindRefusalRecovery? bindRefusalRecovery = null)
+        DelegateBindRefusalRecovery? bindRefusalRecovery = null,
+        // CARD-0020: the fetch-and-persist half of the transcript sync. Every sweep here that is
+        // about to make an IRREVERSIBLE decision on "the transcript does not contain X" pulls the
+        // runner's own view first — the live stream is not a reliable clock, and the kill that
+        // proved it wrong is what produced the records (CARD-0055, session e809ce65). Optional for
+        // the same reason as the rest: a harness without it falls back to whatever streamed, which
+        // is exactly today's behaviour, and the pull swallows its own failures anyway.
+        AgentSessionRuntime? runtime = null)
     {
+        _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
         _checkQueue = checkQueue;
@@ -88,7 +97,7 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <param name="SweepFailures">
-    /// How many of the tick's seven clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's eight clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -101,7 +110,7 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The seven clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The eight clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
@@ -123,6 +132,13 @@ public sealed class AgentTaskDispatcher
         // query altogether, and a task whose session wrote a transcript and then died passes its
         // "did it start" test forever. Three zombies sat open for hours on 2026-08-09 that way.
         sweepFailures += await RunSweepAsync("dead-session reconciler", FailDeadSessionTasksAsync, ct);
+
+        // And with work that started, never stopped, and has now run past a deadline (CARD-0020).
+        // The three clocks above all ask a question about DELIVERY or LIVENESS; a task whose brief
+        // landed, whose session is alive and which is simply never going to finish answered every
+        // one of them for as long as it ran. RolePolicyEntry.TimeoutMinutes was declared for this
+        // and read nowhere, so until now there was no deadline on a working task at all.
+        sweepFailures += await RunSweepAsync("overdue-task deadline", FailOverdueTasksAsync, ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
@@ -373,6 +389,15 @@ public sealed class AgentTaskDispatcher
         {
             ct.ThrowIfCancellationRequested();
             var sessionId = task.AgentSessionId!.Value;
+
+            // PULL BEFORE YOU JUDGE (CARD-0055, plan section 6.1). Everything below decides on "the
+            // transcript does not contain X" and then FAILS the task and KILLS the session — the
+            // most irreversible pair in this file — and the live stream is not a reliable clock:
+            // on session e809ce65 six records landed in one burst at the instant of the kill,
+            // because the flush is triggered by the session ENDING, so the kill produced the
+            // evidence that the kill was wrong. This costs one runner round trip per suspect, ten
+            // minutes after dispatch, on a query that returns nothing on a healthy day.
+            await CatchUpTranscriptAsync(sessionId, ct);
 
             // A non-housekeeping UserPrompt after THIS task's dispatch is the proof the brief
             // landed. "Any transcript entry at all" is the wrong test on a reused session: it

@@ -572,7 +572,8 @@ public class AttentionServiceTests
             LastSequence: 900, HostPid: hostPid);
 
     private static AttentionService BuildService(ISessionRunnerClient runner) =>
-        new(CreateContext(), runner, Options.Create(new SupervisionSettings()), TimeProvider.System,
+        new(CreateContext(), runner, Options.Create(new SupervisionSettings()),
+            Options.Create(new DelegationSettings()), TimeProvider.System,
             NullLogger<AttentionService>.Instance);
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());

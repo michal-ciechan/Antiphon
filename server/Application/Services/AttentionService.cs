@@ -27,7 +27,7 @@ namespace Antiphon.Server.Application.Services;
 /// condition and nothing else: <see cref="AttentionDto.RunnerConsulted"/> goes false and the
 /// DB-derived rows are returned exactly as they were.</para>
 ///
-/// <para><b>One row per piece of work.</b> The five task-scoped conditions are evaluated in priority
+/// <para><b>One row per piece of work.</b> The six task-scoped conditions are evaluated in priority
 /// order and the first match wins, so a task whose session died before writing anything appears once
 /// as <see cref="AttentionKind.DeadSession"/> rather than twice. The order is most-explanatory
 /// first: the row a human reads should name the cause, not a downstream symptom of it.</para>
@@ -78,6 +78,7 @@ public sealed class AttentionService
     private readonly AppDbContext _db;
     private readonly ISessionRunnerClient _runnerClient;
     private readonly SupervisionSettings _supervision;
+    private readonly DelegationSettings _delegation;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AttentionService> _logger;
 
@@ -85,12 +86,17 @@ public sealed class AttentionService
         AppDbContext db,
         ISessionRunnerClient runnerClient,
         IOptions<SupervisionSettings> supervision,
+        // The deadlines are READ from delegation settings, never restated here (CARD-0020 S2/S3) —
+        // the same contract the parked-message row already has with MaxDeliveryAttempts, so this
+        // view and the sweep that fails the task can never disagree about when a task is overdue.
+        IOptions<DelegationSettings> delegation,
         TimeProvider timeProvider,
         ILogger<AttentionService> logger)
     {
         _db = db;
         _runnerClient = runnerClient;
         _supervision = supervision.Value;
+        _delegation = delegation.Value;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -211,7 +217,7 @@ public sealed class AttentionService
         return items;
     }
 
-    // ---- conditions 3-7: the open-task conditions, first match wins ------------------------------
+    // ---- conditions 3-8: the open-task conditions, first match wins ------------------------------
 
     private async Task<List<AttentionItemDto>> BuildOpenTaskItemsAsync(
         IReadOnlyList<AgentTask> open,
@@ -370,7 +376,43 @@ public sealed class AttentionService
                 }
             }
 
-            // 7. ChecksSpent — checks ran, the budget is gone, the task is still open.
+            // 7. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
+            // asked AFTER PastExpectedIdle because that condition owns the idle case and declines
+            // the mid-turn one; the deadline that matters for a working session is the phase clock,
+            // and the ceiling covers both. Same shared policy the dispatcher's sweep acts on, so a
+            // row here is always the failure that is coming, in the same words.
+            var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+            if (deadline is not null)
+            {
+                items.Add(new AttentionItemDto(
+                    AttentionKind.Overdue,
+                    // Warning, not Error: nothing is broken yet, and at 80% of a 240-minute ceiling
+                    // the honest reading is "look at this", not "this has failed".
+                    AlertSeverity.Warning,
+                    task.Id,
+                    task.AgentSessionId,
+                    task.AgentId,
+                    null,
+                    task.Title,
+                    deadline.Breached
+                        ? $"Past its deadline — the next sweep will fail it. {deadline.Summary}"
+                        : $"Closing on the deadline that will fail it. {deadline.Summary}",
+                    Evidence(
+                        deadline.Kind == TaskDeadlinePolicy.DeadlineKind.Ceiling
+                            ? "The hard wall-clock ceiling for this role. Crossing it fails the task "
+                              + "with the phase named; nothing is killed and nothing is retried, so "
+                              + "a reply, a check or a cancel are all still open to you."
+                            : "The session is mid-turn and the phase it is in has run past its own "
+                              + "deadline. Crossing it fails the task; the session is not killed.",
+                        digest),
+                    task.DispatchedAt,
+                    cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.Reply, AttentionAction.Cancel,
+                        AttentionAction.Escalate]));
+                continue;
+            }
+
+            // 8. ChecksSpent — checks ran, the budget is gone, the task is still open.
             if (task.CheckCount > 0 && task.NextCheckAt is null)
             {
                 items.Add(new AttentionItemDto(
