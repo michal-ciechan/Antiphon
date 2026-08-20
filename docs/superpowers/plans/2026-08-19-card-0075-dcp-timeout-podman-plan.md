@@ -267,3 +267,45 @@ CARD-0075 stays open for S1. Its description should gain a one-line correction: 
 post-failure enumeration — a reader who believes the original framing will still look for a runtime
 problem. No other card overlaps; CARD-0011 is complementary and its watchdog is the second caller S1
 must make safe, not a duplicate.
+
+## 6. S1 as shipped (2026-08-20, `993932c` + `10ae5ef`)
+
+Built as planned, with one deliberate departure and one addition.
+
+**Departure.** §3.3's `DcpPublisher:DependencyCheckTimeout: 1` repro was **not run**. It requires
+starting an AppHost, and the only machine available is the operator's - the live stack (server 17202,
+client 17203, session-runner 17204 PID 43424) was healthy throughout and a worktree launch collides
+with it on every published port. The matcher was verified instead against the **exact recorded
+2026-08-17 exception string** from the card as a fixture, plus the live healthy `apphost.log` as a
+negative. The A/B on `ContainerRuntime` therefore remains unmeasured and §3.2 carries the fix alone,
+which the plan already anticipated ("this works whether or not §3.3 does").
+
+**Addition.** `scripts/apphost-common.ps1` - the shared lock parser/writer, the bounded docker probe
+and the log verdict, dot-sourced by both scripts. It is what makes the acceptance run possible without
+a live teardown, and it is where the one `LockMaxAgeMinutes` (15) lives.
+
+Shipped: `restart-apphost.ps1` takes `logs/apphost.restart.lock` (atomic `CreateNew`, held open,
+released in a `finally`) and honours `logs/apphost.launch.lock`, refusing with **exit 3** before any
+kill; a DCP dependency-check timeout in the log now prints the docker verdict and exits **4**; the
+generic timeout says the spawned `dev-aspire.ps1` may still be launching. `watchdog-apphost.ps1`
+checks both locks, **re-checks immediately before restarting**, and does not stamp `restartsUtc` on an
+exit 3. A `-RestartScript` seam was added so the refusal path can be driven against a stub.
+
+**Acceptance, 56 checks, all green** (harness in the session scratchpad, not committed - it drives the
+real scripts, it is not a unit test):
+
+| Plan §3.5 | Result |
+|---|---|
+| 1. two restarts at once | second exits **3**, names the holder's pid and age, 17202/17203/17204 owners byte-identical before and after |
+| 2. restart during a bare `dev-aspire.ps1` | exits **3**, launch untouched, no restart lock left behind |
+| 3. watchdog during a held restart lock | `skip: launch in flight - restart lock held by PID ...`, no restart |
+| 4. watchdog against a refusal | `REFUSED (exit 3, nothing killed)`, `restartsUtc` gains nothing; control arm (stub exit 0) stamps exactly one |
+| 5. the matcher on the real message | classifies `DcpDependencyTimeout`, prints `docker answered in 0.7s: 5 container(s) running`, tells the reader to ignore the podman text, exits **4**; healthy log and build-failure log unaffected |
+| 6. session-runner untouched | PID 43424 on 17204 unchanged, `/health` 200 throughout |
+
+Also pinned: stale rules both ways (dead holder taken over, 20 min old taken over, 14 min old
+refused), the lock body matching `dev-aspire.ps1`'s format and the watchdog's existing regex, a held
+lock still readable by `Get-Content`, the lock released by the `finally` on exit 0, 1 and 4, and both
+scripts parsing under Windows PowerShell 5.1 as well as pwsh 7 (ASCII-only, per the standing rule).
+
+**Not done, still open:** §3.3's config experiment, and everything in §4.
