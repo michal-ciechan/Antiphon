@@ -823,8 +823,12 @@ public class AgentTuiProfileServiceTests
         Capability(claude, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(claude, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(claude, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        // CARD-0099 S1: Codex's rollout tailer makes task_complete a real structured turn end, so
+        // this row is now Supported — derived from TurnCompletion, like every other kind's.
         Capability(catalog.Get(AgentKind.Codex), "structuredActivity").State
-            .ShouldNotBe(AgentTuiCapabilityState.Supported);
+            .ShouldBe(AgentTuiCapabilityState.Supported);
+        Capability(catalog.Get(AgentKind.Codex), "structuredActivity").Reason.ShouldBe(
+            ProviderContractCatalog.For(AgentKind.Codex).TurnCompletion.Reason);
     }
 
     [Test]

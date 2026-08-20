@@ -114,7 +114,15 @@ public sealed class ProviderContractCatalogTests
         grok.Discovery.ShouldBe(TranscriptDiscovery.DeterministicPath);
         SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Grok).ShouldBe(grok.Format);
 
-        foreach (var kind in AllKinds.Where(k => k is not AgentKind.ClaudeCode and not AgentKind.Grok))
+        // CARD-0099 S1. Codex is the third tailed kind and the second DISCOVERED one: it honours no
+        // session-id flag, so unlike Grok its path cannot be computed before launch.
+        var codex = ProviderContractCatalog.For(AgentKind.Codex).Transcript;
+        codex.Format.ShouldBe(TranscriptFormats.Codex);
+        codex.Discovery.ShouldBe(TranscriptDiscovery.DiscoveryWithClaims);
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Codex).ShouldBe(codex.Format);
+
+        foreach (var kind in AllKinds.Where(k =>
+            k is not AgentKind.ClaudeCode and not AgentKind.Grok and not AgentKind.Codex))
         {
             var t = ProviderContractCatalog.For(kind).Transcript;
             t.State.ShouldBe(AgentTuiCapabilityState.Unsupported);
@@ -127,12 +135,14 @@ public sealed class ProviderContractCatalogTests
     [Test]
     public void DeliveryVerification_Supported_locksteps_the_queue_kind_list()
     {
-        // SessionMessageQueueService.IsVerifiedDeliverySessionAsync: Claude|Grok.
+        // SessionMessageQueueService.IsVerifiedDeliverySessionAsync: Claude|Grok|Codex — the
+        // gate reads this axis, so the list here is only the documented mirror of it (CARD-0099 S1
+        // added Codex once its rollout gave CARD-0055 something to confirm against).
         foreach (var kind in AllKinds)
         {
             var supported = ProviderContractCatalog.For(kind).DeliveryVerification.State
                 == AgentTuiCapabilityState.Supported;
-            var queueVerifies = kind is AgentKind.ClaudeCode or AgentKind.Grok;
+            var queueVerifies = kind is AgentKind.ClaudeCode or AgentKind.Grok or AgentKind.Codex;
             supported.ShouldBe(queueVerifies, $"{kind}: DeliveryVerification vs IsVerifiedDeliverySessionAsync");
         }
     }
@@ -177,11 +187,20 @@ public sealed class ProviderContractCatalogTests
         // Grok tailer landed (CARD-0080 S2). It now reads TurnCompletion.Signal.
         AgentTuiLaunchResolver.ActivityModeFor(AgentKind.Grok)
             .ShouldBe(AgentTuiLaunchActivityMode.Structured);
-        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        foreach (var kind in new[] { AgentKind.OpenCode, AgentKind.Raw })
         {
             AgentTuiLaunchResolver.ActivityModeFor(kind)
                 .ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
         }
+    }
+
+    [Test]
+    public void ActivityModeFor_Codex_is_Structured_after_CARD_0099_S1()
+    {
+        // Same derivation, one card later: the Codex rollout tailer makes task_complete the
+        // activity signal, so Codex can no longer be listed with the quiet-time-only kinds.
+        AgentTuiLaunchResolver.ActivityModeFor(AgentKind.Codex)
+            .ShouldBe(AgentTuiLaunchActivityMode.Structured);
     }
 
     [Test]
@@ -215,13 +234,44 @@ public sealed class ProviderContractCatalogTests
     [Test]
     public void TurnCompletion_without_a_transcript_is_quiet_time_Degraded()
     {
-        foreach (var kind in new[] { AgentKind.Codex, AgentKind.OpenCode, AgentKind.Raw })
+        foreach (var kind in new[] { AgentKind.OpenCode, AgentKind.Raw })
         {
             var turn = ProviderContractCatalog.For(kind).TurnCompletion;
             turn.State.ShouldBe(AgentTuiCapabilityState.Degraded);
             turn.Signal.ShouldBe(TurnCompletionSignal.QuietTimeOnly);
             turn.HasScreenFallback.ShouldBeFalse();
         }
+    }
+
+    /// <summary>
+    /// CARD-0099 S1. The three axes the Codex transcript pipeline moves, asserted together because
+    /// they are one fact: a Codex delegate cannot settle without a TurnEnd row, and CARD-0055
+    /// delivery confirmation stays permanently degraded to the screen-only verdict it replaced
+    /// unless DeliveryVerification is Supported.
+    /// </summary>
+    [Test]
+    public void Codex_transcript_turn_completion_and_delivery_verification_after_CARD_0099_S1()
+    {
+        var codex = ProviderContractCatalog.For(AgentKind.Codex);
+
+        codex.Transcript.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        codex.Transcript.Format.ShouldBe(TranscriptFormats.Codex);
+        // Discovery, not a deterministic path: Codex honours no session-id flag and its TUI never
+        // prints its id, so the CARD-0006 claim rules are what make a bind safe.
+        codex.Transcript.Discovery.ShouldBe(TranscriptDiscovery.DiscoveryWithClaims);
+        codex.Transcript.Reason.ShouldContain("rollout");
+        codex.Transcript.Reason.ShouldContain("lazily");
+
+        codex.TurnCompletion.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        codex.TurnCompletion.Signal.ShouldBe(TurnCompletionSignal.StructuredTranscript);
+        codex.TurnCompletion.HasScreenFallback.ShouldBeTrue();
+        codex.TurnCompletion.Reason.ShouldContain("task_complete");
+
+        codex.DeliveryVerification.State.ShouldBe(AgentTuiCapabilityState.Supported);
+
+        // The two derived consumers that turn these facts into behaviour.
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Codex).ShouldBeTrue();
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Codex).ShouldBe(TranscriptFormats.Codex);
     }
 
     [Test]

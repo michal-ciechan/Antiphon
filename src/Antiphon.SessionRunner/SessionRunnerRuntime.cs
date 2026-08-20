@@ -532,6 +532,35 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
                     _tailer.Start();
                 }
+                else if (request.TranscriptEnabled
+                    && string.Equals(request.TranscriptFormat, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Codex's rollout path is NOT deterministic — there is no --session-id flag and
+                    // the TUI never prints its id (CARD-0099 S1) — so this runs the same CARD-0006
+                    // discovery Claude does, over CODEX_HOME/sessions instead. The sidecar records
+                    // the facts a restart needs to judge candidates, and TranscriptPath is filled in
+                    // by the onBound callback once a rollout is positively identified.
+                    SaveSidecar(new TranscriptSidecar
+                    {
+                        SessionId = _sessionId,
+                        Cwd = request.Cwd,
+                        ChildStartUtc = _startedAt,
+                        ResumeLaunch = IsCodexResumeLaunch(request.Args),
+                        TranscriptPath = null,
+                        How = null,
+                        Format = TranscriptFormats.Codex,
+                    });
+
+                    _tailer = new CodexTranscriptTailer(
+                        _sessionId, request.Cwd, _events, _logger,
+                        claims: _transcriptClaims,
+                        inputLog: _inputLog,
+                        childStartUtc: _startedAt,
+                        resumeLaunch: IsCodexResumeLaunch(request.Args),
+                        sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
+                        onBound: RecordTranscriptBinding);
+                    _tailer.Start();
+                }
                 else if (request.TranscriptEnabled)
                 {
                     // The sidecar is written BEFORE the tailer runs, so even a session that never
@@ -673,6 +702,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _tailer.Start();
                     return true;
                 }
+
+                // A Codex sidecar re-tails the recorded rollout directly. If the session never
+                // bound one before the restart, discovery runs again — and correctly finds nothing,
+                // because the input log is empty after a restart so C4 cannot be satisfied until
+                // new input arrives. That is the same conservative outcome the Claude path has:
+                // running unbound is a fault to report, never a reason to relax the rules.
+                if (string.Equals(sidecar?.Format, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+                {
+                    _sidecar = sidecar;
+                    _tailer = new CodexTranscriptTailer(
+                        _sessionId, cwd, _events, _logger,
+                        claims: _transcriptClaims,
+                        inputLog: _inputLog,
+                        childStartUtc: manifest.ChildStartTimeUtc ?? sidecar!.ChildStartUtc,
+                        resumeLaunch: sidecar!.ResumeLaunch,
+                        knownTranscriptPath: sidecar.TranscriptPath,
+                        onBound: RecordTranscriptBinding);
+                    _tailer.Start();
+                    return true;
+                }
                 // A session that predates sidecars has none to load; seed one from the manifest so
                 // this restart is the last one that has to fall back to the migration shim.
                 _sidecar = sidecar ?? new TranscriptSidecar
@@ -735,6 +784,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         // --resume/--continue replay a conversation whose records legitimately predate this launch,
         // which is exactly what rule C3 would otherwise reject.
+        /// <summary>
+        /// Codex's own resume vocabulary: <c>codex resume</c> / <c>codex fork</c> (subcommands, not
+        /// flags — <c>codex --help</c>, 0.147.0). Deliberately separate from
+        /// <see cref="IsResumeLaunch"/>: Codex's <c>-c</c> is <c>--config</c>, not <c>--continue</c>,
+        /// so reusing the Claude predicate would waive C3 on every configured launch.
+        /// </summary>
+        private static bool IsCodexResumeLaunch(IReadOnlyList<string> args) =>
+            args.Any(a => a is "resume" or "fork");
+
         private static bool IsResumeLaunch(IReadOnlyList<string> args) =>
             args.Any(a =>
                 a is "--resume" or "-r" or "--continue" or "-c"

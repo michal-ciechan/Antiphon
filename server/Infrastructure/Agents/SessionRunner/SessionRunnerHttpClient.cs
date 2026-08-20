@@ -50,8 +50,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             spec.Rows,
             spec.MemoryLimitMb,
             // Claude writes the per-cwd JSONL we discover-and-tail; Grok persists its ACP update
-            // stream to a deterministic per-session path (CARD-0080 S2). Codex/OpenCode/Raw have
-            // no structured transcript, so their sessions stay screen-only.
+            // stream to a deterministic per-session path (CARD-0080 S2); Codex writes a rollout
+            // JSONL that has to be discovered under the same CARD-0006 rules as Claude's, because
+            // it honours no session-id flag (CARD-0099 S1). OpenCode/Raw have no structured
+            // transcript, so their sessions stay screen-only.
             TranscriptEnabled: TranscriptEnabledFor(spec.Kind),
             TranscriptFormat: TranscriptFormatFor(spec.Kind));
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);

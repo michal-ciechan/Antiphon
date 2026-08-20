@@ -1400,10 +1400,12 @@ public sealed class SessionMessageQueueService
 
     private async Task<bool> IsVerifiedDeliverySessionAsync(Guid sessionId, CancellationToken ct)
     {
-        // Claude and Grok both echo the composer's content on the rendered screen (Grok measured
-        // 1.0.5, CARD-0080 S1: typed and pasted bodies render, no placeholder collapse at 4.4 KB)
-        // and both have a structured transcript for CARD-0055's confirm to poll — Grok's rows come
-        // from its ACP updates.jsonl (CARD-0080 S2). Codex/OpenCode/Raw sessions deliver blind.
+        // Claude, Grok and Codex all echo the composer's content on the rendered screen (Grok
+        // measured 1.0.5, CARD-0080 S1: typed and pasted bodies render, no placeholder collapse at
+        // 4.4 KB; Codex measured 0.147.0, CARD-0099 S1: a typed body renders and Enter on an empty
+        // composer submits nothing) and all three have a structured transcript for CARD-0055's
+        // confirm to poll — Grok's rows come from its ACP updates.jsonl (CARD-0080 S2), Codex's
+        // from its rollout JSONL (CARD-0099 S1). OpenCode/Raw sessions deliver blind.
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var kind = await db.AgentSessions.AsNoTracking()

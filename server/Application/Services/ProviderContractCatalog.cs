@@ -99,18 +99,18 @@ public static class ProviderContractCatalog
     private static readonly ProviderContract Codex = new(
         AgentKind.Codex,
         Transcript: new TranscriptContract(
-            AgentTuiCapabilityState.Unsupported,
-            "No structured transcript is tailed; Codex sessions stay screen-only.",
-            Format: null,
-            TranscriptDiscovery.None),
+            AgentTuiCapabilityState.Supported,
+            "Codex writes a rollout JSONL per session at CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl, tailed by CodexTranscriptTailer (CARD-0099 S1). There is no --session-id flag and the interactive TUI never prints its id on screen (codex exec does), so the path is DISCOVERED under the full CARD-0006 rules, not computed. The file is created lazily at the first submit (measured 0.147.0: 30s of an idle rendered composer with zero bytes written produced no file) and is held open by Codex, so every read shares write+delete.",
+            TranscriptFormats.Codex,
+            TranscriptDiscovery.DiscoveryWithClaims),
         TurnCompletion: new TurnCompletionContract(
-            AgentTuiCapabilityState.Degraded,
-            "PTY quiet-time detection is not a structured turn end — a weaker guarantee than a TurnEnd row or screen done-marker.",
-            TurnCompletionSignal.QuietTimeOnly,
-            HasScreenFallback: false),
+            AgentTuiCapabilityState.Supported,
+            "Primary signal is the tailed TurnEnd row from event_msg/task_complete, an explicit structured boundary Codex writes per turn (CARD-0099 S1). Codex carries no stop_reason field, so the normalizer synthesizes end_turn, which is what AgentSessionRuntime.IsTurnBoundary keys on. Quiet-time screen detection remains the live fallback when no transcript rows exist.",
+            TurnCompletionSignal.StructuredTranscript,
+            HasScreenFallback: true),
         DeliveryVerification: new DeliveryVerificationContract(
-            AgentTuiCapabilityState.Unsupported,
-            "Blind SendLineAsync; no composer evidence and no transcript to confirm against."),
+            AgentTuiCapabilityState.Supported,
+            "Composer echo measured on codex-cli 0.147.0 TUI (a typed body renders in the composer row; a typed \\n is a literal newline and does not submit) plus CARD-0055 transcript-confirmed delivery against the rollout's UserMessage rows. The re-press contract holds: Enter on an empty composer was measured submitting nothing five times over. Bracketed-paste and large-body behaviour are still unmeasured (CARD-0099 S2), so the conservative spill policy applies."),
         SessionResume: new SessionResumeContract(
             AgentTuiCapabilityState.Unknown,
             "Installed-client resume support has not been probed."),
@@ -124,12 +124,12 @@ public static class ProviderContractCatalog
             UsageLimitSignalForm.Unknown,
             StatesResetTime: null),
         Compaction: new CompactionContract(
-            AgentTuiCapabilityState.Unknown,
-            "Compaction signalling has not been probed.",
-            CompactionMarking.None),
+            AgentTuiCapabilityState.Supported,
+            "Marked in the rollout by a top-level 'compacted' record plus event_msg/context_compacted, and measured MID-TURN on a real session (rollout 01a01193-07eb: the pair landed 66 minutes inside a turn whose own task_complete arrived hours later). Codex compaction is housekeeping that strands nothing, so unlike Claude's manual /compact (CARD-0041) it needs no turn-end treatment and the normalizer skips both records.",
+            CompactionMarking.Marked),
         BlockingStartupModal: new BlockingStartupModalContract(
             AgentTuiCapabilityState.Supported,
-            "Codex shows a per-directory trust prompt ('Do you trust the contents of this directory?'); AcceptTrustPromptIfVisibleAsync auto-accepts it.",
+            "Codex shows a per-directory trust prompt ('Do you trust the contents of this directory?') on the FIRST launch into any unseen cwd, even under --dangerously-bypass-approvals-and-sandbox (measured 0.147.0), plus a startup update-available modal that swallows keystrokes the same way; AcceptTrustPromptIfVisibleAsync auto-accepts the trust prompt.",
             BlockingStartupModalKind.AutoAnswerable,
             BlockingStartupModalScope.Cwd));
 

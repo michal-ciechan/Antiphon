@@ -37,8 +37,15 @@ public sealed class GrokAdapterTests
         SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.ClaudeCode).ShouldBeTrue();
         SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.ClaudeCode).ShouldBeNull();
 
+        // CARD-0099 S1: Codex is the third tailed kind. Its format travels too — and unlike Grok's
+        // it is a DISCOVERED path, because Codex honours no session-id flag.
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Codex).ShouldBeTrue();
+        SessionRunnerHttpClient.TranscriptFormatFor(AgentKind.Codex)
+            .ShouldBe(Antiphon.SessionRunner.Contracts.TranscriptFormats.Codex);
+
         // No structured transcript exists for the others.
-        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Codex).ShouldBeFalse();
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.OpenCode).ShouldBeFalse();
+        SessionRunnerHttpClient.TranscriptEnabledFor(AgentKind.Raw).ShouldBeFalse();
     }
 
     private sealed class ThrowingSessionRunnerClient : ISessionRunnerClient

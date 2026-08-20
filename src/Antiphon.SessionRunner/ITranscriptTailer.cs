@@ -4,9 +4,11 @@ namespace Antiphon.SessionRunner;
 
 /// <summary>
 /// What <c>RunnerSession</c> needs from a transcript tailer, whatever the format: Claude's per-cwd
-/// JSONL (<see cref="TranscriptTailer"/>, discovery + adoption rules) or Grok's deterministic ACP
-/// <c>updates.jsonl</c> (<see cref="GrokTranscriptTailer"/>, no discovery). Both publish
-/// <c>SessionTranscript</c> events on the shared hub; everything downstream is format-agnostic.
+/// JSONL (<see cref="TranscriptTailer"/>, discovery + adoption rules), Grok's deterministic ACP
+/// <c>updates.jsonl</c> (<see cref="GrokTranscriptTailer"/>, no discovery), or Codex's rollout
+/// JSONL (<see cref="CodexTranscriptTailer"/>, discovery under the same CARD-0006 rules as Claude
+/// because Codex honours no session-id flag). All publish <c>SessionTranscript</c> events on the
+/// shared hub; everything downstream is format-agnostic.
 /// </summary>
 internal interface ITranscriptTailer : IAsyncDisposable
 {

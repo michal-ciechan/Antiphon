@@ -29,6 +29,15 @@ public static class TranscriptFormats
     /// S1) — so none of the Claude discovery/claim/fork machinery applies.
     /// </summary>
     public const string Grok = "grok";
+
+    /// <summary>
+    /// Codex's rollout JSONL, <c>CODEX_HOME/sessions/YYYY/MM/DD/rollout-&lt;ts&gt;-&lt;uuid&gt;.jsonl</c>
+    /// (CARD-0099 S1). Codex has no <c>--session-id</c> launch flag and the interactive TUI never
+    /// prints its session id on screen, so unlike Grok the path must be DISCOVERED — under the
+    /// full CARD-0006 rules (C1 claim, C2 <c>session_meta.cwd</c>, C3 first timestamp, C4 a prompt
+    /// this session actually sent).
+    /// </summary>
+    public const string Codex = "codex";
 }
 
 public sealed record RunnerInputRequest(string Input);

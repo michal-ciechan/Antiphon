@@ -43,9 +43,12 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
         // Grok gets the production transcript mapping (CARD-0080 S2) so the real GrokTranscriptTailer
-        // runs inside this in-proc runtime. Claude deliberately stays transcript-DISABLED here: the
-        // Claude tailer would search the real ~/.claude/projects of the machine running the tests,
-        // and the fakeclaude tests that need transcript rows pump them explicitly instead.
+        // runs inside this in-proc runtime — it can, because its transcript path is deterministic.
+        // Claude and Codex deliberately stay transcript-DISABLED here: both use DISCOVERY, so their
+        // tailers would search the real ~/.claude/projects and ~/.codex/sessions of the machine
+        // running the tests. The fakeclaude tests that need transcript rows pump them explicitly
+        // instead, and CodexTranscriptTailerTests drives the real Codex tailer against a temp
+        // sessions root of its own.
         var isGrok = spec.Kind == Antiphon.Server.Domain.Enums.AgentKind.Grok;
         var request = new RunnerLaunchRequest(
             sessionId,

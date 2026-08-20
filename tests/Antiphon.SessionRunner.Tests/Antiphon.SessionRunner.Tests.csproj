@@ -26,6 +26,9 @@
     <Content Include="..\Antiphon.Tests\Agents\Fixtures\compact-boundary.jsonl"
              Link="Fixtures\compact-boundary.jsonl"
              CopyToOutputDirectory="PreserveNewest" />
+    <!-- Real Codex rollouts captured 2026-08-20 (codex-cli 0.147.0) — see
+         CodexTranscriptNormalizerTests for provenance and the one documented reduction. -->
+    <Content Include="Fixtures\codex-*.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
