@@ -52,7 +52,7 @@ public class AgentTaskDeliveryWatchdogTests
     {
         var (harness, _) = CreateHarness();
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
-        await SeedBriefAsync(task.AgentSessionId!.Value, QueuedMessageStatus.Pending);
+        await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
 
         await harness.FailNeverStartedAsync(CancellationToken.None);
 
@@ -62,9 +62,9 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
-    public async Task any_transcript_entry_at_all_means_the_task_is_left_alone()
+    public async Task a_real_user_prompt_after_dispatch_means_the_task_is_left_alone()
     {
-        // Slow work is the stall scan's business; one transcript entry proves delivery happened.
+        // Slow work is the stall scan's business; a real prompt after dispatch proves delivery happened.
         var (harness, stopper) = CreateHarness();
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 45);
         await SeedTranscriptEntryAsync(task.AgentSessionId!.Value);
@@ -75,6 +75,130 @@ public class AgentTaskDeliveryWatchdogTests
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
             .Status.ShouldBe(AgentTaskStatus.Dispatched);
         stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task a_reused_session_whose_new_brief_never_landed_is_failed()
+    {
+        // CARD-0077: inherited history + the compact's five housekeeping records used to make
+        // "any transcript entry" true, so the never-started branch was unreachable for every
+        // reused session. Settlement's own filter sees zero turn prompts here — the watchdog must too.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[antiphon-task:deadbeef] The previous task's brief.",
+            dispatched.AddMinutes(-20));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(-12));
+        await SeedReuseCompactionHousekeepingAsync(sessionId, dispatched.AddMinutes(2));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "inherited history is not this task starting");
+        failed.FailureReason.ShouldContain("never delivered");
+        failed.FailureReason.ShouldContain("no turn prompt since this task was dispatched");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_reused_session_with_a_real_prompt_after_dispatch_is_left_alone()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[antiphon-task:deadbeef] The previous task's brief.",
+            dispatched.AddMinutes(-20));
+        await SeedReuseCompactionHousekeepingAsync(sessionId, dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            dispatched.AddMinutes(4));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stopper.Killed.ShouldNotContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_fresh_session_with_zero_entries_still_fails()
+    {
+        // Regression: the new predicate must degenerate to today's behaviour on a brand-new session.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("never delivered");
+        stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task a_null_timestamp_real_prompt_counts_as_started()
+    {
+        // Clock tolerance mirroring CARD-0056 / LoadPromptsInSpanAsync: an untimestamped record
+        // cannot be placed relative to DispatchedAt, so it is kept rather than dropped.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedEntryAsync(
+            task.AgentSessionId!.Value, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            timestamp: null);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task a_previous_tasks_brief_is_not_this_tasks_queued_evidence()
+    {
+        // On a reused session the earlier brief is Sent and would have made the evidence read
+        // "the brief is marked Sent" for THIS task, which never queued one.
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await using (var db = CreateContext())
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Body = "[antiphon-task:deadbeef]\n\nThe previous task.",
+                Status = QueuedMessageStatus.Sent,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Delegation,
+                CreatedAt = task.DispatchedAt!.Value.AddMinutes(-20),
+                SentAt = task.DispatchedAt!.Value.AddMinutes(-19),
+            });
+            await db.SaveChangesAsync();
+        }
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[antiphon-task:deadbeef] The previous task's brief.",
+            task.DispatchedAt!.Value.AddMinutes(-20));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .FailureReason.ShouldContain("no brief was queued for this task after dispatch");
     }
 
     /// <summary>
@@ -487,37 +611,79 @@ public class AgentTaskDeliveryWatchdogTests
         return task;
     }
 
-    private static async Task SeedBriefAsync(Guid sessionId, QueuedMessageStatus status)
+    private static async Task SeedBriefAsync(Guid sessionId, Guid taskId, QueuedMessageStatus status)
     {
         await using var db = CreateContext();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
         {
             Id = Guid.NewGuid(),
             AgentSessionId = sessionId,
-            Body = "[delegated task] Do the thing.",
+            Body = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
             Status = status,
             Sequence = 1,
             Origin = QueuedMessageOrigin.Delegation,
-            CreatedAt = DateTime.UtcNow.AddMinutes(-11),
+            CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
     }
 
     private static async Task SeedTranscriptEntryAsync(Guid sessionId)
     {
-        var at = DateTime.UtcNow.AddMinutes(-40);
+        // After dispatch of a typical 11- or 45-minute-old Dispatched row, so the new
+        // "since this task was dispatched" predicate still sees a real turn prompt.
+        var at = DateTime.UtcNow.AddMinutes(-1);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt, "[delegated task] Do the thing.", at);
+    }
+
+    /// <summary>
+    /// What a reuse-path manual <c>/compact</c> actually leaves behind (CARD-0077 §1.3 / session
+    /// e55b3b86 seqs 83-87): raw typed line, CompactBoundary, continuation prompt, wrapper,
+    /// stdout. Four USER records, none of them a prompt anybody typed.
+    /// </summary>
+    private static async Task SeedReuseCompactionHousekeepingAsync(Guid sessionId, DateTime at)
+    {
+        const string typed =
+            "/compact This session is being handed NEW, unrelated work. Keep only context useful for: X";
+        await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, typed, at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.CompactBoundary,
+            $"Context compacted {TranscriptKinds.ManualCompactMarker}", at.AddSeconds(44));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            TranscriptKinds.CompactionContinuationPromptPrefix
+            + " that ran out of context. The summary below covers…", at.AddSeconds(35));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n"
+            + "            <command-args>This session is being handed NEW, unrelated work. Keep only context useful for: X</command-args>",
+            at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>",
+            at.AddSeconds(44));
+    }
+
+    private static async Task SeedEntryAsync(
+        Guid sessionId, string kind, string? text, DateTime? timestamp)
+    {
         await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+        var at = timestamp ?? DateTime.UtcNow;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
             Id = Guid.NewGuid(),
             AgentSessionId = sessionId,
-            Sequence = 1,
-            Kind = TranscriptKinds.UserPrompt,
+            Sequence = seq + 1,
+            Kind = kind,
             Uuid = $"delivery-{Guid.NewGuid():N}",
-            Role = "user",
-            Text = "[delegated task] Do the thing.",
-            Timestamp = at,
+            Role = kind == TranscriptKinds.UserPrompt ? "user" : "assistant",
+            Text = text,
+            Timestamp = timestamp,
             CreatedAt = at,
+            StopReason = kind == TranscriptKinds.TurnEnd ? "end_turn" : null,
         });
         await db.SaveChangesAsync();
     }

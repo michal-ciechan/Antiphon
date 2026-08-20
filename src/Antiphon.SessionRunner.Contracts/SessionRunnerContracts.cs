@@ -274,9 +274,12 @@ public static class TranscriptKinds
     /// exists produces a wrapper and matches here; a prompt that merely starts with a slash produces
     /// no wrapper and cannot.</para>
     ///
-    /// <para>SETTLEMENT ONLY. No working/idle rule may consume it: there the manual compact boundary
+    /// <para>SETTLEMENT ONLY — including the delivery watchdog that asks whether THIS task ever
+    /// began (CARD-0077). No working/idle rule may consume it: there the manual compact boundary
     /// already outranks this record (CARD-0041), and reproducing the judgement in three lockstep
-    /// implementations would be three chances to disagree.</para>
+    /// implementations would be three chances to disagree. The watchdog is not a working/idle
+    /// rule; it never asks whether the session is working, only whether a non-housekeeping
+    /// UserPrompt landed after this task's dispatch.</para>
     /// </summary>
     public static bool IsRawLocalCommandEcho(
         string? kind, string? text, IReadOnlyCollection<string> invokedCommands)

@@ -1332,7 +1332,7 @@ public sealed class AgentTaskReplyService
     /// announcement turn) rather than hanging. Same exposure as the local-command shapes.</para>
     /// </summary>
     private static async Task<SubagentWait> ResolveSubagentWaitAsync(
-        AppDbContext db, Guid sessionId, long promptSequence, long? cap, SpanPrompts span,
+        AppDbContext db, Guid sessionId, long promptSequence, long? cap, TranscriptPromptSpan.Result span,
         CancellationToken ct)
     {
         // The ToolResult text is joined in SQL and never transferred — a tool result can be a whole
@@ -1387,85 +1387,14 @@ public sealed class AgentTaskReplyService
     /// <summary>One assistant-text row of the turn, carrying the API response it was part of.</summary>
     private readonly record struct TurnText(string? Text, string? ApiCallId, bool? IsApiError);
 
-    /// <summary>A candidate turn-opening prompt: everything the walk-back needs to judge one.</summary>
-    private sealed record PromptRow(long Sequence, string? Text, DateTime? Timestamp);
-
     /// <summary>
-    /// The prompts a turn of THIS task could have answered, in sequence order. Two filters, and
-    /// both of them killed a delegate that was still working on 2026-08-14 (tasks bcc982b7 /
-    /// session c8d07c43 and fbcd6af2 / 861eaefb, each failed at the 10-minute mark as
-    /// "reported but the result could not be attributed" while the delegate kept going and left
-    /// finished work uncommitted).
-    ///
-    /// <para><b>Bounded at the task's dispatch.</b> A warm-pool delegate's session outlives its
-    /// tasks, so the newest TurnEnd on it stays the PREVIOUS task's until this one ends a turn of
-    /// its own — several minutes, since the reuse path opens with a <c>/compact</c> that makes room
-    /// before the brief is even typed. Every AssistantText re-runs this extraction
-    /// (<c>AgentSessionRuntime</c> :219 → :350), so the previous task's report was read as an
-    /// unattributable report for THIS task, an incident was raised, and
-    /// <c>AgentTaskDispatcher.FailNeverStartedAsync</c> acted on that incident ten minutes later.
-    /// A prompt written before this task was dispatched cannot be its brief.</para>
-    ///
-    /// <para><b>Compaction's own records are not prompts.</b> Between the <c>/compact</c> and the
-    /// brief a manual compaction writes four USER records that nobody typed as a prompt: the
-    /// <c>&lt;command-name&gt;</c> wrapper, the <c>&lt;local-command-stdout&gt;</c> result, the
-    /// synthetic continuation prompt, and the raw echo of the typed command line (CARD-0041). Left
-    /// in, the first one of those below a turn end becomes "the prompt this turn answered", carries
-    /// no marker, and fails the gate — so an agent that compacts MID-task, after its brief, strands
-    /// the same way. Skipping them lets the walk-back reach the brief that is still sitting there
-    /// intact (c8d07c43 seq 137).</para>
-    ///
-    /// <para><see cref="TranscriptEntry.Timestamp"/> is the clock, not <c>CreatedAt</c>: stored
-    /// sequences are ARRIVAL-ordered and a backfill re-persists old records long after the fact
-    /// (2026-08-08), while the record's own timestamp survives reordering. An entry with no
-    /// timestamp cannot be placed in time and is KEPT rather than dropped, exactly as
-    /// <see cref="DelegationUsageRollup"/> keeps it — the conservative direction here is to let the
-    /// marker gate judge it.</para>
-    ///
-    /// <para><b>A background subagent's notification is not a prompt either</b> (CARD-0046 slice 4).
-    /// It is kept, separately, because the launches it answers are what settlement waits for — but
-    /// it must never own the span: without the skip the marker gate fails on every notification
-    /// turn, <see cref="RecordUncorrelatedReportAsync"/> fires, and the delivery watchdog kills the
-    /// task at ten minutes. That hazard is created by slice 4 and closed here.</para>
+    /// The prompts a turn of THIS task could have answered. Owned by
+    /// <see cref="TranscriptPromptSpan"/> so settlement and the delivery watchdog cannot disagree
+    /// on the four-way housekeeping filter (CARD-0077).
     /// </summary>
-    private static async Task<SpanPrompts> LoadPromptsInSpanAsync(
-        AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct)
-    {
-        var rows = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
-                && (dispatchedAt == null || t.Timestamp == null || t.Timestamp > dispatchedAt))
-            .OrderBy(t => t.Sequence)
-            .Select(t => new PromptRow(t.Sequence, t.Text, t.Timestamp))
-            .ToListAsync(ct);
-
-        // The wrappers are the PROOF that a raw "/compact …" line was a command rather than a
-        // prompt that happens to start with a slash — so the names come out of the span itself.
-        var invoked = rows
-            .Select(r => TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, r.Text))
-            .OfType<string>()
-            .ToHashSet(StringComparer.Ordinal);
-
-        return new SpanPrompts(
-            rows.Where(r => !IsHousekeepingPrompt(r.Text, invoked)).ToList(),
-            rows.Where(r => TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, r.Text))
-                .ToList());
-    }
-
-    /// <param name="TurnPrompts">USER records a turn could actually be answering, in sequence order.</param>
-    /// <param name="Notifications">
-    /// The background-subagent notifications among them — skipped as turn prompts, kept because
-    /// they are what proves a launch came back (CARD-0046 slice 4).
-    /// </param>
-    private sealed record SpanPrompts(
-        IReadOnlyList<PromptRow> TurnPrompts, IReadOnlyList<PromptRow> Notifications);
-
-    /// <summary>A USER record that no one typed as a prompt (see <see cref="LoadPromptsInSpanAsync"/>).</summary>
-    private static bool IsHousekeepingPrompt(string? text, IReadOnlyCollection<string> invokedCommands) =>
-        TranscriptKinds.IsLocalCommandRecord(TranscriptKinds.UserPrompt, text)
-        || TranscriptKinds.IsCompactionContinuationPrompt(TranscriptKinds.UserPrompt, text)
-        || TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, text, invokedCommands)
-        || TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, text);
+    private static Task<TranscriptPromptSpan.Result> LoadPromptsInSpanAsync(
+        AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct) =>
+        TranscriptPromptSpan.LoadAsync(db, sessionId, dispatchedAt, ct);
 
     private static string Join(IEnumerable<string?> texts) =>
         string.Join("\n\n", texts.Where(t => !string.IsNullOrWhiteSpace(t))).Trim();

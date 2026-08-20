@@ -113,9 +113,9 @@ public sealed class AgentTaskDispatcher
         // opus Debug task escalating to fable IS the tier ladder working, not an error path.
         sweepFailures += await RunSweepAsync("auto-escalate stalled", AutoEscalateStalledAsync, ct);
 
-        // And with work that never STARTED — zero transcript entries long after dispatch means the
-        // boot prompt was lost, which is categorically different from slow progress and must fail
-        // loudly, never escalate (a bigger model can't fix an undelivered brief).
+        // And with work that never STARTED — no turn prompt after dispatch means the boot prompt
+        // was lost, which is categorically different from slow progress and must fail loudly,
+        // never escalate (a bigger model can't fix an undelivered brief).
         sweepFailures += await RunSweepAsync("delivery watchdog", FailNeverStartedAsync, ct);
 
         // And with work whose SESSION died under it (CARD-0021). Distinct from the watchdog above,
@@ -340,8 +340,12 @@ public sealed class AgentTaskDispatcher
     /// happens, and it reports which:
     ///
     /// <list type="bullet">
-    /// <item>The brief never arrived — ZERO transcript entries. Four tasks sat like that for up to
-    /// 26 minutes on 2026-08-09 while every surface reported Running.</item>
+    /// <item>The brief never arrived — no non-housekeeping UserPrompt after this task's
+    /// <c>DispatchedAt</c>. On a fresh session that is "zero transcript entries" (four tasks sat
+    /// like that for up to 26 minutes on 2026-08-09). On a reused warm-pool session the inherited
+    /// history made the old "any entry at all" test always true, so this branch was unreachable
+    /// even when the NEW brief never landed (CARD-0077). The predicate is
+    /// <see cref="TranscriptPromptSpan"/>, the same one settlement already uses.</item>
     /// <item>The brief arrived, the delegate worked and REPORTED, but no turn could be matched to
     /// the task, so nothing settled it (2026-08-11: three tasks stranded overnight after the pty
     /// ate the head of the brief and the marker with it).</item>
@@ -370,34 +374,43 @@ public sealed class AgentTaskDispatcher
             ct.ThrowIfCancellationRequested();
             var sessionId = task.AgentSessionId!.Value;
 
-            // Any transcript entry at all means the session started — slow work belongs to the
-            // stall scan, not here.
-            var started = await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId, ct);
+            // A non-housekeeping UserPrompt after THIS task's dispatch is the proof the brief
+            // landed. "Any transcript entry at all" is the wrong test on a reused session: it
+            // inherited the previous task's history, so this branch was unreachable (CARD-0077).
+            // Slow work with a real prompt still belongs to the stall scan, not here.
+            var started = await TranscriptPromptSpan.HasTurnPromptSinceAsync(
+                _db, sessionId, task.DispatchedAt, ct);
 
             string reason;
             if (!started)
             {
                 // CARD-0085: an empty TranscriptEntries table is not evidence the work did not
                 // happen. Pull git / later-JSONL evidence before writing Failed (and killing).
+                // After CARD-0077 this also covers a reused session whose only new records are
+                // the compact's housekeeping — the work may still have landed unbound.
                 if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
                     continue;
 
+                var marker = DelegationReportFormatter.TaskMarker(task.Id);
                 var briefStatus = await _db.SessionQueuedMessages
                     .AsNoTracking()
-                    .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Delegation)
+                    .Where(m => m.AgentSessionId == sessionId
+                        && m.Origin == QueuedMessageOrigin.Delegation
+                        && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
+                        && m.Body.Contains(marker))
                     .OrderBy(m => m.Sequence)
                     .Select(m => (QueuedMessageStatus?)m.Status)
                     .FirstOrDefaultAsync(ct);
                 var evidence = briefStatus switch
                 {
                     QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
-                    QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a transcript",
-                    null => "no brief was ever queued for the session",
+                    QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a turn prompt for this task",
+                    null => "no brief was queued for this task after dispatch",
                     _ => $"brief status: {briefStatus}",
                 };
                 reason =
                     $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
-                    + $"the session has zero transcript entries ({evidence}). "
+                    + $"the session has no turn prompt since this task was dispatched ({evidence}). "
                     + "See the agent's incidents for the delivery errors — and if one of them is a "
                     + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
                     + "transcript bound to read (CARD-0064), so check the session before re-running.";
@@ -1631,60 +1644,110 @@ public sealed class AgentTaskDispatcher
     /// session last did, by a focused /compact: shrink the old context down to whatever could help
     /// the new task before the task arrives. Same-run follow-ups skip it — their old context is
     /// exactly the value being reused.
+    ///
+    /// <para>Each enqueue is independently fault-isolated (CARD-0077). The compact delivers
+    /// INLINE on a live idle session (measured 106 s on the live miss), and a single try around
+    /// both calls used to lose the brief silently: a non-OCE throw logged a false "queued"
+    /// claim, and an HttpClient timeout (TaskCanceledException, an OCE subclass) escaped the
+    /// catch entirely. A failure in either is logged accurately and raised as an incident; the
+    /// other still runs.</para>
     /// </summary>
-    private async Task DeliverReuseMessagesAsync(AgentTask task, CancellationToken ct)
+    internal async Task DeliverReuseMessagesAsync(AgentTask task, CancellationToken ct)
     {
         if (task.AgentSessionId is not Guid session)
             return;
 
+        var previousRoot = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == session
+                && t.Id != task.Id
+                && t.DispatchedAt != null
+                && t.DispatchedAt < task.DispatchedAt)
+            .OrderByDescending(t => t.DispatchedAt)
+            .Select(t => (Guid?)t.RootTaskId)
+            .FirstOrDefaultAsync(ct);
+
+        // A Check task NEVER compacts its session. Every interpretation is its own root, so the
+        // "unrelated work" test is true of every single one — and it is exactly wrong here: the
+        // specialist's work is homogeneous, and the accumulated experience of reading bundles is
+        // the whole reason it is a standing agent rather than a fresh Claude per check.
+        if (task.Role != AgentTaskRole.Check
+            && previousRoot is not null && previousRoot != task.RootTaskId)
+        {
+            // One line: a slash command is parsed from the submitted composer text, and the
+            // focus argument tells the summariser what the surviving context must serve.
+            var focus = task.Goal.ReplaceLineEndings(" ").Trim();
+            if (focus.Length > 300) focus = focus[..300];
+            await TryEnqueueReuseAsync(
+                task, session,
+                $"/compact This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
+                "refocus compact", ct);
+        }
+
+        // The live session's own kind (CARD-0084 S1). Unlike the spawn path this is NOT always
+        // ClaudeCode today: a task pinned to a STANDING agent is delivered into whatever that
+        // agent already is, and one of those is a Grok session.
+        var kind = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == session)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
+
+        var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, kind);
+        await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
+    }
+
+    /// <summary>
+    /// CARD-0077 test seam. Production is null and uses <see cref="SessionMessageQueueService"/>.
+    /// Tests set this to throw on one body without losing the other.
+    /// </summary>
+    internal Func<Guid, string, CancellationToken, Task>? ReuseEnqueueOverride { get; set; }
+
+    private async Task TryEnqueueReuseAsync(
+        AgentTask task, Guid session, string body, string what, CancellationToken ct)
+    {
         try
         {
-            var previousRoot = await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.AgentSessionId == session
-                    && t.Id != task.Id
-                    && t.DispatchedAt != null
-                    && t.DispatchedAt < task.DispatchedAt)
-                .OrderByDescending(t => t.DispatchedAt)
-                .Select(t => (Guid?)t.RootTaskId)
-                .FirstOrDefaultAsync(ct);
-
-            // A Check task NEVER compacts its session. Every interpretation is its own root, so the
-            // "unrelated work" test is true of every single one — and it is exactly wrong here: the
-            // specialist's work is homogeneous, and the accumulated experience of reading bundles is
-            // the whole reason it is a standing agent rather than a fresh Claude per check.
-            if (task.Role != AgentTaskRole.Check
-                && previousRoot is not null && previousRoot != task.RootTaskId)
-            {
-                // One line: a slash command is parsed from the submitted composer text, and the
-                // focus argument tells the summariser what the surviving context must serve.
-                var focus = task.Goal.ReplaceLineEndings(" ").Trim();
-                if (focus.Length > 300) focus = focus[..300];
+            if (ReuseEnqueueOverride is { } enqueue)
+                await enqueue(session, body, ct);
+            else
                 await _queue.EnqueueAsync(
-                    session,
-                    $"/compact This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
-                    MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
-            }
-
-            // The live session's own kind (CARD-0084 S1). Unlike the spawn path this is NOT always
-            // ClaudeCode today: a task pinned to a STANDING agent is delivered into whatever that
-            // agent already is, and one of those is a Grok session.
-            var kind = await _db.AgentSessions.AsNoTracking()
-                .Where(s => s.Id == session)
-                .Select(s => (AgentKind?)s.AgentKind)
-                .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
-
-            var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, kind);
-            await _queue.EnqueueAsync(
-                session, brief, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+                    session, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Same contract as the spawn path: rows are persisted before the runner is probed, so
-            // a transient transport failure delays delivery rather than losing the brief.
-            _logger.LogWarning(
-                ex, "Task {ShortId}: reuse messages are queued but could not be delivered yet",
-                DelegationReportFormatter.Short(task.Id));
+            throw;
         }
+        catch (Exception ex)
+        {
+            // Not "queued but could not be delivered yet": EnqueueAsync persists then delivers
+            // inline, so a throw here means this row may not exist at all. The spawn path's
+            // "rows are persisted before the runner is probed" contract does not hold here.
+            _logger.LogWarning(
+                ex, "Task {ShortId}: reuse {What} was not queued ({Message})",
+                DelegationReportFormatter.Short(task.Id), what, ex.Message);
+            await RecordReuseEnqueueFailedAsync(task, session, what, ex, ct);
+        }
+    }
+
+    private async Task RecordReuseEnqueueFailedAsync(
+        AgentTask task, Guid session, string what, Exception ex, CancellationToken ct)
+    {
+        if (task.AgentId is not Guid agentId)
+            return;
+
+        var message =
+            $"Reuse {what} was not queued for task {DelegationReportFormatter.Short(task.Id)}: {ex.Message}";
+        _db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agentId,
+            SessionId = session,
+            Kind = AgentIncidentKind.DeliveryTransportFailed,
+            Severity = AlertSeverity.Warning,
+            Message = message,
+            FailureReason = ex.GetType().Name,
+            CreatedAt = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>

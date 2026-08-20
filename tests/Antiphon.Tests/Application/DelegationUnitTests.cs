@@ -1105,6 +1105,29 @@ public class TranscriptLocalCommandEchoTests
         TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, Wrapper, ["/compact"])
             .ShouldBeFalse();
     }
+
+    [Test]
+    public void the_four_housekeeping_shapes_are_one_filter()
+    {
+        // CARD-0077: settlement and the delivery watchdog share this helper so they cannot disagree.
+        var invoked = new[] { "/compact" };
+        TranscriptPromptSpan.IsHousekeepingPrompt(Wrapper, invoked).ShouldBeTrue();
+        TranscriptPromptSpan.IsHousekeepingPrompt(
+            "/compact Keep only what serves the new task.", invoked).ShouldBeTrue();
+        TranscriptPromptSpan.IsHousekeepingPrompt(
+            TranscriptKinds.CompactionContinuationPromptPrefix + " that ran out of context.", invoked)
+            .ShouldBeTrue();
+        TranscriptPromptSpan.IsHousekeepingPrompt(
+            "<local-command-stdout>Compacted</local-command-stdout>", invoked).ShouldBeTrue();
+        TranscriptPromptSpan.IsHousekeepingPrompt(
+            "<task-notification>\n<summary>done</summary>\n</task-notification>", invoked)
+            .ShouldBeTrue();
+        TranscriptPromptSpan.IsHousekeepingPrompt(
+            "[antiphon-task:abcd1234]\n\nDo the thing.", invoked)
+            .ShouldBeFalse("a real brief is the thing the watchdog is looking for");
+        TranscriptPromptSpan.IsHousekeepingPrompt("/compact do the thing", []).ShouldBeFalse(
+            "without a wrapper in the span a slash-prefixed prompt is still a prompt");
+    }
 }
 
 /// <summary>
