@@ -1001,10 +1001,22 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         };
     }
 
-    private static bool UsesSessionIdentityArgs(AgentKind kind) =>
+    /// <summary>
+    /// Whether this kind's launch carries <c>--session-id</c>/<c>--resume</c> at all. Internal so
+    /// <c>DelegateLaunchArgvIntegrityTests</c> can ask the real rule which kinds it must find that
+    /// argument on, rather than encoding a list of kinds that would drift.
+    /// </summary>
+    internal static bool UsesSessionIdentityArgs(AgentKind kind) =>
         ProviderContractCatalog.For(kind).SessionResume.State == AgentTuiCapabilityState.Supported;
 
-    private static IReadOnlyList<string> BuildSessionIdentityArgs(
+    /// <summary>
+    /// Internal, not private, for CARD-0101's coverage gap (P0-1): <c>--session-id</c> is appended
+    /// HERE, after <c>AgentTaskDispatcher.BuildLaunchSpec</c> has composed the bundles, so an argv
+    /// integrity test that stopped at the spec would be testing a command line production never
+    /// builds — and losing this argument is precisely what made the shred survive three days (an
+    /// unbound transcript reads as a transcript-layer bug).
+    /// </summary>
+    internal static IReadOnlyList<string> BuildSessionIdentityArgs(
         IReadOnlyList<string> args,
         Guid sessionId,
         AgentSessionResumeMode? resumeMode)

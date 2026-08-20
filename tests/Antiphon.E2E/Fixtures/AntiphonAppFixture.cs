@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
@@ -199,6 +200,11 @@ public class AntiphonAppFixture
 
     public async Task DisposeAsync()
     {
+        // CARD-0102: stop what this fixture started, BEFORE the database and the host it needs to
+        // identify those sessions are torn down. Sets SessionLeakVerdict rather than throwing here —
+        // a leak must fail the run, and it must not do so by abandoning a Postgres container.
+        await StopSessionsThisFixtureStartedAsync();
+
         // Covers the API-only tests, which have no page and so never called
         // CaptureOnCompletionAsync; a no-op when they did. Skipped for a fixture with a
         // caller-chosen directory, which is not tied to one test's pass/fail.
@@ -224,6 +230,11 @@ public class AntiphonAppFixture
         {
             await DeleteDirectoryBestEffortAsync(_workspacePath);
         }
+
+        // Last, so everything above has already been released. A leaked pty-host is a red test in
+        // the run that caused it — which is the whole point of P2-2 item 1.
+        if (SessionLeakVerdict is not null)
+            throw new InvalidOperationException(SessionLeakVerdict);
     }
 
     /// <summary>
@@ -329,6 +340,187 @@ public class AntiphonAppFixture
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
             }
+        }
+    }
+
+    /// <summary>
+    /// How long a pty-host this fixture started may take to die after its session is killed before
+    /// the run is failed. Generous: the kill is a frame to a detached process which then shuts its
+    /// own host down, and a slow machine must not turn a clean teardown into a red run.
+    /// </summary>
+    private static readonly TimeSpan HostShutdownBudget = TimeSpan.FromSeconds(20);
+
+    /// <summary>The detached pty-host, by process name — the pid-reuse guard for the census.</summary>
+    private const string PtyHostProcessName = "Antiphon.PtyHost";
+
+    /// <summary>
+    /// Set when teardown found a pty-host this fixture started still alive. Thrown at the very END
+    /// of <see cref="DisposeAsync"/>, never before: a leak must fail the run, and it must not do so
+    /// by abandoning the Postgres container and the Kestrel host on the way out.
+    /// </summary>
+    public string? SessionLeakVerdict { get; private set; }
+
+    /// <summary>
+    /// CARD-0102, and item 1 of the coverage plan's P2-2: stop every session this fixture started,
+    /// then FAIL THE RUN if any pty-host it started is still alive.
+    ///
+    /// <para>This fixture deliberately drives the always-on production session runner on 17204
+    /// rather than a throwaway one (see <see cref="RecordSessionRunnerReachabilityAsync"/>), and
+    /// nothing here changes that — <see cref="EnsureSessionRunnerReachable"/>'s fail-fast verdict is
+    /// untouched. What changes is that the suite now cleans up after itself: every E2E session was a
+    /// real detached <c>Antiphon.PtyHost</c> holding an interactive <c>cmd.exe</c> on the shared
+    /// runner, and on 2026-08-20, 39 of them were alive at once — some for nearly ten hours — and
+    /// were found only by hand, during triage of an unrelated production incident they had been
+    /// actively confusing.</para>
+    ///
+    /// <para><b>Ownership is proved, never inferred.</b> The set killed is exactly the
+    /// <c>AgentSessions</c> rows in THIS fixture's own Postgres testcontainer, which no other
+    /// process writes to — so every row in it was created by this fixture's tests. A tempting
+    /// alternative (diff the runner's session list against a snapshot taken at startup) would also
+    /// sweep up anything an operator or a delegate started meanwhile, and killing that is precisely
+    /// CARD-0056's disaster: the session nobody claimed turned out to be the operator's own live
+    /// conversation.</para>
+    ///
+    /// <para>Note this is why shortening <c>PtyHostLingerHours</c> — CARD-0102's own suggested
+    /// remedy — would not have helped: <c>HostSession</c> starts the linger clock only after the
+    /// child exits, and an interactive <c>cmd.exe</c> never does. Those hosts were not lingering
+    /// orphans, they were live sessions nobody stopped. The fix is lifecycle, not TTL.</para>
+    ///
+    /// <para>An unreachable runner at teardown is NOT a leak verdict. It is the absence of evidence,
+    /// and a suite that went red because a daemon was restarting would be worse than one that says
+    /// nothing.</para>
+    /// </summary>
+    private async Task StopSessionsThisFixtureStartedAsync()
+    {
+        if (_kestrelHost is null)
+            return;
+
+        List<Guid> ours;
+        try
+        {
+            using var scope = _kestrelHost.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Every row, not just the live ones: a row written off as Failed can still have a live
+            // host behind it — that is CARD-0056 exactly, and a cleanup that trusted the status
+            // column would leak the one session most worth stopping.
+            ours = await db.AgentSessions.Select(s => s.Id).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Note($"[session-cleanup] could not read this fixture's sessions: {ex.Message}");
+            return;
+        }
+
+        if (ours.Count == 0)
+            return;
+
+        var runner = _kestrelHost.Services.GetRequiredService<ISessionRunnerClient>();
+        IReadOnlyList<SessionRunnerSessionDto> listed;
+        try
+        {
+            listed = await runner.ListAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _diagnostics?.Note(
+                $"[session-cleanup] the session runner was unreachable at teardown ({ex.Message}); "
+                + $"{ours.Count} session row(s) were NOT verified. This is not a leak verdict.");
+            return;
+        }
+
+        var owned = ours.ToHashSet();
+        var mine = listed.Where(s => owned.Contains(s.SessionId)).ToList();
+        if (mine.Count == 0)
+        {
+            _diagnostics?.Note(
+                $"[session-cleanup] none of this fixture's {ours.Count} session row(s) are on the runner — "
+                + "nothing to stop (most were seeded straight into the database and never launched).");
+            return;
+        }
+
+        // Snapshotted BEFORE the kills: once a session is gone the runner stops naming its host, and
+        // a pid we never recorded is a leak we can never detect.
+        var hosts = mine
+            .Where(s => s.HostPid is int pid && pid > 0)
+            .Select(s => (s.SessionId, HostPid: s.HostPid!.Value))
+            .ToList();
+
+        foreach (var session in mine)
+        {
+            try
+            {
+                await runner.KillAsync(session.SessionId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // Recorded, not swallowed: the census below is what decides the verdict, and a kill
+                // that threw on an already-dead session is normal.
+                _diagnostics?.Note(
+                    $"[session-cleanup] kill for {session.SessionId} failed: {ex.Message}");
+            }
+        }
+
+        _diagnostics?.Note(
+            $"[session-cleanup] stopped {mine.Count} runner session(s) this fixture started "
+            + $"({hosts.Count} with a named pty-host).");
+
+        await AssertNoLeakedPtyHostsAsync(hosts);
+    }
+
+    /// <summary>
+    /// The census: every pty-host this fixture started must be gone. A leak becomes a red test in
+    /// the run that caused it, rather than a process nobody notices for a day.
+    ///
+    /// <para>The process NAME is checked as well as the pid, because pids are reused: on a machine
+    /// that has cycled through them, a bare "is this pid alive" would fail the run over some
+    /// unrelated program that happened to inherit the number.</para>
+    /// </summary>
+    private async Task AssertNoLeakedPtyHostsAsync(IReadOnlyList<(Guid SessionId, int HostPid)> hosts)
+    {
+        if (hosts.Count == 0)
+            return;
+
+        var deadline = DateTime.UtcNow + HostShutdownBudget;
+        List<(Guid SessionId, int HostPid)> alive;
+        while (true)
+        {
+            alive = [.. hosts.Where(h => IsPtyHostAlive(h.HostPid))];
+            if (alive.Count == 0 || DateTime.UtcNow >= deadline)
+                break;
+            await Task.Delay(500);
+        }
+
+        if (alive.Count == 0)
+        {
+            _diagnostics?.Note($"[session-cleanup] all {hosts.Count} pty-host(s) are gone.");
+            return;
+        }
+
+        SessionLeakVerdict =
+            $"CARD-0102: this E2E fixture leaked {alive.Count} of {hosts.Count} pty-host(s) onto the "
+            + $"shared session runner. Still alive after {HostShutdownBudget.TotalSeconds:0}s: "
+            + string.Join(", ", alive.Select(h => $"pid {h.HostPid} (session {h.SessionId})"))
+            + ". Each one holds a real detached process on the daemon every delegate dispatch also "
+            + "uses. Do not 'fix' this by widening the budget — find what started a session this "
+            + "teardown could not stop.";
+        _diagnostics?.Note("[session-cleanup] " + SessionLeakVerdict);
+    }
+
+    private static bool IsPtyHostAlive(int pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            return !process.HasExited
+                && string.Equals(process.ProcessName, PtyHostProcessName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            return false; // no such process — the good outcome
+        }
+        catch (InvalidOperationException)
+        {
+            return false; // exited between lookup and inspection
         }
     }
 

@@ -243,4 +243,33 @@ public enum AgentIncidentKind
     /// hours" instead of the thirty-eighth identical row that says "broken".
     /// </summary>
     TranscriptBindStuck = 27,
+
+    /// <summary>
+    /// The three views of "what sessions exist" have diverged past a threshold: the session runner
+    /// is serving far more sessions than the database claims, or far more <c>Antiphon.PtyHost</c>
+    /// processes are alive than there are runner sessions with a live agent child.
+    ///
+    /// <para>Warning normally; Critical past a hard ceiling, because the difference between
+    /// "drifting" and "dozens of stray processes" is the difference between something to look at
+    /// this week and something eating the machine now.</para>
+    ///
+    /// <para>Live miss 2026-08-20 (CARD-0102): 39 orphaned pty-hosts — every one an
+    /// <c>AntiphonAppFixture</c> session the E2E suite started and never stopped, up to ten hours
+    /// old — were found and killed BY HAND during triage of an unrelated production incident, where
+    /// they cost real investigation time by looking exactly like its symptom. The data was already
+    /// there: <c>SessionReconciliationService</c>'s third pass fetches the runner's full session
+    /// list once per sweep (CARD-0056) and the server log said "46 runner sessions with no DB row at
+    /// all" four hours before the human found it. Nothing alerted. This is the alert.</para>
+    ///
+    /// <para><b>It never reaps.</b> That constraint is inherited from CARD-0056 and is not
+    /// negotiable: the false positive that created that card fired on a perfectly healthy session,
+    /// and the unclaimed session was the operator's own live conversation. Unclaimed is a reason to
+    /// TELL somebody, never a reason to kill.</para>
+    ///
+    /// <para>Deduped by <c>PtyHostCensusAlertState</c> — one raise per repeat window while the
+    /// condition holds, and an escalation always goes through — so it cannot become the CARD-0101
+    /// refusal storm (37 identical Warnings in three hours, nobody acted, then silence read as a
+    /// fix).</para>
+    /// </summary>
+    PtyHostCensusDiverged = 28,
 }

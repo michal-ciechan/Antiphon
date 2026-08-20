@@ -1541,4 +1541,175 @@ public class FakeClaudeContractTests
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
+
+    // ------------------------------------------------------------------------------------------
+    // CARD-0101 / test-coverage plan P0-2 — why this fake had to learn a second argv parser.
+    // ------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The fake was, for months, the reason a shredding command line looked correct.
+    ///
+    /// <para><c>--echo-args</c> prints the vector <b>.NET</b> parsed, and .NET's parser accepts a
+    /// doubled <c>""</c> inside a quoted argument as one escaped quote. <c>CommandLineToArgvW</c> —
+    /// the parser <c>claude.exe</c>, node and bun actually use — SPLITS there. So the inbox backend
+    /// was correct for .NET children and shredding for the child that matters, and
+    /// <c>SessionMessageQueuePtyIntegrationTests.Launch_args_reach_the_child_process</c> passed on
+    /// the failing shape for months because the only child it ever asked was this one.</para>
+    ///
+    /// <para>Both arms are the assertion, and neither works alone:</para>
+    /// <list type="number">
+    /// <item><b>Through the real pty, on the production composition</b> — the two lines AGREE. That
+    /// is the fix working; on its own it proves nothing, because it also agrees when the strict
+    /// line is a copy of the loose one.</item>
+    /// <item><b>Direct spawn on the PRE-fix (Porta doubling) command line</b> — the two lines
+    /// DIVERGE, and <c>--echo-args</c> alone still reports the intended argument intact. That
+    /// divergence is the whole reason <c>--echo-argv-strict</c> exists, and it is why nobody may
+    /// "simplify" this back to one line.</item>
+    /// </list>
+    ///
+    /// <para>Arm 2 deliberately does NOT go through a pseudoconsole: since <c>aa1c8f1</c> +
+    /// <c>7a92098</c> both backends escape correctly and <see cref="LaunchArgvGuard"/> refuses the
+    /// launch outright if they ever stop — so the shredding line can no longer be built by the
+    /// production path at all. That is the desired state; measuring the child's parser therefore
+    /// needs a spawn that bypasses it. <c>ProcessStartInfo.Arguments</c> (the string overload, not
+    /// <c>ArgumentList</c>) is passed to <c>CreateProcess</c> verbatim, which is exactly the raw
+    /// line we need.</para>
+    /// </summary>
+    [Test]
+    public async Task A_doubled_quote_argument_splits_for_a_native_parser_and_not_for_dotnet()
+    {
+        SkipIfUnavailable();
+
+        // One intended argument, carrying a literal quote: the delegate-basics shape.
+        const string intended = "a \"quoted\" word";
+
+        // ---- arm 1: the production composition, through a real ConPTY ----------------------------
+        var runner = new PtyAgentRunner("inbox");
+        await runner.StartAsync(
+            FakeClaudeExe, ["--echo-args", "--echo-argv-strict", "--append-system-prompt", intended],
+            cols: 220, rows: 30);
+        ShouldBeInbox(runner);
+        try
+        {
+            var sawBoth = await runner.WaitForOutputAsync(
+                s => Unwrap(s).Contains("ARGS:") && Unwrap(s).Contains("ARGVSTRICT:"),
+                TimeSpan.FromSeconds(45));
+            sawBoth.ShouldBeTrue("the fake must print both argv lines: " + runner.SnapshotText());
+
+            var text = Unwrap(runner.SnapshotText());
+            text.ShouldNotContain("ARGVSTRICTWARN:",
+                customMessage: "argv[0] must be this process's own exe, or the strict vector is offset "
+                    + "by one and every assertion below it is meaningless");
+
+            var loose = LineAfter(text, "ARGS:");
+            var strict = LineAfter(text, "ARGVSTRICT:");
+            strict.ShouldBe(loose,
+                "on the CORRECTED escaping the two parsers must agree — this is the arm that goes red "
+                + "if the production composition regresses. loose=[" + loose + "] strict=[" + strict + "]");
+            strict.ShouldContain(
+                "--append-system-prompt␟a \"quoted\" word",
+                customMessage: "and the quoted value must arrive as ONE argument: " + text);
+        }
+        finally
+        {
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+            await runner.DisposeAsync();
+        }
+
+        // ---- arm 2: the PRE-fix line, spawned raw ------------------------------------------------
+        // Porta.Pty 1.0.7's WindowsArguments.Format, replicated by LaunchArgvGuard.FormatPortaStyle:
+        // wrap every argument in quotes, double every inner quote. This is what shipped.
+        var portaLine = LaunchArgvGuard.FormatPortaStyle(
+            FakeClaudeExe, ["--echo-args", "--echo-argv-strict", "--append-system-prompt", intended]);
+        var (looseRaw, strictRaw) = await SpawnAndReadArgvLinesAsync(portaLine);
+
+        looseRaw.ShouldContain(
+            "--append-system-prompt␟a \"quoted\" word",
+            customMessage: "the .NET parser reports the intended argument INTACT on the shredding line — "
+                + "which is precisely how this went unnoticed for months. Line was: " + portaLine);
+        strictRaw.ShouldNotContain(
+            "--append-system-prompt␟a \"quoted\" word",
+            customMessage: "a native child's CRT must NOT see the intended argument on the pre-fix line. "
+                + "If this ever passes, either the fake stopped using CommandLineToArgvW or Porta's "
+                + "formatter changed — check LaunchArgvGuardTests' reflection pin before touching this.");
+        strictRaw.Split('␟').Length.ShouldBeGreaterThan(
+            looseRaw.Split('␟').Length,
+            "the split is the defect: the native parser sees MORE arguments than were intended, and "
+            + $"each extra one is a fragment of the system prompt. loose=[{looseRaw}] strict=[{strictRaw}]");
+    }
+
+    /// <summary>
+    /// Spawns the fake on a RAW command line (no pty, no re-escaping) and returns its two argv
+    /// lines. <c>ProcessStartInfo.Arguments</c> is handed to <c>CreateProcess</c> as-is, so the
+    /// hostile line reaches the child byte for byte.
+    /// </summary>
+    private static async Task<(string Loose, string Strict)> SpawnAndReadArgvLinesAsync(string commandLine)
+    {
+        // The app is the first token of the composed line; everything after it is the argument tail.
+        var quoted = commandLine.StartsWith('"');
+        var appEnd = quoted ? commandLine.IndexOf('"', 1) + 1 : commandLine.IndexOf(' ');
+        var arguments = appEnd < 0 || appEnd >= commandLine.Length ? string.Empty : commandLine[appEnd..].TrimStart();
+
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = FakeClaudeExe,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+            },
+        };
+
+        var loose = string.Empty;
+        var strict = string.Empty;
+        process.Start();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            while ((loose.Length == 0 || strict.Length == 0) && !cts.IsCancellationRequested)
+            {
+                var line = await process.StandardOutput.ReadLineAsync(cts.Token);
+                if (line is null) break;
+                if (line.StartsWith("ARGS:", StringComparison.Ordinal)) loose = line["ARGS:".Length..];
+                else if (line.StartsWith("ARGVSTRICT:", StringComparison.Ordinal)) strict = line["ARGVSTRICT:".Length..];
+            }
+        }
+        catch (OperationCanceledException) { /* fall through to the assertions below */ }
+        finally
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+        }
+
+        loose.ShouldNotBeEmpty("the fake must print its ARGS line even on a hostile command line");
+        strict.ShouldNotBeEmpty("the fake must print its ARGVSTRICT line even on a hostile command line");
+        return (loose, strict);
+    }
+
+    /// <summary>ConPTY soft-wraps at the terminal width; rejoin before matching a long banner line.</summary>
+    private static string Unwrap(string raw) => raw.Replace("\r", string.Empty).Replace("\n", string.Empty);
+
+    /// <summary>
+    /// The text between <paramref name="prefix"/> and the next banner marker on an unwrapped
+    /// snapshot. Nothing here can rely on line boundaries — they were just removed — so the next
+    /// known prefix is the terminator.
+    /// </summary>
+    private static string LineAfter(string unwrapped, string prefix)
+    {
+        var start = unwrapped.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+        start += prefix.Length;
+        var rest = unwrapped[start..];
+        foreach (var terminator in new[] { "ARGVSTRICT:", "ARGS:", "]0;" })
+        {
+            var at = rest.IndexOf(terminator, StringComparison.Ordinal);
+            if (at >= 0) rest = rest[..at];
+        }
+        // TrimEnd, because a terminal row is space-padded to the window width by definition and
+        // whether that padding has arrived when the snapshot is taken is a race: this comparison
+        // failed once on six trailing spaces the renderer had filled in on the ARGS: row and not
+        // yet on the last one. Nothing this test asserts about ends in a space.
+        return rest.TrimEnd();
+    }
 }

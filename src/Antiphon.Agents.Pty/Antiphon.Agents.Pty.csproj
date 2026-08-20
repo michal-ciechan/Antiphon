@@ -36,6 +36,12 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Antiphon.Agents.Pty.Tests" />
+    <!-- CARD-0101 coverage (P0-1): DelegateLaunchArgvIntegrityTests lives in Antiphon.Tests, where
+         the real AgentTaskDispatcher.BuildLaunchSpec is, and has to take those real composed args
+         through BuildCommandLine/EscapeArgument - the actual production composition, not a copy of
+         it. Copying the composition into the test is what left the bundle->argv seam untested while
+         a passing test sat one file away. -->
+    <InternalsVisibleTo Include="Antiphon.Tests" />
   </ItemGroup>
 
 </Project>

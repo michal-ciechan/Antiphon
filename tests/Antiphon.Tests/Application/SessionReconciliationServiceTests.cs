@@ -514,7 +514,10 @@ public class SessionReconciliationServiceTests
         MockEventBus eventBus,
         IAlertService? alerts = null,
         SessionReAdoptionState? reAdoptions = null,
-        bool reAdoptEnabled = true) =>
+        bool reAdoptEnabled = true,
+        IPtyHostCensusProbe? census = null,
+        PtyHostCensusAlertState? censusAlerts = null,
+        bool censusAlertEnabled = true) =>
         new(
             db,
             runnerClient,
@@ -522,12 +525,18 @@ public class SessionReconciliationServiceTests
             alerts ?? new NoOpAlertService(),
             new RunnerReachabilityState(),
             reAdoptions ?? new SessionReAdoptionState(),
+            // Default OFF for every pre-existing case: the census is global by nature and these
+            // tests share a database, so a suite that had not thought about it must not start
+            // raising census alerts as a side effect of other tests' rows.
+            census ?? new StatedCensusProbe(PtyHostCensus.Unavailable),
+            censusAlerts ?? new PtyHostCensusAlertState(),
             Options.Create(new SessionReconciliationSettings
             {
                 Enabled = true,
                 StartingGraceMs = 90_000,
                 AgentGraceMs = 120_000,
                 ReAdoptEnabled = reAdoptEnabled,
+                CensusAlertEnabled = censusAlertEnabled && census is not null,
             }),
             TimeProvider.System,
             NullLogger<SessionReconciliationService>.Instance);
@@ -708,5 +717,290 @@ public class SessionReconciliationServiceTests
 
         public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
             throw new NotSupportedException();
+    }
+
+    // ---- pass 4: the census alert (CARD-0102 / coverage plan P0-3) --------------------------------
+    //
+    // Every case below states the runner's session list outright, so "unclaimed" means exactly the
+    // sessions this test declared and no DB row exists for. Nothing here depends on what other rows
+    // are in the shared test database — which matters, because the sweep is global and the count
+    // being asserted is a count.
+
+    /// <summary>
+    /// The 2026-08-20 shape, one notch past the threshold: the runner is serving sessions the
+    /// database has never heard of. This is the line the server log already printed four hours
+    /// before a human found the leak by hand; all that was missing was somebody being told.
+    /// </summary>
+    [Test]
+    public async Task Census_alert_fires_when_unclaimed_runner_sessions_pass_the_threshold()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, RunnerWithUnclaimed(12), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 12, claude: 12));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        var census = CensusAlerts(alerts).ShouldHaveSingleItem();
+        census.Severity.ShouldBe(AlertSeverity.Warning);
+        census.Detail.ShouldNotBeNull();
+        census.Detail.ShouldContain("unclaimed by the database: 12");
+        census.Detail.ShouldContain("NOTHING WAS KILLED");
+        census.DedupKey.ShouldBe($"reconciler:{AgentIncidentKind.PtyHostCensusDiverged}");
+    }
+
+    /// <summary>
+    /// The measured number (46) must land on the severity that reaches a human. CARD-0101's whole
+    /// cascade was Warning-only because Critical was reserved for channel-bound agents, and a
+    /// delegate agent is never channel-bound — eleven agent-hours of it were visible to anyone
+    /// querying the database and to nobody else.
+    /// </summary>
+    [Test]
+    public async Task Census_alert_is_critical_past_the_hard_ceiling()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, RunnerWithUnclaimed(46), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 46, claude: 46));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).ShouldHaveSingleItem().Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    /// <summary>
+    /// The arm that catches what CARD-0102 actually was — and the reason the card's own proposed
+    /// remedy would not have helped. 39 hosts alive, ZERO runner sessions, so the unclaimed arm sees
+    /// nothing at all: those hosts were holding interactive <c>cmd.exe</c> children that never exit,
+    /// which no <c>PtyHostLingerHours</c> can collect (the linger clock starts after the child
+    /// exits). Without this arm the whole leak is invisible.
+    /// </summary>
+    [Test]
+    public async Task Census_alert_fires_on_pty_host_surplus_with_no_unclaimed_sessions()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, new FakeRunnerClient { Sessions = [] }, new MockEventBus(), alerts,
+            census: Census(ptyHosts: 39, claude: 0));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        var census = CensusAlerts(alerts).ShouldHaveSingleItem();
+        census.Severity.ShouldBe(AlertSeverity.Critical, "39 stray hosts is past the hard ceiling");
+        census.Detail.ShouldNotBeNull();
+        census.Detail.ShouldContain("Live Antiphon.PtyHost processes: 39");
+        census.Detail.ShouldContain("surplus over sessions with a live child: 39");
+    }
+
+    /// <summary>
+    /// A host whose reported child pid is NOT in the process table does not count as a session with
+    /// a live agent child. Trusting the runner's own report would count a session whose child died
+    /// while the host stands on — which is half of what this pass exists to find.
+    /// </summary>
+    [Test]
+    public async Task A_runner_session_whose_child_pid_is_dead_does_not_offset_the_surplus()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        // Ten runner sessions, each naming a child pid — but the process table knows none of them.
+        var runner = RunnerWithUnclaimed(10, pidBase: 900_000);
+        var service = BuildService(
+            db, runner, new MockEventBus(), alerts,
+            census: Census(ptyHosts: 10, claude: 0, livePids: new HashSet<int>()));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        var census = CensusAlerts(alerts).ShouldHaveSingleItem();
+        census.Detail.ShouldNotBeNull();
+        census.Detail.ShouldContain("with a live agent child: 0");
+        census.Detail.ShouldContain("surplus over sessions with a live child: 10");
+    }
+
+    /// <summary>
+    /// THE constraint, inherited from CARD-0056 and not negotiable: unclaimed never implies kill.
+    /// The false positive that created that card fired on a perfectly healthy session, and the
+    /// session nobody claimed was the operator's own live conversation — a pass that resolved the
+    /// divergence by killing would have killed it mid-sentence.
+    /// </summary>
+    [Test]
+    public async Task The_census_alert_never_kills_anything()
+    {
+        await using var db = CreateContext();
+        var runner = RunnerWithUnclaimed(60);
+        var before = runner.Sessions.Select(s => s.SessionId).ToList();
+        var service = BuildService(
+            db, runner, new MockEventBus(), new RecordingAlertService(),
+            census: Census(ptyHosts: 200, claude: 0));
+
+        var corrections = await service.ScanAsync(CancellationToken.None);
+
+        runner.Killed.ShouldBeEmpty(
+            "the census REPORTS. It must never reap — CARD-0056's constraint outranks every "
+            + "threshold in this file.");
+        corrections.ShouldBe(0, "and it corrects nothing: there is nothing here it is entitled to change");
+
+        await using var verify = CreateContext();
+        var stillAbsent = await verify.AgentSessions.CountAsync(s => before.Contains(s.Id));
+        stillAbsent.ShouldBe(0, "it must not invent rows for them either");
+    }
+
+    /// <summary>
+    /// §6.5 of the coverage plan, as a test: CARD-0101's refusal fault fired 37 identical Warnings
+    /// over three hours, nobody acted, and then the stream went quiet while the fault kept running.
+    /// At a 15-second sweep an ungated alert writes 240 rows an hour and means exactly as much.
+    /// </summary>
+    [Test]
+    public async Task The_census_alert_does_not_storm_while_the_condition_holds()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, RunnerWithUnclaimed(12), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 12, claude: 12));
+
+        await service.ScanAsync(CancellationToken.None);
+        await service.ScanAsync(CancellationToken.None);
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).Count.ShouldBe(1, "three sweeps, one alert — the window is 60 minutes");
+    }
+
+    /// <summary>
+    /// And the other half of that rule, without which the gate is just a mute button: an ESCALATION
+    /// goes out immediately. A Warning that has become Critical is news however recently the
+    /// Warning was sent.
+    /// </summary>
+    [Test]
+    public async Task An_escalation_to_critical_bypasses_the_repeat_window()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var state = new PtyHostCensusAlertState();
+
+        var warning = BuildService(
+            db, RunnerWithUnclaimed(12), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 12, claude: 12), censusAlerts: state);
+        await warning.ScanAsync(CancellationToken.None);
+
+        var critical = BuildService(
+            db, RunnerWithUnclaimed(46), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 46, claude: 46), censusAlerts: state);
+        await critical.ScanAsync(CancellationToken.None);
+
+        var raised = CensusAlerts(alerts);
+        raised.Count.ShouldBe(2, "the escalation must not wait out a window it did not cause");
+        raised[0].Severity.ShouldBe(AlertSeverity.Warning);
+        raised[1].Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    /// <summary>Below both thresholds is the normal state of the world and says nothing.</summary>
+    [Test]
+    public async Task A_census_within_the_thresholds_is_silent()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var runner = RunnerWithUnclaimed(3);
+        var live = runner.Sessions.Select(s => s.Pid!.Value).ToHashSet();
+        var service = BuildService(
+            db, runner, new MockEventBus(), alerts,
+            // Three hosts for three live children, plus two lingering after an exit: the system working.
+            census: Census(ptyHosts: 5, claude: 3, livePids: live));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A probe that could not read the process table reports "unavailable", never a surplus of
+    /// zero. Same rule that makes an unreachable runner mean nothing rather than "no sessions
+    /// exist": "I could not look" must never be reported as "nothing is there".
+    /// </summary>
+    [Test]
+    public async Task An_unavailable_process_census_suppresses_the_surplus_arm()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, new FakeRunnerClient { Sessions = [] }, new MockEventBus(), alerts,
+            census: new StatedCensusProbe(PtyHostCensus.Unavailable));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).ShouldBeEmpty("no census means no surplus verdict, not a surplus of zero");
+    }
+
+    /// <summary>...and when the OTHER arm fires anyway, the detail says the census was unavailable
+    /// rather than quietly reporting numbers it does not have.</summary>
+    [Test]
+    public async Task An_unavailable_process_census_says_so_in_the_detail()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, RunnerWithUnclaimed(12), new MockEventBus(), alerts,
+            census: new StatedCensusProbe(PtyHostCensus.Unavailable));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        var census = CensusAlerts(alerts).ShouldHaveSingleItem();
+        census.Detail.ShouldNotBeNull();
+        census.Detail.ShouldContain("Process census UNAVAILABLE");
+        census.Detail.ShouldNotContain("Live Antiphon.PtyHost processes:");
+    }
+
+    /// <summary>Off means off: the numbers are still collected, nothing is said about them.</summary>
+    [Test]
+    public async Task The_census_alert_can_be_turned_off()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var service = BuildService(
+            db, RunnerWithUnclaimed(60), new MockEventBus(), alerts,
+            census: Census(ptyHosts: 200, claude: 0), censusAlertEnabled: false);
+
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).ShouldBeEmpty();
+    }
+
+    // ---- census helpers --------------------------------------------------------------------------
+
+    /// <summary>
+    /// Census alerts only. The sweep is global and raises other things (orphans, reachability); an
+    /// unfiltered assertion here would be asserting about the rest of the database's state too.
+    /// </summary>
+    private static IReadOnlyList<AlertRaise> CensusAlerts(RecordingAlertService alerts) =>
+        [.. alerts.Raised.Where(a => a.DedupKey == $"reconciler:{AgentIncidentKind.PtyHostCensusDiverged}")];
+
+    /// <summary>
+    /// A runner serving <paramref name="count"/> Running sessions with fresh GUIDs — so by
+    /// construction the database has no row for any of them, whatever else is in it.
+    /// </summary>
+    private static FakeRunnerClient RunnerWithUnclaimed(int count, int pidBase = 5_000) => new()
+    {
+        Sessions =
+        [
+            .. Enumerable.Range(0, count).Select(i => new SessionRunnerSessionDto(
+                Guid.NewGuid(), Pid: pidBase + i, StartedAt: DateTime.UtcNow.AddHours(-3),
+                Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                LastSequence: 10, HostPid: pidBase + 10_000 + i))
+        ]
+    };
+
+    /// <summary>
+    /// A stated process table. <paramref name="livePids"/> null means "every pid this test's runner
+    /// could name is alive" — the ordinary case, where the interesting number is the host count.
+    /// </summary>
+    private static StatedCensusProbe Census(int ptyHosts, int claude, IReadOnlySet<int>? livePids = null) =>
+        new(new PtyHostCensus(
+            ptyHosts, claude, livePids ?? Enumerable.Range(0, 100_000).ToHashSet()));
+
+    private sealed class StatedCensusProbe(PtyHostCensus census) : IPtyHostCensusProbe
+    {
+        public PtyHostCensus Take() => census;
     }
 }

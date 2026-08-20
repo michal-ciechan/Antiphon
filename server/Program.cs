@@ -310,6 +310,11 @@ try
     // Singleton because SessionReconciliationService is scoped — a per-sweep flap counter would
     // reset every 15s and bound nothing (CARD-0056).
     builder.Services.AddSingleton<SessionReAdoptionState>();
+    // CARD-0102 / coverage plan P0-3: the pty-host census the reconciliation sweep reports on.
+    // Singletons for the same reason SessionReAdoptionState is one - the dedup window is per
+    // server uptime, and the probe holds no state at all.
+    builder.Services.AddSingleton<IPtyHostCensusProbe, PtyHostCensusProbe>();
+    builder.Services.AddSingleton<PtyHostCensusAlertState>();
     // Same reason, for the dead-session sweep's grace clock: AgentTaskDispatcher is scoped, so a
     // per-tick map would restart the window every 5s and never fire (CARD-0021).
     builder.Services.AddSingleton<DeadSessionFirstSeenState>();

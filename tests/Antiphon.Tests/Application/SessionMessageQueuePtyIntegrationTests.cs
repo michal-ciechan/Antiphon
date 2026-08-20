@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -368,49 +369,90 @@ public class SessionMessageQueuePtyIntegrationTests
         }
     }
 
-    // Risk row 4 at the PTY tier (PR 5): a multi-line --append-system-prompt value must survive the
-    // runner → pty-host → CreateProcess quoting chain byte-for-byte. fakeclaude --echo-args prints
-    // the argv it actually received (newline-escaped, ␟-joined) in its banner.
+    /// <summary>
+    /// Risk row 4 at the PTY tier (PR 5): a multi-line <c>--append-system-prompt</c> value must
+    /// survive the runner → pty-host → CreateProcess quoting chain byte-for-byte.
+    ///
+    /// <para>CARD-0101 / coverage plan P0-2 changed what this asserts and where it runs, because
+    /// what it USED to assert was not enough on either axis:</para>
+    /// <list type="bullet">
+    /// <item><b>The line it reads.</b> It read <c>ARGS:</c>, which is the argv <b>.NET</b> parsed.
+    /// .NET accepts a doubled <c>""</c> inside a quoted argument as one escaped quote;
+    /// <c>CommandLineToArgvW</c> — <c>claude.exe</c>'s parser — splits there. This test passed for
+    /// months on a command line that was delivering NINE arguments where three were intended
+    /// (<c>LaunchArgvGuardTests</c> measures it on this test's own literal). It now asserts on
+    /// <c>ARGVSTRICT:</c>, which is that same line re-parsed by the real Win32 parser — and keeps
+    /// the <c>ARGS:</c> assertion beside it, so a future divergence between the two is visible
+    /// rather than silently replaced.</item>
+    /// <item><b>The backend it ran on.</b> Inbox only, while production runs <c>modern</c> — and
+    /// CARD-0101's defect was in <c>ModernConPtyConnection.BuildCommandLine</c>. Both are now
+    /// declared arms of the same test.</item>
+    /// </list>
+    /// </summary>
     [Test]
-    public async Task Launch_args_reach_the_child_process()
+    [Arguments("inbox")]
+    [Arguments("modern")]
+    public async Task Launch_args_reach_the_child_process(string backend)
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeClaudeExe))
             throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+        if (backend == "modern" && !ConPtyRedistributable.TryLocate(out _, out var why))
+            throw new SkipTestException("no shipped conpty.dll: " + why);
 
         var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
-        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: backend);
         var sessionId = Guid.NewGuid();
         var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
         Directory.CreateDirectory(cwd);
 
+        // The literal LaunchArgvGuardTests measures the shred on: quotes and braces inside a
+        // multi-line value. Deliberately unchanged — a test whose hostile content was softened to
+        // make it pass would be the exact regression this class exists to catch.
         var appendText = "line one of the preamble\nline two with \"quotes\" and {braces}\nline three — final.";
         var spec = new AgentLaunchSpec(
             DefinitionName: "fakeclaude",
             Kind: AgentKind.ClaudeCode,
             Exe: FakeClaudeExe,
-            Args: new[] { "--echo-args", "--append-system-prompt", appendText },
+            Args: new[] { "--echo-args", "--echo-argv-strict", "--append-system-prompt", appendText },
             Env: new Dictionary<string, string>(),
             Cwd: cwd,
-            Cols: 120,
+            Cols: 200,
             Rows: 30);
 
         try
         {
             await client.StartAsync(sessionId, spec, CancellationToken.None);
 
-            var expected = "--echo-args␟--append-system-prompt␟" + appendText.Replace("\n", "\\n");
+            var expected = "--echo-args␟--echo-argv-strict␟--append-system-prompt␟"
+                + appendText.Replace("\n", "\\n");
             var echoed = await WaitForRawAsync(
-                client, sessionId, s => s.Contains("ARGS:"), TimeSpan.FromSeconds(15));
-            echoed.ShouldBeTrue("fakeclaude must print its ARGS banner line");
+                client, sessionId, s => s.Contains("ARGVSTRICT:"), TimeSpan.FromSeconds(20));
+            echoed.ShouldBeTrue($"fakeclaude must print its ARGVSTRICT banner line on {backend}");
 
             // ConPTY may soft-wrap the long banner line at the terminal width; stripping CR/LF
             // rejoins it before the exact-match check.
             var snapshot = await client.GetSnapshotAsync(sessionId, CancellationToken.None);
             var unwrapped = (snapshot.RawOutput ?? string.Empty).Replace("\r", "").Replace("\n", "");
+
+            unwrapped.ShouldNotContain(
+                "ARGVSTRICTWARN:",
+                customMessage: $"on {backend} argv[0] was not the fake's own exe, so the strict vector is "
+                    + "offset by one and the assertion below would be meaningless. Raw:\n" + snapshot.RawOutput);
+
+            // The assertion that matters: what a NATIVE child's CRT builds from this command line.
+            unwrapped.ShouldContain(
+                "ARGVSTRICT:" + expected,
+                customMessage: $"on {backend}, the multi-line append-system-prompt value must survive "
+                    + "runner→pty quoting intact AS A NATIVE CHILD PARSES IT. A green ARGS: line beside a "
+                    + "red one here is CARD-0101 exactly: correct for a .NET child, shredded for claude.exe. "
+                    + "Raw:\n" + snapshot.RawOutput);
+
+            // Kept, not replaced: on a correct command line the two parsers agree, and the day they
+            // stop agreeing is the day something composed a line only .NET can read.
             unwrapped.ShouldContain(
                 "ARGS:" + expected,
-                customMessage: "the multi-line append-system-prompt value must survive runner→pty quoting intact. Raw:\n"
+                customMessage: $"on {backend}, the .NET-parsed argv must agree with the native one. Raw:\n"
                     + snapshot.RawOutput);
         }
         finally

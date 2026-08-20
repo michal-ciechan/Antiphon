@@ -168,6 +168,12 @@ internal static class Program
         // notably a multi-line --append-system-prompt value — survived process-spawn quoting intact.
         if (Array.IndexOf(args, "--echo-args") >= 0)
             Write("ARGS:" + string.Join("␟", args).Replace("\r", "\\r").Replace("\n", "\\n") + "\r\n");
+        // --echo-argv-strict: the SAME command line, re-parsed the way a NATIVE child's CRT parses
+        // it (CARD-0101 / test-coverage plan P0-2). Kept BESIDE --echo-args, never replacing it:
+        // the divergence between the two lines on a hostile input is what pins why this exists.
+        if (Array.IndexOf(args, "--echo-argv-strict") >= 0)
+            foreach (var strictLine in StrictArgvLines())
+                Write(strictLine + "\r\n");
         Write(IdleTitle);
 
         // Background reader: accumulate raw stdin CHUNKS, each stamped with its arrival time. The
@@ -879,5 +885,86 @@ internal static class Program
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+
+    /// <summary>
+    /// CARD-0101 / test-coverage plan P0-2: what a NATIVE child's own CRT would have built as its
+    /// <c>argv</c>, as opposed to what .NET's parser handed <c>Main</c>.
+    ///
+    /// <para>This exists because the fake was lying, and that lie is blindness B1 in the coverage
+    /// plan. <c>--echo-args</c> prints the vector .NET produced, and .NET's parser accepts a doubled
+    /// <c>""</c> inside a quoted argument as ONE escaped quote. <c>CommandLineToArgvW</c> — which
+    /// <c>claude.exe</c>, node and bun all use — SPLITS there instead. On the exact literal
+    /// <c>SessionMessageQueuePtyIntegrationTests.Launch_args_reach_the_child_process</c> was
+    /// sending, the real child would have seen NINE arguments where three were intended
+    /// (<c>LaunchArgvGuardTests</c> measures it) — and that test passed for months on the failing
+    /// shape, because the only child ever asked was this one.</para>
+    ///
+    /// <para><c>--echo-args</c> is deliberately KEPT and unchanged. The DIVERGENCE between the two
+    /// lines on a hostile input is the assertion (<c>FakeClaudeContractTests</c>:
+    /// <c>A_doubled_quote_argument_splits_for_a_native_parser_and_not_for_dotnet</c>); a fake that
+    /// only printed the strict vector could no longer show why the strict vector is needed, and the
+    /// next person would "simplify" it back.</para>
+    ///
+    /// <para><c>argv[0]</c> is dropped so the two lines are directly comparable — that is the point
+    /// of matching the format. It is the executable only when this process was launched AS one,
+    /// which is how the harness stages it (<c>fakeclaude/fakeclaude.exe</c>); when it is not,
+    /// <c>ARGVSTRICTWARN:</c> says so rather than letting a line that is offset by one read as a
+    /// pass.</para>
+    /// </summary>
+    private static IEnumerable<string> StrictArgvLines()
+    {
+        // GetCommandLineW, not Environment.CommandLine: the latter is .NET's reconstruction and
+        // would re-introduce exactly the parser this method exists to bypass.
+        var raw = Marshal.PtrToStringUni(GetCommandLineW()) ?? string.Empty;
+
+        var handle = CommandLineToArgvW(raw, out var count);
+        if (handle == IntPtr.Zero)
+        {
+            yield return "ARGVSTRICT:<unavailable:CommandLineToArgvW returned NULL>";
+            yield break;
+        }
+
+        string[] argv;
+        try
+        {
+            argv = new string[count];
+            for (var i = 0; i < count; i++)
+                argv[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(handle, i * IntPtr.Size)) ?? string.Empty;
+        }
+        finally
+        {
+            LocalFree(handle);
+        }
+
+        if (argv.Length == 0)
+        {
+            yield return "ARGVSTRICT:<empty>";
+            yield break;
+        }
+
+        var self = Environment.ProcessPath;
+        if (self is not null && !string.Equals(
+                Path.GetFileName(argv[0]), Path.GetFileName(self), StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "ARGVSTRICTWARN:argv[0] is '" + EscapeArgvLine(argv[0]) + "' but this process is '"
+                + EscapeArgvLine(self) + "' — the strict vector below may be offset by one";
+        }
+
+        yield return "ARGVSTRICT:" + EscapeArgvLine(string.Join("\u241F", argv.Skip(1)));
+    }
+
+    /// <summary>The same escaping <c>--echo-args</c> uses, so the two lines compare directly.</summary>
+    private static string EscapeArgvLine(string s) =>
+        s.Replace("\r", "\\r").Replace("\n", "\\n");
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetCommandLineW();
+
+    [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CommandLineToArgvW(string lpCmdLine, out int pNumArgs);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr hMem);
 
 }

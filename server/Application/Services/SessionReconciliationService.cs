@@ -41,6 +41,8 @@ public sealed class SessionReconciliationService
     private readonly IAlertService _alerts;
     private readonly RunnerReachabilityState _reachability;
     private readonly SessionReAdoptionState _reAdoptions;
+    private readonly IPtyHostCensusProbe _census;
+    private readonly PtyHostCensusAlertState _censusAlerts;
     private readonly SessionReconciliationSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionReconciliationService> _logger;
@@ -52,6 +54,8 @@ public sealed class SessionReconciliationService
         IAlertService alerts,
         RunnerReachabilityState reachability,
         SessionReAdoptionState reAdoptions,
+        IPtyHostCensusProbe census,
+        PtyHostCensusAlertState censusAlerts,
         IOptions<SessionReconciliationSettings> settings,
         TimeProvider timeProvider,
         ILogger<SessionReconciliationService> logger)
@@ -62,6 +66,8 @@ public sealed class SessionReconciliationService
         _alerts = alerts;
         _reachability = reachability;
         _reAdoptions = reAdoptions;
+        _census = census;
+        _censusAlerts = censusAlerts;
         _settings = settings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -84,6 +90,9 @@ public sealed class SessionReconciliationService
         {
             corrections += await ReconcileSessionsAsync(runnerSessions, now, ct);
             corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
+            // Pass 4 (CARD-0102): report what the three views of "what is running" add up to.
+            // Returns no corrections on purpose - it changes nothing, ever.
+            await RaiseCensusAlertIfDivergedAsync(runnerSessions, now, ct);
         }
 
         corrections += await ReconcileAgentsAsync(now, ct);
@@ -520,4 +529,134 @@ public sealed class SessionReconciliationService
 
         return changedAgentIds.Count;
     }
+
+    /// <summary>
+    /// Pass 4 (CARD-0102 / coverage plan P0-3) — REPORT the census this sweep already collects.
+    ///
+    /// <para>Nothing new is fetched from the runner: pass 3 has fetched its full session list
+    /// unconditionally since CARD-0056, and on 2026-08-20 the server log already read
+    /// <c>"46 runner sessions with no DB row at all"</c> — four hours before a human found 39
+    /// orphaned pty-hosts by hand, during triage of an unrelated incident they had been actively
+    /// confusing. The data existed; nobody was told. All this pass adds is the process table and a
+    /// threshold.</para>
+    ///
+    /// <para><b>It raises. It never reaps.</b> That is inherited from CARD-0056 and it outranks
+    /// every other consideration here: the false positive that created that card fired on a
+    /// perfectly healthy session, and the unclaimed session was the operator's own live
+    /// conversation. A pass that resolved this divergence by killing would have killed it
+    /// mid-sentence. Two arms, either of which is enough:</para>
+    /// <list type="bullet">
+    /// <item><b>Unclaimed runner sessions</b> past <c>UnclaimedSessionAlertThreshold</c> — the
+    /// database has no row for them at all.</item>
+    /// <item><b>Pty-host surplus</b> past <c>PtyHostSurplusAlertThreshold</c> — live
+    /// <c>Antiphon.PtyHost</c> processes minus runner sessions that name a child pid which is
+    /// actually alive. This is the arm that catches the shape CARD-0102 had: hosts holding
+    /// interactive <c>cmd.exe</c> children that never exit, which no linger TTL can ever collect
+    /// (<c>HostSession</c> starts the linger clock only AFTER the child exits).</item>
+    /// </list>
+    ///
+    /// <para>An unavailable census (the probe could not read the process table) suppresses the
+    /// surplus arm entirely rather than reading as a surplus of zero — "I could not look" must
+    /// never be reported as "nothing is there", which is the same rule that makes an unreachable
+    /// runner mean nothing rather than "no sessions".</para>
+    ///
+    /// <para>Deduped by <see cref="PtyHostCensusAlertState"/>, not raised per sweep: at 15 seconds
+    /// a tick that alerted every time would write 240 rows an hour, and §6.5 of the plan is
+    /// explicit that any incident added without a dedup key AND an escalation path becomes noise
+    /// that proves nothing by its absence.</para>
+    ///
+    /// <para>Deliberately NOT hung off <c>AgentSupervisorHostedService</c> beside the CARD-0067 and
+    /// CARD-0082 sweeps: those exist because nothing else has a clock. This one's inputs are
+    /// already in this method's hands, once per sweep, and a second timer would take the census
+    /// twice and race the first one's dedup window.</para>
+    /// </summary>
+    private async Task RaiseCensusAlertIfDivergedAsync(
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
+    {
+        if (!_settings.CensusAlertEnabled)
+            return;
+
+        var running = runnerSessions
+            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var runningIds = running.Select(s => s.SessionId).ToList();
+        var knownIds = await _db.AgentSessions
+            .Where(s => runningIds.Contains(s.Id))
+            .Select(s => s.Id)
+            .ToListAsync(ct);
+        var known = knownIds.ToHashSet();
+        var unclaimed = running.Where(s => !known.Contains(s.SessionId)).ToList();
+
+        var census = _census.Take();
+        // A runner session "has a live agent child" when the runner names a pid AND that pid is in
+        // the process table. Trusting the runner's report alone would count a session whose child
+        // died but whose host is still standing — which is half of what this pass is looking for.
+        var withLiveChild = census.IsUnavailable
+            ? 0
+            : running.Count(s => s.Pid is int pid && census.LivePids.Contains(pid));
+        var surplus = census.IsUnavailable ? 0 : census.PtyHostProcesses - withLiveChild;
+
+        var unclaimedBreach = unclaimed.Count > _settings.UnclaimedSessionAlertThreshold;
+        var surplusBreach = !census.IsUnavailable && surplus > _settings.PtyHostSurplusAlertThreshold;
+        if (!unclaimedBreach && !surplusBreach)
+        {
+            _censusAlerts.Clear();
+            return;
+        }
+
+        var critical =
+            unclaimed.Count > _settings.UnclaimedSessionCriticalThreshold
+            || (!census.IsUnavailable && surplus > _settings.PtyHostSurplusCriticalThreshold);
+        var severity = critical ? AlertSeverity.Critical : AlertSeverity.Warning;
+
+        var liveDbRows = await _db.AgentSessions.CountAsync(s => LiveStatuses.Contains(s.Status), ct);
+        var oldestUnclaimed = unclaimed.Count == 0
+            ? (TimeSpan?)null
+            : now - unclaimed.Min(s => s.StartedAt);
+
+        var detail =
+            $"Session census diverged. Runner sessions Running: {running.Count} "
+            + $"(with a live agent child: {withLiveChild}, unclaimed by the database: {unclaimed.Count}"
+            + (oldestUnclaimed is TimeSpan oldest ? $", oldest unclaimed {Describe(oldest)}" : string.Empty)
+            + "). "
+            + (census.IsUnavailable
+                ? "Process census UNAVAILABLE (the process table could not be read), so the pty-host "
+                  + "surplus arm was not evaluated. "
+                : $"Live Antiphon.PtyHost processes: {census.PtyHostProcesses} "
+                  + $"(surplus over sessions with a live child: {surplus}); live claude processes: "
+                  + $"{census.ClaudeProcesses}. ")
+            + $"Database sessions in a live status: {liveDbRows}. "
+            + "NOTHING WAS KILLED and nothing here ever will be — unclaimed does not imply dead "
+            + "(CARD-0056: the session nobody claimed was the operator's own conversation). "
+            + "Usual cause is a test suite or a caller that starts sessions on the shared runner and "
+            + "does not stop them (CARD-0102).";
+
+        if (!_censusAlerts.ShouldRaise(
+                now, (int)severity, TimeSpan.FromMinutes(Math.Max(1, _settings.CensusAlertRepeatMinutes))))
+        {
+            return;
+        }
+
+        _logger.Log(
+            critical ? LogLevel.Error : LogLevel.Warning,
+            "{Kind}: {Detail}", AgentIncidentKind.PtyHostCensusDiverged, detail);
+
+        // Alert only, with no incident row: an AgentIncident belongs to an agent, and this condition
+        // is about the machine rather than any one of them. Same shape the unclaimed-session arm of
+        // AlertAndIncidentAsync already takes, and for the same reason.
+        await _alerts.RaiseAsync(
+            new AlertRaise(
+                severity,
+                Source: "reconciler",
+                Title: $"{AgentIncidentKind.PtyHostCensusDiverged}: session census",
+                Detail: detail,
+                DedupKey: $"reconciler:{AgentIncidentKind.PtyHostCensusDiverged}"),
+            ct);
+    }
+
+    private static string Describe(TimeSpan span) =>
+        span.TotalHours >= 1 ? $"{span.TotalHours:0.#}h"
+        : span.TotalMinutes >= 1 ? $"{span.TotalMinutes:0}m"
+        : $"{span.TotalSeconds:0}s";
 }
