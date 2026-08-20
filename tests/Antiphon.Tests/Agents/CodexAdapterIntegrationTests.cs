@@ -1,7 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
-using Antiphon.Server.Infrastructure.Agents.Pty;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -11,33 +11,44 @@ namespace Antiphon.Tests.Agents;
 
 [NotInParallel("Headed")]
 [Category("Headed")]
+[Category("Card0108")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class CodexAdapterIntegrationTests
 {
     /// <summary>
-    /// <b>KNOWN RED against the real CLI as of 2026-08-20 — CARD-0099 S3's to fix, recorded here so
-    /// nobody re-derives it.</b> This test skipped silently for its whole life because
-    /// <see cref="HeadedCodexGate"/> looked for a <c>cx.ps1</c> that exists nowhere on this machine.
-    /// S2 repointed the gate at the npm shim, so it runs now — and fails:
+    /// The first observed full <c>-Kind Codex</c> round trip: launch a real codex-cli, submit a
+    /// prompt, and read the model's ACTUAL answer back out. CARD-0108 S3.
     ///
-    /// <code>
-    /// result.ResponseText should contain "pong" but was "gpt-5.6-luna low · ~\appdata\local\temp"
-    /// </code>
+    /// <para><b>What this used to be, and why it failed.</b> It drove the in-process
+    /// <c>CodexAdapter</c> — an adapter production never constructs — and returned
+    /// <c>"gpt-5.6-luna low · &lt;cwd&gt;"</c>, the Codex TUI's own STATUS BAR, as
+    /// <c>ResponseText</c> in about 5 s. That was CARD-0108, two stacked defects and not one:
+    /// the production submit path (body, 20 ms, a separate CR) stranded the prompt in the composer
+    /// — measured 6 times out of 6, the CR folding inside Codex's paste-detection window — so no
+    /// turn ever ran and no rollout file was ever created; then the 3 s quiet done-detector
+    /// certified that silent non-turn as a completed turn and the response analyzer scraped what
+    /// was on screen. (The comment here previously blamed CARD-0099 S3; it was CARD-0108's, and
+    /// S1-S3 of that card are what this test now exercises.)</para>
     ///
-    /// <para>It returns in ~5 s, i.e. <c>WaitForTurnCompleteAsync</c>'s quiet-period detector fired
-    /// before the model had answered, and <c>CodexResponseAnalyzer.ExtractResponse</c> then scraped
-    /// the STATUS BAR as the response. Both halves are the screen-scraping turn detection
-    /// <c>ProviderContractCatalog.Codex</c> declares — the axis S1's rollout tailer replaces with
-    /// structured <c>task_complete</c> rows. Left failing rather than quarantined: the failure is
-    /// real, it only runs under <c>ANTIPHON_CODEX_HEADED_TESTS=1</c>, and it is the first evidence
-    /// anyone has had that this adapter path does not work against the live CLI.</para>
+    /// <para><b>What it is now.</b> The production <see cref="RunnerCodexAdapter"/> over an
+    /// in-process <see cref="DirectSessionRunnerClient"/> with Codex transcript tailing opted in —
+    /// so both halves of the fix are under test: <c>SendPromptAsync</c> must confirm the submit
+    /// against a real <c>UserPrompt</c> rollout row (pressing Enter again, never re-typing, when
+    /// the first CR folds), and <c>WaitForTurnCompleteAsync</c> must take its verdict and its reply
+    /// text from the real <c>task_complete</c>/<c>AgentMessage</c> rows. The assertion is unchanged:
+    /// <c>ResponseText</c> contains "pong".</para>
     ///
-    /// <para>The model was moved off <c>gpt-5.4-mini</c> at the same time: that model is deprecated,
-    /// and launching on it parks the TUI on a "GPT-5.4 Mini will be deprecated soon" modal that
-    /// swallows input exactly as the trust dialog does.</para>
+    /// <para>The cwd is a UNIQUE temp directory per run, not the shared <c>Path.GetTempPath()</c>
+    /// this used before: the Codex tailer discovers its rollout and proves ownership by
+    /// <c>session_meta.cwd</c> (CARD-0006 rule C2), and a cwd shared with every other Codex session
+    /// on the machine makes that evidence worthless. A fresh directory also means a first-launch
+    /// trust dialog, which the adapter's own <c>AcceptTrustPromptIfVisibleAsync</c> answers.</para>
+    ///
+    /// <para>Headed and opt-in (<c>ANTIPHON_CODEX_HEADED_TESTS=1</c>): it spends a real model
+    /// turn.</para>
     /// </summary>
     [Test]
-    public async Task Full_round_trip_via_cx_returns_response_text_and_can_be_stopped()
+    public async Task Full_round_trip_via_the_production_runner_adapter_returns_the_models_answer()
     {
         HeadedCodexGate.SkipIfNotEligible();
         var cx = HeadedCodexGate.ResolveOrThrow();
@@ -45,7 +56,8 @@ public class CodexAdapterIntegrationTests
             cx,
             "-m", "gpt-5.6-luna",
             "-c", "model_reasoning_effort=\"low\"",
-            "--no-alt-screen");
+            "--no-alt-screen",
+            "--dangerously-bypass-approvals-and-sandbox");
 
         var options = Options.Create(new AgentRegistrySettings
         {
@@ -54,34 +66,64 @@ public class CodexAdapterIntegrationTests
             CodexReadyQuietPeriodMs = 1_000,
             CodexReadyMaxWaitMs = 60_000,
             CodexDoneQuietPeriodMs = 3_000,
-            CodexDoneMaxWaitMs = 300_000,
+            // Bounded well below the 5-minute production ceiling: if the round trip is broken again
+            // this must fail in a couple of minutes, not park a headed run for five.
+            CodexDoneMaxWaitMs = 120_000,
         });
 
-        await using var adapter = new CodexAdapter(options);
-        var spec = new AgentLaunchSpec(
-            DefinitionName: "codex",
-            Kind: AgentKind.Codex,
-            Exe: app,
-            Args: args,
-            Env: new Dictionary<string, string>(),
-            Cwd: Path.GetTempPath(),
-            Cols: 120,
-            Rows: 30);
+        var cwd = Directory.CreateTempSubdirectory("antiphon-codex-roundtrip").FullName;
+        var sessionLogPath = Directory.CreateTempSubdirectory("antiphon-codex-runner").FullName;
+        // modern, because that is what this deployment runs (ADR 0002) and the inbox conhost is a
+        // different pty with different measured behaviour.
+        await using var client = new DirectSessionRunnerClient(
+            sessionLogPath, ptyBackend: "modern", codexTranscript: true);
+        var adapter = new RunnerCodexAdapter(client, options);
 
-        await adapter.StartAsync(spec, CancellationToken.None);
+        try
+        {
+            var spec = new AgentLaunchSpec(
+                DefinitionName: "codex",
+                Kind: AgentKind.Codex,
+                Exe: app,
+                Args: args,
+                Env: new Dictionary<string, string>(),
+                Cwd: cwd,
+                Cols: 120,
+                Rows: 30,
+                SessionId: Guid.NewGuid());
 
-        var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
-        ready.ShouldBeTrue();
+            await adapter.StartAsync(spec, CancellationToken.None);
 
-        await adapter.SendPromptAsync("Reply with exactly PONG and no other text.", CancellationToken.None);
-        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+            var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
+            ready.ShouldBeTrue();
 
-        result.TurnCompleted.ShouldBeTrue();
-        result.ResponseText.ShouldNotBeNull();
-        result.ResponseText!.ToLowerInvariant().ShouldContain("pong");
-        result.IsAskingQuestion.ShouldBeFalse();
+            await adapter.SendPromptAsync(
+                "Reply with exactly PONG and no other text.", CancellationToken.None);
+            var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
-        var killed = await adapter.KillAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-        killed.ShouldBeTrue();
+            result.TurnCompleted.ShouldBeTrue(
+                "no task_complete row and no Working-indicator lifecycle was ever observed. Screen:\n"
+                + adapter.SnapshotRenderedScreen());
+            result.ResponseText.ShouldNotBeNull();
+            result.ResponseText!.ToLowerInvariant().ShouldContain(
+                "pong",
+                Case.Sensitive,
+                $"ResponseText must be the MODEL's answer, not the status bar. Got: {result.ResponseText}");
+            result.IsAskingQuestion.ShouldBeFalse();
+
+            var killed = await adapter.KillAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            killed.ShouldBeTrue();
+        }
+        finally
+        {
+            await adapter.DisposeAsync();
+            TryDelete(cwd);
+            TryDelete(sessionLogPath);
+        }
+    }
+
+    private static void TryDelete(string dir)
+    {
+        try { Directory.Delete(dir, true); } catch { /* best effort */ }
     }
 }

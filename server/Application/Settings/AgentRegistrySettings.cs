@@ -60,6 +60,29 @@ public class AgentRegistrySettings
     public int CodexReadyMaxWaitMs { get; set; } = 60000;
     public int CodexDoneQuietPeriodMs { get; set; } = 3000;
     public int CodexDoneMaxWaitMs { get; set; } = 300000;
+
+    /// <summary>
+    /// CARD-0108 S1. How long a typed Codex prompt has to produce its confirming <c>UserPrompt</c>
+    /// transcript row before Enter is pressed again. 4 s is the measured working interval: the
+    /// probe's extra Enter went ~4 s after the failed CR and submitted 6/6, and after the Enter
+    /// that actually submits the row is observable within ~2.8 s. Enter only — the body is never
+    /// re-typed (see <c>CodexSubmitConfirmation</c>).
+    /// </summary>
+    public int CodexSubmitReEnterIntervalMs { get; set; } = 4000;
+
+    /// <summary>
+    /// Enter presses AFTER the initial body+CR. Three, because a re-press onto an empty composer
+    /// was measured to submit nothing, so the only cost of an unnecessary one is the interval.
+    /// </summary>
+    public int CodexSubmitAttempts { get; set; } = 3;
+
+    /// <summary>
+    /// Total budget for the submit-confirm loop. <b>Do not trim below ~20 s:</b> a first turn's
+    /// confirmation races the rollout file's lazy creation AND the tailer's discovery/bind
+    /// (250 ms locate poll plus CARD-0006's C1-C4), and "no transcript yet" must poll as
+    /// not-yet-confirmed rather than as failure.
+    /// </summary>
+    public int CodexSubmitConfirmTimeoutMs { get; set; } = 20000;
     public int OpenCodeReadyQuietPeriodMs { get; set; } = 1000;
     public int OpenCodeReadyMaxWaitMs { get; set; } = 60000;
     public int OpenCodeDoneQuietPeriodMs { get; set; } = 3000;

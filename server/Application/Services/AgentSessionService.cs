@@ -485,6 +485,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// second typing cannot double-submit. CARD-0055's Enter-only rule governs the phase after
     /// evidence; this is the phase before it.</para>
     ///
+    /// <para><b>That justification does not hold for Codex</b> (CARD-0108 S1): its measured failure
+    /// mode is a body that arrived in the composer perfectly and a CR that folded into a newline
+    /// instead of submitting, so the composer may still be HOLDING the prompt when the exception is
+    /// thrown. <c>CodexSubmitConfirmation</c> therefore LOOKS at the screen before it throws and
+    /// sets <see cref="PromptDeliveryException.ComposerMayHoldBody"/>; when it is set this loop
+    /// skips the re-type and goes straight to the late-confirm, because appending a second copy is
+    /// how a body arrives spliced onto itself. Narrow on purpose — the general look-then-clear
+    /// before any re-type is CARD-0103's, not this card's.</para>
+    ///
     /// <para>Before declaring failure, one last look at ground truth: if this session already has an
     /// observable transcript, a <c>UserPrompt</c> record carrying this body proves the submit
     /// actually happened while the screen reads were blind. That gate is why this is not a general
@@ -514,7 +523,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
             catch (PromptDeliveryException ex)
             {
-                if (attempt < attempts)
+                if (attempt < attempts && !ex.ComposerMayHoldBody)
                 {
                     _logger.LogWarning(
                         "Boot prompt to session {SessionId} showed no composer evidence on attempt {Attempt} "
@@ -526,12 +535,21 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     continue;
                 }
 
+                if (ex.ComposerMayHoldBody && attempt < attempts)
+                {
+                    _logger.LogWarning(
+                        "Boot prompt to session {SessionId} failed on attempt {Attempt} of {Attempts} with "
+                        + "the body STILL VISIBLE in the composer: {Reason} Skipping the remaining "
+                        + "re-types — appending a second copy would splice the body onto itself "
+                        + "(CARD-0108 S1)", sessionId, attempt, attempts, ex.Message);
+                }
+
                 if (await TryLateConfirmBootPromptAsync(sessionId, toType, baseline, confirmFrom, ct))
                     return;
 
                 _logger.LogWarning(ex,
-                    "Boot prompt to session {SessionId} failed all {Attempts} attempts and no transcript "
-                    + "record confirms it", sessionId, attempts);
+                    "Boot prompt to session {SessionId} failed after {Attempt} of {Attempts} attempt(s) "
+                    + "and no transcript record confirms it", sessionId, attempt, attempts);
                 throw;
             }
         }

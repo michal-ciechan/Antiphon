@@ -1,7 +1,22 @@
 namespace Antiphon.Agents.Pty;
 
 /// <summary>A prompt could not be verifiably delivered into the agent's composer (see <see cref="VerifiedPromptSubmitter"/>).</summary>
-public sealed class PromptDeliveryException(string message) : Exception(message);
+public sealed class PromptDeliveryException(string message, bool composerMayHoldBody = false)
+    : Exception(message)
+{
+    /// <summary>
+    /// The composer was LOOKED AT after the failure and still shows the body — so a caller that
+    /// retries by re-typing would splice a second copy onto the first (CARD-0108 S1).
+    ///
+    /// <para>False is the default and keeps every pre-existing caller's behaviour: for Claude and
+    /// Grok this exception means <c>VerifiedPromptSubmitter</c> never saw composer evidence, which
+    /// is itself proof the composer is NOT holding the body, and that is exactly what makes
+    /// <c>AgentSessionService.SendBootPromptWithRetryAsync</c>'s re-type safe there. Codex's
+    /// failure mode is the opposite one — a body that arrived fine and an Enter that folded — so
+    /// its adapter sets this flag and the retry loop must skip the re-type when it is set.</para>
+    /// </summary>
+    public bool ComposerMayHoldBody { get; } = composerMayHoldBody;
+}
 
 /// <param name="EvidenceTimeout">How long typed text may take to show up on the rendered screen.</param>
 /// <param name="PollInterval">Screen/output polling cadence for both verification phases.</param>

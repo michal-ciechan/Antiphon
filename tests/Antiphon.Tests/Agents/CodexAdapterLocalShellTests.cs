@@ -16,8 +16,17 @@ namespace Antiphon.Tests.Agents;
 
 /// <summary>
 /// Exercises CodexAdapter against a real local cmd.exe. This keeps the test
-/// offline while proving the adapter can start, send input, detect a quiet
+/// offline while proving the adapter can start, send input, detect a
 /// completed turn, detect questions, and stop the underlying process.
+///
+/// <para><b>CARD-0108 S2 changed what "a completed turn" means here.</b> It used to be terminal
+/// quiet alone, and against the real CLI that certified a prompt stranded in a silent composer as a
+/// finished turn, handing the status bar back as the model's answer. A Codex turn is now recognised
+/// by its measured lifecycle — the <c>Working ( … esc to interrupt)</c> indicator appearing and then
+/// leaving the screen — so the turn tests below wrap their commands in
+/// <see cref="AsCodexTurn"/> to render that lifecycle. cmd.exe produces no such indicator on its
+/// own, and a fake that does not render one is now (correctly) never read as having taken a
+/// turn.</para>
 /// </summary>
 [NotInParallel("Pty")]
 [Category("Pty")]
@@ -32,11 +41,22 @@ public class CodexAdapterLocalShellTests
             throw new SkipTestException("ConPTY only on Windows");
     }
 
+    /// <summary>
+    /// <c>cmd /d /k "prompt $G"</c>. It used to be <c>/d /q /k "@echo off &amp; prompt $G"</c>, and
+    /// that fixture prints NO PROMPT AT ALL: measured 2026-08-20 through this same PTY, cmd runs the
+    /// command (the OSC title shows <c>cmd.exe - echo  off</c>) and then emits nothing — with ECHO
+    /// OFF an interactive cmd does not display its prompt. Every test gated on
+    /// <see cref="WaitUntilSnapshotContainsAsync"/> seeing <c>"&gt;"</c> therefore timed out after
+    /// 60 s on a 93-character snapshot that was just the title, which is how three of this class's
+    /// tests were failing at the base commit before CARD-0108 touched anything. Echo stays ON now;
+    /// an interactive cmd does not re-echo the commands you type, so the prompt still appears
+    /// exactly once in the snapshot and <c>ExtractResponse</c> still strips it.
+    /// </summary>
     private static AgentLaunchSpec InteractiveCmdSpec() => new(
         DefinitionName: "codex-fake",
         Kind: AgentKind.Codex,
         Exe: Cmd,
-        Args: new[] { "/d", "/q", "/k", "@echo off & prompt $G" },
+        Args: new[] { "/d", "/k", "prompt $G" },
         Env: new Dictionary<string, string>(),
         Cwd: Environment.CurrentDirectory,
         Cols: 120,
@@ -68,6 +88,24 @@ public class CodexAdapterLocalShellTests
         CodexDoneQuietPeriodMs = 750,    // scenario-gated: same echo floor as ready
         CodexDoneMaxWaitMs = 60_000,     // runaway bound (was 15s); success returns on quiet
     });
+
+    /// <summary>
+    /// Wraps a cmd command so the fake session models a real Codex TURN rather than merely some
+    /// output: the <c>Working ( … esc to interrupt)</c> indicator is echoed, the work runs while it
+    /// stands, and it is then SCROLLED off the rendered screen the way the real TUI takes it down
+    /// when the turn completes. The middle <c>ping</c> keeps the indicator up for ~2 s — several
+    /// 250 ms detector polls — so the lifecycle cannot be missed between two samples.
+    ///
+    /// <para>Scrolled rather than cleared on purpose: <c>cls</c> does NOT clear this screen. Under
+    /// ConPTY cmd renders it as per-line <c>ESC[nX</c> erase-character runs, measured, which leave
+    /// every earlier row (indicator included) exactly where it was. Forty echoed lines past a
+    /// 30-row window is unambiguous. The bullet the real TUI draws is deliberately not reproduced —
+    /// ConPTY narrows non-ASCII input and the matcher does not look for it — and the parens are
+    /// caret-escaped for cmd.</para>
+    /// </summary>
+    private static string AsCodexTurn(string command) =>
+        $"echo Working ^(1s - esc to interrupt^) & {command} & ping -n 3 127.0.0.1 > nul "
+        + "& for /l %i in (1,1,40) do @echo .";
 
     /// <summary>
     /// CARD-0050 S2: poll until <paramref name="needle"/> is in the raw snapshot.
@@ -104,7 +142,8 @@ public class CodexAdapterLocalShellTests
         await WaitUntilSnapshotContainsAsync(adapter, ">", TimeSpan.FromSeconds(60));
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
 
-        await adapter.SendPromptAsync("echo Should we continue?", CancellationToken.None);
+        await adapter.SendPromptAsync(
+            AsCodexTurn("echo Should we continue?"), CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         result.TurnCompleted.ShouldBeTrue();
@@ -149,7 +188,9 @@ public class CodexAdapterLocalShellTests
         await WaitUntilSnapshotContainsAsync(adapter, ">", TimeSpan.FromSeconds(60));
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
 
-        await adapter.SendPromptAsync("echo answer has no question & rem prompt has a question?", CancellationToken.None);
+        await adapter.SendPromptAsync(
+            AsCodexTurn("echo answer has no question & echo prompt has a question? > nul"),
+            CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
         result.TurnCompleted.ShouldBeTrue();
@@ -228,10 +269,12 @@ public class CodexAdapterLocalShellTests
         await using var adapter = new CodexAdapter(SlowStartOptions());
         await adapter.StartAsync(SlowStartCmdSpec(bat.Path), CancellationToken.None);
 
-        await adapter.SendPromptAsync("rem card-0052", CancellationToken.None);
+        await adapter.SendPromptAsync(AsCodexTurn("cd ."), CancellationToken.None);
         var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
-        result.TurnCompleted.ShouldBeTrue();
+        result.TurnCompleted.ShouldBeTrue(
+            "the fake turn's Working indicator must have been seen and then scrolled away. Screen:\n"
+            + adapter.SnapshotRenderedScreen());
         VisiblePtyOutput.HasVisibleOutput(result.RawSnapshot).ShouldBeTrue(
             "a completed empty turn is the card title — the snapshot must have visible text");
         result.RawSnapshot.ShouldContain("SLOW_START_BODY");

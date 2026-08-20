@@ -22,17 +22,151 @@ public sealed class CodexReadyDetector
 }
 
 /// <summary>
-/// Codex turn completion detector. A completed turn or a Codex question both
-/// settle into a quiet TUI, so the adapter treats terminal quiet as the turn
-/// boundary and lets <see cref="CodexResponseAnalyzer"/> classify the text.
+/// The Codex TUI's turn-in-progress indicator — the only positive screen signal a live turn
+/// produces, and the gate the screen fallback now hangs on (CARD-0108 S2).
+///
+/// <para><b>MEASURED 2026-08-20, codex-cli 0.147.0, modern ConPTY:</b> while a turn runs the TUI
+/// repaints a line of the form <c>• Working (12s • esc to interrupt)</c> at roughly 1 Hz (the
+/// bullet alternates •/◦ and the elapsed count climbs), and the line LEAVES the screen the moment
+/// the turn completes. Codex renders no "Worked for Ns" done-line the way Grok does — a completed
+/// turn's screen carries the answer and a fresh composer, nothing else — so the indicator's
+/// disappearance is the whole screen signal. The OSC-0 title also carries a braille spinner while
+/// busy, but it spins during MCP startup with no turn running: that is "busy", not "turn running",
+/// and it is deliberately not used here.</para>
+///
+/// <para>Both halves of the line are matched, on one row, because either alone is text a model
+/// could plausibly emit into its own answer.</para>
+/// </summary>
+public static class CodexWorkingIndicator
+{
+    public const string Prefix = "Working (";
+    public const string Suffix = "esc to interrupt)";
+
+    public static bool IsVisible(string? renderedScreen)
+    {
+        if (string.IsNullOrEmpty(renderedScreen))
+            return false;
+
+        foreach (var line in renderedScreen.Split('\n'))
+        {
+            var open = line.IndexOf(Prefix, StringComparison.Ordinal);
+            if (open >= 0 && line.IndexOf(Suffix, open + Prefix.Length, StringComparison.Ordinal) >= 0)
+                return true;
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// The screen half of Codex turn-completion, as a per-poll state machine so the two adapters share
+/// one rule: the in-process <see cref="CodexDoneDetector"/> drives it in a loop of its own, and
+/// <c>RunnerCodexAdapter</c> drives it inside the loop that also polls the transcript.
+///
+/// <para><b>CARD-0108: quiet alone is not done, and for Codex it is actively dangerous.</b> The
+/// old rule was bare <c>WaitForQuietAfterVisible(3s)</c>. Measured on 2026-08-20, the production
+/// submit path stranded the prompt in a silent composer 6 times out of 6 — no turn ran, the TUI
+/// emitted nothing for at least 100 s, and this detector certified that non-turn as complete at
+/// ~3.2 s, whereupon <see cref="CodexResponseAnalyzer.ExtractResponse"/> scraped the STATUS BAR as
+/// the response (the status bar's model and cwd, verbatim), the shape CARD-0108 records. Quiet
+/// now counts only AFTER the measured lifecycle: the <see cref="CodexWorkingIndicator"/> line
+/// appeared and then went. A session where it never appears never completes here — it reaches max
+/// wait and reports <c>false</c>, which for the stranded shape is the truth.</para>
+///
+/// <para>Widening the quiet period cannot substitute for this and must not be tried: the stranded
+/// shape is silent forever, so no margin reaches it.</para>
+/// </summary>
+public sealed class CodexTurnScreenTracker(TimeSpan quietPeriod)
+{
+    private bool _primed;
+    private bool _indicatorSeen;
+    private bool _indicatorGone;
+    private long _lastMark;
+    private DateTime _lastChangeUtc;
+
+    /// <summary>True once a live turn has been positively observed on screen.</summary>
+    public bool IndicatorSeen => _indicatorSeen;
+
+    /// <summary>True once an observed indicator has left the screen again.</summary>
+    public bool IndicatorGone => _indicatorGone;
+
+    /// <param name="renderedScreen">Rendered screen (the indicator lives here, not in raw output).</param>
+    /// <param name="rawOutput">Raw pty output, for the CARD-0052 empty-snapshot guard.</param>
+    /// <param name="outputMark">Monotonic output progress marker (runner: output sequence; in-proc: buffer length).</param>
+    /// <returns>True when this poll completes the turn on screen evidence alone.</returns>
+    public bool Observe(string? renderedScreen, string? rawOutput, long outputMark, DateTime nowUtc)
+    {
+        if (!_primed)
+        {
+            _primed = true;
+            _lastMark = outputMark;
+            _lastChangeUtc = nowUtc;
+        }
+
+        if (CodexWorkingIndicator.IsVisible(renderedScreen))
+        {
+            _indicatorSeen = true;
+            _indicatorGone = false;
+        }
+        else if (_indicatorSeen)
+        {
+            _indicatorGone = true;
+        }
+
+        if (outputMark != _lastMark)
+        {
+            _lastMark = outputMark;
+            _lastChangeUtc = nowUtc;
+            return false;
+        }
+
+        return _indicatorSeen
+            && _indicatorGone
+            && nowUtc - _lastChangeUtc >= quietPeriod
+            && VisiblePtyOutput.HasVisibleOutput(rawOutput);
+    }
+}
+
+/// <summary>
+/// Codex turn completion from the screen alone — the FALLBACK for a session with no transcript.
+/// The primary signal is the tailed <c>TurnEnd</c> row Codex writes as <c>event_msg/task_complete</c>
+/// (<c>RunnerCodexAdapter.WaitForTurnCompleteAsync</c>, CARD-0108 S2); this class exists for the
+/// sessions that have no such rows, and its contract is now the indicator lifecycle described on
+/// <see cref="CodexTurnScreenTracker"/> rather than bare quiet.
 /// </summary>
 public sealed class CodexDoneDetector
 {
     public TimeSpan QuietPeriod { get; init; } = TimeSpan.FromSeconds(3);
     public TimeSpan MaxWait { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(250);
 
     public Task<bool> WaitAsync(PtyAgentRunner runner, CancellationToken ct = default)
-        => runner.WaitForQuietAfterVisibleAsync(QuietPeriod, MaxWait, ct);
+        => WaitAsync(
+            _ => Task.FromResult(runner.SnapshotScreen()),
+            _ => Task.FromResult(runner.SnapshotText()),
+            ct);
+
+    /// <summary>Delegate-based so a runner-mediated terminal fits the same rule without a PTY.</summary>
+    public async Task<bool> WaitAsync(
+        Func<CancellationToken, Task<string>> snapshotScreen,
+        Func<CancellationToken, Task<string>> snapshotRaw,
+        CancellationToken ct = default)
+    {
+        var tracker = new CodexTurnScreenTracker(QuietPeriod);
+        var deadline = DateTime.UtcNow + MaxWait;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var raw = await snapshotRaw(ct);
+            if (tracker.Observe(await snapshotScreen(ct), raw, raw.Length, DateTime.UtcNow))
+                return true;
+
+            try { await Task.Delay(PollInterval, ct); }
+            catch (OperationCanceledException) { return false; }
+        }
+
+        return false;
+    }
 }
 
 public static class CodexResponseAnalyzer

@@ -32,7 +32,9 @@ public sealed class AgentProtocolAdapterFactory : IAgentProtocolAdapterFactory
         AgentKind.ClaudeCode => new RunnerClaudeAdapter(
             _sessionRunnerClient, _options, _supervisionSettings,
             _loggerFactory?.CreateLogger<RunnerClaudeAdapter>()),
-        AgentKind.Codex => new RunnerCodexAdapter(_sessionRunnerClient, _options),
+        AgentKind.Codex => new RunnerCodexAdapter(
+            _sessionRunnerClient, _options,
+            _loggerFactory?.CreateLogger<RunnerCodexAdapter>()),
         AgentKind.OpenCode => new RunnerOpenCodeAdapter(_sessionRunnerClient, _options),
         AgentKind.Grok => new RunnerGrokAdapter(
             _sessionRunnerClient, _options, _supervisionSettings,

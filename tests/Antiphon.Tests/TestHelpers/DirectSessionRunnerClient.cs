@@ -15,6 +15,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly SessionRunnerRuntime _runtime;
+    private readonly bool _codexTranscript;
 
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
@@ -27,8 +28,18 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// inbox-conhost fact silently ran on whatever the launching shell had exported. Now it says
     /// which one it means, and the runtime states it on the host's command line.</para>
     /// </param>
-    public DirectSessionRunnerClient(string sessionLogPath, string? ptyBackend = null)
+    /// <param name="codexTranscript">
+    /// Opt in to the production Codex rollout tailer for this client (default off — see
+    /// <see cref="StartAsync"/> for why). The one caller that sets it is
+    /// <c>CodexAdapterIntegrationTests</c>, which is headed, spends real model turns, and gives its
+    /// session a UNIQUE temp cwd so the tailer's C2 evidence is exact against the real
+    /// <c>~/.codex/sessions</c> — the only way to observe a full <c>-Kind Codex</c> round trip
+    /// (CARD-0108 S3).
+    /// </param>
+    public DirectSessionRunnerClient(
+        string sessionLogPath, string? ptyBackend = null, bool codexTranscript = false)
     {
+        _codexTranscript = codexTranscript;
         _runtime = new SessionRunnerRuntime(
             Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
             {
@@ -49,7 +60,16 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         // running the tests. The fakeclaude tests that need transcript rows pump them explicitly
         // instead, and CodexTranscriptTailerTests drives the real Codex tailer against a temp
         // sessions root of its own.
-        var isGrok = spec.Kind == Antiphon.Server.Domain.Enums.AgentKind.Grok;
+        //
+        // The ONE opt-in exception is `codexTranscript` (CARD-0108 S3): the headed Codex round-trip
+        // test needs the real rollout tailer, because the round trip it proves — submit confirmed by
+        // a UserPrompt row, turn completed by a task_complete row — is made ENTIRELY of transcript
+        // evidence. Searching the machine's real sessions root is safe there because that test gives
+        // its session a unique temp cwd, which makes the tailer's C2 rule exact rather than a
+        // recency guess.
+        var kind = spec.Kind;
+        var isGrok = kind == Antiphon.Server.Domain.Enums.AgentKind.Grok;
+        var isCodex = _codexTranscript && kind == Antiphon.Server.Domain.Enums.AgentKind.Codex;
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -59,8 +79,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             spec.Cols,
             spec.Rows,
             spec.MemoryLimitMb,
-            TranscriptEnabled: isGrok,
-            TranscriptFormat: isGrok ? TranscriptFormats.Grok : null);
+            TranscriptEnabled: isGrok || isCodex,
+            TranscriptFormat: isGrok ? TranscriptFormats.Grok : isCodex ? TranscriptFormats.Codex : null);
 
         return Map(await _runtime.StartAsync(request, ct));
     }
