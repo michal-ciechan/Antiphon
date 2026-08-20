@@ -655,42 +655,215 @@ public sealed class AgentTaskDispatcher
                     ? $"; read session {sessionId} before re-running this task."
                     : ".");
 
-            await FailAsync(task, reason, ct);
-
             // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
-            await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
-            await _db.SaveChangesAsync(ct);
-
-            if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
-            {
-                var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
-                try
-                {
-                    await _queue.EnqueueAsync(
-                        parentSession, note.Body, MessageSendMode.WhenIdle, ct,
-                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(
-                        ex, "Could not deliver dead-session failure of task {ShortId} to parent session {SessionId}",
-                        DelegationReportFormatter.Short(task.Id), parentSession);
-                }
-            }
-
-            await _eventBus.PublishToAllAsync(
-                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
-            _logger.LogWarning(
-                "Task {ShortId} failed by the dead-session reconciler: {Reason}",
-                DelegationReportFormatter.Short(task.Id), reason);
+            await FailAndNotifyAsync(task, reason, "dead-session reconciler", ct);
 
             _deadSessions.Forget(task.Id);
             failed++;
         }
 
         return failed;
+    }
+
+    /// <summary>
+    /// The deadline on work that STARTED and never stops (CARD-0020 S2/S3). Two clocks, evaluated
+    /// together by the shared <see cref="TaskDeadlinePolicy"/> and the tighter one wins:
+    ///
+    /// <list type="number">
+    /// <item><b>The hard ceiling</b> — <c>RolePolicyEntry.TimeoutMinutes</c> (240) wall-clock from
+    /// <c>DispatchedAt</c>, whatever the session is doing. This is the config the card is right
+    /// about: it was declared, defaulted to 60, and read NOWHERE, so a task that got its brief and
+    /// then ran forever had no deadline at all. 240 rather than the shipped 60 because 5 of 247
+    /// successful tasks (2.0%) ran past 60 minutes and the longest ran 2 732 — enabling the old
+    /// default would have killed real work on day one.</item>
+    /// <item><b>The phase-aware deadline</b> — 20 minutes waiting on the model, 90 running a local
+    /// tool, and only while the session is MID-TURN. A tightening of the ceiling, not a
+    /// replacement.</item>
+    /// </list>
+    ///
+    /// <para><b>It fails and reports; it never escalates, kills or retries.</b> Escalation would
+    /// re-run the work on a bigger model, which is the wrong response to a task that will not end —
+    /// the same argument <see cref="FailNeverStartedAsync"/> makes in its own comment. The session
+    /// is deliberately left ALIVE: unlike a never-started session there may be real work in it, and
+    /// CARD-0056 is the standing reminder of what a wrong kill costs. Retry stays a human click.</para>
+    ///
+    /// <para><b>Three gates before anything is written</b>, in this order:</para>
+    /// <list type="number">
+    /// <item><b>Stand down for CARD-0072.</b> An unresolved <c>ApiErrorRecovery</c> row for this
+    /// session means the retry ladder owns it — it is the more specific mechanism, it schedules its
+    /// own resumes (hourly for Transient/Wall) and it escalates to Critical on its own caps.
+    /// Failing the task underneath it would settle work the ladder is still reviving.</item>
+    /// <item><b>Pull, then judge</b> (CARD-0055). Only for a task that has ALREADY tripped a
+    /// deadline on the stored rows, so the round trip is bounded by the tasks about to be failed
+    /// rather than paid on every tick for every healthy long-running task. The pull can only ever
+    /// move a phase clock backwards — a record that arrives is a record the phase read was missing
+    /// — so it can only ever withhold a failure, never cause one.</item>
+    /// <item><b>Bind-refusal recovery</b> (CARD-0085). An empty (or unbound) transcript is not
+    /// evidence that the work did not happen; ask the working directory before writing Failed.</item>
+    /// </list>
+    ///
+    /// <para>The attention projection previews this at 80% of whichever limit applies
+    /// (<see cref="AttentionKind.Overdue"/>), the way <c>NeverStartedGrace</c> previews the delivery
+    /// watchdog — so a human sees it while a reply, a check or a cancel are all still open.</para>
+    /// </summary>
+    internal async Task<int> FailOverdueTasksAsync(CancellationToken ct)
+    {
+        var open = await _db.AgentTasks
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.DispatchedAt != null && t.AgentSessionId != null)
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            return 0;
+
+        var failed = 0;
+        foreach (var task in open)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Isolated per task, which the sibling sweeps are not. They fail one suspect a tick at
+            // most and retry the rest 5 s later; this one walks EVERY open task on every tick, so a
+            // single row that throws every time (a poisoned session, a runner that 500s on it)
+            // would be a permanent, silent deadline outage for all the others rather than a skipped
+            // tick. RunSweepAsync stays the outer net for anything outside the loop.
+            try
+            {
+                if (await TryFailOverdueAsync(task, ct))
+                    failed++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    ex, "Overdue-deadline evaluation of task {ShortId} failed; the sweep continues "
+                    + "with the remaining {Count} task(s)",
+                    DelegationReportFormatter.Short(task.Id), open.Count - 1);
+            }
+        }
+
+        return failed;
+    }
+
+    /// <summary>
+    /// One task's pass through <see cref="FailOverdueTasksAsync"/>'s three gates. Returns true only
+    /// when the task was actually failed.
+    /// </summary>
+    private async Task<bool> TryFailOverdueAsync(AgentTask task, CancellationToken ct)
+    {
+        var sessionId = task.AgentSessionId!.Value;
+
+        // First pass on the stored rows alone. TaskDeadlinePolicy returns null in one
+        // comparison for anything not yet near a limit, so the ordinary tick costs nothing.
+        var suspected = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        if (suspected is not { Breached: true })
+            return false;
+
+        // Gate 1 — CARD-0072 owns this session.
+        if (await _db.ApiErrorRecoveries.AsNoTracking()
+            .AnyAsync(r => r.AgentSessionId == sessionId && r.ResolvedAt == null, ct))
+        {
+            _logger.LogDebug(
+                "Task {ShortId} is past its deadline but session {SessionId} has an unresolved "
+                + "API-error recovery — leaving it to the retry ladder",
+                DelegationReportFormatter.Short(task.Id), sessionId);
+            return false;
+        }
+
+        // Gate 2 — pull the runner's own view, then re-read the clocks against it.
+        await CatchUpTranscriptAsync(sessionId, ct);
+        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        if (verdict is not { Breached: true })
+        {
+            _logger.LogInformation(
+                "Task {ShortId} was past its deadline on the stored transcript and is not on the "
+                + "runner's — the pull is what saved it; leaving it alone",
+                DelegationReportFormatter.Short(task.Id));
+            return false;
+        }
+
+        // Gate 3 — CARD-0085. Same call, same contract, as the two sweeps above.
+        if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
+            return false;
+
+        // The Summary already names the clock, the phase and the last entry's age — the failure
+        // reason and the attention row are deliberately the same sentence, so a human who saw the
+        // Overdue row reads the failure it became in the words it was previewed in.
+        var reason =
+            $"{verdict.Summary} "
+            + "The task is Failed, not escalated and not retried: a bigger model cannot finish a "
+            + "task that never ends, and re-running it is your call. The session was NOT killed "
+            + $"— read session {sessionId} for what it was actually doing before you decide.";
+
+        await FailAndNotifyAsync(task, reason, "overdue-task deadline", ct);
+        return true;
+    }
+
+    /// <summary>
+    /// Pull the runner's own transcript view and persist it, so the next read is judging current
+    /// evidence (CARD-0055). Never throws and never touches the message queue —
+    /// <see cref="AgentSessionRuntime.CatchUpTranscriptAsync"/> is the fetch-and-persist half of the
+    /// sync precisely because the full one re-enters the per-session queue lock. A dispatcher built
+    /// without the runtime skips the pull and falls back to whatever streamed, which is what every
+    /// harness predating this did.
+    /// </summary>
+    private async Task CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_runtime is null)
+            return;
+
+        try
+        {
+            await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // The runtime already swallows an unreachable runner; this covers everything else it
+            // does on the way (persisting the snapshot). A pull that fails leaves the caller judging
+            // the streamed rows, which is exactly what it did before this call existed — it must
+            // never be the reason a watchdog stops running.
+            _logger.LogDebug(ex, "Transcript catch-up failed for session {SessionId}", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// The NON-DESTRUCTIVE failure tail: write Failed, retire an ephemeral delegate, tell the
+    /// caller, publish the change. Shared by the two sweeps that fail a task without killing its
+    /// session — everything destructive stays in <see cref="FailNeverStartedAsync"/>, which is the
+    /// only one holding evidence that the session never did anything (CARD-0021, CARD-0056).
+    ///
+    /// <para>The completion note is best-effort by design: the caller must HEAR about the death
+    /// rather than discover it, but a parent session that cannot take a message is not a reason to
+    /// leave the task open.</para>
+    /// </summary>
+    private async Task FailAndNotifyAsync(
+        AgentTask task, string reason, string sweep, CancellationToken ct)
+    {
+        await FailAsync(task, reason, ct);
+        await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
+        await _db.SaveChangesAsync(ct);
+
+        if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
+        {
+            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason);
+            try
+            {
+                await _queue.EnqueueAsync(
+                    parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                    QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    ex, "Could not deliver the {Sweep} failure of task {ShortId} to parent session {SessionId}",
+                    sweep, DelegationReportFormatter.Short(task.Id), parentSession);
+            }
+        }
+
+        await _eventBus.PublishToAllAsync(
+            "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        _logger.LogWarning(
+            "Task {ShortId} failed by the {Sweep}: {Reason}",
+            DelegationReportFormatter.Short(task.Id), sweep, reason);
     }
 
     /// <summary>

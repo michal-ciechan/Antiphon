@@ -35,6 +35,12 @@ export type AttentionKind =
   | 'RecentCriticalIncident'
   /** Context, not an alarm: tasks that failed in the last 24h. */
   | 'RecentFailure'
+  /**
+   * Closing on a deadline that will FAIL the task: the role's hard wall-clock ceiling, or - while
+   * the session is mid-turn - the phase-aware model-wait / local-execution deadline (CARD-0020).
+   * Listed from 80% of the limit, so a reply, a check or a cancel are all still open.
+   */
+  | 'Overdue'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

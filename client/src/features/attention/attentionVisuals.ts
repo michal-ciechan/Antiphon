@@ -4,6 +4,7 @@ import {
   TbClockExclamation,
   TbEyeOff,
   TbHelpCircle,
+  TbHourglassHigh,
   TbLink,
   TbMailExclamation,
   TbPlayerPlayFilled,
@@ -90,6 +91,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'gray',
     icon: TbX,
     hint: 'Settled as failed in the last 24h. Context, not an alarm.',
+  },
+  Overdue: {
+    label: 'Overdue',
+    color: 'warning',
+    icon: TbHourglassHigh,
+    hint: 'Closing on the deadline that will fail it - the role ceiling, or its current phase.',
   },
 }
 
