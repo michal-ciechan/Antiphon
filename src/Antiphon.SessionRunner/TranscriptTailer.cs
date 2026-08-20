@@ -286,6 +286,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         // the log to say so.
         var faultPolls = 0;
         DateTime? refusingSince = null;
+        DateTime? emptySince = null;
         DateTime? lastRefusalFault = null;
 
         while (!ct.IsCancellationRequested)
@@ -334,6 +335,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
                         refusingSince = verdict.Refusals.Count > 0 ? refusingSince ?? DateTime.UtcNow : null;
                         MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault);
+
+                        // CARD-0073 S1: C2 itself found nothing, so Refusals is empty and the
+                        // refusal path stays silent. A live child that has already been typed at
+                        // and still has zero cwd-matching candidates is the 10e30ff7 shape — it
+                        // must not run unbound forever with nothing on the wire.
+                        emptySince = IsEmptyCensus(verdict) ? emptySince ?? DateTime.UtcNow : null;
+                        MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault);
                     }
                 }
             }
@@ -389,7 +397,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         return true;
     }
 
-    private readonly record struct CandidateVerdict(string? Winner, string How, IReadOnlyList<string> Refusals);
+    private readonly record struct CandidateVerdict(
+        string? Winner,
+        string How,
+        IReadOnlyList<string> Refusals,
+        int FilesUnderRoot,
+        int CwdMatched);
 
     /// <summary>
     /// Applies C1–C4 to every transcript under the projects root and returns the best qualifying
@@ -403,10 +416,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         var refusals = new List<string>();
         var activeCutoff = DateTime.UtcNow - _activeWriteWindow;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var filesUnderRoot = 0;
+        var cwdMatched = 0;
 
         foreach (var file in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
         {
             seen.Add(file);
+            filesUnderRoot++;
 
             if (Path.GetFileNameWithoutExtension(file).Equals(_sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
                 continue; // the exact file is handled by the fast path
@@ -423,6 +439,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             // reporting. Also the cheap gate: a non-matching file is never read past its lead.
             if (ProbeCwdMatchingCandidate(file) is not { } probe)
                 continue;
+            cwdMatched++;
 
             // C2b — a name we know is not ours. Absence is neutral: operator sessions may carry
             // their own names and older Claude versions may write none at all.
@@ -461,7 +478,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             return new CandidateVerdict(
                 qualified.OrderByDescending(c => c.Mtime).First().Path,
                 TranscriptBindMethods.Discovery,
-                refusals);
+                refusals,
+                filesUnderRoot,
+                cwdMatched);
         }
 
         // Migration shim (removable one release after deploy): a session being re-adopted with no
@@ -473,9 +492,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         // available to a fresh launch — which is where the 2026-08-09 incident happened — and it
         // announces itself with a SessionTranscriptBound event rather than binding quietly.
         if (_restartAdopt && _knownTranscriptPath is null && shimEligible.Count == 1)
-            return new CandidateVerdict(shimEligible[0].Path, TranscriptBindMethods.MigrationShim, refusals);
+            return new CandidateVerdict(shimEligible[0].Path, TranscriptBindMethods.MigrationShim, refusals, filesUnderRoot, cwdMatched);
 
-        return new CandidateVerdict(null, TranscriptBindMethods.Discovery, refusals);
+        return new CandidateVerdict(null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched);
     }
 
     /// <summary>
@@ -641,7 +660,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             return;
 
         lastRefusalFault = now;
-        var detail = string.Join("; ", verdict.Refusals.Take(5));
+        var detail = $"{string.Join("; ", verdict.Refusals.Take(5))} ({FormatCensus(verdict)})";
         _logger.LogWarning(
             "Session {SessionId}: refusing every transcript candidate in {Cwd} after {Seconds:F0}s — {Detail}. "
             + "Running WITHOUT a transcript rather than binding to a conversation that may not be ours.",
@@ -655,6 +674,58 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 detail,
                 verdict.Refusals.Count == 1 ? verdict.Refusals[0] : null));
     }
+
+    /// <summary>
+    /// C2 found nothing at all — not "candidates existed and all were refused", which
+    /// <see cref="MaybeReportRefusal"/> already reports. A live child that has been typed at
+    /// and still has zero cwd-matching files after <see cref="_refusalFaultDelay"/> is the
+    /// CARD-0073 hole (session 10e30ff7): nothing qualifying is the correct bind outcome, but
+    /// it used to be invisible. Same delay and repeat cadence as the refusal path, one knob.
+    /// </summary>
+    private void MaybeReportNoCandidates(
+        CandidateVerdict verdict, ref DateTime? emptySince, ref DateTime? lastRefusalFault)
+    {
+        if (!IsEmptyCensus(verdict) || emptySince is not { } since)
+            return;
+
+        var now = DateTime.UtcNow;
+        if (now - since < _refusalFaultDelay)
+            return;
+        if (lastRefusalFault is { } last && now - last < RefusalFaultRepeat)
+            return;
+
+        lastRefusalFault = now;
+        var detail =
+            $"No cwd-matching transcript candidates after {(now - since).TotalSeconds:F0}s "
+            + $"({FormatCensus(verdict)}). Running WITHOUT a transcript.";
+        _logger.LogWarning(
+            "Session {SessionId}: no cwd-matching transcript candidates in {Cwd} after {Seconds:F0}s — {Census}. "
+            + "Running WITHOUT a transcript; ingestion, working/idle and channel replies are dead until one appears.",
+            _sessionId, _cwd, (now - since).TotalSeconds, FormatCensus(verdict));
+
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.TranscriptMissing,
+                detail,
+                null));
+    }
+
+    // Input must already have been delivered: Claude creates the file lazily, so an untouched
+    // composer with an empty projects dir is the normal first-prompt wait, not a fault. Child
+    // exit is ReportMissingAfterChildExit's job — do not steal it. Refusals belong to
+    // MaybeReportRefusal so the two shapes stay distinguishable.
+    private bool IsEmptyCensus(CandidateVerdict verdict) =>
+        verdict.Winner is null
+        && verdict.Refusals.Count == 0
+        && verdict.CwdMatched == 0
+        && _inputLog is { IsEmpty: false }
+        && _childExitedAtUtc is null;
+
+    private static string FormatCensus(CandidateVerdict verdict) =>
+        $"{verdict.FilesUnderRoot} file(s) under the transcript root, "
+        + $"{verdict.CwdMatched} cwd-matched, {verdict.Refusals.Count} refused";
 
     // The child is dead and nothing ever bound. Only a fault if input was actually delivered: a
     // session that was never typed at legitimately has no transcript to find.

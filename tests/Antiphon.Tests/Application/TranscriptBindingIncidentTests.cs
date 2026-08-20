@@ -7,6 +7,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Shouldly;
 using TUnit.Core;
 
@@ -156,6 +157,191 @@ public class TranscriptBindingIncidentTests
             .ShouldBeFalse("no transcript must read idle, or every WhenIdle delivery strands");
     }
 
+    /// <summary>
+    /// CARD-0073 S1: a delegate task session has no Agents.PersistentSessionId pointing at it —
+    /// the owner is on the task row. Dropping that lookup silenced every bind/fault outcome for
+    /// the population the card measured (57 discovery binds, 5 incidents).
+    /// </summary>
+    [Test]
+    public async Task Delegate_task_session_fault_records_incident_on_the_task_agent()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
+        });
+
+        var delegateSessionId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var now = DateTime.UtcNow;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = delegateSessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.Combine(harness.TempRoot, "delegate-cwd"),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "delegate owner drop",
+                Goal = "delegate owner drop",
+                WorkingDirectory = Path.Combine(harness.TempRoot, "delegate-cwd"),
+                AgentId = harness.AgentId,
+                AgentSessionId = delegateSessionId,
+                AgentName = "task-delegate",
+                Status = AgentTaskStatus.Dispatched,
+                Ephemeral = true,
+                CreatedAt = now,
+                DispatchedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        try
+        {
+            await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+                .OnTranscriptFaultAsync(
+                    new SessionRunnerTranscriptFaultEvent(
+                        delegateSessionId,
+                        TranscriptFaultKinds.TranscriptMissing,
+                        "No cwd-matching transcript candidates after 60s (0 file(s) under the transcript root, 0 cwd-matched, 0 refused).",
+                        CandidatePath: null),
+                    CancellationToken.None);
+
+            await using var db = BridgeQueueHarness.CreateContext();
+            var incident = await db.AgentIncidents.SingleAsync(
+                i => i.AgentId == harness.AgentId
+                    && i.SessionId == delegateSessionId
+                    && i.Kind == AgentIncidentKind.TranscriptBindFailed);
+            incident.FailureReason.ShouldBe(TranscriptFaultKinds.TranscriptMissing);
+            incident.Message.ShouldContain("0 cwd-matched");
+        }
+        finally
+        {
+            await using var cleanup = BridgeQueueHarness.CreateContext();
+            await cleanup.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Delegate_task_session_heuristic_bind_records_incident_on_the_task_agent()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
+        });
+
+        var delegateSessionId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var now = DateTime.UtcNow;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = delegateSessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.Combine(harness.TempRoot, "delegate-bind-cwd"),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "delegate bind owner",
+                Goal = "delegate bind owner",
+                WorkingDirectory = Path.Combine(harness.TempRoot, "delegate-bind-cwd"),
+                AgentId = harness.AgentId,
+                AgentSessionId = delegateSessionId,
+                AgentName = "task-delegate",
+                Status = AgentTaskStatus.Dispatched,
+                Ephemeral = true,
+                CreatedAt = now,
+                DispatchedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        try
+        {
+            await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+                .OnHeuristicBindAsync(
+                    new SessionRunnerTranscriptBoundEvent(
+                        delegateSessionId,
+                        @"C:\Users\lndco\.claude\projects\C--tmp-worktree\deadbeef.jsonl",
+                        TranscriptBindMethods.Discovery),
+                    CancellationToken.None);
+
+            await using var db = BridgeQueueHarness.CreateContext();
+            var incident = await db.AgentIncidents.SingleAsync(
+                i => i.AgentId == harness.AgentId
+                    && i.SessionId == delegateSessionId
+                    && i.Kind == AgentIncidentKind.TranscriptBoundByDiscovery);
+            incident.Severity.ShouldBe(AlertSeverity.Info);
+            incident.Message.ShouldContain(TranscriptBindMethods.Discovery);
+        }
+        finally
+        {
+            await using var cleanup = BridgeQueueHarness.CreateContext();
+            await cleanup.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
+    /// When nothing owns the session the outcome must still be visible: Error, not a silent
+    /// return and not a Warning that operators filter out. No incident row — there is nowhere
+    /// to hang one — matching ChannelReplyDispatcher.ReportLostAsync.
+    /// </summary>
+    [Test]
+    public async Task Unowned_session_fault_logs_error_and_does_not_record_an_incident()
+    {
+        var logs = new List<string>();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<TranscriptBindingIncidentService>();
+                s.AddSingleton<ILogger<TranscriptBindingIncidentService>>(new ListLogger<TranscriptBindingIncidentService>(logs));
+            },
+        });
+
+        var orphan = Guid.NewGuid();
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    orphan,
+                    TranscriptFaultKinds.TranscriptMissing,
+                    "No cwd-matching transcript candidates after 60s",
+                    CandidatePath: null),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.SessionId == orphan && i.Kind == AgentIncidentKind.TranscriptBindFailed))
+            .ShouldBeFalse("an unowned session has nowhere to hang an incident");
+
+        logs.ShouldContain(l => l.Contains("[Error]", StringComparison.Ordinal)
+            && l.Contains(orphan.ToString("D"), StringComparison.OrdinalIgnoreCase)
+            && l.Contains("No agent owns", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task<Guid> BindChannelAsync(Guid agentId)
     {
         await using var db = BridgeQueueHarness.CreateContext();
@@ -174,5 +360,23 @@ public class TranscriptBindingIncidentTests
         db.ChatChannels.Add(channel);
         await db.SaveChangesAsync();
         return channel.Id;
+    }
+
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (sink)
+                sink.Add($"[{logLevel}] {formatter(state, exception)}");
+        }
     }
 }

@@ -44,18 +44,19 @@ public sealed class TranscriptBindingIncidentService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var sessionIdText = fault.SessionId.ToString("D");
-            var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
-            if (agent is null)
+            var agentId = await ResolveOwningAgentIdAsync(db, fault.SessionId, ct);
+            if (agentId is not Guid owner)
             {
-                _logger.LogWarning(
+                // Same swallow-and-Error shape as ChannelReplyDispatcher.ReportLostAsync: nothing
+                // to hang an incident on, but an unbound session nobody claims is itself worth seeing.
+                _logger.LogError(
                     "Session {SessionId} has no transcript ({Kind}: {Detail}). No agent owns the session, "
                     + "so the fault was not recorded as an incident.",
                     fault.SessionId, fault.Kind, fault.Detail);
                 return;
             }
 
-            var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agent.Id, ct);
+            var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == owner, ct);
             var detail = fault.CandidatePath is { } candidate
                 ? $"{fault.Kind}: {fault.Detail} (candidate {candidate})"
                 : $"{fault.Kind}: {fault.Detail}";
@@ -63,7 +64,7 @@ public sealed class TranscriptBindingIncidentService
             // RecordIncidentAsync does NOT save; this scope's SaveChanges commits the row.
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             await supervisor.RecordIncidentAsync(
-                agent.Id,
+                owner,
                 fault.SessionId,
                 AgentIncidentKind.TranscriptBindFailed,
                 channelBound ? AlertSeverity.Critical : AlertSeverity.Warning,
@@ -92,14 +93,19 @@ public sealed class TranscriptBindingIncidentService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var sessionIdText = bound.SessionId.ToString("D");
-            var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
-            if (agent is null)
+            var agentId = await ResolveOwningAgentIdAsync(db, bound.SessionId, ct);
+            if (agentId is not Guid owner)
+            {
+                _logger.LogError(
+                    "Transcript bound by {How} at {Path} for session {SessionId}, but no agent owns the session, "
+                    + "so the bind was not recorded as an incident.",
+                    bound.How, bound.TranscriptPath, bound.SessionId);
                 return;
+            }
 
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             await supervisor.RecordIncidentAsync(
-                agent.Id,
+                owner,
                 bound.SessionId,
                 AgentIncidentKind.TranscriptBoundByDiscovery,
                 AlertSeverity.Info,
@@ -112,5 +118,29 @@ public sealed class TranscriptBindingIncidentService
         {
             _logger.LogWarning(ex, "Recording a heuristic transcript bind for session {SessionId} failed", bound.SessionId);
         }
+    }
+
+    /// <summary>
+    /// Standing agents own a session via <c>PersistentSessionId</c>; a delegate task session often
+    /// does not — the pool/ephemeral agent is on the task row, and a later spawn can overwrite
+    /// the standing pointer. Same two-step lookup AttentionService uses for session owners; when
+    /// neither hits, the caller logs at Error rather than dropping the outcome.
+    /// </summary>
+    private static async Task<Guid?> ResolveOwningAgentIdAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var sessionIdText = sessionId.ToString("D");
+        var standing = await db.Agents
+            .Where(a => a.PersistentSessionId == sessionIdText)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
+        if (standing is Guid standingId)
+            return standingId;
+
+        return await db.AgentTasks
+            .Where(t => t.AgentSessionId == sessionId && t.AgentId != null)
+            .OrderByDescending(t => t.DispatchedAt ?? t.CreatedAt)
+            .Select(t => t.AgentId)
+            .FirstOrDefaultAsync(ct);
     }
 }

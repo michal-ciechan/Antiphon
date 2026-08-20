@@ -418,8 +418,9 @@ public static class TranscriptFaultKinds
     public const string AdoptionRefused = "AdoptionRefused";
 
     /// <summary>
-    /// No transcript can be found at all — the projects root is missing/unreadable, or the child
-    /// exited after input was delivered without ever producing one.
+    /// No transcript can be found at all — the projects root is missing/unreadable, the child
+    /// exited after input was delivered without ever producing one, or the child is still alive
+    /// with input delivered and zero cwd-matching candidates after the refusal window.
     /// </summary>
     public const string TranscriptMissing = "TranscriptMissing";
 

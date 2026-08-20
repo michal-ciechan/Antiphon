@@ -358,6 +358,139 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    /// <summary>
+    /// CARD-0073 S1: the 10e30ff7 shape. A fresh worktree has zero cwd-matching transcripts, the
+    /// child is alive, and input WAS delivered — so this is not the lazy-create wait. Refusals
+    /// never accrue (C2 itself found nothing), ReportRootFault needs a broken root, and
+    /// ReportMissingAfterChildExit needs an exit. After the existing refusal window the silence
+    /// becomes one TranscriptMissing fault carrying the census; it does not repeat inside the
+    /// five-minute cadence.
+    /// </summary>
+    [Test]
+    public async Task Zero_cwd_matching_candidates_with_live_child_and_delivered_input_raises_exactly_one_fault()
+    {
+        using var tree = new TranscriptTree("empty-census");
+        var input = new SessionInputLog();
+        input.Append("A brief that was delivered into a fresh worktree");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow, refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull("a live child with delivered input and zero candidates must not stay silent");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
+            var detail = fault.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            detail.ShouldContain("0 cwd-matched");
+            detail.ShouldContain("0 refused");
+            tailer.BoundTranscriptPath.ShouldBeNull();
+
+            await Task.Delay(TimeSpan.FromSeconds(1.5));
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault)
+                .ShouldBe(1, "the empty-census fault shares the refusal repeat cadence and must not flap");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Files exist under the projects root but none share this session's cwd: C2 filters them
+    /// before refusals accrue, which is the other half of the CARD-0073 silence. The census must
+    /// distinguish that from an empty root and from "candidates existed and all were refused".
+    /// </summary>
+    [Test]
+    public async Task Files_in_other_cwds_are_not_refusals_and_still_raise_the_empty_census_fault()
+    {
+        using var tree = new TranscriptTree("other-cwd-census");
+        var input = new SessionInputLog();
+        input.Append("A brief delivered while only a stranger's project has transcripts");
+
+        var stranger = tree.NewTranscript();
+        await tree.AppendAsync(stranger, UserLine("s1", @"C:\some\other\project", "unrelated work", DateTime.UtcNow));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow, refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull();
+            fault!.RootElement.GetProperty("Kind").GetString()
+                .ShouldBe(TranscriptFaultKinds.TranscriptMissing, "C2 found nothing — this is not AdoptionRefused");
+            var detail = fault.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            detail.ShouldContain("1 file");
+            detail.ShouldContain("0 cwd-matched");
+            detail.ShouldContain("0 refused");
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// A legitimate bind inside the window must not raise the new empty-census fault. The delay
+    /// is the same knob as the refusal path; waiting past it after a successful bind is what
+    /// proves the clock does not keep ticking once LocateAsync has returned.
+    /// </summary>
+    [Test]
+    public async Task Quick_legitimate_bind_does_not_raise_an_unbound_fault()
+    {
+        using var tree = new TranscriptTree("quick-bind-no-fault");
+        var prompt = "Implement CARD-0073 empty-census reporting";
+        var input = new SessionInputLog();
+        input.Append(prompt);
+
+        var file = tree.NewTranscript();
+        await tree.AppendAsync(file, UserLine("u1", tree.Cwd, prompt, DateTime.UtcNow));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5), refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            (await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe(prompt);
+            tailer.BoundTranscriptPath.ShouldBe(file);
+
+            await Task.Delay(TimeSpan.FromSeconds(1.5));
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault)
+                .ShouldBe(0, "a session that bound must not spuriously report unbound-too-long");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Claude creates the transcript lazily on first submit. Zero candidates with no input is
+    /// the normal wait, not a fault — the same reason ReportMissingAfterChildExit stays quiet
+    /// when the input log is empty.
+    /// </summary>
+    [Test]
+    public async Task Zero_candidates_without_delivered_input_stays_silent()
+    {
+        using var tree = new TranscriptTree("empty-no-input");
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, new SessionInputLog(), childStartUtc: DateTime.UtcNow, refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     // ------------------------------------------------------------- §8.2 fork-follow and restart
 
     /// <summary>
@@ -1023,6 +1156,12 @@ public class TranscriptAdoptionSafetyTests
             }
 
             return null;
+        }
+
+        public int Count(string eventName)
+        {
+            lock (_received)
+                return _received.Count(e => e.EventName == eventName);
         }
 
         public async ValueTask DisposeAsync()
