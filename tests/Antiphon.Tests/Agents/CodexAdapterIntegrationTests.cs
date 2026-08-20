@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -101,6 +102,11 @@ public class CodexAdapterIntegrationTests
                 "Reply with exactly PONG and no other text.", CancellationToken.None);
             var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
 
+            // The evidence CARD-0108 asks for, kept rather than thrown away: a passing run prints
+            // nothing, and "somebody once saw a real Codex round trip work" is the whole point of
+            // this test.
+            WriteRoundTripLog(result);
+
             result.TurnCompleted.ShouldBeTrue(
                 "no task_complete row and no Working-indicator lifecycle was ever observed. Screen:\n"
                 + adapter.SnapshotRenderedScreen());
@@ -125,5 +131,17 @@ public class CodexAdapterIntegrationTests
     private static void TryDelete(string dir)
     {
         try { Directory.Delete(dir, true); } catch { /* best effort */ }
+    }
+
+    private static void WriteRoundTripLog(AgentTurnResult result)
+    {
+        var dir = Path.Combine(AppContext.BaseDirectory, "TestOutput", "CodexCanary");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(
+            Path.Combine(dir, nameof(CodexAdapterIntegrationTests) + ".log"),
+            $"# {DateTime.UtcNow:O}{Environment.NewLine}"
+            + $"TurnCompleted={result.TurnCompleted}{Environment.NewLine}"
+            + $"IsAskingQuestion={result.IsAskingQuestion}{Environment.NewLine}"
+            + $"ResponseText=<<{result.ResponseText}>>{Environment.NewLine}");
     }
 }
