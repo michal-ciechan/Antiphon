@@ -96,6 +96,15 @@ public sealed class AgentTaskDispatcher
         _logger = logger;
     }
 
+    /// <summary>
+    /// Whether the CARD-0055 pull-before-you-judge round trip is actually available (CARD-0020).
+    /// The runtime is an OPTIONAL constructor dependency so that every harness predating it keeps
+    /// constructing this — which means a missing DI registration in production would not fail, it
+    /// would silently leave two irreversible sweeps judging the streamed rows alone, forever, with
+    /// no symptom. Exists so that state is assertable rather than invisible.
+    /// </summary>
+    internal bool TranscriptPullArmed => _runtime is not null;
+
     /// <param name="SweepFailures">
     /// How many of the tick's eight clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by

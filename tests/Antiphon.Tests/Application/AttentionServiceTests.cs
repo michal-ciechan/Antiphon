@@ -233,8 +233,11 @@ public class AttentionServiceTests
         // not stuck, and the moment this view says otherwise it stops being worth opening.
         await using var scenario = new Scenario();
         var session = await scenario.AddSessionAsync();
+        // Three hours, not the four this used to seed: CARD-0020's Overdue row starts at 80% of the
+        // 240-minute ceiling, so a four-hour task is now listed — by that condition, on the deadline
+        // it is about to breach, which is a different claim from the one this test makes.
         var task = await scenario.AddTaskAsync(
-            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 240, expectedMinutes: 30);
+            session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 180, expectedMinutes: 30);
         // Activity above the last turn end: the shared verdict reads working.
         await scenario.AddTranscriptAsync(session,
             (TranscriptKinds.UserPrompt, "the brief", null),
@@ -247,7 +250,88 @@ public class AttentionServiceTests
             "a working session with a fresh transcript is never listed, however far past its estimate");
     }
 
-    // ---- 7. ChecksSpent -------------------------------------------------------------------------
+    // ---- 7. Overdue (CARD-0020 S2/S3) -----------------------------------------------------------
+
+    [Test]
+    public async Task a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it()
+    {
+        // The hole PastExpectedIdle declines by construction. Listed at 80% of the limit, the way
+        // NeverStartedGrace previews the delivery watchdog, so a reply, a check or a cancel are all
+        // still open to a human.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 200, expectedMinutes: 30);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.Overdue);
+        item.Severity.ShouldBe(
+            AlertSeverity.Warning, "nothing is broken yet — the honest reading is 'look at this'");
+        item.Headline.ShouldContain("Closing on the deadline");
+        item.Headline.ShouldContain("ceiling for role Code", customMessage:
+            "the row and the failure it becomes are the same sentence");
+        item.Actions[0].ShouldBe(AttentionAction.OpenDrawer);
+    }
+
+    [Test]
+    public async Task a_task_only_part_way_through_its_ceiling_is_not_listed_as_overdue()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 100, expectedMinutes: 30);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.TaskId == task,
+            "under the preview fraction there is nothing to say, and a view that cries wolf is not opened");
+    }
+
+    [Test]
+    public async Task a_breached_deadline_says_the_sweep_is_about_to_fail_it()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 300, expectedMinutes: 30);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.Overdue);
+        item.Headline.ShouldContain("Past its deadline", customMessage:
+            "a row that has already fired must not read the same as one that has not");
+    }
+
+    [Test]
+    public async Task an_idle_task_keeps_the_more_explanatory_past_expected_row()
+    {
+        // First-match order: PastExpectedIdle owns the idle case and names the cause ("finished and
+        // never reported"); Overdue would only name a clock. The two partition the open tasks.
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 200, expectedMinutes: 30);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.TurnEnd, null, null));
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(
+            AttentionKind.PastExpectedIdle,
+            "the ceiling is at 83% here too — the idle row still wins, because it names the cause");
+    }
+
+    // ---- 8. ChecksSpent -------------------------------------------------------------------------
 
     [Test]
     public async Task a_task_whose_check_budget_ran_out_is_listed_as_unwatched()
