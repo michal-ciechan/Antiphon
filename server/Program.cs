@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -398,6 +398,11 @@ try
     builder.Services.AddScoped<AgentTuiProfileService>();
     builder.Services.AddScoped<AgentTuiProfileImporter>();
     builder.Services.AddScoped<AgentTuiLaunchResolver>();
+    // CARD-0106: API key store CRUD. The protector itself is registered by
+    // AgentTuiDataProtectionSetup.Configure, alongside the key ring both stores share.
+    builder.Services.AddScoped<ApiKeyService>();
+    // CARD-0106 S2: launch-time placeholder resolution. Scoped, because it reads the key store.
+    builder.Services.AddScoped<ApiKeyEnvResolver>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
@@ -545,6 +550,7 @@ try
     // API endpoints
     app.MapSettingsEndpoints();
     app.MapProjectEndpoints();
+    app.MapApiKeyEndpoints();
     app.MapBoardEndpoints();
     app.MapCardEndpoints();
     app.MapAgentEndpoints();

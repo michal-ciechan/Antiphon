@@ -63,6 +63,9 @@ public sealed class CardService
     private readonly AgentReviewCheckpointService _reviewCheckpoints;
     private readonly ContextWindowSettings _contextWindow;
     private readonly ILogger<CardService>? _logger;
+    // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
+    // unresolved and the launch tripwire refuses them by name. Production always registers it.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public CardService(
         AppDbContext db,
@@ -74,7 +77,8 @@ public sealed class CardService
         AgentReviewCheckpointService reviewCheckpoints,
         AgentTuiLaunchResolver? launchResolver = null,
         IOptions<ContextWindowSettings>? contextWindow = null,
-        ILogger<CardService>? logger = null)
+        ILogger<CardService>? logger = null,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -86,6 +90,7 @@ public sealed class CardService
         _reviewCheckpoints = reviewCheckpoints;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _logger = logger;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -575,6 +580,18 @@ public sealed class CardService
                 Rows: request.Rows,
                 ExtraArgs: null,
                 ExtraEnv: null));
+            // This is a direct registry resolve with no agent, so it is where the spec is finalized
+            // and where API keys have to be resolved (CARD-0106 S2). The card's board names the
+            // project, so an explicitly-named definition spawned onto a project's card still gets
+            // that project's keys.
+            if (_apiKeyEnvResolver is not null)
+            {
+                spec = await _apiKeyEnvResolver.ResolveSpecAsync(
+                    spec,
+                    card.Board.ProjectId,
+                    $"card {card.Identifier}",
+                    ct);
+            }
         }
         else if (card.AssignedAgent is { } assignedAgent)
         {
@@ -587,8 +604,12 @@ public sealed class CardService
                     Cols: request.Cols,
                     Rows: request.Rows,
                     ExtraArgs: null,
-                    ExtraEnv: null),
-                ct);
+                    ExtraEnv: null,
+                    // The CARD's board names the project for a card spawn (plan section 4), whether
+                    // or not the agent that runs it happens to sit on the same board.
+                    ApiKeyProjectId: card.Board.ProjectId),
+                ct,
+                _apiKeyEnvResolver);
             definitionName = resolved.Spec.DefinitionName;
             spec = resolved.Spec;
             tuiProfileRevisionId = resolved.ProfileRevisionId;
@@ -604,8 +625,12 @@ public sealed class CardService
                     Cols: request.Cols,
                     Rows: request.Rows,
                     ExtraArgs: null,
-                    ExtraEnv: null),
-                ct);
+                    ExtraEnv: null,
+                    // The CARD's board names the project for a card spawn (plan section 4), whether
+                    // or not the agent that runs it happens to sit on the same board.
+                    ApiKeyProjectId: card.Board.ProjectId),
+                ct,
+                _apiKeyEnvResolver);
             definitionName = resolved.Spec.DefinitionName;
             spec = resolved.Spec;
             tuiProfileRevisionId = resolved.ProfileRevisionId;

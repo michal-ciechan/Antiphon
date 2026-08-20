@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Security;
 
 namespace Antiphon.Server.Infrastructure.Agents.Tui;
 
@@ -83,34 +84,10 @@ public sealed class DataProtectionAgentTuiSecretProtector : IAgentTuiSecretProte
         }
     }
 
-    private static Guid GetPayloadKeyId(string protectedValue)
-    {
-        const int EncodedPrefixLength = 28;
-        const int DecodedPrefixLength = 21;
-        if (protectedValue.Length < EncodedPrefixLength)
-            throw new CryptographicException("Agent TUI managed-secret payload is invalid.");
-
-        try
-        {
-            var header = WebEncoders.Base64UrlDecode(protectedValue[..EncodedPrefixLength]);
-            if (header.Length != DecodedPrefixLength
-                || header[0] != 0x09
-                || header[1] != 0xF0
-                || header[2] != 0xC9
-                || header[3] != 0xF0)
-            {
-                throw new CryptographicException("Agent TUI managed-secret payload is invalid.");
-            }
-
-            return new Guid(header.AsSpan(4, 16));
-        }
-        catch (FormatException exception)
-        {
-            throw new CryptographicException(
-                "Agent TUI managed-secret payload is invalid.",
-                exception);
-        }
-    }
+    private static Guid GetPayloadKeyId(string protectedValue) =>
+        DataProtectionPayload.GetKeyId(
+            protectedValue,
+            "Agent TUI managed-secret payload is invalid.");
 }
 
 public sealed class AgentTuiKeyProtectionReadiness
@@ -277,6 +254,10 @@ internal static class AgentTuiDataProtectionSetup
                         requiredKeyId: requiredKeyId));
         });
         services.AddSingleton<IAgentTuiSecretProtector, DataProtectionAgentTuiSecretProtector>();
+        // CARD-0106 S1: API keys reuse this key ring, this readiness handshake and this provider
+        // wholesale — only the purpose chain differs. Registered HERE rather than in Program.cs so
+        // it cannot be wired up in an installation where the readiness singleton above was not.
+        services.AddSingleton<IApiKeyProtector, DataProtectionApiKeyProtector>();
         return protectionReady;
     }
 

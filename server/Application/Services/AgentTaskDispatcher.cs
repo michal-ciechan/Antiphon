@@ -39,6 +39,9 @@ public sealed class AgentTaskDispatcher
     private readonly DeadSessionFirstSeenState? _deadSessions;
     private readonly DelegateBindRefusalRecovery? _bindRefusalRecovery;
     private readonly AgentSessionRuntime? _runtime;
+    // CARD-0106 S2. Optional like everything else here; absent, a delegate whose agent env carries a
+    // placeholder fails at the launch tripwire by name rather than exporting the literal token.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -74,8 +77,10 @@ public sealed class AgentTaskDispatcher
         // proved it wrong is what produced the records (CARD-0055, session e809ce65). Optional for
         // the same reason as the rest: a harness without it falls back to whatever streamed, which
         // is exactly today's behaviour, and the pull swallows its own failures anyway.
-        AgentSessionRuntime? runtime = null)
+        AgentSessionRuntime? runtime = null,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
+        _apiKeyEnvResolver = apiKeyEnvResolver;
         _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
@@ -1255,6 +1260,18 @@ public sealed class AgentTaskDispatcher
         // pinned one (CARD-0058 slice 6).
         var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
         var spec = BuildLaunchSpec(claimed, agent, session, attachedBundleKeys);
+        // CARD-0106 S2 — this is the other bottom-level path where Env is finalized, and it is the
+        // one a POOL DELEGATE takes. A pool delegate has no board, so it resolves GLOBAL keys only;
+        // a task PINNED to a standing agent with a board gets that project's keys, which is what
+        // makes the "Grok delegate on its own project credential" case work.
+        if (_apiKeyEnvResolver is not null)
+        {
+            spec = await _apiKeyEnvResolver.ResolveSpecAsync(
+                spec,
+                agent,
+                $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
+                ct);
+        }
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName: null, notes: null);
 
         // The brief goes through the message QUEUE, never straight to the pty: that is the only path
@@ -1497,6 +1514,10 @@ public sealed class AgentTaskDispatcher
                 Cols: session.Cols,
                 Rows: session.Rows,
                 ExtraArgs: extraArgs,
+                // The agent's own launch env, merged BEFORE ExtraEnv so the ANTIPHON_* block below
+                // always wins (CARD-0106 S2). A pool delegate's row carries "{}" and contributes
+                // nothing; a pinned standing agent contributes whatever its settings say.
+                AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
                 ExtraEnv: BuildEnv(task, agent, session)));
     }
 

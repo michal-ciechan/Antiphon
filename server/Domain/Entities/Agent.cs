@@ -65,6 +65,19 @@ public class Agent
     /// </summary>
     public int? AutoCompactContextPercent { get; set; }
 
+    /// <summary>
+    /// Per-agent launch environment (CARD-0106 S2), stored as a JSON <c>Dictionary&lt;string,string&gt;</c>;
+    /// <c>{}</c> for every agent that existed before the column. This is where "per-agent API key"
+    /// actually lives — a value may reference a stored key as <c>{{key:NAME}}</c>, resolved at launch
+    /// with the agent's project (via <see cref="BoardId"/> → <c>Board.ProjectId</c>) overriding global.
+    ///
+    /// <para>Merged into the launch environment BEFORE <c>AgentLaunchOptions.ExtraEnv</c>, and that
+    /// ordering is load-bearing: <c>ExtraEnv</c> is Antiphon's own orchestration block
+    /// (<c>ANTIPHON_SESSION_ID</c>, <c>ANTIPHON_TASK_TOKEN</c>, ...), and a per-agent override of
+    /// those would be a self-inflicted CARD-0006 — an agent tailing somebody else's transcript.</para>
+    /// </summary>
+    public string LaunchEnvJson { get; set; } = "{}";
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The board automatically created for this agent when it was added.</summary>

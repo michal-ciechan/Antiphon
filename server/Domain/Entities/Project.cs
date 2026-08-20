@@ -18,4 +18,10 @@ public class Project
     public DateTime UpdatedAt { get; set; }
 
     public ICollection<Board> Boards { get; set; } = new List<Board>();
+
+    /// <summary>
+    /// Project-scoped API keys (CARD-0106). Cascade-deleted with the project; an agent still
+    /// referencing a deleted key fails its next launch loudly rather than launching without it.
+    /// </summary>
+    public ICollection<ApiKey> ApiKeys { get; set; } = new List<ApiKey>();
 }

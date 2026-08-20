@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -35,6 +35,9 @@ public sealed class AgentControlService
     private readonly DelegationSettings _delegationSettings;
     private readonly ILogger<AgentControlService> _logger;
     private readonly AgentWorkspaceProvisioner? _workspace;
+    // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
+    // unresolved and the launch tripwire refuses them by name. Production always registers it.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public AgentControlService(
         AppDbContext db,
@@ -50,7 +53,8 @@ public sealed class AgentControlService
         AgentTuiLaunchResolver? launchResolver = null,
         // Optional for the same reason as everywhere else here: a harness that wires no provisioner
         // still starts agents, it just starts them without the CLAUDE.md floor.
-        AgentWorkspaceProvisioner? workspace = null)
+        AgentWorkspaceProvisioner? workspace = null,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _db = db;
         _agentService = agentService;
@@ -64,6 +68,7 @@ public sealed class AgentControlService
         _delegationSettings = delegationSettings.Value;
         _logger = logger;
         _workspace = workspace;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     /// <summary>
@@ -258,7 +263,8 @@ public sealed class AgentControlService
                 Rows: 30,
                 ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
                 ExtraEnv: extraEnv),
-            ct);
+            ct,
+            _apiKeyEnvResolver);
         var spec = resolved.Spec;
         var definitionName = spec.DefinitionName;
 

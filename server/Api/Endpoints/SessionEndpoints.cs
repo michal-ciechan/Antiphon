@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Data;
@@ -17,6 +17,7 @@ public static class SessionEndpoints
             StartAgentSessionRequest request,
             AgentRegistry registry,
             AgentSessionService service,
+            ApiKeyEnvResolver apiKeys,
             CancellationToken cancellationToken) =>
         {
             ValidateTerminalSize(request.Cols, request.Rows);
@@ -29,6 +30,12 @@ public static class SessionEndpoints
                 Rows: request.Rows,
                 ExtraArgs: request.ExtraArgs,
                 ExtraEnv: request.ExtraEnv));
+            // A third direct AgentRegistry.Resolve caller, and therefore a third place Env is
+            // finalized (CARD-0106 S2). No agent and no card here, so GLOBAL keys only. Without
+            // this the tripwire would refuse an otherwise-legitimate launch — the tripwire is the
+            // backstop for a FORGOTTEN path, not a substitute for wiring a known one.
+            spec = await apiKeys.ResolveSpecAsync(
+                spec, projectId: null, $"session start on '{definitionName}'", cancellationToken);
             var result = await service.StartAsync(
                 request with { DefinitionName = definitionName, AgentKind = spec.Kind },
                 spec,
@@ -124,6 +131,7 @@ public static class SessionEndpoints
             AppDbContext db,
             AgentRegistry registry,
             AgentSessionService service,
+            ApiKeyEnvResolver apiKeys,
             CancellationToken cancellationToken) =>
         {
             var session = await db.AgentSessions
@@ -134,6 +142,8 @@ public static class SessionEndpoints
                 Cwd: session.Cwd,
                 Cols: session.Cols,
                 Rows: session.Rows));
+            spec = await apiKeys.ResolveSpecAsync(
+                spec, projectId: null, $"resume of session {id:D}", cancellationToken);
 
             return Results.Accepted($"/api/sessions/{id}", await service.ResumeAsync(id, spec, request.Mode, cancellationToken));
         });

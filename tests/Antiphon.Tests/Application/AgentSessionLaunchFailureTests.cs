@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -61,6 +61,72 @@ public class AgentSessionLaunchFailureTests
         session.Status.ShouldBe(SessionStatus.Failed);
         var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
         agent.Status.ShouldBe(AgentStatus.Failed, "the Start API already flipped it to Running");
+    }
+
+    // ---- CARD-0106 S2: the API key tripwire, in the method every launch passes through ----------
+
+    /// <summary>
+    /// The tripwire's whole reason to exist, exercised where it lives rather than as a static
+    /// helper: a spec that never went through <c>ApiKeyEnvResolver</c> reaches
+    /// <c>AgentSessionService.BuildRuntimeLaunchSpec</c>, which is the one method all three
+    /// <c>adapter.StartAsync</c> sites go through. It must refuse, and it must refuse BEFORE the
+    /// process starts — a child already holding a literal {{key:...}} in its environment would
+    /// authenticate as nobody, with no error anywhere to say why.
+    /// </summary>
+    [Test]
+    public async Task An_unresolved_api_key_placeholder_refuses_the_launch_before_the_process_starts()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var unresolved = new AgentLaunchSpec(
+            "fake",
+            AgentKind.Raw,
+            "fake",
+            [],
+            new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "{{key:anthropic-maven}}" },
+            fixture.Workspace,
+            120,
+            30);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            fixture.LaunchInteractiveAsync(spec: unresolved));
+
+        ex.Message.ShouldContain("ANTHROPIC_API_KEY");
+        ex.Message.ShouldContain("{{key:anthropic-maven}}");
+        adapter.Started.ShouldBeFalse("nothing may launch holding an unresolved placeholder");
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldContain(
+            "anthropic-maven", customMessage: "the failure reason names the key to add or fix");
+    }
+
+    /// <summary>
+    /// The same choke point, for the leak surface the placeholder is banned from: an ARGUMENT. This
+    /// is the rule being ENFORCED rather than documented — argv is process-listing-visible and is
+    /// quoted into failure reasons, and --append-system-prompt text also lands in the transcript.
+    /// </summary>
+    [Test]
+    public async Task A_placeholder_in_a_launch_argument_refuses_the_launch_too()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var inArgs = new AgentLaunchSpec(
+            "fake",
+            AgentKind.Raw,
+            "fake",
+            ["--append-system-prompt", "Authenticate with {{key:anthropic-maven}}."],
+            new Dictionary<string, string>(),
+            fixture.Workspace,
+            120,
+            30);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            fixture.LaunchInteractiveAsync(spec: inArgs));
+
+        ex.Message.ShouldContain("environment VALUES only");
+        adapter.Started.ShouldBeFalse();
     }
 
     /// <summary>
@@ -641,11 +707,16 @@ public class AgentSessionLaunchFailureTests
         public static AppDbContext CreateContext() => BridgeQueueHarness.CreateContext();
 
         public Task LaunchInteractiveAsync(
-            string? remoteControlName = null, bool resume = false, LaunchNotes? notes = null) =>
+            string? remoteControlName = null,
+            bool resume = false,
+            LaunchNotes? notes = null,
+            // CARD-0106 S2: lets a test hand the launch a spec the resolvers never saw, which is
+            // exactly the "future forgotten path" the tripwire exists for.
+            AgentLaunchSpec? spec = null) =>
             Services.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
                 SessionId,
                 AgentId,
-                LaunchSpec(Workspace),
+                spec ?? LaunchSpec(Workspace),
                 remoteControlName,
                 resume,
                 notes,

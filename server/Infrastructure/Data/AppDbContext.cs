@@ -58,6 +58,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentTuiSecret> AgentTuiSecrets => Set<AgentTuiSecret>();
     public DbSet<AgentTuiModel> AgentTuiModels => Set<AgentTuiModel>();
     public DbSet<AgentTuiValidationRun> AgentTuiValidationRuns => Set<AgentTuiValidationRun>();
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -664,6 +665,35 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // CARD-0106 S1. Two FILTERED unique indexes, not one composite: a project-scoped key and a
+        // global key may deliberately share a name (that IS the override feature), while a duplicate
+        // WITHIN a scope is a conflict. Filtered rather than leaning on PG15+ NULLS NOT DISTINCT, so
+        // the constraint holds on every server version this deployment could land on.
+        modelBuilder.Entity<ApiKey>(entity =>
+        {
+            entity.ToTable("ApiKeys");
+            entity.HasKey(k => k.Id);
+            entity.Property(k => k.Name).IsRequired().HasMaxLength(128);
+            entity.Property(k => k.Ciphertext).IsRequired();
+            entity.Property(k => k.ProtectionVersion).IsRequired().HasMaxLength(100);
+            entity.Property(k => k.CreatedAt).IsRequired();
+            entity.Property(k => k.UpdatedAt).IsRequired();
+
+            entity.HasIndex(k => k.Name)
+                .IsUnique()
+                .HasFilter("\"ProjectId\" IS NULL")
+                .HasDatabaseName("IX_ApiKeys_Name_Global");
+            entity.HasIndex(k => new { k.ProjectId, k.Name })
+                .IsUnique()
+                .HasFilter("\"ProjectId\" IS NOT NULL")
+                .HasDatabaseName("IX_ApiKeys_ProjectId_Name");
+
+            entity.HasOne(k => k.Project)
+                .WithMany(p => p.ApiKeys)
+                .HasForeignKey(k => k.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<AgentTuiModel>(entity =>
         {
             entity.ToTable("AgentTuiModels");
@@ -746,6 +776,12 @@ public class AppDbContext : DbContext
             entity.Property(a => a.Kind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);
             entity.Property(a => a.ModelId).HasMaxLength(500);
             entity.Property(a => a.PersistentSessionId).HasMaxLength(200);
+            // CARD-0106 S2. jsonb, like every other JSON column here; the default states the fact
+            // that every agent row predating the column carried no launch environment at all.
+            entity.Property(a => a.LaunchEnvJson)
+                .IsRequired()
+                .HasColumnType("jsonb")
+                .HasDefaultValue("{}");
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();
 

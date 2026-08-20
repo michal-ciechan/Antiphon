@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -342,7 +342,19 @@ public sealed class AgentService
         if (request.RemoteControlEnabled is { } remoteControlEnabled)
             agent.RemoteControlEnabled = remoteControlEnabled;
         if (request.SystemPromptAppend is { } systemPromptAppend)
+        {
+            // CARD-0106 S2: a placeholder here would be resolved into --append-system-prompt, which
+            // is an ARGUMENT (process-listing-visible, quoted into failure reasons) whose text also
+            // lands in the transcript. Refused at the moment it is typed, not silently stripped —
+            // stripping would launch the agent under a contract that quietly lost a line.
+            ApiKeyPlaceholderInPromptGuard(systemPromptAppend);
             agent.SystemPromptAppend = string.IsNullOrWhiteSpace(systemPromptAppend) ? null : systemPromptAppend;
+        }
+
+        // Null leaves it alone (an older caller must not wipe a configured environment); an empty
+        // dictionary is the explicit clear.
+        if (request.LaunchEnv is { } launchEnv)
+            agent.LaunchEnvJson = AgentLaunchEnv.Serialize(AgentLaunchEnv.Validate(launchEnv));
         if (request.ModelLevel is { } modelLevel)
             agent.ModelLevel = modelLevel;
         if (request.ReplyStyle is { } replyStyle)
@@ -824,7 +836,8 @@ public sealed class AgentService
             bundlesOutOfDate,
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
-            agent.AutoCompactContextPercent);
+            agent.AutoCompactContextPercent,
+            AgentLaunchEnv.Parse(agent.LaunchEnvJson));
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -887,7 +900,8 @@ public sealed class AgentService
             keys,
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
-            agent.AutoCompactContextPercent);
+            agent.AutoCompactContextPercent,
+            AgentLaunchEnv.Parse(agent.LaunchEnvJson));
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
@@ -1026,6 +1040,24 @@ public sealed class AgentService
             return slug;
 
         return slug[..maxLength].Trim('-');
+    }
+
+    /// <summary>
+    /// CARD-0106 S2 — placeholders are legal in environment VALUES only. System-prompt text becomes
+    /// a launch ARGUMENT and lands in the transcript, so a key resolved into one would be a key
+    /// published. Refused as a 422 the operator sees, ahead of the launch tripwire that would
+    /// otherwise catch it much later and only when they tried to start the agent.
+    /// </summary>
+    private static void ApiKeyPlaceholderInPromptGuard(string? systemPromptAppend)
+    {
+        if (!ApiKeyPlaceholder.ContainsMarker(systemPromptAppend))
+            return;
+
+        throw new ValidationException(
+            "systemPromptAppend",
+            "An API key placeholder is not supported in system-prompt text: it becomes a launch "
+            + "argument, which is visible to any process lister and is written into the agent's "
+            + "transcript. Put the placeholder in the agent's launch environment instead.");
     }
 
     private static void ValidateAgentRequest(string name, string workingDirectory)

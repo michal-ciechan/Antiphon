@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -27,6 +27,9 @@ public sealed class OrchestratorService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<OrchestratorService> _logger;
     private readonly AgentSessionRuntime? _runtime;
+    // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
+    // unresolved and the launch tripwire refuses them by name. Production always registers it.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public OrchestratorService(
         AppDbContext db,
@@ -41,7 +44,8 @@ public sealed class OrchestratorService
         TimeProvider timeProvider,
         ILogger<OrchestratorService> logger,
         AgentSessionRuntime? runtime = null,
-        AgentTuiLaunchResolver? launchResolver = null)
+        AgentTuiLaunchResolver? launchResolver = null,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -56,6 +60,7 @@ public sealed class OrchestratorService
         _timeProvider = timeProvider;
         _logger = logger;
         _runtime = runtime;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     public async Task<OrchestratorTickResult> PollTickAsync(CancellationToken ct)
@@ -604,14 +609,16 @@ public sealed class OrchestratorService
                     _agentRegistry,
                     _launchResolver,
                     options,
-                    ct);
+                    ct,
+                    _apiKeyEnvResolver);
         }
 
         return await AgentLaunchResolution.ResolveDefaultAsync(
             _agentRegistry,
             _launchResolver,
             options,
-            ct);
+            ct,
+            _apiKeyEnvResolver);
     }
 
     private static void ClearCardClaim(Card card, DateTime utcNow)

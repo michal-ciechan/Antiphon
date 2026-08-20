@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -990,7 +990,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
 
-        return launchSpec with
+        var spec = launchSpec with
         {
             Args = args,
             Cwd = cwd,
@@ -999,6 +999,20 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             MemoryLimitMb = _settings.MemoryLimitMb,
             SessionId = session.Id
         };
+
+        // THE API KEY TRIPWIRE (CARD-0106 S2). Every launch from every path — interactive, card,
+        // resume — passes through this method on its way to one of the three adapter.StartAsync
+        // sites, and nothing else in the server calls StartAsync at all. So a future path that
+        // builds an Env and forgets to resolve it fails its FIRST launch naming the surviving
+        // token, instead of exporting the literal {{key:...}} string into a real process where the
+        // only symptom is an agent that authenticates as nobody — or, worse, being "fixed" later by
+        // somebody deleting the placeholder. It refuses; it does not resolve (there is no database
+        // here on purpose — a tripwire that could paper over the gap would stop being evidence of
+        // it). It also refuses a placeholder in ARGUMENTS, which is the enforcement half of
+        // "env values only": args are process-listing-visible and quoted into logs and failure
+        // reasons, and --append-system-prompt text additionally lands in transcripts.
+        ApiKeyPlaceholder.EnsureResolved(spec, session.Id);
+        return spec;
     }
 
     /// <summary>

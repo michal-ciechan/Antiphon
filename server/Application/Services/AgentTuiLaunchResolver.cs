@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
@@ -31,8 +31,17 @@ internal static class AgentLaunchResolution
         AgentRegistry agentRegistry,
         AgentTuiLaunchResolver? launchResolver,
         AgentLaunchOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
+        // The agent's own launch env, attached HERE (CARD-0106 S2) rather than at each of the five
+        // call sites this funnel serves — a caller that forgot would launch the agent without the
+        // environment somebody configured for it, silently.
+        options = options with
+        {
+            AgentEnv = options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent)
+        };
+
         if (launchResolver is null)
         {
             if (agent.TuiProfileId is not null)
@@ -42,7 +51,8 @@ internal static class AgentLaunchResolution
                     "profile_resolution_unavailable");
             }
 
-            return ResolveLegacy(agentRegistry, options);
+            return await ResolveLegacyAsync(
+                agentRegistry, options, agent, apiKeyEnvResolver, cancellationToken);
         }
 
         try
@@ -52,7 +62,8 @@ internal static class AgentLaunchResolution
         catch (ConflictException exception)
             when (agent.TuiProfileId is null && exception.Code == "profile_not_found")
         {
-            return ResolveLegacy(agentRegistry, options);
+            return await ResolveLegacyAsync(
+                agentRegistry, options, agent, apiKeyEnvResolver, cancellationToken);
         }
     }
 
@@ -60,10 +71,14 @@ internal static class AgentLaunchResolution
         AgentRegistry agentRegistry,
         AgentTuiLaunchResolver? launchResolver,
         AgentLaunchOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         if (launchResolver is null)
-            return ResolveLegacy(agentRegistry, options);
+        {
+            return await ResolveLegacyAsync(
+                agentRegistry, options, agent: null, apiKeyEnvResolver, cancellationToken);
+        }
 
         try
         {
@@ -71,15 +86,35 @@ internal static class AgentLaunchResolution
         }
         catch (ConflictException exception) when (exception.Code == "profile_not_found")
         {
-            return ResolveLegacy(agentRegistry, options);
+            return await ResolveLegacyAsync(
+                agentRegistry, options, agent: null, apiKeyEnvResolver, cancellationToken);
         }
     }
 
-    private static ResolvedAgentTuiLaunch ResolveLegacy(
+    /// <summary>
+    /// The legacy (no managed profile) path. It is also where the legacy spec gets FINALIZED, which
+    /// is why API key resolution happens here rather than inside the sync, no-DB
+    /// <c>AgentRegistry.Resolve</c> it wraps (plan section 4).
+    /// </summary>
+    private static async Task<ResolvedAgentTuiLaunch> ResolveLegacyAsync(
         AgentRegistry agentRegistry,
-        AgentLaunchOptions options)
+        AgentLaunchOptions options,
+        Agent? agent,
+        ApiKeyEnvResolver? apiKeyEnvResolver,
+        CancellationToken cancellationToken)
     {
         var spec = agentRegistry.Resolve(agentRegistry.Settings.DefaultDefinition, options);
+        if (apiKeyEnvResolver is not null)
+        {
+            var projectId = options.ApiKeyProjectId
+                ?? await apiKeyEnvResolver.ResolveProjectIdAsync(agent?.BoardId, cancellationToken);
+            spec = await apiKeyEnvResolver.ResolveSpecAsync(
+                spec,
+                projectId,
+                agent is null ? "the default launch" : $"agent '{agent.Name}'",
+                cancellationToken);
+        }
+
         return new ResolvedAgentTuiLaunch(
             spec,
             ProfileId: null,
@@ -106,18 +141,25 @@ public sealed class AgentTuiLaunchResolver
     private readonly AgentTuiMetrics _metrics;
     private readonly AgentTuiRunnerCatalog _runnerCatalog;
     private readonly IEqualityComparer<string> _environmentNameComparer;
+    // CARD-0106 S2. Optional for the same reason AgentTuiLaunchResolver itself is optional to its
+    // callers: a harness that does not wire it still resolves launches, and a placeholder that
+    // therefore goes unresolved is caught by the tripwire in AgentSessionService.BuildRuntimeLaunchSpec
+    // rather than reaching a child process. Production always registers it.
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public AgentTuiLaunchResolver(
         AppDbContext db,
         IAgentTuiSecretProtector secretProtector,
         AgentTuiMetrics metrics,
-        AgentTuiRunnerCatalog runnerCatalog)
+        AgentTuiRunnerCatalog runnerCatalog,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
         : this(
             db,
             secretProtector,
             metrics,
             runnerCatalog,
-            AgentEnvironmentVariableNames.ForCurrentPlatform())
+            AgentEnvironmentVariableNames.ForCurrentPlatform(),
+            apiKeyEnvResolver)
     {
     }
 
@@ -126,13 +168,15 @@ public sealed class AgentTuiLaunchResolver
         IAgentTuiSecretProtector secretProtector,
         AgentTuiMetrics metrics,
         AgentTuiRunnerCatalog runnerCatalog,
-        IEqualityComparer<string> environmentNameComparer)
+        IEqualityComparer<string> environmentNameComparer,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _db = db;
         _secretProtector = secretProtector;
         _metrics = metrics;
         _runnerCatalog = runnerCatalog;
         _environmentNameComparer = environmentNameComparer;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     public async Task<ResolvedAgentTuiLaunch> ResolveForAgentAsync(
@@ -255,6 +299,14 @@ public sealed class AgentTuiLaunchResolver
             }
         }
 
+        // Merge order (CARD-0106 S2): profile non-secret env and managed secrets -> the AGENT's own
+        // launch env -> ExtraEnv. The agent's field outranks the profile because it is the more
+        // specific thing somebody wrote about THIS agent; it never outranks ExtraEnv, which carries
+        // Antiphon's own ANTIPHON_* orchestration identity. Null means "read it off the agent" —
+        // an explicit (possibly empty) dictionary from a caller wins.
+        foreach (var (key, value) in options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent))
+            environment[key] = value;
+
         if (options.ExtraEnv is not null)
         {
             foreach (var (key, value) in options.ExtraEnv)
@@ -292,6 +344,31 @@ public sealed class AgentTuiLaunchResolver
                    ?? revision.Executable;
         var definitionName = profile.SourceDefinitionName
                              ?? profile.DisplayName;
+
+        // CARD-0106 S2 — resolution runs over the FULLY-MERGED environment, after the kind defaults
+        // above, so a {{key:NAME}} works identically whichever layer contributed the value: the
+        // agent's own launch env, the profile revision's non-secret env, or an appsettings
+        // definition. That last one is what makes the AgentTuiSecret convergence a small card later.
+        var subject = agent.Id == Guid.Empty
+            ? $"the default launch on profile '{definitionName}'"
+            : $"agent '{agent.Name}'";
+        if (_apiKeyEnvResolver is not null)
+        {
+            // The agent's board decides the project scope. No board (a pool delegate, the synthetic
+            // default agent) resolves GLOBAL keys only — deriving a project from a working directory
+            // was rejected as unreliable, and a mis-scoped secret is worse than a failed launch.
+            var projectId = options.ApiKeyProjectId
+                ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, cancellationToken);
+            foreach (var argument in args)
+                ApiKeyPlaceholder.EnsureAbsent(argument, $"A launch argument for {subject}");
+            environment = new Dictionary<string, string>(
+                await _apiKeyEnvResolver.ResolveAsync(
+                    environment,
+                    projectId,
+                    subject,
+                    cancellationToken),
+                StringComparer.Ordinal);
+        }
 
         var spec = new AgentLaunchSpec(
             DefinitionName: definitionName,
