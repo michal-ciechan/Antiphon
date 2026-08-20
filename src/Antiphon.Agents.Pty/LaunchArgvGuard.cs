@@ -111,35 +111,12 @@ public static class LaunchArgvGuard
     }
 
     /// <summary>
-    /// The inbox-conhost backend formats its command line inside <c>Porta.Pty</c>
-    /// (<c>WindowsArguments.Format</c>, an internal type), so the finished string cannot be
-    /// inspected from here the way <see cref="VerifyOrThrow"/> inspects the modern backend's. What
-    /// CAN be done is reproduce that formatter — <b>measured against the shipped 1.0.7 assembly</b>,
-    /// and pinned by <c>LaunchArgvGuardTests</c> so a package bump that changes it goes red — and
-    /// round-trip the result through the same real parser.
-    ///
-    /// <para>This matters because <c>aa1c8f1</c> fixed only the modern backend.
-    /// <c>WindowsArguments.Format</c> still wraps every argument in quotes and doubles inner quotes,
-    /// so on the inbox backend the CARD-0101 shape still shreds — and a trailing backslash still
-    /// escapes the closing quote. Those launches were silently broken before; now they refuse.
-    /// Refusing is the correct outcome: a delegate running on a truncated system prompt with no
-    /// <c>--session-id</c> is not a degraded session, it is an unreadable one that costs agent-hours
-    /// before anybody notices.</para>
-    /// </summary>
-    public static void VerifyInboxBackendOrThrow(string app, string[]? intendedArgs)
-    {
-        var intended = intendedArgs ?? [];
-        if (intended.Length == 0)
-            return;
-
-        VerifyOrThrow(app, intended, FormatPortaStyle(app, intended), "inbox conhost (Porta.Pty)");
-    }
-
-    /// <summary>
     /// Replica of <c>Porta.Pty.Windows.WindowsArguments.Format</c> plus Porta's app-quoting rule,
     /// as measured from Porta.Pty 1.0.7: wrap every argument in <c>"</c>, double every inner
-    /// <c>"</c>. Deliberately kept as the WRONG algorithm — it is a model of what the other backend
-    /// does, not a thing to fix. Fixing it means changing how Porta is called, not changing this.
+    /// <c>"</c>. Deliberately kept as the WRONG algorithm — it exists to DOCUMENT what the inbox
+    /// backend used to compose, and to keep <c>LaunchArgvGuardTests</c> honest that the workaround
+    /// in <see cref="PtyAgentRunner"/> (pre-escape + <c>VerbatimCommandLine</c>) is still working
+    /// around something real. Nothing in the launch path calls it any more.
     /// </summary>
     internal static string FormatPortaStyle(string app, string[] args)
     {

@@ -81,13 +81,32 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         var backend = PtyBackendPolicy.Resolve(backendOverride);
         Backend = backend;
 
-        // CARD-0101: both backends get a launch-time argv assertion, but they need different ones.
-        // ModernConPtyConnection.Spawn checks the literal string it is about to hand CreateProcessW;
-        // Porta formats its own command line internally, so the inbox arm is checked here against a
-        // measured replica of that formatter (which aa1c8f1 did NOT fix and which still shreds an
-        // embedded quote). Either way the throw lands before a process exists.
-        if (backend.Backend != PtyBackend.ModernConPty)
-            LaunchArgvGuard.VerifyInboxBackendOrThrow(app, commandLine);
+        // CARD-0101: aa1c8f1 corrected the escaping in ModernConPtyConnection only. Porta's own
+        // formatter (WindowsArguments.Format) is STILL the doubling rule that shredded production —
+        // measured against the shipped 1.0.7 assembly, and pinned by LaunchArgvGuardTests so a
+        // package bump cannot quietly change what is being worked around here. Rather than let the
+        // inbox backend keep composing a command line by that rule, escape the argument vector here
+        // with the corrected CRT rule and hand Porta a VERBATIM command line, which it space-joins
+        // without re-quoting. Porta's app resolution and app-quoting are untouched: the verbatim
+        // flag only selects which formatter it uses for the arguments.
+        //
+        // Why this was invisible until now: `Launch_args_reach_the_child_process` spawns fakeclaude,
+        // a .NET child, and .NET's own command-line parser accepts a doubled quote inside a quoted
+        // argument as one escaped quote. CommandLineToArgvW — which claude.exe, node and bun use —
+        // does not, and splits there instead. So the inbox backend has always been correct for .NET
+        // children and shredding for the child that actually matters, and the one test covering it
+        // could not see the difference.
+        if (backend.Backend != PtyBackend.ModernConPty && !options.VerbatimCommandLine)
+        {
+            var escaped = commandLine.Select(ModernConPtyConnection.EscapeArgument).ToArray();
+            LaunchArgvGuard.VerifyOrThrow(
+                app,
+                commandLine,
+                ModernConPtyConnection.BuildCommandLine(app, escaped, verbatim: true),
+                "inbox conhost (Porta.Pty)");
+            options.CommandLine = escaped;
+            options.VerbatimCommandLine = true;
+        }
 
         _conn = backend.Backend == PtyBackend.ModernConPty
             ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options)

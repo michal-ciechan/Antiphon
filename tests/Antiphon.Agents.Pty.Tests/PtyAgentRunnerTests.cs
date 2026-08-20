@@ -419,16 +419,10 @@ public partial class PtyAgentRunnerTests
                 "-NoProfile",
                 "-NoLogo",
                 "-Command",
-                // Single-quoted concatenation, not an interpolated "OUT:$line" (CARD-0101). The
-                // interpolated form put a literal " inside this argument, and on the inbox backend
-                // Porta's doubling rule shreds that: measured, this one argument became TWO argv
-                // entries and lost three characters. The test passed anyway only because
-                // `pwsh -Command` re-joins its trailing arguments with spaces and the mangled
-                // remains happened to still be valid PowerShell — which is precisely the kind of
-                // luck that let the production shred survive three days. What this test is about is
-                // concurrent SendLineAsync not corrupting child input; it should not also depend on
-                // an escaping bug in the backend it happens to run on.
-                "while (($line = [Console]::In.ReadLine()) -ne 'DONE') { Write-Output ('OUT:' + $line) }"
+                // Interpolated on purpose (CARD-0101): the literal " inside this argument is
+                // exactly what Porta's doubling rule shredded, so this is now a regression test for
+                // PtyAgentRunner pre-escaping and passing a verbatim command line instead.
+                "while (($line = [Console]::In.ReadLine()) -ne 'DONE') { Write-Output \"OUT:$line\" }"
             });
 
         var messages = Enumerable.Range(1, 10)

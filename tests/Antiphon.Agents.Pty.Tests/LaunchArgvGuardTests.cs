@@ -141,45 +141,57 @@ public class LaunchArgvGuardTests
     }
 
     /// <summary>
-    /// aa1c8f1 fixed the modern backend only. Porta still doubles inner quotes, so the CARD-0101
-    /// shape shreds there exactly as it did in production — this pins that the inbox path now
-    /// REFUSES rather than launching a delegate that cannot be read for its whole life.
+    /// aa1c8f1 fixed the modern backend only, and Porta's formatter still shreds the CARD-0101
+    /// shape. <see cref="PtyAgentRunner"/> therefore stopped letting Porta format at all: it
+    /// pre-escapes with the corrected rule and passes a verbatim command line. This pins that the
+    /// line it hands over round-trips, using the same composition the runner uses.
     /// </summary>
     [Test]
-    public void The_inbox_backend_still_shreds_the_card_0101_shape_and_now_refuses_it()
+    public void The_inbox_backends_pre_escaped_verbatim_line_round_trips()
     {
-        var ex = Should.Throw<PtyLaunchArgvException>(
-            () => LaunchArgvGuard.VerifyInboxBackendOrThrow(App, TheFailingLaunch));
+        foreach (var args in new[]
+                 {
+                     TheFailingLaunch,
+                     new[] { @"C:\Antiphon\worktrees\card-task-1768af90\", "--next" },
+                     new[] { "--echo-args", "--append-system-prompt", "a\nb with \"quotes\" and {braces}\nc" },
+                 })
+        {
+            var escaped = args.Select(ModernConPtyConnection.EscapeArgument).ToArray();
+            var verbatimLine = ModernConPtyConnection.BuildCommandLine(App, escaped, verbatim: true);
 
-        ex.Message.ShouldContain("inbox conhost (Porta.Pty)");
-        ex.Message.ShouldContain("would NOT reach the child");
+            Should.NotThrow(
+                () => LaunchArgvGuard.VerifyOrThrow(App, args, verbatimLine, "inbox conhost (Porta.Pty)"),
+                $"pre-escaped verbatim line must round-trip for [{string.Join(", ", args)}]");
+        }
     }
 
     /// <summary>
-    /// A trailing backslash escapes Porta's closing quote — the second shape the doubling rule gets
-    /// wrong, and one that any Windows path argument can hit. Also refused rather than shredded.
+    /// Why the shred survived: <c>CommandLineToArgvW</c> — the parser claude.exe, node and bun use —
+    /// splits on a doubled quote inside a quoted argument, but .NET's own parser treats it as one
+    /// escaped quote. The only test that covered arguments through the inbox backend spawns
+    /// fakeclaude, a .NET child, so it was blind to exactly the failure that cost three days. This
+    /// records the divergence: <b>Porta's format does NOT round-trip through the strict parser</b>,
+    /// which is the whole reason the launch path no longer uses it.
     /// </summary>
     [Test]
-    public void The_inbox_backend_refuses_a_trailing_backslash_argument()
+    public void Portas_format_does_not_round_trip_the_shape_that_shredded_production()
     {
-        string[] intended = [@"C:\Antiphon\worktrees\card-task-1768af90\", "--next"];
+        var portaLine = LaunchArgvGuard.FormatPortaStyle(App, TheFailingLaunch);
 
-        Should.Throw<PtyLaunchArgvException>(
-            () => LaunchArgvGuard.VerifyInboxBackendOrThrow(App, intended));
-    }
+        LaunchArgvGuard.ParseArgv(portaLine).Length.ShouldNotBe(
+            TheFailingLaunch.Length + 1,
+            "if this ever round-trips, the pre-escape workaround in PtyAgentRunner can be deleted");
 
-    /// <summary>
-    /// The overwhelming majority of launches carry nothing special and must be untouched by the
-    /// guard: it is a tripwire, not a new failure mode.
-    /// </summary>
-    [Test]
-    public void The_inbox_backend_passes_an_ordinary_launch()
-    {
-        Should.NotThrow(() => LaunchArgvGuard.VerifyInboxBackendOrThrow(
-            App, ["--model", "opus", "--session-id", "1a1b6b7b-0000-0000-0000-000000000000"]));
-
-        Should.NotThrow(() => LaunchArgvGuard.VerifyInboxBackendOrThrow(App, []));
-        Should.NotThrow(() => LaunchArgvGuard.VerifyInboxBackendOrThrow(App, null));
+        // And the exact live shape from Launch_args_reach_the_child_process, which passed for
+        // months on the inbox backend only because its child happened to be a .NET process.
+        var fakeClaudeArgs = new[]
+        {
+            "--echo-args",
+            "--append-system-prompt",
+            "line one of the preamble\nline two with \"quotes\" and {braces}\nline three — final.",
+        };
+        LaunchArgvGuard.ParseArgv(LaunchArgvGuard.FormatPortaStyle(App, fakeClaudeArgs))
+            .Length.ShouldBe(9, "measured: six fragments where one argument was intended");
     }
 
     [Test]
