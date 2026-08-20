@@ -144,7 +144,6 @@ public class AgentTaskAgentKindTests
     // ---- the allowlist -------------------------------------------------------------------------
 
     [Test]
-    [Arguments(AgentKind.Codex)]
     [Arguments(AgentKind.OpenCode)]
     [Arguments(AgentKind.Raw)]
     public async Task a_kind_outside_the_allowlist_is_refused_with_its_reason(AgentKind kind)
@@ -169,6 +168,9 @@ public class AgentTaskAgentKindTests
         message.ShouldContain(kind.ToString());
         message.ShouldContain("ClaudeCode");
         message.ShouldContain("Grok");
+        message.ShouldContain("Codex");
+        message.ShouldContain(
+            "CARD-0083", customMessage: "the refusal names the card that replaces this allowlist");
 
         await using var verify = CreateContext();
         (await verify.AgentTasks.CountAsync(t => t.Goal == goal))
@@ -176,11 +178,33 @@ public class AgentTaskAgentKindTests
     }
 
     [Test]
-    public async Task the_allowlist_is_exactly_ClaudeCode_and_Grok()
+    public async Task the_allowlist_is_exactly_ClaudeCode_Grok_and_Codex()
     {
         // Pinned as a list rather than inferred from the enum: a kind joins it because it has been
         // measured as a delegate, never because someone added an enum member.
-        AgentTaskService.DelegatableKinds.ShouldBe([AgentKind.ClaudeCode, AgentKind.Grok]);
+        AgentTaskService.DelegatableKinds.ShouldBe(
+            [AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex]);
+    }
+
+    [Test]
+    public void every_delegatable_kind_has_its_own_model_ladder()
+    {
+        // ModelLevelAliases.For's own doc comment makes this a CONTRACT, not a nicety: a kind on the
+        // allowlist with no arm there falls through to the Claude ladder, and every human- and
+        // interpreter-facing surface — task events, escalation text, the check digest, the completion
+        // note — then tells a Codex delegate it is running on fable. Asserted as "no two kinds share
+        // an alias", which is what a missing arm actually looks like, rather than by re-listing the
+        // ladders (that would pass just as happily against a copy of the bug).
+        foreach (var level in Enum.GetValues<AgentModelLevel>())
+        {
+            var aliases = AgentTaskService.DelegatableKinds
+                .Select(kind => ModelLevelAliases.For(kind, level))
+                .ToList();
+            aliases.Distinct(StringComparer.Ordinal).Count().ShouldBe(
+                aliases.Count,
+                customMessage: $"two delegatable kinds report the same model at {level}: "
+                    + string.Join(", ", aliases));
+        }
     }
 
     // ---- orchestrators stay on Claude -----------------------------------------------------------
@@ -206,6 +230,65 @@ public class AgentTaskAgentKindTests
         message.ShouldContain("orchestrator");
         message.ShouldContain(
             "WORKER", customMessage: "a refusal must say what Grok IS good for, not only what it isn't");
+    }
+
+    [Test]
+    public async Task an_orchestrator_cannot_be_asked_to_run_on_Codex()
+    {
+        // Same rule, same reason, and the reason is not "Grok specifically" — Codex cannot execute
+        // Claude's PreToolUse deny hook at all, and the check interpreter and delegate.ps1 usage
+        // patterns have only ever run on Claude. CARD-0099 widens the WORKER list, never this one.
+        await using var db = CreateContext();
+        using var workspace = new TempWorkspace();
+
+        var ex = await Should.ThrowAsync<ValidationException>(
+            () => CreateService(db).CreateAsync(
+                new CreateAgentTaskRequest(Goal: "own this chunk", Kind: AgentTaskKind.Orchestrator)
+                {
+                    AgentKind = AgentKind.Codex,
+                },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+
+        var message = string.Join(" ", ex.Errors.Values.SelectMany(v => v));
+        message.ShouldContain("orchestrator");
+        message.ShouldContain("Codex");
+        message.ShouldContain(
+            "WORKER", customMessage: "a refusal must say what Codex IS good for, not only what it isn't");
+    }
+
+    [Test]
+    public async Task a_Codex_worker_under_a_Codex_ban_on_orchestrators_is_still_allowed()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+
+        service.ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Code, AgentKind.Codex)
+            .ShouldBe(AgentKind.Codex);
+    }
+
+    [Test]
+    public async Task a_Codex_worker_is_created_and_stored_as_Codex()
+    {
+        // The half the allowlist alone does not prove: an explicit -Kind Codex survives creation on
+        // all three surfaces the caller and the board read it through.
+        await using var db = CreateContext();
+        using var workspace = new TempWorkspace();
+
+        var created = await CreateService(db).CreateAsync(
+            new CreateAgentTaskRequest(Goal: "run the suite", Role: AgentTaskRole.Test)
+            {
+                AgentKind = AgentKind.Codex,
+            },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.AgentKind.ShouldBe(AgentKind.Codex);
+
+        await using var verify = CreateContext();
+        var row = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
+        row.AgentKind.ShouldBe(AgentKind.Codex);
+        (await CreateService(verify).GetSummaryAsync(row, [row])).AgentKind.ShouldBe(AgentKind.Codex);
     }
 
     [Test]
@@ -269,16 +352,18 @@ public class AgentTaskAgentKindTests
     [Test]
     public async Task a_role_configured_to_an_undelegatable_kind_fails_loudly_and_names_the_role()
     {
-        // A typo in config must not run Claude while the operator believes it runs Codex.
+        // A typo in config must not run Claude while the operator believes it runs something else.
+        // OpenCode stands in for what Codex used to be here: CARD-0099 admitted Codex, so pinning
+        // this arm to it would have turned a refusal test into a test of nothing the day it landed.
         await using var db = CreateContext();
-        var service = CreateService(db, configure: s => s.RolePolicy["Docs"].Kind = AgentKind.Codex);
+        var service = CreateService(db, configure: s => s.RolePolicy["Docs"].Kind = AgentKind.OpenCode);
 
         var ex = Should.Throw<ValidationException>(
             () => service.ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Docs, null));
 
         var message = string.Join(" ", ex.Errors.Values.SelectMany(v => v));
         message.ShouldContain("Docs");
-        message.ShouldContain("Codex");
+        message.ShouldContain("OpenCode");
     }
 
     // ---- the wire shape the script depends on ------------------------------------------------------

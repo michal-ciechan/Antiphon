@@ -27,8 +27,11 @@ param(
     # Which agent program runs it. Omitted means ClaudeCode, exactly as before. Grok is opt-in and
     # WORKERS ONLY (CARD-0084): its delegate mileage is zero, and live-typed follow-up messages to
     # it arrive with their line breaks joined - briefs and refinements travel by file and are safe.
+    # Codex is opt-in and WORKERS ONLY too (CARD-0099): same zero mileage, and while its composer
+    # keeps typed line breaks intact, a body over ~one write costs an extra Enter - so its briefs and
+    # refinements also travel by file. An orchestrator stays ClaudeCode for both.
     [Parameter(ParameterSetName = 'Create')]
-    [ValidateSet('ClaudeCode', 'Grok')]
+    [ValidateSet('ClaudeCode', 'Grok', 'Codex')]
     [string]$Kind,
 
     # Run somewhere else - another repo, another checkout. Defaults to the caller's directory.

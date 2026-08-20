@@ -1419,20 +1419,36 @@ public sealed class AgentTaskDispatcher
         // answer to "what is on the other end of this pty" rather than four (CARD-0084 S3).
         var kind = session.AgentKind;
         var isGrok = kind == AgentKind.Grok;
+        var isCodex = kind == AgentKind.Codex;
 
         var extraArgs = new List<string>();
-        // --name is a Claude-only flag; grok.exe rejects it, so a Grok delegate is nameless on its
-        // command line and identified the way everything else already identifies it — the task
-        // marker in its brief and ANTIPHON_TASK_ID in its environment.
-        if (!isGrok)
+        // --name is a Claude-only flag; grok.exe rejects it and Codex has no equivalent at all
+        // (`codex --help`, cli 0.147.0), so those delegates are nameless on their command line and
+        // identified the way everything else already identifies them — the task marker in the brief
+        // and ANTIPHON_TASK_ID in the environment.
+        if (!isGrok && !isCodex)
             extraArgs.AddRange(["--name", agent.Name]);
-        // Family alias, never a pinned version — every launch picks up the family's current model.
+        // Family alias where the provider offers one — Codex does not, so its rung is a pinned
+        // gpt-5.6-* slug (see ModelLevelAliases.ForCodex; a bare `-m luna` is a 400). Branched
+        // EXPLICITLY rather than through ModelLevelAliases.For: a wrong alias here is a wrong
+        // process, not a wrong word, so a new kind must be added deliberately at this site.
         extraArgs.AddRange([
             "--model",
-            isGrok
-                ? ModelLevelAliases.ForGrok(task.ModelLevel)
-                : ModelLevelAliases.ForClaude(task.ModelLevel),
+            isCodex
+                ? ModelLevelAliases.ForCodex(task.ModelLevel)
+                : isGrok
+                    ? ModelLevelAliases.ForGrok(task.ModelLevel)
+                    : ModelLevelAliases.ForClaude(task.ModelLevel),
         ]);
+        if (isCodex)
+        {
+            // Explicit, because Codex's own default for the FRONTIER slug is `low` and the operator's
+            // config.toml would otherwise decide the tier's depth (CARD-0099 S3).
+            extraArgs.AddRange([
+                CodexLaunchArgs.ConfigFlag,
+                CodexLaunchArgs.ReasoningEffortOverride(task.ModelLevel),
+            ]);
+        }
 
         // The role's standing instructions, composed from the repo's bundle files at LAUNCH
         // (CARD-0058). Two properties make this the right channel and neither is about size: the
@@ -1456,10 +1472,13 @@ public sealed class AgentTaskDispatcher
             composed, extraArgs, _settings.CommandLineBudgetChars, subject);
         if (!composed.IsEmpty)
         {
-            // Grok's system-prompt channel is --rules; the flag differs but the contract does not —
-            // it is an ARGUMENT either way, so it survives compaction and no pty ceiling applies.
-            // Same branch AgentControlService already makes for a named Grok agent.
-            extraArgs.AddRange([isGrok ? "--rules" : "--append-system-prompt", composed.Text]);
+            // Grok's system-prompt channel is --rules and Codex's is a `-c developer_instructions=`
+            // config override; the flag differs but the contract does not — it is an ARGUMENT in all
+            // three cases, so it survives compaction and no pty ceiling applies. Same branch
+            // AgentControlService makes for a named Grok or Codex agent.
+            extraArgs.AddRange(isCodex
+                ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(composed.Text)]
+                : new[] { isGrok ? "--rules" : "--append-system-prompt", composed.Text });
             // Logged because a composition is otherwise invisible from everywhere else: the args are
             // not stored, and the agent row of a pool delegate is deleted when its task settles.
             _logger.LogInformation(

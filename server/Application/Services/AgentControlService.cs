@@ -156,12 +156,19 @@ public sealed class AgentControlService
         var profileKind = await PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
         var isGrok = profileKind == AgentKind.Grok;
+        // CARD-0099 S3. Before this, a named Codex agent fell outside the whole block below: it was
+        // launched with no --model at all, so its ModelLevel was silently inert and it ran on
+        // whatever ~/.codex/config.toml happened to say, and its bundles and SystemPromptAppend were
+        // dropped without a word. The delegate path (AgentTaskDispatcher.BuildLaunchSpec) makes the
+        // same three decisions; both had to learn Codex at once or a Codex agent would launch one way
+        // as an agent and another way as a delegate.
+        var isCodex = profileKind == AgentKind.Codex;
         var extraArgs = new List<string>();
         // Null until a composition actually happens, and the difference is load-bearing: it is what
         // the session row stores, and a null there means "no evidence" and can never raise a drift
-        // badge. A non-Claude/Grok launch composes nothing and must not claim it composed nothing.
+        // badge. A launch that composes nothing must not claim it composed nothing.
         string? composedStamp = null;
-        if (isClaudeCode || isGrok)
+        if (isClaudeCode || isGrok || isCodex)
         {
             var sessionName = agent.Name.Trim();
             if (isClaudeCode && sessionName.Length > 0)
@@ -173,9 +180,22 @@ public sealed class AgentControlService
             {
                 extraArgs.AddRange([
                     "--model",
-                    isGrok
-                        ? ModelLevelAliases.ForGrok(agent.ModelLevel)
-                        : ModelLevelAliases.ForClaude(agent.ModelLevel)
+                    isCodex
+                        ? ModelLevelAliases.ForCodex(agent.ModelLevel)
+                        : isGrok
+                            ? ModelLevelAliases.ForGrok(agent.ModelLevel)
+                            : ModelLevelAliases.ForClaude(agent.ModelLevel)
+                ]);
+            }
+
+            // Codex's per-model default reasoning effort is `low` on the frontier slug and the
+            // operator's own config.toml overrides it globally, so the tier says it explicitly —
+            // exactly as the delegate path does.
+            if (isCodex)
+            {
+                extraArgs.AddRange([
+                    CodexLaunchArgs.ConfigFlag,
+                    CodexLaunchArgs.ReasoningEffortOverride(agent.ModelLevel),
                 ]);
             }
 
@@ -223,10 +243,9 @@ public sealed class AgentControlService
                     extraArgs,
                     _delegationSettings.CommandLineBudgetChars,
                     $"Agent '{agent.Name}'");
-                extraArgs.AddRange([
-                    isGrok ? "--rules" : "--append-system-prompt",
-                    rendered
-                ]);
+                extraArgs.AddRange(isCodex
+                    ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(rendered)]
+                    : new[] { isGrok ? "--rules" : "--append-system-prompt", rendered });
             }
         }
 

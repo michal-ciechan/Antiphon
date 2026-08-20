@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
@@ -26,9 +27,9 @@ public class AgentRegistrySettingsTests
             ["Agents:Definitions:raw:Kind"] = "Raw",
             ["Agents:Definitions:raw:Exe"] = "pwsh.exe",
             ["Agents:Definitions:codex:Kind"] = "Codex",
-            ["Agents:Definitions:codex:Exe"] = "pwsh.exe",
-            ["Agents:Definitions:codex:ArgsTemplate:0"] = "-File",
-            ["Agents:Definitions:codex:ArgsTemplate:1"] = "cx.ps1",
+            ["Agents:Definitions:codex:Exe"] = "codex.cmd",
+            ["Agents:Definitions:codex:ArgsTemplate:0"] = "--no-alt-screen",
+            ["Agents:Definitions:codex:ArgsTemplate:1"] = "--dangerously-bypass-approvals-and-sandbox",
             ["Agents:ClaudeReadyQuietPeriodMs"] = "1234",
             ["Agents:CodexReadyQuietPeriodMs"] = "4321",
             ["Agents:CodexDoneQuietPeriodMs"] = "3456",
@@ -47,11 +48,81 @@ public class AgentRegistrySettingsTests
         settings.Definitions["claude"].SecretEnvironmentNames.ShouldBe(["SERVICE_TOKEN"]);
         settings.Definitions["raw"].Kind.ShouldBe("Raw");
         settings.Definitions["codex"].Kind.ShouldBe("Codex");
-        settings.Definitions["codex"].Exe.ShouldBe("pwsh.exe");
-        settings.Definitions["codex"].ArgsTemplate.ShouldBe(new[] { "-File", "cx.ps1" });
+        settings.Definitions["codex"].Exe.ShouldBe("codex.cmd");
+        settings.Definitions["codex"].ArgsTemplate.ShouldBe(
+            new[] { "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox" });
         settings.ClaudeReadyQuietPeriodMs.ShouldBe(1234);
         settings.CodexReadyQuietPeriodMs.ShouldBe(4321);
         settings.CodexDoneQuietPeriodMs.ShouldBe(3456);
+    }
+
+    /// <summary>
+    /// CARD-0099 S3 — the SHIPPED definition, read off the real appsettings.json rather than an
+    /// in-memory sample. It named a <c>cx.ps1</c> wrapper that has never existed on this machine, so
+    /// an interactive Codex launch died on CommandNotFound and every headed-Codex test skipped in
+    /// silence for months (found by the CARD-0099 plan, confirmed by S2). The in-memory binding tests
+    /// above cannot catch that: they assert the binder, not the file.
+    /// </summary>
+    [Test]
+    public void The_shipped_codex_definition_no_longer_names_the_phantom_wrapper()
+    {
+        var codex = ShippedCodexDefinition(Path.Combine(ShippedSettingsRoot(), "server", "appsettings.json"));
+
+        codex.Kind.ShouldBe("Codex");
+        codex.Exe.ShouldBe("codex.cmd", "the npm shim, resolved off PATH by AgentExecutableResolver");
+        codex.ArgsTemplate.ShouldContain("--no-alt-screen");
+        codex.ArgsTemplate.ShouldContain("--dangerously-bypass-approvals-and-sandbox");
+        // The whole point of the slice: nothing anywhere in the definition still reaches for the
+        // wrapper, including through a pwsh -Command trampoline.
+        codex.Exe.ShouldNotContain("cx.ps1");
+        foreach (var arg in codex.ArgsTemplate)
+            arg.ShouldNotContain("cx.ps1");
+    }
+
+    [Test]
+    public void The_shipped_codex_definition_resolves_to_a_real_executable_on_this_machine()
+    {
+        // The assertion the binding tests structurally cannot make, and the one that was false for
+        // months. Skipped rather than failed where Codex simply is not installed — the definition is
+        // still correct there; it is "names something nobody has" that this is guarding against.
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("The npm shim layout is Windows-specific");
+
+        var codex = ShippedCodexDefinition(Path.Combine(ShippedSettingsRoot(), "server", "appsettings.json"));
+        var resolved = AgentExecutableResolver.Default.TryResolve(codex.Exe);
+        if (resolved is null)
+            throw new TUnit.Core.Exceptions.SkipTestException(
+                $"'{codex.Exe}' is not on PATH; install codex-cli (npm i -g @openai/codex) to exercise this");
+
+        File.Exists(resolved).ShouldBeTrue();
+    }
+
+    [Test]
+    public void The_shipped_example_settings_agree_with_the_shipped_server_settings()
+    {
+        // appsettings.json.example is what a new checkout copies; the two drifting is how a machine
+        // gets configured with the definition that was just proven broken.
+        var root = ShippedSettingsRoot();
+        var server = ShippedCodexDefinition(Path.Combine(root, "server", "appsettings.json"));
+        var example = ShippedCodexDefinition(Path.Combine(root, "appsettings.json.example"));
+
+        example.Kind.ShouldBe(server.Kind);
+        example.Exe.ShouldBe(server.Exe);
+        example.ArgsTemplate.ShouldBe(server.ArgsTemplate);
+    }
+
+    private static AgentDefinition ShippedCodexDefinition(string settingsPath) =>
+        new ConfigurationBuilder().AddJsonFile(settingsPath).Build()
+            .GetSection("Agents").Get<AgentRegistrySettings>()!.Definitions["codex"];
+
+    private static string ShippedSettingsRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+
+        return directory?.FullName
+            ?? throw new DirectoryNotFoundException("Could not locate the Antiphon repository root.");
     }
 
     [Test]
@@ -63,7 +134,7 @@ public class AgentRegistrySettingsTests
             Definitions =
             {
                 ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "cl.bat" },
-                ["codex"] = new AgentDefinition { Kind = "Codex", Exe = "pwsh.exe" },
+                ["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex.cmd" },
             }
         };
 

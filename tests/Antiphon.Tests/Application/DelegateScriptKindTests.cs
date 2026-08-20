@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 
@@ -46,16 +48,53 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Kind_Codex_is_posted_as_agentKind()
+    {
+        // CARD-0099 S3. Until this slice, Codex was the value this file used as its EXAMPLE of a
+        // refused kind — the ValidateSet is the caller-facing half of the allowlist, so widening one
+        // without the other leaves the flag rejected at the prompt no matter what the server admits.
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("agentKind").GetString().ShouldBe("Codex");
+        body.RootElement.GetProperty("kind").GetString().ShouldBe("Worker", "-Kind is a different axis from worker/orchestrator");
+    }
+
+    [Test]
     public async Task an_undelegatable_Kind_is_refused_by_the_script_before_any_request()
     {
         // ValidateSet is the cheap half of the allowlist: a typo costs nothing, and the caller
         // finds out at the prompt rather than through a 422 the server had to compose.
         using var server = new StubApi();
-        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex");
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite", "-Kind", "OpenCode");
 
         run.ExitCode.ShouldNotBe(0);
-        run.Output.ShouldContain("Codex");
+        run.Output.ShouldContain("OpenCode");
         server.RequestCount.ShouldBe(0, "a rejected flag must not reach the server");
+    }
+
+    [Test]
+    public async Task the_scripts_ValidateSet_is_exactly_the_servers_allowlist()
+    {
+        // The two halves are separate files in separate languages, and CARD-0099 is the second time
+        // they had to move together. A ValidateSet narrower than the server silently makes a kind
+        // undispatchable; a ValidateSet wider than it turns a clean refusal into a 422 round trip.
+        var lines = await File.ReadAllLinesAsync(
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1"));
+        var line = lines
+            .Select(l => l.Trim())
+            .First(l => l.StartsWith("[ValidateSet('ClaudeCode'", StringComparison.Ordinal));
+
+        foreach (var kind in AgentTaskService.DelegatableKinds)
+            line.ShouldContain($"'{kind}'");
+        foreach (var kind in Enum.GetValues<AgentKind>())
+        {
+            if (AgentTaskService.DelegatableKinds.Contains(kind))
+                continue;
+            line.ShouldNotContain($"'{kind}'");
+        }
     }
 
     [Test]

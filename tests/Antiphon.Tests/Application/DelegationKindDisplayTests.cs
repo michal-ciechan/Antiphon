@@ -55,15 +55,78 @@ public class ModelLevelAliasDisplayTests
     }
 
     [Test]
+    [Arguments(AgentModelLevel.Frontier, "gpt-5.6-sol")]
+    [Arguments(AgentModelLevel.High, "gpt-5.6-terra")]
+    [Arguments(AgentModelLevel.Medium, "gpt-5.6-luna")]
+    [Arguments(AgentModelLevel.Low, "gpt-5.6-luna")]
+    public void the_codex_ladder_answers_for_the_codex_kind(AgentModelLevel level, string expected)
+    {
+        // CARD-0099 S3. Sol > Terra > Luna is the CAPABILITY order (catalog priority 1/2/3), not the
+        // Sol/Luna/Terra order the card names them in — getting that backwards would put the
+        // frontier tier on the cheap model with nothing to show for it.
+        ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(expected);
+        ModelLevelAliases.For(AgentKind.Codex, level).ShouldBe(ModelLevelAliases.ForCodex(level));
+    }
+
+    [Test]
+    public void the_codex_ladder_pins_full_versioned_slugs_and_never_a_bare_tier_name()
+    {
+        // Measured 2026-08-20 against codex-cli 0.147.0: `-m luna` fails twice over, once locally
+        // ("Model metadata for `luna` not found") and once as an HTTP 400. Codex has no unversioned
+        // aliases, so a "family alias" of the kind Claude and Grok use would never start a session.
+        foreach (var level in Enum.GetValues<AgentModelLevel>())
+        {
+            var slug = ModelLevelAliases.For(AgentKind.Codex, level);
+            slug.ShouldStartWith("gpt-5.6-");
+            slug.ShouldNotBe("sol");
+            slug.ShouldNotBe("terra");
+            slug.ShouldNotBe("luna");
+        }
+    }
+
+    [Test]
     public void no_kind_ever_displays_the_other_provider_s_family()
     {
         // The whole failure mode in one assertion, across the full ladder: whatever a Grok task
-        // reads, it is never a Claude family name, and vice versa.
+        // reads, it is never a Claude family name, and vice versa — and now the same for Codex,
+        // which is the kind that proves ModelLevelAliases.For's doc-comment contract is real.
         foreach (var level in Enum.GetValues<AgentModelLevel>())
         {
             ModelLevelAliases.For(AgentKind.Grok, level).ShouldStartWith("grok-");
-            ModelLevelAliases.For(AgentKind.ClaudeCode, level).ShouldNotContain("grok");
+            ModelLevelAliases.For(AgentKind.Codex, level).ShouldStartWith("gpt-");
+            var claude = ModelLevelAliases.For(AgentKind.ClaudeCode, level);
+            claude.ShouldNotContain("grok");
+            claude.ShouldNotContain("gpt-");
         }
+    }
+
+    [Test]
+    public void a_codex_task_s_completion_note_names_a_codex_model()
+    {
+        // The header is what the caller sees about who did the work. Naming fable here would
+        // misattribute the run to Claude on the one surface the caller actually reads.
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(AgentKind.Codex, AgentModelLevel.Frontier), Settings, "Landed the change.");
+
+        note.Body.ShouldContain("gpt-5.6-sol");
+        note.Body.ShouldNotContain("fable");
+    }
+
+    [Test]
+    public void a_codex_handoff_names_the_ladder_codex_actually_climbed()
+    {
+        // Typed into the next attempt's own composer, so a wrong alias here is a lie told to the
+        // delegate about itself — the one reader with no way to check.
+        var task = NewTask(AgentKind.Codex, AgentModelLevel.High);
+        task.Attempt = 2;
+        task.EscalatedFrom = AgentModelLevel.Medium;
+        task.Result = "Got as far as the repro.";
+
+        var handoff = DelegationReportFormatter.BuildHandoff(task).ShouldNotBeNull();
+
+        handoff.ShouldContain("at gpt-5.6-luna, escalated to gpt-5.6-terra");
+        handoff.ShouldNotContain("sonnet");
+        handoff.ShouldNotContain("opus");
     }
 
     // ---- the completion note the CALLER reads ---------------------------------------------------

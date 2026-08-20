@@ -747,7 +747,8 @@ public sealed class AgentTaskService
     /// is exactly the contract CARD-0083 is designing. This one method is what CARD-0083 replaces;
     /// until then a kind is on the list because it has been measured, not because it exists.
     /// </summary>
-    public static readonly IReadOnlyList<AgentKind> DelegatableKinds = [AgentKind.ClaudeCode, AgentKind.Grok];
+    public static readonly IReadOnlyList<AgentKind> DelegatableKinds =
+        [AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex];
 
     /// <summary>
     /// Resolve WHICH AGENT PROGRAM runs the task: an explicit request wins, else the role policy's
@@ -755,10 +756,10 @@ public sealed class AgentTaskService
     /// <see cref="ResolveLevel"/>, and the same shape of decision.
     ///
     /// <para>Two refusals, both loud. A kind outside <see cref="DelegatableKinds"/> is rejected with
-    /// its reason — nothing has been exercised on Codex/OpenCode/Raw as a DELEGATE, and quietly
+    /// its reason — nothing has been exercised on OpenCode/Raw as a DELEGATE, and quietly
     /// substituting Claude for what the caller asked for is worse than failing. And an orchestrator
     /// is ClaudeCode only: its contract (the PreToolUse deny hook, delegate.ps1 usage, the check
-    /// interpreter) has only ever run on Claude, so Grok starts as a worker kind. Unlike the tier
+    /// interpreter) has only ever run on Claude, so Grok and Codex are WORKER kinds. Unlike the tier
     /// floor, which silently clamps, an EXPLICIT orchestrator kind is rejected rather than
     /// reinterpreted — a caller who typed it deserves to know it did not happen.</para>
     /// </summary>
@@ -776,7 +777,7 @@ public sealed class AgentTaskService
             throw new ValidationException(
                 nameof(CreateAgentTaskRequest.AgentKind),
                 $"{resolved} {source}. Delegated work runs on "
-                + $"{string.Join(" or ", DelegatableKinds)} (CARD-0084); the others have never been "
+                + $"{string.Join(" or ", DelegatableKinds)} (CARD-0084, CARD-0099); the others have never been "
                 + "exercised as delegates and CARD-0083 replaces this allowlist with a capability "
                 + "contract that can answer for them.");
         }

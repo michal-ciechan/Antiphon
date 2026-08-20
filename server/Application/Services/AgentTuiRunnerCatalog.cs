@@ -62,13 +62,10 @@ public sealed class AgentTuiRunnerCatalog
     {
         AgentKind.ClaudeCode => ModelLevelAliases.ForClaude(level),
         AgentKind.Grok => ModelLevelAliases.ForGrok(level),
-        AgentKind.Codex => level switch
-        {
-            AgentModelLevel.Frontier => "gpt-5.6-sol",
-            AgentModelLevel.High => "gpt-5.6-terra",
-            AgentModelLevel.Medium or AgentModelLevel.Low => "gpt-5.6-luna",
-            _ => "gpt-5.6-terra"
-        },
+        // Delegated, not duplicated (CARD-0099 S3): this table predated ModelLevelAliases.ForCodex
+        // and said the same three slugs. Two copies of a ladder is how the profile picker and the
+        // launch path come to disagree about which model a tier means.
+        AgentKind.Codex => ModelLevelAliases.ForCodex(level),
         _ => null
     };
 
