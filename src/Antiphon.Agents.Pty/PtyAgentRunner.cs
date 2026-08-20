@@ -80,6 +80,15 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // before CARD-0037, ceilings and all.
         var backend = PtyBackendPolicy.Resolve(backendOverride);
         Backend = backend;
+
+        // CARD-0101: both backends get a launch-time argv assertion, but they need different ones.
+        // ModernConPtyConnection.Spawn checks the literal string it is about to hand CreateProcessW;
+        // Porta formats its own command line internally, so the inbox arm is checked here against a
+        // measured replica of that formatter (which aa1c8f1 did NOT fix and which still shreds an
+        // embedded quote). Either way the throw lands before a process exists.
+        if (backend.Backend != PtyBackend.ModernConPty)
+            LaunchArgvGuard.VerifyInboxBackendOrThrow(app, commandLine);
+
         _conn = backend.Backend == PtyBackend.ModernConPty
             ? ModernConPtyConnection.Spawn(backend.ConPtyDllPath!, options)
             : new PortaPtySession(await PtyProvider.SpawnAsync(options, ct));

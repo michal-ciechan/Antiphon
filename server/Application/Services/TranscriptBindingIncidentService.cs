@@ -1,9 +1,12 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -23,13 +26,16 @@ public sealed class TranscriptBindingIncidentService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscriptBindingIncidentService> _logger;
+    private readonly TranscriptBindingSettings _settings;
 
     public TranscriptBindingIncidentService(
         IServiceScopeFactory scopeFactory,
-        ILogger<TranscriptBindingIncidentService> logger)
+        ILogger<TranscriptBindingIncidentService> logger,
+        IOptions<TranscriptBindingSettings>? settings = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _settings = settings?.Value ?? new TranscriptBindingSettings();
     }
 
     /// <summary>
@@ -47,12 +53,33 @@ public sealed class TranscriptBindingIncidentService
             var agentId = await ResolveOwningAgentIdAsync(db, fault.SessionId, ct);
             if (agentId is not Guid owner)
             {
-                // Same swallow-and-Error shape as ChannelReplyDispatcher.ReportLostAsync: nothing
-                // to hang an incident on, but an unbound session nobody claims is itself worth seeing.
+                // CARD-0101: this used to be a bare log-and-return, and it is the one path by which
+                // the incident stream can go quiet while the runner log keeps reporting the fault —
+                // exactly the "zero new incidents therefore solved" misreading the investigation
+                // made. An AgentIncident row needs an AgentId, so there is still no incident to
+                // write; a standalone alert carrying the session id is (same shape as an unclaimed
+                // AutoCompactFailed / ChannelReplyLost: notify nobody in particular, but never swallow).
                 _logger.LogError(
-                    "Session {SessionId} has no transcript ({Kind}: {Detail}). No agent owns the session, "
-                    + "so the fault was not recorded as an incident.",
-                    fault.SessionId, fault.Kind, fault.Detail);
+                    "Session {SessionId} has no transcript ({Kind}: {Detail}, unbound {Unbound:F0}s, "
+                    + "report #{Repeat}). No agent owns the session, so the fault was raised as a "
+                    + "standalone alert rather than an incident.",
+                    fault.SessionId, fault.Kind, fault.Detail, fault.UnboundSeconds, fault.Repeat);
+
+                var unownedAlerts = scope.ServiceProvider.GetService<IAlertService>();
+                if (unownedAlerts is not null)
+                {
+                    await unownedAlerts.RaiseAsync(
+                        new AlertRaise(
+                            IsStuck(fault) ? AlertSeverity.Critical : AlertSeverity.Warning,
+                            Source: "supervisor",
+                            Title: $"{AgentIncidentKind.TranscriptBindFailed}: unclaimed session",
+                            Detail: $"Session {fault.SessionId:D} is running with no transcript and no "
+                                + $"owning agent. {fault.Kind}: {fault.Detail}",
+                            DedupKey: UnownedFaultDedupKey(fault.SessionId),
+                            AgentId: null,
+                            SessionId: fault.SessionId),
+                        ct);
+                }
                 return;
             }
 
@@ -73,6 +100,8 @@ public sealed class TranscriptBindingIncidentService
                     : $"No transcript is bound to this session. {detail}",
                 failureReason: fault.Kind,
                 ct: ct);
+
+            await MaybeEscalateStuckAsync(db, supervisor, fault, owner, channelBound, detail, ct);
             await db.SaveChangesAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -80,6 +109,77 @@ public sealed class TranscriptBindingIncidentService
             _logger.LogWarning(ex, "Recording a transcript fault for session {SessionId} failed", fault.SessionId);
         }
     }
+
+    /// <summary>
+    /// CARD-0101's escalation, layered ON TOP of the existing five-minute repeat rather than
+    /// replacing it — the repeats are the proof the fault is still live and removing them would
+    /// trade one blind spot for another. What is added is a distinct, Critical
+    /// <see cref="AgentIncidentKind.TranscriptBindStuck"/> once the refusal has been CONTINUOUS for
+    /// <c>StuckAfterMinutes</c>, independent of channel binding.
+    ///
+    /// <para>Independent of channel binding is the whole point: <see cref="OnTranscriptFaultAsync"/>
+    /// reserves Critical for channel-bound agents, and a delegate task agent is never channel-bound,
+    /// so every one of the 2026-08-20 cascade's ~250 incidents was Warning. Eleven agent-hours ran
+    /// unreadable and the only thing that would have surfaced it was somebody querying the database.</para>
+    ///
+    /// <para>Re-fire is gated on the DB, not on in-memory state, so it survives a server restart and
+    /// cannot be reset by the reconnect that re-subscribes to the runner's event stream. Same shape
+    /// as <c>ContextCompactionService.HasAutoCompactFailedSinceAsync</c>.</para>
+    /// </summary>
+    private async Task MaybeEscalateStuckAsync(
+        AppDbContext db,
+        AgentSupervisorService supervisor,
+        SessionRunnerTranscriptFaultEvent fault,
+        Guid owner,
+        bool channelBound,
+        string detail,
+        CancellationToken ct)
+    {
+        if (!_settings.EscalationEnabled || !IsStuck(fault))
+            return;
+
+        var since = DateTime.UtcNow - TimeSpan.FromMinutes(Math.Max(1, _settings.StuckRepeatMinutes));
+        var alreadyEscalated = await db.AgentIncidents.AsNoTracking()
+            .AnyAsync(i => i.SessionId == fault.SessionId
+                && i.Kind == AgentIncidentKind.TranscriptBindStuck
+                && i.CreatedAt >= since, ct);
+        if (alreadyEscalated)
+            return;
+
+        var hours = TimeSpan.FromSeconds(fault.UnboundSeconds);
+        var message =
+            $"STILL unbound after {Describe(hours)} of continuous refusal ({fault.Repeat} report(s)). "
+            + $"Nothing has been ingested for this session for that entire period: working/idle reads "
+            + $"permanently idle, channel replies cannot dispatch, and any delegated task on it will "
+            + $"settle on a watchdog timeout rather than its own report. {detail}"
+            + (channelBound ? " This agent is channel-bound — a human may be waiting on a dead line." : "");
+
+        await supervisor.RecordIncidentAsync(
+            owner,
+            fault.SessionId,
+            AgentIncidentKind.TranscriptBindStuck,
+            AlertSeverity.Critical,
+            message,
+            failureReason: fault.Kind,
+            ct: ct);
+
+        _logger.LogError(
+            "Session {SessionId} has been unbound for {Seconds:F0}s ({Repeat} reports) — escalated to "
+            + "{Kind}/Critical. {Detail}",
+            fault.SessionId, fault.UnboundSeconds, fault.Repeat,
+            AgentIncidentKind.TranscriptBindStuck, detail);
+    }
+
+    private bool IsStuck(SessionRunnerTranscriptFaultEvent fault) =>
+        fault.UnboundSeconds >= TimeSpan.FromMinutes(Math.Max(1, _settings.StuckAfterMinutes)).TotalSeconds;
+
+    internal static string UnownedFaultDedupKey(Guid sessionId) =>
+        $"supervisor:{AgentIncidentKind.TranscriptBindFailed}:unclaimed:{sessionId:D}";
+
+    private static string Describe(TimeSpan span) =>
+        span.TotalHours >= 1 ? $"{span.TotalHours:0.#}h"
+        : span.TotalMinutes >= 1 ? $"{span.TotalMinutes:0}m"
+        : $"{span.TotalSeconds:0}s";
 
     /// <summary>
     /// A transcript was bound by heuristic (cwd discovery, a mid-session fork, or the restart

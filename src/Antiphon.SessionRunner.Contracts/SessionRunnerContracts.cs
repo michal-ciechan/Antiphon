@@ -398,11 +398,25 @@ public static class RunnerExitReasons
 /// an agent to the human operator's own Claude conversation on nothing more than "same cwd, written
 /// recently", and the only warning was one WRN line nobody watches.
 /// </summary>
+/// <param name="UnboundSeconds">
+/// How long this session has been CONTINUOUSLY in this fault, in seconds — reset to zero the moment
+/// the condition clears. CARD-0101: without it every repeat of an ongoing fault looks identical on
+/// the wire, so a session unbound for three hours and one unbound for one minute produce the same
+/// Warning row and nothing ever escalates (measured: 37 identical incidents over 180 minutes for
+/// session 5409c537, all Warning, none reaching a human). The runner reports the elapsed FACT; the
+/// server owns the threshold policy, so an older runner that sends 0 simply never escalates.
+/// </param>
+/// <param name="Repeat">
+/// 1 for the first report of this continuous fault, incrementing on each rate-limited repeat.
+/// Carried so the escalated incident can say how long it has been shouting.
+/// </param>
 public sealed record RunnerTranscriptFaultEvent(
     Guid SessionId,
     string Kind,
     string Detail,
-    string? CandidatePath);
+    string? CandidatePath,
+    double UnboundSeconds = 0,
+    int Repeat = 1);
 
 /// <summary>
 /// A transcript was bound by HEURISTIC (cwd discovery / fork follow / migration shim) rather than

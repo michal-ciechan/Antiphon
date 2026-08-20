@@ -42,7 +42,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private const int LocateFaultRepeatPolls = 480;
     private static readonly TimeSpan DefaultForkScanInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan DefaultRefusalFaultDelay = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan RefusalFaultRepeat = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultRefusalFaultRepeat = TimeSpan.FromMinutes(5);
     // A dead child writes no more transcript; give the last flush a moment, then stop looking.
     private static readonly TimeSpan ChildExitSettle = TimeSpan.FromSeconds(3);
     private const int MaxReadChunkBytes = 1 << 20; // 1 MiB per poll
@@ -59,6 +59,10 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     // left to the migration shim below.
     private readonly TimeSpan _activeWriteWindow;
     private readonly TimeSpan _refusalFaultDelay;
+    // CARD-0101: injectable purely so a test can observe the SECOND and THIRD report of one
+    // continuous fault (the repeat counter and the growing unbound clock are what the server
+    // escalates on). Production stays on the measured 5-minute cadence.
+    private readonly TimeSpan _refusalFaultRepeat;
     private readonly TranscriptClaimRegistry? _claims;
     private readonly SessionInputLog? _inputLog;
     private readonly DateTime? _childStartUtc;
@@ -101,7 +105,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         string? knownTranscriptPath = null,
         bool restartAdopt = false,
         Action<string, string>? onBound = null,
-        TimeSpan? refusalFaultDelay = null)
+        TimeSpan? refusalFaultDelay = null,
+        TimeSpan? refusalFaultRepeat = null)
     {
         _sessionId = sessionId;
         _cwd = cwd;
@@ -110,6 +115,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _exactIdGrace = exactIdGrace ?? TimeSpan.FromSeconds(10);
         _activeWriteWindow = activeWriteWindow ?? TimeSpan.FromSeconds(20);
         _refusalFaultDelay = refusalFaultDelay ?? DefaultRefusalFaultDelay;
+        _refusalFaultRepeat = refusalFaultRepeat ?? DefaultRefusalFaultRepeat;
         _claims = claims;
         _inputLog = inputLog;
         _childStartUtc = childStartUtc;
@@ -288,6 +294,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         DateTime? refusingSince = null;
         DateTime? emptySince = null;
         DateTime? lastRefusalFault = null;
+        // CARD-0101: how many times this CONTINUOUS fault has been reported. Reset with the fault
+        // itself (below), so it is a measure of this episode and never of the session's lifetime.
+        var refusalRepeat = 0;
 
         while (!ct.IsCancellationRequested)
         {
@@ -334,14 +343,23 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                         }
 
                         refusingSince = verdict.Refusals.Count > 0 ? refusingSince ?? DateTime.UtcNow : null;
-                        MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault);
+                        MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault, ref refusalRepeat);
 
                         // CARD-0073 S1: C2 itself found nothing, so Refusals is empty and the
                         // refusal path stays silent. A live child that has already been typed at
                         // and still has zero cwd-matching candidates is the 10e30ff7 shape — it
                         // must not run unbound forever with nothing on the wire.
                         emptySince = IsEmptyCensus(verdict) ? emptySince ?? DateTime.UtcNow : null;
-                        MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault);
+                        MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault, ref refusalRepeat);
+
+                        // The repeat counter belongs to the EPISODE, not the session: once neither
+                        // shape is live any more the next fault starts again at 1, so an escalation
+                        // can never be inherited from a fault that has already cleared.
+                        if (refusingSince is null && emptySince is null)
+                        {
+                            refusalRepeat = 0;
+                            lastRefusalFault = null;
+                        }
                     }
                 }
             }
@@ -648,7 +666,10 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// repeated at most every five minutes.
     /// </summary>
     private void MaybeReportRefusal(
-        CandidateVerdict verdict, ref DateTime? refusingSince, ref DateTime? lastRefusalFault)
+        CandidateVerdict verdict,
+        ref DateTime? refusingSince,
+        ref DateTime? lastRefusalFault,
+        ref int refusalRepeat)
     {
         if (verdict.Refusals.Count == 0 || refusingSince is not { } since)
             return;
@@ -656,15 +677,18 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         var now = DateTime.UtcNow;
         if (now - since < _refusalFaultDelay)
             return;
-        if (lastRefusalFault is { } last && now - last < RefusalFaultRepeat)
+        if (lastRefusalFault is { } last && now - last < _refusalFaultRepeat)
             return;
 
         lastRefusalFault = now;
+        var unbound = (now - since).TotalSeconds;
+        var repeat = ++refusalRepeat;
         var detail = $"{string.Join("; ", verdict.Refusals.Take(5))} ({FormatCensus(verdict)})";
         _logger.LogWarning(
-            "Session {SessionId}: refusing every transcript candidate in {Cwd} after {Seconds:F0}s — {Detail}. "
+            "Session {SessionId}: refusing every transcript candidate in {Cwd} after {Seconds:F0}s "
+            + "(report #{Repeat}) — {Detail}. "
             + "Running WITHOUT a transcript rather than binding to a conversation that may not be ours.",
-            _sessionId, _cwd, (now - since).TotalSeconds, detail);
+            _sessionId, _cwd, unbound, repeat, detail);
 
         _events.Publish(
             SessionRunnerEventNames.SessionTranscriptFault,
@@ -672,7 +696,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 _sessionId,
                 TranscriptFaultKinds.AdoptionRefused,
                 detail,
-                verdict.Refusals.Count == 1 ? verdict.Refusals[0] : null));
+                verdict.Refusals.Count == 1 ? verdict.Refusals[0] : null,
+                unbound,
+                repeat));
     }
 
     /// <summary>
@@ -683,7 +709,10 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// it used to be invisible. Same delay and repeat cadence as the refusal path, one knob.
     /// </summary>
     private void MaybeReportNoCandidates(
-        CandidateVerdict verdict, ref DateTime? emptySince, ref DateTime? lastRefusalFault)
+        CandidateVerdict verdict,
+        ref DateTime? emptySince,
+        ref DateTime? lastRefusalFault,
+        ref int refusalRepeat)
     {
         if (!IsEmptyCensus(verdict) || emptySince is not { } since)
             return;
@@ -691,17 +720,20 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         var now = DateTime.UtcNow;
         if (now - since < _refusalFaultDelay)
             return;
-        if (lastRefusalFault is { } last && now - last < RefusalFaultRepeat)
+        if (lastRefusalFault is { } last && now - last < _refusalFaultRepeat)
             return;
 
         lastRefusalFault = now;
+        var unbound = (now - since).TotalSeconds;
+        var repeat = ++refusalRepeat;
         var detail =
             $"No cwd-matching transcript candidates after {(now - since).TotalSeconds:F0}s "
             + $"({FormatCensus(verdict)}). Running WITHOUT a transcript.";
         _logger.LogWarning(
-            "Session {SessionId}: no cwd-matching transcript candidates in {Cwd} after {Seconds:F0}s — {Census}. "
+            "Session {SessionId}: no cwd-matching transcript candidates in {Cwd} after {Seconds:F0}s "
+            + "(report #{Repeat}) — {Census}. "
             + "Running WITHOUT a transcript; ingestion, working/idle and channel replies are dead until one appears.",
-            _sessionId, _cwd, (now - since).TotalSeconds, FormatCensus(verdict));
+            _sessionId, _cwd, unbound, repeat, FormatCensus(verdict));
 
         _events.Publish(
             SessionRunnerEventNames.SessionTranscriptFault,
@@ -709,7 +741,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 _sessionId,
                 TranscriptFaultKinds.TranscriptMissing,
                 detail,
-                null));
+                null,
+                unbound,
+                repeat));
     }
 
     // Input must already have been delivered: Claude creates the file lazily, so an untouched

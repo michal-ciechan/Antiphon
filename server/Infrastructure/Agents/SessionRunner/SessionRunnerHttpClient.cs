@@ -294,7 +294,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                     eventName,
                     fault.SessionId,
                     TranscriptFault: new SessionRunnerTranscriptFaultEvent(
-                        fault.SessionId, fault.Kind, fault.Detail, fault.CandidatePath));
+                        fault.SessionId, fault.Kind, fault.Detail, fault.CandidatePath,
+                        fault.UnboundSeconds, fault.Repeat));
         }
 
         if (eventName == SessionRunnerEventNames.SessionTranscriptBound)

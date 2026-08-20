@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -8,6 +9,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -307,9 +309,16 @@ public class TranscriptBindingIncidentTests
     /// When nothing owns the session the outcome must still be visible: Error, not a silent
     /// return and not a Warning that operators filter out. No incident row — there is nowhere
     /// to hang one — matching ChannelReplyDispatcher.ReportLostAsync.
+    ///
+    /// <para>CARD-0101 added the second half. A log line is not a surface: this branch was the one
+    /// way the INCIDENT stream could fall silent while the runner log kept reporting the same fault
+    /// every five minutes, which is exactly the "zero new incidents, therefore solved" misreading
+    /// the 2026-08-20 investigation made about a cascade that was still live. There is still no
+    /// incident row (AgentIncident.AgentId is required), but there is now a standalone alert
+    /// carrying the session id — the same shape as an unclaimed AutoCompactFailed.</para>
     /// </summary>
     [Test]
-    public async Task Unowned_session_fault_logs_error_and_does_not_record_an_incident()
+    public async Task Unowned_session_fault_logs_error_and_raises_a_standalone_alert()
     {
         var logs = new List<string>();
         await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
@@ -340,6 +349,152 @@ public class TranscriptBindingIncidentTests
         logs.ShouldContain(l => l.Contains("[Error]", StringComparison.Ordinal)
             && l.Contains(orphan.ToString("D"), StringComparison.OrdinalIgnoreCase)
             && l.Contains("No agent owns", StringComparison.OrdinalIgnoreCase));
+
+        var alert = await db.Alerts.SingleAsync(
+            a => a.DedupKey == TranscriptBindingIncidentService.UnownedFaultDedupKey(orphan));
+        alert.Severity.ShouldBe(AlertSeverity.Warning, "a fresh fault is not yet an escalation");
+        alert.SessionId.ShouldBe(orphan);
+        alert.AgentId.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// CARD-0101 item 4, server half. The existing Critical path is reserved for channel-bound
+    /// agents; a delegate task agent is never channel-bound, so on 2026-08-20 every one of ~250
+    /// incidents across six sessions was Warning while eleven agent-hours ran unreadable. A refusal
+    /// that has been CONTINUOUS past the stuck threshold now raises a distinct Critical incident
+    /// regardless of channel binding — the row that says "still broken, for hours" rather than
+    /// the thirty-eighth row that says "broken".
+    /// </summary>
+    [Test]
+    public async Task A_prolonged_refusal_escalates_to_critical_without_a_channel_binding()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton(Options.Create(new TranscriptBindingSettings
+                {
+                    StuckAfterMinutes = 30,
+                    StuckRepeatMinutes = 60,
+                }));
+                s.AddSingleton<TranscriptBindingIncidentService>();
+            },
+        });
+
+        // The 5409c537 shape: 37 reports, 3h6m unbound, no channel binding anywhere.
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.AdoptionRefused,
+                    "no prompt in it matches input delivered to this session",
+                    CandidatePath: null,
+                    UnboundSeconds: 11165,
+                    Repeat: 37),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+
+        // The base incident is unchanged: the repeats are the evidence the fault is still live.
+        var baseIncident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindFailed);
+        baseIncident.Severity.ShouldBe(AlertSeverity.Warning);
+
+        var stuck = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindStuck);
+        stuck.Severity.ShouldBe(AlertSeverity.Critical, "no channel binding must not mean no escalation");
+        stuck.SessionId.ShouldBe(harness.SessionId);
+        stuck.Message.ShouldContain("3.1h", customMessage: "the operator needs the duration, not just the fact");
+        stuck.Message.ShouldContain("37 report(s)");
+
+        var stuckAlert = await db.Alerts.SingleAsync(
+            a => a.AgentId == harness.AgentId
+                && a.DedupKey == $"supervisor:{AgentIncidentKind.TranscriptBindStuck}:{harness.AgentId}");
+        stuckAlert.Severity.ShouldBe(AlertSeverity.Critical, "Critical is what reaches Telegram");
+    }
+
+    /// <summary>
+    /// A first-minute refusal is normal operation on a session whose first turn is slow. Escalating
+    /// on it would make the new Critical exactly as ignorable as the Warning it exists to escape.
+    /// </summary>
+    [Test]
+    public async Task A_fresh_refusal_records_the_incident_but_does_not_escalate()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton(Options.Create(new TranscriptBindingSettings { StuckAfterMinutes = 30 }));
+                s.AddSingleton<TranscriptBindingIncidentService>();
+            },
+        });
+
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.AdoptionRefused,
+                    "no prompt in it matches input delivered to this session",
+                    CandidatePath: null,
+                    UnboundSeconds: 65,
+                    Repeat: 1),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindFailed))
+            .ShouldBeTrue("the base incident is unconditional");
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindStuck))
+            .ShouldBeFalse("65 seconds unbound is a slow first turn, not a stuck session");
+    }
+
+    /// <summary>
+    /// The underlying fault repeats every five minutes for as long as it lasts. If the escalation
+    /// repeated with it, 37 Warnings would become 37 Criticals and the signal would be right back
+    /// where it started. Gated on the database, not in-memory state, so a server restart or an
+    /// event-stream reconnect cannot reset it.
+    /// </summary>
+    [Test]
+    public async Task The_escalation_does_not_re_fire_within_its_repeat_window()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton(Options.Create(new TranscriptBindingSettings
+                {
+                    StuckAfterMinutes = 30,
+                    StuckRepeatMinutes = 60,
+                }));
+                s.AddSingleton<TranscriptBindingIncidentService>();
+            },
+        });
+
+        var service = harness.Provider.GetRequiredService<TranscriptBindingIncidentService>();
+        for (var repeat = 37; repeat <= 39; repeat++)
+        {
+            await service.OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.AdoptionRefused,
+                    "no prompt in it matches input delivered to this session",
+                    CandidatePath: null,
+                    UnboundSeconds: 11165 + (repeat - 37) * 300,
+                    Repeat: repeat),
+                CancellationToken.None);
+        }
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindFailed))
+            .ShouldBe(3, "the five-minute repeat is deliberately untouched");
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindStuck))
+            .ShouldBe(1, "one escalation per repeat window, or the escalation is just more noise");
     }
 
     private static async Task<Guid> BindChannelAsync(Guid agentId)

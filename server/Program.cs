@@ -128,6 +128,7 @@ try
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
+    builder.Services.Configure<TranscriptBindingSettings>(builder.Configuration.GetSection("TranscriptBinding"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
     builder.Services.AddSingleton<IValidateOptions<ContextCompactionSettings>, ContextCompactionSettingsValidator>();
     builder.Services.AddOptions<ContextCompactionSettings>()

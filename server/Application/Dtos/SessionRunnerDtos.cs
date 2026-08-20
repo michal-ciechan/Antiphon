@@ -82,11 +82,18 @@ public sealed record SessionRunnerAdoptedEvent(
 /// The runner refused to bind a transcript to a session (CARD-0006) — it is running without one
 /// rather than risk reading a conversation that may belong to somebody else.
 /// </summary>
+/// <param name="UnboundSeconds">
+/// How long the session has been CONTINUOUSLY in this fault (CARD-0101). Zero from a runner that
+/// predates the field, which simply means no escalation — never a false escalation.
+/// </param>
+/// <param name="Repeat">1 for the first report of this continuous fault, incrementing per repeat.</param>
 public sealed record SessionRunnerTranscriptFaultEvent(
     Guid SessionId,
     string Kind,
     string Detail,
-    string? CandidatePath);
+    string? CandidatePath,
+    double UnboundSeconds = 0,
+    int Repeat = 1);
 
 /// <summary>A transcript was bound by heuristic (discovery/fork/shim) rather than by exact id.</summary>
 public sealed record SessionRunnerTranscriptBoundEvent(

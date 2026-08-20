@@ -242,3 +242,33 @@ public sealed class DeliveryVerificationSettings
     /// </summary>
     public int BootPromptRetryDelaySeconds { get; set; } = 2;
 }
+
+/// <summary>
+/// CARD-0101: when a CARD-0006 transcript-bind refusal stops being "a session is degraded" and
+/// becomes "a session has been unreadable for hours and nobody has been told".
+///
+/// The refusal itself is correct and must keep repeating — it is the only signal that the session
+/// is still unbound — but at Warning, forever, on a five-minute cadence, it is indistinguishable
+/// from noise. On 2026-08-20 six sessions carried 32-73 identical Warning incidents each, up to 3h6m
+/// of continuous refusal, and none of it reached a human: the existing Critical path fires only for
+/// channel-bound agents, and a delegate task agent is never channel-bound.
+/// </summary>
+public sealed class TranscriptBindingSettings
+{
+    /// <summary>
+    /// Continuous refusal past this raises <c>AgentIncidentKind.TranscriptBindStuck</c> at Critical,
+    /// channel binding or not. Well past the minutes a slow first turn can legitimately take, well
+    /// under the hours the 2026-08-20 cascade ran for.
+    /// </summary>
+    public int StuckAfterMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// How often the escalated incident may re-fire while the fault continues. The underlying
+    /// <c>TranscriptBindFailed</c> rows keep their own five-minute cadence untouched; this is the
+    /// loud one, and it is deliberately much quieter so it stays readable as an escalation.
+    /// </summary>
+    public int StuckRepeatMinutes { get; set; } = 60;
+
+    /// <summary>Kill switch for the escalation only. The base incident is unaffected.</summary>
+    public bool EscalationEnabled { get; set; } = true;
+}

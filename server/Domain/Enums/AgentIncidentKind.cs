@@ -227,4 +227,20 @@ public enum AgentIncidentKind
     /// check.
     /// </summary>
     CheckInterpreterUnavailable = 26,
+
+    /// <summary>
+    /// A <see cref="TranscriptBindFailed"/> refusal has been CONTINUOUS for
+    /// <c>TranscriptBindingSettings.StuckAfterMinutes</c> and is still going. Critical regardless of
+    /// channel binding, and deduped per session so it fires roughly once per
+    /// <c>StuckRepeatMinutes</c> rather than once per underlying repeat.
+    ///
+    /// Live miss 2026-08-17–20 (CARD-0101): <see cref="TranscriptBindFailed"/> repeats every five
+    /// minutes at Warning forever with no cap and no escalation — session 5409c537 logged 37
+    /// identical incidents over three hours, six sessions ran unbound for up to 3h6m, and the only
+    /// severity that reaches a human is reserved for channel-bound agents. A delegate task agent is
+    /// never channel-bound, so the entire cascade was Warning-only: visible to anyone querying the
+    /// database and to nobody else. This is the row that says "still broken, and it has been for
+    /// hours" instead of the thirty-eighth identical row that says "broken".
+    /// </summary>
+    TranscriptBindStuck = 27,
 }

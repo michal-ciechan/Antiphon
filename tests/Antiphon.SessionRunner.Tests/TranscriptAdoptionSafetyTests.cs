@@ -969,6 +969,65 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    /// <summary>
+    /// CARD-0101 item 4: a refusal that never ends must stop looking like a refusal that just
+    /// started. On 2026-08-20 six sessions logged 32-73 IDENTICAL Warning incidents each — session
+    /// 5409c537 managed 37 over three hours at a measured 5.003-minute cadence — and nothing on the
+    /// wire distinguished the first from the thirty-seventh, so nothing could escalate. The runner
+    /// reports the elapsed fact (how long this CONTINUOUS episode has run, and which report this is);
+    /// the server owns the threshold. The repeat cadence itself is untouched: the repeats ARE the
+    /// evidence the fault is still live, and capping them would trade one blind spot for another.
+    /// </summary>
+    [Test]
+    public async Task A_continuing_refusal_carries_its_elapsed_time_and_repeat_count()
+    {
+        using var tree = new TranscriptTree("refusal-escalation");
+        var childStart = DateTime.UtcNow;
+
+        // A stranger's conversation in the same cwd, predating the child: refused on C3 forever.
+        var strangerFile = tree.NewTranscript();
+        await tree.AppendAsync(strangerFile, UserLine("s1", tree.Cwd, "somebody else's question", childStart.AddHours(-1)));
+
+        var input = new SessionInputLog();
+        input.Append("A brief this session was actually sent");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: childStart,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(300),
+            refusalFaultRepeat: TimeSpan.FromMilliseconds(500));
+        tailer.Start();
+        try
+        {
+            // Long enough for at least three reports at the compressed cadence.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+            while (DateTime.UtcNow < deadline && hub.Count(SessionRunnerEventNames.SessionTranscriptFault) < 3)
+                await Task.Delay(100);
+
+            var faults = hub.All(SessionRunnerEventNames.SessionTranscriptFault);
+            faults.Length.ShouldBeGreaterThanOrEqualTo(3, "the refusal must keep repeating — that is the fix's floor");
+
+            var repeats = faults.Select(f => f.RootElement.GetProperty("Repeat").GetInt32()).ToArray();
+            repeats.ShouldBe(Enumerable.Range(1, repeats.Length).ToArray(),
+                "Repeat counts this episode's reports; a gap or a reset would let an escalation be missed or inherited");
+
+            var unbound = faults.Select(f => f.RootElement.GetProperty("UnboundSeconds").GetDouble()).ToArray();
+            unbound[0].ShouldBeGreaterThanOrEqualTo(0.29, "the first report is raised only after the refusal delay");
+            for (var i = 1; i < unbound.Length; i++)
+            {
+                unbound[i].ShouldBeGreaterThan(unbound[i - 1],
+                    "the unbound clock is what the server escalates on — it must grow with the episode");
+            }
+
+            tailer.BoundTranscriptPath.ShouldBeNull("the stranger's conversation is still correctly refused");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     // ---------------------------------------------------------------------------- test plumbing
 
     private static TranscriptTailer NewTailer(
@@ -982,6 +1041,7 @@ public class TranscriptAdoptionSafetyTests
         string? knownTranscriptPath = null,
         bool restartAdopt = false,
         TimeSpan? refusalFaultDelay = null,
+        TimeSpan? refusalFaultRepeat = null,
         Guid? sessionId = null) =>
         new(
             sessionId ?? Guid.NewGuid(),
@@ -997,7 +1057,8 @@ public class TranscriptAdoptionSafetyTests
             resumeLaunch: resumeLaunch,
             knownTranscriptPath: knownTranscriptPath,
             restartAdopt: restartAdopt,
-            refusalFaultDelay: refusalFaultDelay);
+            refusalFaultDelay: refusalFaultDelay,
+            refusalFaultRepeat: refusalFaultRepeat);
 
     /// <summary>A minimal Claude "user" JSONL record: cwd (rule C2), timestamp (C3), prompt text (C4).</summary>
     private static string UserLine(string uuid, string cwd, string text, DateTimeOffset timestamp) =>
@@ -1162,6 +1223,15 @@ public class TranscriptAdoptionSafetyTests
         {
             lock (_received)
                 return _received.Count(e => e.EventName == eventName);
+        }
+
+        /// <summary>Every event of a name, in arrival order — CARD-0101 asserts across repeats.</summary>
+        public JsonDocument[] All(string eventName)
+        {
+            lock (_received)
+                return _received.Where(e => e.EventName == eventName)
+                    .Select(e => JsonDocument.Parse(e.Json))
+                    .ToArray();
         }
 
         public async ValueTask DisposeAsync()

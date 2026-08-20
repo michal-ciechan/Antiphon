@@ -144,6 +144,14 @@ internal sealed class ModernConPtyConnection : IPtySession
         var app = ResolveAppPath(options.App, options.Cwd, environment);
         var commandLine = BuildCommandLine(app, options.CommandLine, options.VerbatimCommandLine);
 
+        // CARD-0101: prove the child will actually see the argv we composed, BEFORE anything is
+        // created — no pipes, no pseudoconsole, no job, no process. Escaping correctly (above) and
+        // verifying the result are two different jobs: the first bug was invisible for three days
+        // precisely because nothing ever checked. Skipped for a verbatim command line, where the
+        // caller deliberately supplied a raw string and there is no argument vector to compare to.
+        if (!options.VerbatimCommandLine)
+            LaunchArgvGuard.VerifyOrThrow(app, options.CommandLine, commandLine, "modern ConPTY");
+
         // Kill-on-close job, created BEFORE anything else so every failure path can dispose it (and
         // with it any process that did get created). Porta does the same; without it a crashed host
         // leaves the child and its OpenConsole behind.
