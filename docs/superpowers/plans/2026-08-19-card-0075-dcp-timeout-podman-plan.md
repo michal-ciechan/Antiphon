@@ -1,7 +1,7 @@
 # CARD-0075 — Concurrent AppHost restarts time out the DCP check, and the error blames podman: plan
 
 **Date:** 2026-08-20
-**Status:** planned (not implemented)
+**Status:** S1 shipped 2026-08-20 (`993932c` + `10ae5ef`) - see §6
 **Card:** CARD-0075 (`3867fb99-ab17-4428-89ec-9e6614569ba8`, Backlog) — concurrent restarts time out
 Aspire's DCP dependency check; the message names podman, which is not installed.
 **Precedent:** CARD-0011 (`4fcd60c`, the AppHost health watchdog — it built the lock this card needs),
