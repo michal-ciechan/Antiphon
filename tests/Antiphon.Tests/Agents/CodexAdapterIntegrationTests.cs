@@ -14,6 +14,28 @@ namespace Antiphon.Tests.Agents;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class CodexAdapterIntegrationTests
 {
+    /// <summary>
+    /// <b>KNOWN RED against the real CLI as of 2026-08-20 — CARD-0099 S3's to fix, recorded here so
+    /// nobody re-derives it.</b> This test skipped silently for its whole life because
+    /// <see cref="HeadedCodexGate"/> looked for a <c>cx.ps1</c> that exists nowhere on this machine.
+    /// S2 repointed the gate at the npm shim, so it runs now — and fails:
+    ///
+    /// <code>
+    /// result.ResponseText should contain "pong" but was "gpt-5.6-luna low · ~\appdata\local\temp"
+    /// </code>
+    ///
+    /// <para>It returns in ~5 s, i.e. <c>WaitForTurnCompleteAsync</c>'s quiet-period detector fired
+    /// before the model had answered, and <c>CodexResponseAnalyzer.ExtractResponse</c> then scraped
+    /// the STATUS BAR as the response. Both halves are the screen-scraping turn detection
+    /// <c>ProviderContractCatalog.Codex</c> declares — the axis S1's rollout tailer replaces with
+    /// structured <c>task_complete</c> rows. Left failing rather than quarantined: the failure is
+    /// real, it only runs under <c>ANTIPHON_CODEX_HEADED_TESTS=1</c>, and it is the first evidence
+    /// anyone has had that this adapter path does not work against the live CLI.</para>
+    ///
+    /// <para>The model was moved off <c>gpt-5.4-mini</c> at the same time: that model is deprecated,
+    /// and launching on it parks the TUI on a "GPT-5.4 Mini will be deprecated soon" modal that
+    /// swallows input exactly as the trust dialog does.</para>
+    /// </summary>
     [Test]
     public async Task Full_round_trip_via_cx_returns_response_text_and_can_be_stopped()
     {
@@ -21,7 +43,7 @@ public class CodexAdapterIntegrationTests
         var cx = HeadedCodexGate.ResolveOrThrow();
         var (app, args) = HeadedCodexGate.BuildLaunch(
             cx,
-            "-m", "gpt-5.4-mini",
+            "-m", "gpt-5.6-luna",
             "-c", "model_reasoning_effort=\"low\"",
             "--no-alt-screen");
 

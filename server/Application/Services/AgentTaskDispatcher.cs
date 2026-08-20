@@ -1344,12 +1344,13 @@ public sealed class AgentTaskDispatcher
     /// omission.</para>
     ///
     /// <para><paramref name="agentKind"/> is whose COMPOSER is on the other end (CARD-0084 S1), a
-    /// separate axis from the pseudoconsole. A kind that joins the lines we type — Grok drops every
-    /// LF and joins with no separator, measured — has an inline ceiling of 0, so its brief ALWAYS
-    /// takes the spill path below and reaches it as a file with its structure intact, rather than
-    /// as one run-on line whose paths and commands have grown the next line's first word. Every
-    /// production call site passes the session's own kind; the default keeps every test that
-    /// predates this rendering byte-identical.</para>
+    /// separate axis from the pseudoconsole. A kind whose composer is not trusted to keep the lines
+    /// we type has an inline ceiling of 0, so its brief ALWAYS takes the spill path below and
+    /// reaches it as a file with its structure intact, rather than as one run-on line whose paths
+    /// and commands have grown the next line's first word. The gate is <b>default-deny — every kind
+    /// except ClaudeCode</b> (CARD-0099 S2): measured for Grok, assumed for Codex and anything else
+    /// whose composer nobody has put a canary on. Every production call site passes the session's
+    /// own kind; the default keeps every test that predates this rendering byte-identical.</para>
     /// </summary>
     internal static string FitBriefForTyping(
         AgentTask task,

@@ -265,16 +265,18 @@ public static class DelegationReportFormatter
     /// to the API (which needs no filesystem and is therefore always available).
     /// </summary>
     /// <param name="agentKind">
-    /// Whose composer this will be typed into (CARD-0084 S1). A kind that JOINS typed lines
-    /// (<see cref="PtyDeliveryCeilings.ComposerJoinsTypedLines"/>) gets the same words rendered as
-    /// ONE line, with the spill path quoted — see <see cref="FlattenForJoiningComposer"/>. Default
+    /// Whose composer this will be typed into (CARD-0084 S1; default-deny since CARD-0099 S2). A
+    /// kind whose composer is not trusted to keep our newlines
+    /// (<see cref="PtyDeliveryCeilings.RequiresJoinSafeDelivery"/> — measured for Grok, assumed for
+    /// every other non-Claude kind) gets the same words rendered as ONE line, with the spill path
+    /// quoted — see <see cref="FlattenForJoiningComposer"/>. Default
     /// <see cref="AgentKind.ClaudeCode"/>, so every existing caller renders byte-identically.
     /// </param>
     public static string BuildBriefPointer(
         AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
         AgentKind agentKind = AgentKind.ClaudeCode)
     {
-        var joins = PtyDeliveryCeilings.ComposerJoinsTypedLines(agentKind);
+        var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var where = string.IsNullOrWhiteSpace(spillPath)
             ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the \"goal\" field"
             : joins ? $"'{spillPath}'" : spillPath;
@@ -390,7 +392,7 @@ public static class DelegationReportFormatter
         AgentTask task, DelegationSettings settings, string? spillPath, int fullLength,
         AgentKind agentKind = AgentKind.ClaudeCode)
     {
-        var joins = PtyDeliveryCeilings.ComposerJoinsTypedLines(agentKind);
+        var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var marker = TaskMarker(task.Id);
         var where = string.IsNullOrWhiteSpace(spillPath)
             ? $"GET {settings.ApiBaseUrl.TrimEnd('/')}/api/agent-tasks/{task.Id} and read the newest \"Refined\" event"

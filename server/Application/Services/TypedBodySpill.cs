@@ -98,7 +98,7 @@ internal static class TypedBodySpill
     private static string BuildPointer(
         int fullLength, string where, AgentKind agentKind, string? envelopePrefix)
     {
-        var joins = PtyDeliveryCeilings.ComposerJoinsTypedLines(agentKind);
+        var joins = PtyDeliveryCeilings.RequiresJoinSafeDelivery(agentKind);
         var display = joins ? $"'{where}'" : where;
 
         var pointer = $"""

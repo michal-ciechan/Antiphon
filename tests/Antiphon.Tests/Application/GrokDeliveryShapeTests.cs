@@ -26,6 +26,7 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class GrokDeliveryShapeTests
 {
+    private const string NL = "\n";
     private const string AnyReason = "test";
 
     /// <summary>Where the real gate writes its spill files when it decides to spill.</summary>
@@ -111,20 +112,65 @@ public class GrokDeliveryShapeTests
     }
 
     /// <summary>
-    /// Non-Grok delivery is untouched — by value, not by inspection. Every kind whose composer keeps
-    /// the newlines we type gets exactly the ceilings the backend resolved.
+    /// Claude delivery is untouched — by value, not by inspection. The one kind whose composer HAS
+    /// been measured to keep the newlines we type gets exactly the ceilings the backend resolved.
     /// </summary>
     [Test]
-    [Arguments(AgentKind.ClaudeCode)]
-    [Arguments(AgentKind.Codex)]
-    [Arguments(AgentKind.OpenCode)]
-    [Arguments(AgentKind.Raw)]
-    public void A_kind_whose_composer_keeps_newlines_gets_the_backends_ceilings_unchanged(AgentKind kind)
+    public void The_one_measured_keeps_newlines_kind_gets_the_backends_ceilings_unchanged()
     {
         var baseline = new DelegationSettings().CeilingsFor(PtyBackend.ModernConPty, AnyReason);
 
-        baseline.ForAgentKind(kind).ShouldBe(baseline);
-        PtyDeliveryCeilings.ComposerJoinsTypedLines(kind).ShouldBeFalse();
+        baseline.ForAgentKind(AgentKind.ClaudeCode).ShouldBe(baseline);
+        PtyDeliveryCeilings.RequiresJoinSafeDelivery(AgentKind.ClaudeCode).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// CARD-0099 S2: the gate is DEFAULT-DENY. A kind whose composer nobody has measured spills its
+    /// brief for the same reason Grok's does — not because it is known to join, but because it is
+    /// not known not to, and a fused command line in a Code delegate's brief is a silent, expensive
+    /// failure. Codex is the kind this was widened for; OpenCode and Raw come along because the rule
+    /// is "measured or spilled", not a per-kind allowlist somebody has to remember to extend.
+    ///
+    /// <para>Measurement can only ever move a kind OUT of this set, by naming it in
+    /// <see cref="PtyDeliveryCeilings.RequiresJoinSafeDelivery"/> with a canary behind it — see
+    /// <c>CodexCanaryTests</c>. Adding a kind to the enum must not need an edit here to be safe.</para>
+    /// </summary>
+    [Test]
+    [Arguments(AgentKind.Codex)]
+    [Arguments(AgentKind.OpenCode)]
+    [Arguments(AgentKind.Raw)]
+    public void An_unmeasured_kind_is_join_safe_by_default(AgentKind kind)
+    {
+        var baseline = new DelegationSettings().CeilingsFor(PtyBackend.ModernConPty, AnyReason);
+
+        PtyDeliveryCeilings.RequiresJoinSafeDelivery(kind).ShouldBeTrue(
+            "a composer nobody has put a canary on is assumed to join");
+
+        var narrowed = baseline.ForAgentKind(kind);
+        narrowed.BriefInlineMaxBytes.ShouldBe(0, "every brief and refinement must spill");
+        narrowed.SingleWriteMaxBytes.ShouldBe(baseline.SingleWriteMaxBytes);
+        narrowed.ReplyInlineMaxChars.ShouldBe(baseline.ReplyInlineMaxChars);
+        narrowed.Reason.ShouldContain("no measured composer contract",
+            customMessage: "a 0 ceiling that is a default, not a measurement, has to say so in the log line");
+    }
+
+    /// <summary>
+    /// The exposure CARD-0099 S2 closes, stated the way the Grok one above is: a real brief runs
+    /// 1.5-6 KB and the modern backend's inline ceiling is 43 200 bytes, so before this EVERY brief
+    /// to a Codex delegate would have been typed inline into a composer with no measured contract.
+    /// </summary>
+    [Test]
+    public void A_codex_brief_spills_where_the_backend_alone_would_have_typed_it_inline()
+    {
+        var settings = new DelegationSettings();
+        var task = NewTask(string.Join(NL, Enumerable.Range(0, 40).Select(i => $"goal line {i:D4}")));
+        var modern = settings.CeilingsFor(PtyBackend.ModernConPty, AnyReason);
+
+        var forCodex = AgentTaskDispatcher.FitBriefForTyping(task, settings, modern, null, AgentKind.Codex);
+
+        forCodex.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+        forCodex.ShouldNotContain("goal line 0039", customMessage: "the body itself must not be typed at all");
+        forCodex.ShouldNotContain(NL, customMessage: "and the pointer that replaces it is flattened join-safe");
     }
 
     // ---- the pointer ---------------------------------------------------------------------------
