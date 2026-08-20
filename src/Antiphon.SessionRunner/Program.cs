@@ -65,6 +65,25 @@ builder.Services.AddHostedService<SessionCpuWatchdogService>();
 
 var app = builder.Build();
 
+// CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
+// before a restart) - it must answer 404, not crash the request pipeline with an unhandled
+// KeyNotFoundException out of SessionRunnerRuntime.GetSession. Narrow on purpose: this is the ONLY
+// exception type every session-lookup endpoint throws for "not found" today, so mapping anything
+// wider here would hide a real bug as a 404 instead of surfacing it.
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);
+    }
+    catch (KeyNotFoundException ex)
+    {
+        app.Logger.LogInformation("404: {Message}", ex.Message);
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
+    }
+});
+
 // Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
 // request that fell back to the inbox conhost looks identical from everywhere else, and it silently
 // re-arms the 1 KB clipping the ceilings exist for.

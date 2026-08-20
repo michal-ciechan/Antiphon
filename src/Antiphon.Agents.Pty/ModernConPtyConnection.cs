@@ -411,16 +411,27 @@ internal sealed class ModernConPtyConnection : IPtySession
     }
 
     /// <summary>
-    /// Quote each argument, join with spaces, prefix the (quoted-if-spaced) app — exactly
-    /// <c>WindowsArguments.Format</c> plus Porta's app-quoting rule, so a command line that launches
-    /// today launches identically on the new backend.
+    /// Quote each argument, join with spaces, prefix the (quoted-if-spaced) app.
+    ///
+    /// <para><b>CARD-0101.</b> This used to be <c>WindowsArguments.Format</c> plus Porta's
+    /// app-quoting rule — wrap in <c>"</c>, double every inner <c>"</c>. That is not how
+    /// <c>CommandLineToArgvW</c> (the parser every Windows/.NET child actually uses to build its own
+    /// <c>argv</c>) treats a doubled quote inside a quoted argument: measured live, a single
+    /// unescaped <c>"</c> inside one bundled argument shredded a 9-argument command line into 165
+    /// <c>argv</c> entries, truncating the system prompt 42% and losing <c>--session-id</c> into the
+    /// tail entirely (root cause: <c>docs/investigations/2026-08-20-delegate-command-line-shred.md</c>).
+    /// <see cref="EscapeArgument"/> is the canonical CRT/<c>CommandLineToArgvW</c> quoting rule
+    /// instead (the same one .NET's own <c>ProcessStartInfo.Arguments</c> uses internally) — a run
+    /// of backslashes is only special immediately before a quote (then it must double), everywhere
+    /// else backslashes pass through literally. Round-tripped in
+    /// <c>ModernConPtyConnectionCommandLineTests</c> against the real Win32 <c>CommandLineToArgvW</c>,
+    /// not just eyeballed.</para>
     /// </summary>
     internal static string BuildCommandLine(string app, string[]? args, bool verbatim)
     {
         var arguments = verbatim
             ? string.Join(" ", args ?? [])
-            : string.Join(" ", (args ?? []).Select(a =>
-                string.IsNullOrEmpty(a) ? string.Empty : "\"" + a.Replace("\"", "\"\"") + "\""));
+            : string.Join(" ", (args ?? []).Select(EscapeArgument));
 
         var quoteApp = app.Contains(' ') && !app.StartsWith('"') && !app.EndsWith('"');
         var builder = new StringBuilder(app.Length + arguments.Length + 4);
@@ -428,6 +439,45 @@ internal sealed class ModernConPtyConnection : IPtySession
         else builder.Append(app);
         if (!string.IsNullOrWhiteSpace(arguments)) builder.Append(' ').Append(arguments);
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// One argument, quoted per the CRT/<c>CommandLineToArgvW</c> rule (CARD-0101): a run of
+    /// backslashes is doubled only when it is immediately followed by a <c>"</c> (or ends the
+    /// argument, since the closing quote follows) — everywhere else a backslash is literal and
+    /// untouched. An argument with no space/tab/newline/vtab/quote needs no quoting at all.
+    /// </summary>
+    internal static string EscapeArgument(string a)
+    {
+        if (!string.IsNullOrEmpty(a) && a.IndexOfAny([' ', '\t', '\n', '\v', '"']) < 0) return a;
+
+        var sb = new StringBuilder();
+        sb.Append('"');
+        for (var i = 0; i < a.Length; i++)
+        {
+            var backslashes = 0;
+            while (i < a.Length && a[i] == '\\') { i++; backslashes++; }
+
+            if (i == a.Length)
+            {
+                // Trailing backslashes: double them so they don't escape the closing quote we add.
+                sb.Append('\\', backslashes * 2);
+                break;
+            }
+
+            if (a[i] == '"')
+            {
+                // Backslashes immediately before a literal quote: double them, then escape the quote.
+                sb.Append('\\', backslashes * 2 + 1).Append('"');
+            }
+            else
+            {
+                // Backslashes before anything else are literal.
+                sb.Append('\\', backslashes).Append(a[i]);
+            }
+        }
+        sb.Append('"');
+        return sb.ToString();
     }
 
     /// <summary>
