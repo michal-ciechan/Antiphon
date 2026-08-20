@@ -129,17 +129,20 @@ public class TaskDeadlinePolicyTests
     public async Task a_running_local_tool_takes_the_much_longer_local_execution_deadline()
     {
         // The whole reason a flat timeout is wrong: a build or a test suite is legitimately long
-        // (measured max 5 311 s), so the SAME 30 minutes that fails a model wait must not fail this.
+        // (measured max 5 311 s). 75 minutes of it is worth SURFACING and nothing more — the same
+        // 75 minutes with a model-wait tail would have been failed nearly an hour earlier.
         await using var scenario = new Scenario();
-        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
-        await scenario.SeedEntriesAsync((TranscriptKinds.ToolCall, "dotnet build", 30));
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 80);
+        await scenario.SeedEntriesAsync((TranscriptKinds.ToolCall, "dotnet build", 75));
 
         var verdict = await scenario.EvaluateAsync(task);
 
         verdict.ShouldNotBeNull();
         verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.LocalExecution);
         verdict.Limit.ShouldBe(TimeSpan.FromMinutes(90));
-        verdict.Breached.ShouldBeFalse("30 minutes into a build is a build, not a stall");
+        verdict.Breached.ShouldBeFalse("75 minutes into a build is a build, not a stall");
+        verdict.WorthSurfacing.ShouldBeTrue();
+        verdict.Summary.ShouldContain("waiting on a local tool");
     }
 
     [Test]
@@ -162,14 +165,24 @@ public class TaskDeadlinePolicyTests
     }
 
     [Test]
-    public async Task an_unrecognised_last_kind_gets_the_ceiling_and_nothing_tighter()
+    public void an_unclassified_tail_arms_no_phase_deadline_at_all()
     {
-        await using var scenario = new Scenario();
-        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
-        await scenario.SeedEntriesAsync((TranscriptKinds.TurnTitle, "Doing the thing", 30));
+        // ClassifyPhase directly: TurnEnd, the boundaries and anything added to TranscriptKinds in
+        // future fall through to a ZERO limit, which the caller reads as "no phase applies". A new
+        // kind must be classified deliberately rather than inherit the tightest clock we have.
+        var modelWait = TimeSpan.FromMinutes(20);
+        var localExecution = TimeSpan.FromMinutes(90);
 
-        (await scenario.EvaluateAsync(task)).ShouldBeNull(
-            "60 of 240 minutes is nowhere near the ceiling, and no phase applies");
+        foreach (var kind in new[]
+        {
+            TranscriptKinds.TurnEnd, TranscriptKinds.TurnTitle, TranscriptKinds.CompactBoundary,
+            TranscriptKinds.SessionRestartBoundary, "SomethingAddedNextYear",
+        })
+        {
+            var (phase, limit) = TaskDeadlinePolicy.ClassifyPhase(kind, modelWait, localExecution);
+            phase.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling, $"{kind} arms no phase clock");
+            limit.ShouldBe(TimeSpan.Zero, $"{kind} arms no phase clock");
+        }
     }
 
     // ---- the three housekeeping negatives (plan section 3.1) -------------------------------------
