@@ -323,11 +323,15 @@ public class SessionMessageQueuePtyIntegrationTests
             // taking the spill path - and failing - ever since that gate reached the queue,
             // proving nothing about the thing it exists to prove. What it exists to prove is the
             // CRLF normalization, which needs many line BREAKS, not a large body: it keeps every
-            // break and loses the bulk.
+            // break and loses the bulk. CARD-0025 (00ad946) is what made this spill; that path is
+            // pinned separately by SessionMessageQueueSpillTests.
             var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\r\n\r\n"
                 + string.Join("\r\n", Enumerable.Range(1, 8).Select(i => $"booking line {i} " + new string('x', 80)))
                 + "\r\nTAIL-MARKER also check my outlook calendar?";
 
+            // Fail loudly on the size, not mysteriously on the assertion below: grow this body past
+            // the inbox tripwire and the queue spills it to a file, and the assertion below would
+            // then be pinning the POINTER, not the CRLF normalization.
             System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThan(
                 new DelegationSettings().PtySingleChunkBytes,
                 "the body must be TYPED, not spilled - assert it rather than trusting the "
