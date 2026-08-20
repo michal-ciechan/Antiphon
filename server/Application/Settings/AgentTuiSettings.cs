@@ -13,6 +13,14 @@ public sealed class AgentTuiSettings
     public string KeyRingPath { get; set; } = string.Empty;
     public AgentTuiKeyProtectionSettings KeyProtection { get; set; } = new();
 
+    /// <summary>
+    /// Whether startup imports the configured runner profiles and backfills every agent row that
+    /// has no profile yet. True is the installation behaviour. A host that shares its database with
+    /// something else - the test assembly's shared schema, where the backfill would stamp
+    /// TuiProfileId onto agent rows other tests own - turns it off.
+    /// </summary>
+    public bool ImportProfilesOnStartup { get; set; } = true;
+
     public string ResolveKeyRingPath(AgentTuiPathEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(environment);

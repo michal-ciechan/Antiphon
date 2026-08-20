@@ -749,7 +749,10 @@ public sealed class AgentTuiApiWebAppFactory : AntiphonWebAppFactory
             {
                 ["ConnectionStrings:DefaultConnection"] = IsolatedConnectionString,
                 ["Serilog:LogPath"] = _logPath,
-                ["Serilog:ConsoleMinimumLevel"] = "Warning"
+                ["Serilog:ConsoleMinimumLevel"] = "Warning",
+                // Safe here, unlike on the shared schema the base factory runs against: this
+                // host owns its own schema, so the import's agent backfill reaches nobody else.
+                ["AgentTui:ImportProfilesOnStartup"] = "true"
             }));
         builder.ConfigureServices(services =>
         {

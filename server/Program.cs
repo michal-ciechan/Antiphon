@@ -27,13 +27,30 @@ using Antiphon.Server.Infrastructure.Realtime;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 
-// Bootstrap Serilog for startup logging (before host is built)
-Log.Logger = new LoggerConfiguration()
-    .WriteTo.Console()
-    .CreateBootstrapLogger();
+// Startup writes PROCESS-GLOBAL state: Serilog's static Log.Logger. WebApplicationFactory runs
+// this entry point once per factory, and the test assembly holds several of them (the shared
+// AntiphonWebAppFactory, its per-suite subclasses, and SmokeTests' own bare factory), so two
+// invocations can be inside startup at the same time. The bootstrap logger is a ReloadableLogger
+// parked on Log.Logger and builder.Build() FREEZES it: interleaved, the second invocation
+// overwrites Log.Logger, the first freezes what the second parked there, and the second's Build()
+// throws "The logger is already frozen." The gate covers assignment-through-Build only - it is
+// released before app.Run() blocks - and is a no-op for the single invocation a real server makes.
+//
+// It covers the whole of startup, not just Build(), because the same overlap breaks the seeder:
+// DatabaseSeeder is check-then-insert against a database both invocations share, so a second one
+// arriving mid-seed inserts a row the first already inserted and Postgres answers 23505 on
+// PK_TemplateGroups. Cross-PROCESS seeding is still unguarded - that wants a pg advisory lock
+// around migrate+seed, which this gate is not.
+Program.StartupGate.Wait();
+var startupGateHeld = true;
 
 try
 {
+    // Bootstrap Serilog for startup logging (before host is built)
+    Log.Logger = new LoggerConfiguration()
+        .WriteTo.Console()
+        .CreateBootstrapLogger();
+
     var builder = WebApplication.CreateBuilder(args);
 
     // Serilog — structured logging with correlation enrichment (NFR19)
@@ -485,17 +502,22 @@ try
         dbContext.Database.Migrate();
         await DatabaseSeeder.SeedAsync(dbContext, llmSettings, CancellationToken.None);
         var agentTuiMetrics = scope.ServiceProvider.GetRequiredService<AgentTuiMetrics>();
-        Antiphon.Server.Application.Dtos.AgentTuiImportResultDto profileImport;
-        try
+        var profileImport = new Antiphon.Server.Application.Dtos.AgentTuiImportResultDto(0, 0);
+        if (scope.ServiceProvider.GetRequiredService<IOptions<AgentTuiSettings>>()
+            .Value.ImportProfilesOnStartup)
         {
-            profileImport = await scope.ServiceProvider.GetRequiredService<AgentTuiProfileImporter>()
-                .ImportAsync(CancellationToken.None);
-            agentTuiMetrics.RecordImport(profileImport);
-        }
-        catch
-        {
-            agentTuiMetrics.RecordImportFailure();
-            throw;
+            try
+            {
+                profileImport = await scope.ServiceProvider
+                    .GetRequiredService<AgentTuiProfileImporter>()
+                    .ImportAsync(CancellationToken.None);
+                agentTuiMetrics.RecordImport(profileImport);
+            }
+            catch
+            {
+                agentTuiMetrics.RecordImportFailure();
+                throw;
+            }
         }
         if (profileImport.ProfilesCreated > 0 || profileImport.AgentsAssigned > 0)
         {
@@ -545,18 +567,43 @@ try
     app.MapFallbackToFile("index.html");
 
     Log.Information("Antiphon server starting");
+
+    // Startup is done: the static logger is frozen, migrations are applied and the seed rows
+    // exist. Release before app.Run(), which blocks until shutdown.
+    Program.StartupGate.Release();
+    startupGateHeld = false;
+
     app.Run();
 }
-catch (Exception ex)
+catch (Exception ex) when (ex is not HostAbortedException)
 {
+    // RETHROW. A swallowed startup exception exits 0, which lies to every supervisor that watches
+    // this process, and under WebApplicationFactory it is worse than silent: the entry point
+    // returns without ever starting the host, the factory caches the unstarted TestServer, and
+    // every later test on that shared factory fails with "The server has not been started or no
+    // web application was configured" - naming nothing, forever. HostAbortedException is excluded
+    // so `dotnet ef` design-time host resolution still unwinds cleanly.
     Log.Fatal(ex, "Antiphon server terminated unexpectedly");
+    throw;
 }
 finally
 {
+    if (startupGateHeld)
+        Program.StartupGate.Release();
+
     Log.CloseAndFlush();
 }
 
 // Exposed as public so test projects can use WebApplicationFactory<Program> with public
 // subclasses (e.g. the shared AntiphonWebAppFactory). The top-level program otherwise emits
 // an internal Program class.
-public partial class Program { }
+public partial class Program
+{
+    /// <summary>
+    /// Serialises the process-global part of startup (see the comment at the top of this file).
+    /// Held from the bootstrap-logger assignment until <c>builder.Build()</c> returns, never across
+    /// <c>app.Run()</c>. Uncontended - and therefore free - for a real server, which invokes this
+    /// entry point once.
+    /// </summary>
+    internal static readonly SemaphoreSlim StartupGate = new(1, 1);
+}

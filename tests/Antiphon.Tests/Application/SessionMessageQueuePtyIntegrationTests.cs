@@ -314,9 +314,24 @@ public class SessionMessageQueuePtyIntegrationTests
             // deliberately with CRLF line endings, the actual fragmentation hazard (measured against
             // real Claude 2026-07-31: mid-body \r submits; \n is literal). DeliverAsync must
             // normalize the endings to LF or every line break submits a partial turn.
+            //
+            // The line count is bounded, not arbitrary. This session runs on the INBOX conhost
+            // (PinnedBackend), and CARD-0037's tripwire is a hard gate there: a body over
+            // DelegationSettings.PtySingleChunkBytes - 1 024 bytes, the measured chunk cut - is
+            // never typed at all. SessionMessageQueueService spills it to .antiphon/inbox/ and
+            // types a pointer instead. At 12 lines this body was 1 286 bytes, so it had been
+            // taking the spill path - and failing - ever since that gate reached the queue,
+            // proving nothing about the thing it exists to prove. What it exists to prove is the
+            // CRLF normalization, which needs many line BREAKS, not a large body: it keeps every
+            // break and loses the bulk.
             var body = "[Telegram \"Family\" — Mike 01:55] HEAD-MARKER add these to my calendar:\r\n\r\n"
-                + string.Join("\r\n", Enumerable.Range(1, 12).Select(i => $"booking line {i} " + new string('x', 80)))
+                + string.Join("\r\n", Enumerable.Range(1, 8).Select(i => $"booking line {i} " + new string('x', 80)))
                 + "\r\nTAIL-MARKER also check my outlook calendar?";
+
+            System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThan(
+                new DelegationSettings().PtySingleChunkBytes,
+                "the body must be TYPED, not spilled - assert it rather than trusting the "
+                + "arithmetic to survive the next edit to these lines");
 
             var queue = provider.GetRequiredService<SessionMessageQueueService>();
             await queue.EnqueueAsync(sessionId, body, MessageSendMode.Now, CancellationToken.None);

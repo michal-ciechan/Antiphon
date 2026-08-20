@@ -43,6 +43,13 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 ["Git:WorkspacePath"] = _workspacePath,
                 ["Git:WorktreeBasePath"] = Path.Combine(_workspacePath, "worktrees"),
                 ["AgentTui:KeyRingPath"] = Path.Combine(_workspacePath, "data-protection-keys"),
+                // This host shares the assembly's schema with every service-level test. The
+                // startup import's BackfillAgentsAsync stamps TuiProfileId onto EVERY agent row
+                // with none, including rows a test that builds its own harness (no launch
+                // resolver) is about to launch - which then fails with
+                // "The selected runner profile cannot be resolved by this installation."
+                // A factory on its own schema (AgentTuiApiWebAppFactory) turns it back on.
+                ["AgentTui:ImportProfilesOnStartup"] = "false",
                 ["GitHub:Enabled"] = "false",
                 ["Agents:DefaultDefinition"] = "test-raw",
                 ["Agents:Definitions:test-raw:Kind"] = "Raw",
