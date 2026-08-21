@@ -200,6 +200,12 @@ public sealed class AgentTaskService
         var id = Guid.NewGuid();
         var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
         var agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+        // A task token always carries the parent task's identity, including null. The work may run
+        // in another checkout, but its commissioning project — not its filesystem path — decides
+        // the eventual API-key scope (CARD-0115 S1).
+        var projectId = parent is null
+            ? await DeriveCallerProjectAsync(caller, ct)
+            : parent.ProjectId;
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
@@ -216,6 +222,7 @@ public sealed class AgentTaskService
             Goal = request.Goal.Trim(),
             Kind = request.Kind,
             Role = request.Role,
+            ProjectId = projectId,
             AgentKind = agentKind,
             ModelLevel = level,
             Workspace = workspace,
@@ -257,7 +264,8 @@ public sealed class AgentTaskService
                 // task teaches nobody anything, and the one that says "on Grok" is the whole point.
                 + (agentKind == AgentKind.ClaudeCode
                     ? string.Empty
-                    : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}"),
+                    : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}")
+                + ProjectScopeSuffix(projectId),
             At = now,
         });
         if (warning is not null)
@@ -277,6 +285,38 @@ public sealed class AgentTaskService
             id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind,
             NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None);
     }
+
+    /// <summary>
+    /// Resolves a root task's project identity from the calling session at creation time. A card
+    /// binding wins over the owning standing agent's board, matching the card-launch precedent:
+    /// the work's card names its project even if the agent happens to belong elsewhere.
+    /// </summary>
+    private async Task<Guid?> DeriveCallerProjectAsync(Caller caller, CancellationToken ct)
+    {
+        if (caller.Task is not null || caller.SessionId is not Guid sessionId)
+            return null;
+
+        var cardProjectId = await (
+            from session in _db.AgentSessions.AsNoTracking()
+            join card in _db.Cards.AsNoTracking() on session.CardId equals card.Id
+            join board in _db.Boards.AsNoTracking() on card.BoardId equals board.Id
+            where session.Id == sessionId
+            select (Guid?)board.ProjectId)
+            .FirstOrDefaultAsync(ct);
+        if (cardProjectId is not null)
+            return cardProjectId;
+
+        var persistentSessionId = sessionId.ToString("D");
+        return await (
+            from agent in _db.Agents.AsNoTracking()
+            join board in _db.Boards.AsNoTracking() on agent.BoardId equals board.Id
+            where agent.PersistentSessionId == persistentSessionId
+            select (Guid?)board.ProjectId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private static string ProjectScopeSuffix(Guid? projectId) =>
+        projectId is { } id ? $" — project scope: {id}" : string.Empty;
 
     /// <summary>
     /// The workspace an unspecified request gets, and the warning a risky explicit one earns.
@@ -673,6 +713,7 @@ public sealed class AgentTaskService
                 """,
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Merge,
+            ProjectId = conflicted.ProjectId,
             ModelLevel = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null),
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = worktree,
@@ -695,7 +736,8 @@ public sealed class AgentTaskService
             Type = AgentTaskEventType.Created,
             ModelLevel = task.ModelLevel,
             Detail = $"Spawned by the server to resolve {conflictFiles.Count} conflicted file(s) from "
-                + $"task {DelegationReportFormatter.Short(conflicted.Id)}.",
+                + $"task {DelegationReportFormatter.Short(conflicted.Id)}."
+                + ProjectScopeSuffix(task.ProjectId),
             At = now,
         });
         RawTokens[id] = token;

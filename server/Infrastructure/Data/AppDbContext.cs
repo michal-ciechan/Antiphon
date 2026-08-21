@@ -1321,6 +1321,7 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Goal).IsRequired().HasMaxLength(20000);
             entity.Property(t => t.Kind).IsRequired();
             entity.Property(t => t.Role).IsRequired();
+            entity.Property(t => t.ProjectId).IsRequired(false);
             // CARD-0084 S2. ClaudeCode on every pre-existing row, which is what they actually ran —
             // the default is a backfill, not a guess.
             entity.Property(t => t.AgentKind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);
@@ -1362,6 +1363,14 @@ public class AppDbContext : DbContext
                 .WithMany(t => t.Children)
                 .HasForeignKey(t => t.ParentTaskId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // A deleted project must leave delegation history intact; its old tasks simply fall
+            // back to global-only scope if they are ever retried (CARD-0115 S1).
+            entity.HasOne<Project>()
+                .WithMany()
+                .HasForeignKey(t => t.ProjectId)
+                .OnDelete(DeleteBehavior.SetNull);
+
         });
 
         modelBuilder.Entity<AgentTaskEvent>(entity =>
@@ -1380,5 +1389,6 @@ public class AppDbContext : DbContext
                 .HasForeignKey(e => e.AgentTaskId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
     }
 }
