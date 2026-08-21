@@ -36,6 +36,7 @@ public class AntiphonAppFixture
     private WebApplicationFactory<Program>? _factory;
     private string? _workspacePath;
     private TestDiagnostics? _diagnostics;
+    private IsolatedSessionRunner? _isolatedSessionRunner;
 
     /// <summary>
     /// When true, the app serves prebuilt React assets from wwwroot (client/dist).
@@ -92,7 +93,18 @@ public class AntiphonAppFixture
             DiagnosticsDirectory = _diagnostics.Directory;
         }
 
-        await _container.StartAsync();
+        _isolatedSessionRunner = new IsolatedSessionRunner(GetRandomAvailablePort, FindRepositoryRoot());
+        var runnerStartup = _isolatedSessionRunner.StartAsync();
+        var containerStartup = _container.StartAsync();
+        try
+        {
+            await Task.WhenAll(runnerStartup, containerStartup);
+        }
+        catch
+        {
+            await _isolatedSessionRunner.DisposeAsync();
+            throw;
+        }
 
         var connectionString = _container.GetConnectionString();
         var port = GetRandomAvailablePort();
@@ -105,7 +117,8 @@ public class AntiphonAppFixture
             port,
             UseMockExecutor,
             _workspacePath,
-            DiagnosticsDirectory
+            DiagnosticsDirectory,
+            _isolatedSessionRunner.BaseUrl
         );
 
         // Trigger host creation (WAF builds host on first access)
@@ -134,7 +147,7 @@ public class AntiphonAppFixture
     /// <summary>
     /// Fail immediately with the startup probe verdict when <c>/sessions</c> was not 2xx.
     /// Session-dependent tests call this instead of burning a 30–60s Running-status timeout.
-    /// This fixture does not start a runner.
+    /// The runner is an isolated child process owned by this fixture.
     /// </summary>
     public void EnsureSessionRunnerReachable()
     {
@@ -147,13 +160,9 @@ public class AntiphonAppFixture
     /// <summary>
     /// Records whether the configured session runner is actually there.
     ///
-    /// This fixture does NOT start one — it pins <c>SessionRunner:BaseUrl</c> to
-    /// <c>http://localhost:17204</c> (the always-on daemon) and talks to whatever is listening.
-    /// When nothing is (or when an unrelated process has taken the port — a stray node.exe was
-    /// squatting 17283 on 2026-08-08, answering 404), every test that needs a live session used
-    /// to fail 30-60s later with "did not reach Running status" and no hint as to why. The
-    /// verdict is stored so <see cref="EnsureSessionRunnerReachable"/> can fail those tests in
-    /// seconds with the URL and status or exception.
+    /// The fixture starts an isolated child runner before building the server host. The verdict is
+    /// stored so <see cref="EnsureSessionRunnerReachable"/> can fail session-dependent tests in
+    /// seconds with the child's URL and status or exception.
     /// </summary>
     private async Task RecordSessionRunnerReachabilityAsync()
     {
@@ -175,15 +184,15 @@ public class AntiphonAppFixture
             {
                 SessionRunnerReachable = true;
                 SessionRunnerReachabilityVerdict =
-                    $"[session-runner] {baseUrl} responding ({(int)response.StatusCode})";
+                    $"[session-runner] our isolated child at {baseUrl} responding ({(int)response.StatusCode})";
             }
             else
             {
                 SessionRunnerReachable = false;
                 SessionRunnerReachabilityVerdict =
-                    $"[session-runner] {baseUrl} answered {(int)response.StatusCode} for /sessions — "
-                    + "something is on that port but it is not a session runner. "
-                    + "Tests needing a live agent session will fail.";
+                    $"[session-runner] our isolated child at {baseUrl} answered {(int)response.StatusCode} for /sessions. "
+                    + "Tests needing a live agent session will fail. Captured runner output tail: "
+                    + GetIsolatedRunnerOutputTail();
             }
 
             _diagnostics?.Note(SessionRunnerReachabilityVerdict);
@@ -192,8 +201,9 @@ public class AntiphonAppFixture
         {
             SessionRunnerReachable = false;
             SessionRunnerReachabilityVerdict =
-                $"[session-runner] {baseUrl} unreachable ({ex.GetBaseException().Message}). "
-                + "Tests needing a live agent session will fail.";
+                $"[session-runner] our isolated child at {baseUrl} unreachable ({ex.GetBaseException().Message}). "
+                + "Tests needing a live agent session will fail. Captured runner output tail: "
+                + GetIsolatedRunnerOutputTail();
             _diagnostics?.Note(SessionRunnerReachabilityVerdict);
         }
     }
@@ -204,6 +214,9 @@ public class AntiphonAppFixture
         // identify those sessions are torn down. Sets SessionLeakVerdict rather than throwing here —
         // a leak must fail the run, and it must not do so by abandoning a Postgres container.
         await StopSessionsThisFixtureStartedAsync();
+
+        if (_isolatedSessionRunner is not null)
+            await _isolatedSessionRunner.DisposeAsync();
 
         // Covers the API-only tests, which have no page and so never called
         // CaptureOnCompletionAsync; a no-op when they did. Skipped for a fixture with a
@@ -253,21 +266,27 @@ public class AntiphonAppFixture
 
     private static string FindClientDistPath()
     {
+        var clientPath = Path.Combine(FindRepositoryRoot(), "client");
+        EnsureClientBundleIsCurrent(clientPath);
+        return clientPath;
+    }
+
+    internal static string FindRepositoryRoot()
+    {
         var dir = AppContext.BaseDirectory;
         while (dir is not null)
         {
-            var clientPath = Path.Combine(dir, "client");
-            if (Directory.Exists(clientPath))
-            {
-                EnsureClientBundleIsCurrent(clientPath);
-                return clientPath;
-            }
+            if (Directory.Exists(Path.Combine(dir, "client")))
+                return dir;
             dir = Directory.GetParent(dir)?.FullName;
         }
 
         throw new DirectoryNotFoundException(
             "Could not find client/ directory. Ensure the frontend has been built with 'npm run build'.");
     }
+
+    private string GetIsolatedRunnerOutputTail() =>
+        _isolatedSessionRunner?.GetOutputTail() ?? "(isolated runner was not started)";
 
     /// <summary>
     /// Refuses to run browser tests against a stale bundle.
@@ -364,22 +383,12 @@ public class AntiphonAppFixture
     /// CARD-0102, and item 1 of the coverage plan's P2-2: stop every session this fixture started,
     /// then FAIL THE RUN if any pty-host it started is still alive.
     ///
-    /// <para>This fixture deliberately drives the always-on production session runner on 17204
-    /// rather than a throwaway one (see <see cref="RecordSessionRunnerReachabilityAsync"/>), and
-    /// nothing here changes that — <see cref="EnsureSessionRunnerReachable"/>'s fail-fast verdict is
-    /// untouched. What changes is that the suite now cleans up after itself: every E2E session was a
-    /// real detached <c>Antiphon.PtyHost</c> holding an interactive <c>cmd.exe</c> on the shared
-    /// runner, and on 2026-08-20, 39 of them were alive at once — some for nearly ten hours — and
-    /// were found only by hand, during triage of an unrelated production incident they had been
-    /// actively confusing.</para>
+    /// <para>The fixture owns a dedicated runner, so its session list cannot contain an operator or
+    /// delegate session. This S1 cleanup retains the existing database-backed ownership check; S2
+    /// will replace it with the owned runner's full-list kill-all path.</para>
     ///
-    /// <para><b>Ownership is proved, never inferred.</b> The set killed is exactly the
-    /// <c>AgentSessions</c> rows in THIS fixture's own Postgres testcontainer, which no other
-    /// process writes to — so every row in it was created by this fixture's tests. A tempting
-    /// alternative (diff the runner's session list against a snapshot taken at startup) would also
-    /// sweep up anything an operator or a delegate started meanwhile, and killing that is precisely
-    /// CARD-0056's disaster: the session nobody claimed turned out to be the operator's own live
-    /// conversation.</para>
+    /// <para><b>Ownership is now structural.</b> The fixture's private runner is configured with a
+    /// per-run manifest root, so it cannot share pty-host state with the production daemon.</para>
     ///
     /// <para>Note this is why shortening <c>PtyHostLingerHours</c> — CARD-0102's own suggested
     /// remedy — would not have helped: <c>HostSession</c> starts the linger clock only after the
@@ -497,11 +506,10 @@ public class AntiphonAppFixture
         }
 
         SessionLeakVerdict =
-            $"CARD-0102: this E2E fixture leaked {alive.Count} of {hosts.Count} pty-host(s) onto the "
-            + $"shared session runner. Still alive after {HostShutdownBudget.TotalSeconds:0}s: "
+            $"CARD-0102: this E2E fixture leaked {alive.Count} of {hosts.Count} pty-host(s) in its "
+            + $"isolated session-runner run directory. Still alive after {HostShutdownBudget.TotalSeconds:0}s: "
             + string.Join(", ", alive.Select(h => $"pid {h.HostPid} (session {h.SessionId})"))
-            + ". Each one holds a real detached process on the daemon every delegate dispatch also "
-            + "uses. Do not 'fix' this by widening the budget — find what started a session this "
+            + ". Do not 'fix' this by widening the budget — find what started a session this "
             + "teardown could not stop.";
         _diagnostics?.Note("[session-cleanup] " + SessionLeakVerdict);
     }
@@ -539,6 +547,7 @@ public class AntiphonAppFixture
         private readonly bool _useMockExecutor;
         private readonly string _workspacePath;
         private readonly string? _diagnosticsDirectory;
+        private readonly string _sessionRunnerBaseUrl;
 
         public IHost? KestrelHost { get; private set; }
 
@@ -548,7 +557,8 @@ public class AntiphonAppFixture
             int port,
             bool useMockExecutor,
             string workspacePath,
-            string? diagnosticsDirectory
+            string? diagnosticsDirectory,
+            string sessionRunnerBaseUrl
         )
         {
             _clientDistPath = clientDistPath;
@@ -557,6 +567,7 @@ public class AntiphonAppFixture
             _useMockExecutor = useMockExecutor;
             _workspacePath = workspacePath;
             _diagnosticsDirectory = diagnosticsDirectory;
+            _sessionRunnerBaseUrl = sessionRunnerBaseUrl;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -577,7 +588,7 @@ public class AntiphonAppFixture
                     ["Agents:DefaultDefinition"] = "e2e-raw",
                     ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
                     ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                    ["SessionRunner:BaseUrl"] = "http://localhost:17204"
+                    ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl
                 };
 
                 if (_diagnosticsDirectory is not null)
