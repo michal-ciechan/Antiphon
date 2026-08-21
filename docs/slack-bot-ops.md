@@ -75,7 +75,30 @@ After creation:
 3. Store both values only in the Bitwarden item **“Antiphon Slack Bot”**. Never commit them,
    place them in an app manifest, or paste them into an agent prompt.
 4. Invite the bot to every public or private channel it should hear. The history scopes only permit
-   messages from conversations the bot has joined; a user opens a DM by messaging the bot.
+   messages from conversations the bot has joined.
+
+### DMs need the Messages tab — the manifest above does NOT enable it
+
+**Measured live 2026-08-21 (CARD-0107).** With the manifest exactly as written above, opening the
+bot's DM in Slack shows **“Sending messages to this app has been turned off.”** and renders *no
+composer at all*. Scopes are not the problem — `im:history` and `message.im` are both present; the
+blocker is the App Home **Messages tab**, which is off by default and is not expressed anywhere in
+the manifest above.
+
+A channel is unaffected, which is why the channel round trip verified green while DMs stayed
+impossible. If you want DMs, add this block to the manifest (App Manifest editor → Save, then
+reinstall) and re-check the DM view:
+
+```yaml
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+```
+
+Until that is done, treat **channels as the only supported inbound surface** and invite the bot
+rather than telling users to DM it.
 
 The bot scopes are intentional: `chat:write` sends replies; `channels:history`, `groups:history`,
 `im:history`, and `mpim:history` receive each conversation kind; `users:read` resolves author
@@ -96,17 +119,31 @@ Slack__AppToken: "${SLACK_APP_TOKEN}"       # xapp-… with connections:write
 Slack__AllowedConversationIds__0: "C0123456789"
 ```
 
-For a source deployment, tar-sync `src/Antiphon.Messaging*` and `Messaging.Pack.props` to
-`/home/mc/antiphon-messaging/build/src` on server2, then run:
+**Deployed 2026-08-21 (CARD-0107): Slack joins the existing `family` gateway** — the same
+`am-service` container that carries the live Family and AZ Care Telegram conversations, in compose
+project `antiphon-messaging` at `/home/mc/antiphon-messaging` on server2. It was *not* given a
+separate gateway: one process now registers both adapters, sharing that instance's `am-redpanda`
+and `am-postgres`. The full, re-verified tar-sync + build + rollback procedure lives in
+[telegram-bot-ops.md](telegram-bot-ops.md#deploying-the-messaging-service-server2) — it is the same
+gateway, so there is one copy of those steps, not two.
+
+Both tokens are supplied the same way the Telegram one already was: compose interpolates
+`${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}` from the mode-600 `.env` beside `docker-compose.yml`.
+Nothing is inline in the compose file, and no token value need ever be printed to add one:
 
 ```bash
-docker compose build messaging-service && docker compose up -d messaging-service
+# check interpolation WITHOUT revealing values — lengths only (xoxb- is 56, xapp- is 98)
+ssh mc@server2 'cd /home/mc/antiphon-messaging && docker compose config' \
+  | grep -E 'Slack__|Telegram__Bot' | awk -F': ' '{gsub(/"/,"",$2); print $1": len=" length($2)}'
 ```
 
-Re-verify those paths and compose service name on server2 before executing them; they are captured
-operator knowledge, not a guarantee about a future host. At deployment time, choose whether Slack
-joins the existing family gateway (same persona and bindings) or has a separate gateway with its
-own Kafka and Postgres, as described in [messaging-standalone.md](messaging-standalone.md).
+Because the two adapters share one process, **a Slack deploy restarts the live Telegram gateway.**
+Verify Telegram in both directions afterwards, per that doc's verify step — do not stop at "it
+built".
+
+Startup should log one `[ingress] starting channel …` line per adapter, then the Socket Mode
+handshake. The authoritative registration check is `curl -s localhost:18090/api/channels`, which
+lists each adapter's capabilities — prefer it over the startup log line.
 
 ## Bind a Slack conversation to an agent
 
@@ -138,6 +175,12 @@ resolve it from the mutable channel row.
   token carrying `connections:write`, and `Slack__BotToken` is the installed app’s `xoxb-…` token.
 - Repeated `disconnect` envelopes are normal Slack connection rotation. The adapter acknowledges
   envelopes immediately and opens a fresh socket; investigate only if reconnects do not settle.
+- **Never run two adapters on the same app token at once** — e.g. a local instance left running
+  while you deploy to server2. Slack accepts multiple Socket Mode connections per app and
+  *load-balances* events across them, so roughly half the messages vanish into whichever process
+  you weren't watching. There is no error and both sockets look healthy; the only symptom is
+  intermittently missing inbound. Stop the local one before deploying (this is why the local
+  pre-deploy check in CARD-0107 was torn down before the server2 build).
 - Duplicate events indicate a delayed envelope acknowledgement or Slack redelivery. The adapter
   acknowledges before normalization and the bridge deduplicates by channel message id; check logs
   for socket stalls before changing code.

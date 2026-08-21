@@ -15,9 +15,22 @@ Postgres DB** — so you can run several side by side (e.g. an `antiphon` bot an
 Full table + a compose example: **[src/Antiphon.Messaging.Service/README.md](../src/Antiphon.Messaging.Service/README.md)**.
 Slack setup, manifest, and Socket Mode diagnostics: **[slack-bot-ops.md](slack-bot-ops.md)**.
 
-**Live:** the `school_revision` instance runs on server2 inside the school-revision compose
-(`~/docker/schoolrevision`) — service `antiphon-messaging-telegram` + its own `messaging-redpanda`
-+ DB `school_revision_messaging`, using `school_revision_bot`.
+**Live (both verified on server2, 2026-08-21):**
+
+- The `family` instance — the one Antiphon itself uses — runs in compose project
+  `antiphon-messaging` (`/home/mc/antiphon-messaging`): service `messaging-service`, container
+  **`am-service`** on host port 18090, **built from source** (`build: ./build/src`) rather than from
+  the published image, with its own `am-redpanda` (external listener `100.93.77.126:19092`),
+  `am-postgres` (db `antiphon_messaging`) and `am-console` (18080). Since CARD-0107 this single
+  instance registers **both** the Telegram and Slack adapters — one process, two channels. Ops
+  procedure: [telegram-bot-ops.md](telegram-bot-ops.md).
+- The `school_revision` instance runs on server2 inside the school-revision compose
+  (`~/docker/schoolrevision`) — service `antiphon-messaging-telegram` + its own `messaging-redpanda`
+  + DB `school_revision_messaging`, using `school_revision_bot`.
+
+The two share nothing — separate brokers, separate databases, separate images. "One instance per
+bot" is about the *bot token*, not about the channel: a single instance happily serves several
+providers at once, as `am-service` now does.
 
 ## Fake gateway (local dev / integration tests)
 

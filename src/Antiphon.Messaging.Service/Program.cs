@@ -71,7 +71,11 @@ var registeredChannels = app.Services.GetServices<IChannelAdapter>().Select(adap
 if (registeredChannels.Length == 0)
     app.Logger.LogWarning("No messaging channel adapters are registered; configure Telegram:BotToken and/or Slack:BotToken.");
 else
-    app.Logger.LogInformation("Messaging channel adapters registered: {Channels}", registeredChannels);
+    // string.Join, NOT the array: LogInformation takes `params object?[]`, and a string[] binds AS
+    // that params array — so {Channels} would render only registeredChannels[0] and silently drop
+    // the rest. Measured live 2026-08-21: a gateway running BOTH adapters logged "registered: telegram",
+    // which reads exactly like Slack failed to register (it hadn't — see docs/slack-bot-ops.md).
+    app.Logger.LogInformation("Messaging channel adapters registered: {Channels}", string.Join(", ", registeredChannels));
 
 using (var scope = app.Services.CreateScope())
 {

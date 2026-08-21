@@ -10,11 +10,33 @@ Slack uses the same gateway shape but its own app manifest and Socket Mode proce
 ## Per-bot deployment model
 
 One `Antiphon.Messaging.Service` instance per bot token (bot name = persona). The `family`
-pilot uses `@antiphon_assistant_bot` (token in Bitwarden item "Antiphon Telegram Bot"); the
-gateway instance runs on server2 alongside the existing `school_revision` one — same
-`ghcr.io/michal-ciechan/antiphon-messaging-telegram` image, same Kafka, its own
-`Telegram__BotToken` and a fail-closed `Telegram__AllowedChatIds` list (see
-[messaging-standalone.md](messaging-standalone.md) for the compose shape).
+pilot uses `@antiphon_assistant_bot` (token in Bitwarden item "Antiphon Telegram Bot").
+
+**Verified against server2 on 2026-08-21** (this paragraph previously claimed the family gateway
+shared the `school_revision` instance's image and Kafka — it does not, and
+[messaging-standalone.md](messaging-standalone.md)'s "own Kafka, own Postgres" description is the
+accurate one):
+
+| | `family` (the live Antiphon gateway) | `school_revision` |
+|---|---|---|
+| Compose project | `antiphon-messaging`, dir `/home/mc/antiphon-messaging` | `~/docker/schoolrevision` |
+| Service / container | `messaging-service` / **`am-service`** (host port 18090) | `antiphon-messaging-telegram` |
+| Image | **built from source** (`build: ./build/src`) → `antiphon-messaging-messaging-service` | `ghcr.io/michal-ciechan/antiphon-messaging-telegram` |
+| Broker | its own **`am-redpanda`** (external listener `100.93.77.126:19092`) | its own `schoolrevision-messaging-redpanda-1` |
+| Postgres | its own **`am-postgres`**, db `antiphon_messaging` | its own `schoolrevision-postgres-1` |
+
+The two share **nothing** — not the image, not the broker, not the database. The main Antiphon
+server reaches the family broker over Tailscale: the AppHost sets
+`AntiphonMessaging__BootstrapServers=server2:19092` (`Antiphon.AppHost/Program.cs`), which is why
+the local `antiphon-redpanda` container is only ever used by the offline fake-gateway path.
+
+Secrets are **not** inline in the compose file: it interpolates `${TELEGRAM_TOKEN}` (and, since
+CARD-0107, `${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}`) from a mode-600 `.env` beside it.
+
+**No `Telegram__AllowedChatIds` is configured on this instance** — the fail-closed allowlist that
+earlier revisions of this doc described is available in `TelegramSettings` but is not currently set,
+so the gateway accepts every chat the bot is in. Treat adding it as an open hardening task, not as
+something already in force.
 
 **Known limitation (accepted):** `ChatChannel` is keyed `(Provider, ExternalId)` — two bots
 joined to the SAME Telegram group would collide on one channel row and route to whichever
@@ -24,18 +46,46 @@ column.
 ## Deploying the messaging service (server2)
 
 The `family` gateway on server2 is rebuilt from this repo's messaging projects, not from a published
-image bump alone. Tar-sync `src/Antiphon.Messaging*` plus `Messaging.Pack.props` to
-`/home/mc/antiphon-messaging/build/src` on server2, then:
+image bump alone. **Re-verified end to end on 2026-08-21** (CARD-0107's Slack rollout used exactly
+these steps).
+
+`Messaging.Pack.props` lives at **`src/Messaging.Pack.props`**, not the repo root, and lands beside
+the projects because the Dockerfile's build context is `build/src` itself:
 
 ```bash
-docker compose build messaging-service && docker compose up -d messaging-service
+# from the repo root — exclude bin/obj or the image build picks up host artifacts
+cd src && tar czf /tmp/msgsrc.tgz --exclude=obj --exclude=bin --exclude='bin-*' \
+  Messaging.Pack.props Antiphon.Messaging Antiphon.Messaging.Telegram \
+  Antiphon.Messaging.Slack Antiphon.Messaging.Service
+scp /tmp/msgsrc.tgz mc@server2:/tmp/
+
+# on server2 — replace the tree rather than overlaying it, so files DELETED or RENAMED upstream
+# (e.g. TelegramIngressService.cs -> ChannelIngressService.cs) don't linger in the build context
+ssh mc@server2 'cd /home/mc/antiphon-messaging \
+  && cp docker-compose.yml docker-compose.yml.bak-$(date +%Y%m%d-%H%M%S) \
+  && mv build/src build/src.bak-$(date +%Y%m%d-%H%M%S) \
+  && mkdir -p build/src && tar xzf /tmp/msgsrc.tgz -C build/src \
+  && docker compose build messaging-service && docker compose up -d messaging-service'
 ```
+
+`build` leaves the running container untouched, so the only downtime is the `up -d` recreate
+(~10 s measured). Keep the `build/src.bak-*` and `docker-compose.yml.bak-*` copies until the new
+container is verified — they are the rollback.
 
 Kafka topics `channels.inbound` / `channels.outbound` carry `max.message.bytes=20971520`.
 
-These exact paths and steps should be re-verified against server2 at the time anyone actually runs
-them — they were captured from an operator memory note, not re-derived fresh when this section was
-written.
+**Verify the deploy, don't assume it** — `am-service` carries the live Family and AZ Care
+conversations:
+
+```bash
+ssh mc@server2 'docker logs am-service --since 5m'          # expect one "[ingress] starting channel <name>" per adapter
+ssh mc@server2 'curl -s localhost:18090/api/channels'       # authoritative list of registered adapters
+```
+
+Then prove both directions with real traffic. Send to the **`Antiphon-Family` test group
+(`-5370465377`)**, never the live `Family` group: `dotnet run scripts/tg-send.cs -- --to
+-5370465377 --text "..."` from `C:\src\ClaudeBot` should log `[outbound] sent via telegram -> <id>`,
+and a reply typed back into that group should log `[ingress] telegram -5370465377 -> channels.inbound`.
 
 ## Configure the agent (Channels + Agents pages, or API)
 
