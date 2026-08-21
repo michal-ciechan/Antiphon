@@ -39,7 +39,7 @@ internal static class ConPtyProbe
 
         if (!await WaitForFileAsync(outFile, "PROBE-READY", TimeSpan.FromSeconds(30)))
             throw new InvalidOperationException(
-                $"probe never announced readiness under {host.Backend}. pty said:\n" + host.OutputText);
+                FailureDetails(host, outFile, "probe never announced readiness"));
 
         if (chunkBytes <= 0)
         {
@@ -55,7 +55,7 @@ internal static class ConPtyProbe
         }
 
         if (!await WaitForFileAsync(outFile, "PROBE-SUMMARY ", TimeSpan.FromSeconds(30)))
-            throw new InvalidOperationException($"no PROBE-SUMMARY under {host.Backend}");
+            throw new InvalidOperationException(FailureDetails(host, outFile, "no PROBE-SUMMARY"));
 
         return NodeStdinProbe.ParseSummaryFile(outFile);
     }
@@ -75,4 +75,18 @@ internal static class ConPtyProbe
         }
         return false;
     }
+
+    private static string FailureDetails(ConPtyHost host, string outFile, string problem) =>
+        $"{problem} under {host.Backend}; pid={host.Pid}; exit={host.ExitCode?.ToString() ?? "running"}; "
+        + $"da1Queries={host.Da1QueriesSeen}; da1Answered={host.Da1AnsweredAt?.ToString("O") ?? "never"}; "
+        + $"host={ConPtyHost.Diagnostics}; probe file:\n{TailFile(outFile)}\npty said:\n{Tail(host.OutputText)}";
+
+    private static string TailFile(string path)
+    {
+        try { return File.Exists(path) ? Tail(File.ReadAllText(path)) : "<not created>"; }
+        catch (IOException) { return "<locked while reading diagnostics>"; }
+    }
+
+    private static string Tail(string text, int maxChars = 4_000) =>
+        text.Length <= maxChars ? text : text[^maxChars..];
 }
