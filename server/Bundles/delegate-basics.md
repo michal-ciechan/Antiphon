@@ -28,3 +28,9 @@ work itself: each one is here because ignoring it has already cost a real task.
   caused is yours to fix. What you must never do is quietly widen a timeout, loosen an assertion or
   add a retry to make red go green — that is how a real defect stays hidden for weeks behind the
   word "flaky".
+
+- RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~12 minutes and does not reliably fit
+  one 10-minute foreground window — chunk it by namespace (`--treenode-filter
+  "/*/Antiphon.Tests.Application/*/*"`). After a fix, re-run only what you touched. When you verify
+  that red is pre-existing, re-run the failing tests at the base commit, not the assembly —
+  confirming four known test names costs one minute targeted and twelve full.
