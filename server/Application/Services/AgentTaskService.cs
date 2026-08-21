@@ -582,6 +582,9 @@ public sealed class AgentTaskService
         }
         task.DispatchedAt = null;
         task.CompletedAt = null;
+        // This field describes the current settlement only. A retry is a fresh attempt on the
+        // same row, so it must not inherit the previous attempt's recovery provenance.
+        task.RecoveredAt = null;
         task.ConcurrencyToken = Guid.NewGuid();
         // A new attempt gets a new check schedule: the old NextCheckAt was measured from a dispatch
         // that no longer exists, and the previous attempt's checks are not this one's budget.
@@ -891,7 +894,7 @@ public sealed class AgentTaskService
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
             task.AgentName,
             task.AgentSessionId, task.Attempt,
-            task.CreatedAt, task.DispatchedAt, task.CompletedAt,
+            task.CreatedAt, task.DispatchedAt, task.CompletedAt, task.RecoveredAt,
             task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
             task.CostUsd, task.CostPricingVersion, subtreeCost, childCount,
             task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount);

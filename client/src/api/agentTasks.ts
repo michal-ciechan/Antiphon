@@ -91,6 +91,8 @@ export interface AgentTaskSummaryDto {
   createdAt: string
   dispatchedAt: string | null
   completedAt: string | null
+  /** Non-null when recovery settled an unbound session without observing completion. */
+  recoveredAt: string | null
   /** UNCACHED input only — add the two cache counters for a human "tokens in". */
   tokensIn: number
   /** Cached prefix re-read per turn, priced at ~0.1x input. Dominates an agentic session. */

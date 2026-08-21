@@ -5,6 +5,7 @@ import {
   STATUS_COLOR,
   TIER_VISUALS,
   buildTaskForest,
+  completionObserved,
   countSubtree,
   elapsedSeconds,
   formatCost,
@@ -40,6 +41,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTa
     createdAt: '2026-08-07T10:00:00Z',
     dispatchedAt: null,
     completedAt: null,
+    recoveredAt: null,
     tokensIn: 0,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
@@ -244,5 +246,10 @@ describe('formatting', () => {
     expect(isLegacyCostEstimate(task({ id: 'a', costUsd: 31.29, costPricingVersion: 0 }))).toBe(true)
     expect(isLegacyCostEstimate(task({ id: 'b', costUsd: 1.65, costPricingVersion: 2 }))).toBe(false)
     expect(isLegacyCostEstimate(task({ id: 'c', costUsd: 0, costPricingVersion: 0 }))).toBe(false)
+  })
+
+  it('knows a recovery settlement did not observe completion', () => {
+    expect(completionObserved(task({ id: 'observed', recoveredAt: null }))).toBe(true)
+    expect(completionObserved(task({ id: 'recovered', recoveredAt: '2026-08-07T10:10:00Z' }))).toBe(false)
   })
 })

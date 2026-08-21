@@ -40,6 +40,7 @@ import { TierBadge } from './TaskChip'
 import {
   STATUS_COLOR,
   WORKSPACE_LABEL,
+  completionObserved,
   elapsedSeconds,
   formatCost,
   formatDuration,
@@ -137,7 +138,21 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
       <Paper withBorder p="sm">
         <Group gap="xl" wrap="wrap">
           <Metric label="Agent" value={summary.agentName ?? '—'} />
-          <Metric label="Elapsed" value={formatDuration(elapsedSeconds(summary))} />
+          <Metric
+            label="Elapsed"
+            value={
+              completionObserved(summary) ? (
+                formatDuration(elapsedSeconds(summary))
+              ) : (
+                <Tooltip
+                  label="recovered from an unbound session - completion was not observed; the delegate may have kept working"
+                  withArrow
+                >
+                  <span>~{formatDuration(elapsedSeconds(summary))}</span>
+                </Tooltip>
+              )
+            }
+          />
           <Metric
             label={isLegacyCostEstimate(summary) ? 'Cost (legacy estimate)' : 'Cost'}
             value={formatCost(summary.costUsd)}

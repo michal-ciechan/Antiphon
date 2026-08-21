@@ -539,6 +539,7 @@ public sealed class AgentTaskReplyService
         task.Result = note;
         task.FailureReason = null;
         task.CompletedAt = now;
+        task.RecoveredAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
 
         db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Completed, note, now));

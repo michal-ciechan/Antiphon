@@ -96,6 +96,11 @@ export function elapsedSeconds(task: AgentTaskSummaryDto, now: number = Date.now
   return Math.max(0, (end - Date.parse(start)) / 1000)
 }
 
+/** A recovery settlement has a timestamp, but it did not observe the delegate finish its work. */
+export function completionObserved(task: AgentTaskSummaryDto): boolean {
+  return task.recoveredAt == null
+}
+
 export function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds))
   const minutes = Math.floor(seconds / 60)

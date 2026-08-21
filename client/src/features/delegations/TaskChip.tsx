@@ -7,6 +7,7 @@ import {
   STATUS_COLOR,
   TIER_VISUALS,
   WORKSPACE_LABEL,
+  completionObserved,
   elapsedSeconds,
   formatCost,
   formatDuration,
@@ -52,6 +53,7 @@ export function TaskChip({
   selected?: boolean
   onOpen: (id: string) => void
 }) {
+  const observed = completionObserved(task)
   const workspaceIcon =
     task.workspace === 'Worktree' ? <TbGitBranch size={12} /> : task.workspace === 'ReadOnly' ? <TbLock size={12} /> : null
 
@@ -115,9 +117,20 @@ export function TaskChip({
         <Text size="xs" c="dimmed" truncate style={{ flex: 1 }}>
           {task.agentName ?? shortId(task.id)}
         </Text>
-        <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {formatDuration(elapsedSeconds(task))}
-        </Text>
+        {observed ? (
+          <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatDuration(elapsedSeconds(task))}
+          </Text>
+        ) : (
+          <Tooltip
+            label="recovered from an unbound session - completion was not observed; the delegate may have kept working"
+            withArrow
+          >
+            <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              ~{formatDuration(elapsedSeconds(task))}
+            </Text>
+          </Tooltip>
+        )}
         <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {formatCost(task.costUsd)}
         </Text>

@@ -79,6 +79,8 @@ public sealed record AgentTaskSummaryDto(
     DateTime CreatedAt,
     DateTime? DispatchedAt,
     DateTime? CompletedAt,
+    /// <summary>Non-null when an unbound-session recovery, rather than an observed finish, settled the task.</summary>
+    DateTime? RecoveredAt,
     /// <summary>UNCACHED input only — add the two cache counters for a human "tokens in".</summary>
     long TokensIn,
     /// <summary>Cached prefix re-read per turn, priced at ~0.1x input. Dominates an agentic session.</summary>
