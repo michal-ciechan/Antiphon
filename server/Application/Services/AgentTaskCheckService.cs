@@ -32,6 +32,8 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class AgentTaskCheckService
 {
+    internal readonly record struct Supersession(bool Settled, AgentTaskStatus Status, DateTime SettledAt);
+
     /// <summary>
     /// How much of the digest the task's timeline entry keeps. Raised from 900 to 1800 with
     /// CARD-0089: dated/collapsed digest lines are longer, and <c>CardThreadService</c> shows the
@@ -123,6 +125,9 @@ public sealed class AgentTaskCheckService
 
         /// <summary>Facts were gathered but the note could not be queued (transport).</summary>
         DeliveryFailed = 4,
+
+        /// <summary>The task settled after capture; its digest was retained on the task timeline.</summary>
+        SupersededBeforeDelivery = 5,
     }
 
     public async Task<CheckOutcome> RunCheckAsync(Guid taskId, CancellationToken ct)
@@ -151,37 +156,37 @@ public sealed class AgentTaskCheckService
         // interpretation is today's note plus a prefix naming why — see Interpretation.
         var interpretation = await InterpretAsync(task, facts, digest, ct);
 
-        // Interpreter window (CARD-0074): GatherAsync ran before the wait, and a task that
-        // settled during it still owes the caller a note — marked, never suppressed. The
-        // completion note is the current answer; the digest below the banner is the snapshot.
-        var latest = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Id == task.Id)
-            .Select(t => new { t.Status, t.CompletedAt })
-            .FirstOrDefaultAsync(ct);
+        // Interpreter window (CARD-0132): retain the digest on the task, but do not type an
+        // inert check at the caller once its completion note is available.
         string? supersededBanner = null;
-        if (latest is not null && AgentTaskService.IsSettled(latest.Status))
+        var supersession = await EvaluateAsync(_db, task.Id, ct);
+        var suppress = false;
+        if (supersession is { Settled: true } settled)
         {
-            var settledAt = latest.CompletedAt ?? _timeProvider.GetUtcNow().UtcDateTime;
-            supersededBanner = SupersededBanner(latest.Status, settledAt, facts.At);
+            supersededBanner = SupersededBanner(settled.Status, settled.SettledAt, facts.At);
+            suppress = await WaitForCompletionNoteAsync(parentSession, task.RootTaskId, ct);
         }
 
         var body = BuildNote(
             task, facts, digest, interpretation.Text, interpretation.DegradedReason, supersededBanner);
 
-        try
+        if (!suppress)
         {
-            await _queue.EnqueueAsync(
-                parentSession, body, MessageSendMode.WhenIdle, ct,
-                QueuedMessageOrigin.Check, ConversationKey(task.Id));
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // A check is advisory. A caller session that is momentarily unreachable must never turn
-            // an observation into an error path — the schedule has already moved on.
-            _logger.LogWarning(
-                ex, "Check note for task {ShortId} could not be queued to session {SessionId}",
-                DelegationReportFormatter.Short(task.Id), parentSession);
-            return CheckOutcome.DeliveryFailed;
+            try
+            {
+                await _queue.EnqueueAsync(
+                    parentSession, body, MessageSendMode.WhenIdle, ct,
+                    QueuedMessageOrigin.Check, ConversationKey(task.Id));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A check is advisory. A caller session that is momentarily unreachable must never turn
+                // an observation into an error path — the schedule has already moved on.
+                _logger.LogWarning(
+                    ex, "Check note for task {ShortId} could not be queued to session {SessionId}",
+                    DelegationReportFormatter.Short(task.Id), parentSession);
+                return CheckOutcome.DeliveryFailed;
+            }
         }
 
         // The timeline keeps the DIGEST whatever the note carried — it is the evidence, and an
@@ -193,7 +198,9 @@ public sealed class AgentTaskCheckService
             Id = Guid.NewGuid(),
             AgentTaskId = task.Id,
             Type = AgentTaskEventType.Check,
-            Detail = ComposeEventDetail(interpretation.Text, interpretation.EventLine, digest),
+            Detail = ComposeEventDetail(
+                interpretation.Text, interpretation.EventLine,
+                supersededBanner is null ? digest : $"{supersededBanner}\n\n{digest}"),
             At = _timeProvider.GetUtcNow().UtcDateTime,
         });
         await _db.SaveChangesAsync(ct);
@@ -201,9 +208,44 @@ public sealed class AgentTaskCheckService
         await _eventBus.PublishToAllAsync(
             "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
         _logger.LogInformation(
-            "Check #{Number} on task {ShortId} delivered to session {SessionId}",
-            facts.Task.CheckNumber, DelegationReportFormatter.Short(task.Id), parentSession);
-        return CheckOutcome.Delivered;
+            "Check #{Number} on task {ShortId} {Outcome} for session {SessionId}",
+            facts.Task.CheckNumber, DelegationReportFormatter.Short(task.Id),
+            suppress ? "suppressed" : "delivered", parentSession);
+        return suppress ? CheckOutcome.SupersededBeforeDelivery : CheckOutcome.Delivered;
+    }
+
+    /// <summary>Returns the current settled state for every check-delivery race window.</summary>
+    internal static async Task<Supersession?> EvaluateAsync(AppDbContext db, Guid taskId, CancellationToken ct)
+    {
+        var task = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.Id == taskId)
+            .Select(t => new { t.Status, t.CompletedAt })
+            .FirstOrDefaultAsync(ct);
+        if (task is null || !AgentTaskService.IsSettled(task.Status))
+            return null;
+
+        return new Supersession(true, task.Status, task.CompletedAt ?? DateTime.UtcNow);
+    }
+
+    internal static Task<bool> HasCompletionNoteAsync(
+        AppDbContext db, Guid parentSessionId, Guid rootTaskId, CancellationToken ct) =>
+        db.SessionQueuedMessages.AsNoTracking().AnyAsync(
+            m => m.AgentSessionId == parentSessionId
+                && m.Origin == QueuedMessageOrigin.Delegation
+                && m.ConversationKey == $"task:{rootTaskId:N}"
+                && m.Status != QueuedMessageStatus.Canceled, ct);
+
+    private async Task<bool> WaitForCompletionNoteAsync(Guid parentSessionId, Guid rootTaskId, CancellationToken ct)
+    {
+        var deadline = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(Math.Max(0, _settings.CompletionNoteGraceSeconds));
+        do
+        {
+            if (await HasCompletionNoteAsync(_db, parentSessionId, rootTaskId, ct))
+                return true;
+            if (_timeProvider.GetUtcNow() >= deadline)
+                return false;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), _timeProvider, ct);
+        } while (true);
     }
 
     /// <summary>One conversation per task, so a check never coalesces with anything else.</summary>
