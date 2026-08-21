@@ -192,7 +192,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         {
             LastSendLineOutcome = await EchoGatedLineSender.SendAsync(
                 line,
-                _ => Task.FromResult(SnapshotScreen()),
+                _ => Task.FromResult(SnapshotText()),
                 WriteCoreAsync,
                 EchoGatedLineSender.DefaultOptions,
                 ct);
