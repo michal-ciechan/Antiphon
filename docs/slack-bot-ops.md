@@ -8,16 +8,25 @@ Telegram procedure.
 
 ## Create the internal Slack app
 
-In <https://api.slack.com/apps>, choose **Create New App → From an app manifest**, select the
-target workspace, and paste this manifest. It deliberately subscribes only to `message.*`: adding
-`app_mention` would double-deliver mentions, because a channel mention is already a
-`message.channels` event.
+**"Create New App → From an app manifest" is broken — do not use it.** Verified live 2026-08-21:
+clicking Create on that wizard's review step sends no request to Slack's API at all (confirmed via
+`Network.enable` — zero requests fired for any Slack endpoint around the click), and silently
+returns to the empty "Your Apps" screen with nothing created. There is no error shown; it just does
+nothing.
+
+**The working path**: **Create New App → Blank app** (name it, pick the target workspace, Create —
+this one genuinely calls `apps.manifest.create` and works), then open the newly-created app's own
+**App Manifest** page (left sidebar) and paste the manifest below there instead. That editor runs
+real client-side lint and shows actual errors, rather than the wizard's silent no-op.
+
+It deliberately subscribes only to `message.*`: adding `app_mention` would double-deliver mentions,
+because a channel mention is already a `message.channels` event.
 
 ```yaml
 display_information:
   name: Antiphon
   description: Antiphon channel-backed agents
-  background_color: "2c2d30"
+  background_color: "#2c2d30"
 features:
   bot_user:
     display_name: Antiphon
@@ -48,6 +57,15 @@ settings:
       - message.mpim
   org_deploy_enabled: false
 ```
+
+`background_color` needs the `#` prefix — Slack's manifest validator rejects a bare hex triplet
+with "The app card color has an invalid format" (this doc had it wrong until 2026-08-21; caught by
+the App Manifest editor's own lint when the wizard-based creation above was replaced).
+
+If automating this creation flow again (browser-harness or similar), read
+`C:\src\claudebot\sites\api.slack.com.md` first — it has the exact working click sequence, the
+cookie-consent-banner and viewport-size traps, and the `aria-disabled`/synthetic-vs-trusted-click
+gotcha that made the broken wizard look like an input problem rather than Slack's own bug.
 
 After creation:
 
