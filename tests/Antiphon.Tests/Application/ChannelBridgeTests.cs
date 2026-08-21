@@ -263,6 +263,40 @@ public class ChannelBridgeTests
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
     }
 
+    // CARD-0119: a Slack DM's `D…` conversation id is stable for the life of the (user, bot-user)
+    // pair, and UpsertFromInboundAsync looks the row up by (Provider, ExternalId) — so a second,
+    // DISTINCT message must reuse the row, not fragment the DM's history across two of them.
+    [Test]
+    public async Task A_second_distinct_message_on_the_same_conversation_reuses_the_row()
+    {
+        await using var h = await HarnessAsync();
+        // Unique per run: this DM id shares the database with every other test running right now.
+        var dmId = $"D{Guid.NewGuid():N}"[..11].ToUpperInvariant();
+        // TelegramText mints a fresh ChannelMessageId per call, so the two messages are distinct
+        // and the Kafka redelivery-dedup path is NOT what makes this pass.
+        ChannelMessage Dm(string text) => TelegramText(dmId, text) with
+        {
+            Channel = "slack",
+            Conversation = new Conversation { Id = dmId, Kind = ConversationKind.Direct, Title = "Mike" },
+        };
+
+        await h.Bridge.HandleInboundAsync(Dm("first message"), CancellationToken.None);
+        var first = (await h.Channels().GetAllAsync(CancellationToken.None))
+            .Where(c => c.Provider == "slack" && c.ExternalId == dmId).ShouldHaveSingleItem();
+
+        await h.Bridge.HandleInboundAsync(Dm("second message"), CancellationToken.None);
+
+        var second = (await h.Channels().GetAllAsync(CancellationToken.None))
+            .Where(c => c.Provider == "slack" && c.ExternalId == dmId).ShouldHaveSingleItem();
+        second.Id.ShouldBe(first.Id, "one DM is one channel row");
+        second.CreatedAt.ShouldBe(first.CreatedAt, "the row must be reused, not recreated");
+        second.MessageCount.ShouldBe(2);
+        second.Kind.ShouldBe(ChatChannelKind.Direct);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await db.ChatChannels.Where(c => c.ExternalId == dmId).ExecuteDeleteAsync();
+    }
+
     [Test]
     public async Task Own_bot_messages_are_ignored()
     {

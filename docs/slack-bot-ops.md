@@ -28,6 +28,10 @@ display_information:
   description: Antiphon channel-backed agents
   background_color: "#2c2d30"
 features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Antiphon
     always_online: false
@@ -77,28 +81,39 @@ After creation:
 4. Invite the bot to every public or private channel it should hear. The history scopes only permit
    messages from conversations the bot has joined.
 
-### DMs need the Messages tab — the manifest above does NOT enable it
+### DMs: the `app_home` block above is what enables them — and Save alone is enough
 
-**Measured live 2026-08-21 (CARD-0107).** With the manifest exactly as written above, opening the
-bot's DM in Slack shows **“Sending messages to this app has been turned off.”** and renders *no
-composer at all*. Scopes are not the problem — `im:history` and `message.im` are both present; the
-blocker is the App Home **Messages tab**, which is off by default and is not expressed anywhere in
-the manifest above.
+**Measured live 2026-08-21 (CARD-0107 found it, CARD-0119 fixed it).** Without
+`features.app_home`, opening the bot's DM in Slack shows **"Sending messages to this app has been
+turned off."** and renders *no composer at all*. Scopes are not the problem — `im:history` and
+`message.im` are both present. The blocker is the App Home **Messages tab**, and specifically the
+**`messages_tab_read_only_enabled: false`** line: a read-only Messages tab still renders no
+composer. That is why channels round-tripped green while DMs stayed impossible — the two surfaces
+fail independently.
 
-A channel is unaffected, which is why the channel round trip verified green while DMs stayed
-impossible. If you want DMs, add this block to the manifest (App Manifest editor → Save, then
-reinstall) and re-check the DM view:
+Three facts worth having before you touch this again, all measured on app `A0BRR9DS9QV`:
 
-```yaml
-features:
-  app_home:
-    home_tab_enabled: false
-    messages_tab_enabled: true
-    messages_tab_read_only_enabled: false
-```
+- **No reinstall is required. Saving the manifest is the whole fix.** CARD-0119 pasted the
+  `app_home` block into the **App Manifest** editor, clicked Save Changes ("Your changes have been
+  successfully saved."), reloaded the Slack client, and the DM composer was there. No
+  `oauth.v2.access`, no bot-token rotation, no `.env` edit, and **nothing on server2 touched** —
+  which matters, because the Slack adapter shares one `am-service` process with the live Telegram
+  gateway, so an unnecessary reinstall would have risked the Family and AZ Care conversations for
+  nothing. `features.app_home` is not an OAuth scope change; treat reinstall as a fallback that was
+  not needed, not as a step.
+- **A missing `app_home` block in the manifest is NOT evidence the tab is off.** Slack omits the
+  block entirely when it has never been set, while the underlying toggles still have values. Read
+  the real state on **App Home** instead — the checkboxes are `#message_tab_toggle` and
+  `#message_tab_read_only_toggle`. On this app `message_tab_toggle` was **already on**; the one
+  that was off was `message_tab_read_only_toggle`, whose visible label is the *inverse* of its id:
+  "Allow users to send Slash commands and messages from the messages tab". Unticked = read-only =
+  no composer.
+- **The dashboard path is equivalent** — App Home → Show Tabs → Messages Tab, plus that "Allow
+  users to send…" tick. Saving the manifest flips the same two checkboxes; either is fine.
 
-Until that is done, treat **channels as the only supported inbound surface** and invite the bot
-rather than telling users to DM it.
+A DM's Antiphon channel row has a **null `Title`** (`conversations.info` returns no `name` for an
+IM), so the Channels UI shows the raw `D…` id. Identify a DM row by its `externalId` prefix, never
+by title. Its `kind` is `Direct`.
 
 The bot scopes are intentional: `chat:write` sends replies; `channels:history`, `groups:history`,
 `im:history`, and `mpim:history` receive each conversation kind; `users:read` resolves author
@@ -157,6 +172,20 @@ lists each adapter's capabilities — prefer it over the startup log line.
 
 Bind the channel before enabling an always-on agent so unbound inbound traffic cannot be mistaken
 for a routing failure.
+
+A DM is **one continuous history**, and it is worth knowing why rather than re-testing it each time.
+`ChatChannelService.UpsertFromInboundAsync` looks a row up by `(Provider, ExternalId)` and inserts
+only on a miss, and that pair carries a **unique index**, so a duplicate row is a database error
+rather than silent fragmentation. Slack keeps a `D...` IM id for the life of the (user, bot-user)
+relationship, and a reinstall preserves the bot user, so the id survives both. Measured end to end
+on 2026-08-21 (CARD-0119): three DMs across eight minutes, with the conversation **closed and
+reopened** in the Slack client in between, produced exactly one row (`D0BRT8UJCPQ`, kind `Direct`)
+whose `Id` and `CreatedAt` never moved while `MessageCount` climbed 1 -> 2 -> 3, and the two routed
+DMs landed in **one** transcript under a single `AgentSessionId` - the agent correctly recalled the
+earlier DM when asked. Pinned by
+`ChannelBridgeTests.A_second_distinct_message_on_the_same_conversation_reuses_the_row`. The one
+thing that legitimately starts a new transcript is the **agent's session** restarting; the channel
+row is untouched by that, so check `persistentSessionId` before calling it fragmentation.
 
 ## Threading limitation
 
