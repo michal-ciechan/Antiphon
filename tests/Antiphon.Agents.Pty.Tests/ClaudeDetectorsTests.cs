@@ -50,8 +50,9 @@ public class ClaudeDetectorsTests
             QuietPeriod = TimeSpan.FromMilliseconds(800),
             MaxWait = TimeSpan.FromSeconds(8)
         };
+        await using var timeline = OutputGapTimeline.Start(runner);
         var done = await detector.WaitAsync(runner);
-        done.ShouldBeTrue();
+        done.ShouldBeTrue(await timeline.StopAndDescribeAsync(detector.QuietPeriod));
 
         await runner.Exited.WaitAsync(TimeSpan.FromSeconds(15));
     }
@@ -69,8 +70,9 @@ public class ClaudeDetectorsTests
             QuietPeriod = TimeSpan.FromSeconds(2),
             MaxWait = TimeSpan.FromSeconds(3)
         };
+        await using var timeline = OutputGapTimeline.Start(runner);
         var done = await detector.WaitAsync(runner);
-        done.ShouldBeFalse();
+        done.ShouldBeFalse(await timeline.StopAndDescribeAsync(detector.QuietPeriod));
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }

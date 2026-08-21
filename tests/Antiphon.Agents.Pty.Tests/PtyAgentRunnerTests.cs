@@ -522,10 +522,12 @@ public partial class PtyAgentRunnerTests
         using var bat = new TempBatch("@echo off\r\n:loop\r\necho noisy-%random%\r\nping -n 1 127.0.0.1 > nul\r\ngoto loop\r\n");
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
+        await using var timeline = OutputGapTimeline.Start(runner);
+        var quietPeriod = TimeSpan.FromSeconds(2);
         var quiet = await runner.WaitForQuietAsync(
-            quietPeriod: TimeSpan.FromSeconds(2),
+            quietPeriod: quietPeriod,
             maxWait: TimeSpan.FromSeconds(3));
-        quiet.ShouldBeFalse();
+        quiet.ShouldBeFalse(await timeline.StopAndDescribeAsync(quietPeriod));
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 

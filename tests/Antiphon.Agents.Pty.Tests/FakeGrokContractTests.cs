@@ -33,17 +33,49 @@ public class FakeGrokContractTests
         IDictionary<string, string>? env = null,
         string[]? args = null)
     {
+        var launch = Stopwatch.StartNew();
         var runner = new PtyAgentRunner("inbox");
-        await runner.StartAsync(FakeGrokExe, args ?? [], cols: 120, rows: 30, env: env);
+        var fakeEnv = env is null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string>(env);
+        // CARD-0128 S1: leave the fake's own input-burst trace in the captured test log.
+        fakeEnv["ANTIPHON_FAKE_DEBUG_INPUT"] = "1";
+        await runner.StartAsync(FakeGrokExe, args ?? [], cols: 120, rows: 30, env: fakeEnv);
         runner.Backend!.Backend.ShouldBe(PtyBackend.InboxConhost);
         // CARD-0050 S3: runaway bound — success returns on the banner. Same spawn-latency
         // class as fakeclaude's 15s miss under the concurrent double-suite load.
         var ready = await runner.WaitForOutputAsync(
             s => s.Contains("Fake Grok ready"),
             TimeSpan.FromSeconds(45));
-        ready.ShouldBeTrue("fake Grok should print its readiness banner: " + runner.SnapshotText());
+        launch.Stop();
+        ready.ShouldBeTrue(
+            $"fake Grok should print its readiness banner; spawn-to-banner={launch.Elapsed.TotalMilliseconds:F0}ms; "
+            + "screen: " + runner.SnapshotScreen() + "; raw: " + runner.SnapshotText());
         runner.ClearLiveBuffer();
         return runner;
+    }
+
+    private static async Task AssertOutputAsync(
+        PtyAgentRunner runner,
+        string assertion,
+        string because,
+        Func<string, bool> predicate)
+    {
+        var wait = Stopwatch.StartNew();
+        var matched = await runner.WaitForOutputAsync(predicate, TimeSpan.FromSeconds(5));
+        wait.Stop();
+        matched.ShouldBeTrue(
+            $"{assertion} ({because}); elapsed={wait.Elapsed.TotalMilliseconds:F0}ms; "
+            + $"screen dump:{Environment.NewLine}{runner.SnapshotScreen()}{Environment.NewLine}"
+            + $"raw output:{Environment.NewLine}{runner.SnapshotText()}");
+    }
+
+    private static void AssertScreenDoesNotContain(PtyAgentRunner runner, string value, string assertion)
+    {
+        runner.SnapshotText().ShouldNotContain(
+            value,
+            customMessage: $"{assertion}; screen dump:{Environment.NewLine}{runner.SnapshotScreen()}{Environment.NewLine}"
+            + $"raw output:{Environment.NewLine}{runner.SnapshotText()}");
     }
 
     [Test]
@@ -110,20 +142,26 @@ public class FakeGrokContractTests
         await Task.Delay(25);
         await runner.WriteAsync("\r");
 
-        var submitted = await runner.WaitForOutputAsync(
-            s => s.Contains("SUBMITTED:queued message"), TimeSpan.FromSeconds(5));
-        submitted.ShouldBeTrue("body followed by a separate CR must submit");
+        await AssertOutputAsync(
+            runner,
+            assertion: "submit marker",
+            because: "body followed by a separate CR must submit",
+            predicate: s => s.Contains("SUBMITTED:queued message"));
 
         // The measured turn-end signals (grok 1.0.5): "Worked for 1.7s" — DECIMAL seconds, which
         // the " for \d+s" integer regex does not match — and an idle OSC title of plain "grok",
         // never Claude's ✳.
-        (await runner.WaitForOutputAsync(
-            s => s.Contains("Worked for 1.7s"), TimeSpan.FromSeconds(5)))
-            .ShouldBeTrue("turn end prints the measured decimal-seconds line");
-        (await runner.WaitForOutputAsync(
-            s => s.Contains("\x1b]0;grok\x07"), TimeSpan.FromSeconds(5)))
-            .ShouldBeTrue("the idle OSC title is plain 'grok'");
-        runner.SnapshotText().ShouldNotContain("✳");
+        await AssertOutputAsync(
+            runner,
+            assertion: "turn-end marker",
+            because: "turn end prints the measured decimal-seconds line",
+            predicate: s => s.Contains("Worked for 1.7s"));
+        await AssertOutputAsync(
+            runner,
+            assertion: "idle OSC title",
+            because: "the idle OSC title is plain 'grok'",
+            predicate: s => s.Contains("\x1b]0;grok\x07"));
+        AssertScreenDoesNotContain(runner, "✳", "idle screen must not contain Claude's busy glyph");
 
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }

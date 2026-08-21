@@ -142,39 +142,38 @@ from "contingent shapes" to concrete slices. Members seen *only* in C may be rec
 (CARD-0050 S5 explicitly left concurrent-only rotation unfixed; the bar for this card is the solo
 configuration, because that is what CI would run).
 
-## S2+ — fix slices, contingent on S1 (shapes listed, decisions deferred)
+## S2+ — concrete product-first slices selected by S1
 
-The fix cannot be sliced concretely before S1 lands — that is the point of the slicing. What can be
-committed to now is the *decision table*: which S1 outcome selects which fix shape. S2 must not
-begin until S1's findings doc is committed.
+S1 is committed in `docs/investigations/2026-08-21-card-0128-pty-flake-measurements.md`. It found
+three bucket-(b) members in configuration A, each reproducing in isolation. These are product
+repairs, not timeout work; their existing tests remain unmodified regression pins.
 
-**If the done-detector failures are bucket (a)** (timeline shows a genuine ≥2s child gap):
-restructure the continuous-output source so contention cannot silence it — candidates, to be chosen
-against the measured gap profile:
-  1. a generator with no per-iteration process spawn (the `ping`-per-line batch is the suspect;
-     a single long-lived child emitting on an internal timer removes the spawn from the loop);
-  2. split the test: keep ONE real-ConPTY smoke of "continuous output ⇒ not done" with a generator
-     from (1), and pin the *policy* (quiet-window arithmetic) against a synthetic/injectable output
-     source with controlled time — this is CARD-0124 S4's stated precondition shape ("asserting on
-     a live quiet-period race is exactly the shape that should be tested against a controlled
-     clock") and CARD-0110's fake/real boundary principle applied to detectors. Note
-     `WaitForQuietAfterVisibleAsync` currently reads `DateTime.UtcNow` and `_liveBuffer` directly;
-     a controlled-clock test implies a seam (injectable time source or a buffer-feed test double).
-     That seam is a small product change and gets its own slice if chosen.
-  Blind widening of `QuietPeriod`/`MaxWait` in these tests is bucket (d) by construction — a longer
-  window under the same starved generator produces the same false quiet, later. The card's
-  prohibition and CARD-0050's rule coincide here.
+### S2a — make `PtyAgentRunner.SendLineAsync` submit CRLF bodies deterministically
 
-**If any member is bucket (b)** (buffer grew, detector said quiet; or FakeGrok dropped a submitted
-body): the product fix leads its own slice, the flaking test becomes the regression pin unmodified,
-and this plan's scope grows by exactly that defect — flag it back to the orchestrator rather than
-absorbing unbounded scope silently.
+Trace the body/CR writes through the ConPTY/fakeclaude boundary and replace the fixed 20ms
+body→CR assumption only with positive composer-delivery evidence. Preserve the production
+two-write contract and prove the CRLF test green in repeated isolation and solo-suite runs. Do not
+widen its 5s observation window.
 
-**If FakeGrok members are bucket (c)** (spawn/banner latency eating the 5s waits): widen the
-runaway bounds with the measured latency cited (the 45s ready bound already followed this path in
-CARD-0050 S3), and/or move `Body_then_separate_CR_submits` onto `EchoGatedSubmit` for symmetry with
-its FakeClaude twin **only if** S1 shows the body echo actually gates anything on Grok's
-merge-tolerant contract — otherwise it is cargo cult and the plan says so.
+### S2b — preserve FakeGrok's idle OSC output through the PTY capture path
+
+Trace the write of `IdleTitle` to the runner's raw buffer/screen and repair the loss or ordering
+fault that leaves `SUBMITTED` and `Worked for 1.7s` present but drops the OSC title. Keep all four
+named assertions and the S1 screen/raw dump on failure. No echo-gated-submit change is authorised:
+S1 proved the submit itself succeeds in the failing shape.
+
+### S2c — repair the modern ConPTY no-summary failure
+
+Instrument `ConPtyProbe.RunAsync` sufficiently to identify whether OpenConsole fails to start,
+the child does not write, or capture loses `PROBE-SUMMARY`; repair that product path and retain
+`A_modern_conpty_delivers_the_markers_unchanged` unchanged as the regression pin. No probe timeout
+widening is authorised.
+
+### S2d — defer load-only and concurrent-only rotation
+
+After S2a–c are green, re-run the B and C members recorded by S1. Any window widening requires
+fresh per-member latency proof that it is a runaway bound; the C-only members remain data, not the
+CI acceptance bar.
 
 **S-final — the re-verification bar (fixed now, so it cannot be negotiated down later):**
 - **5 consecutive green solo runs** (configuration A) on the machine as-is — the CI-candidate bar.

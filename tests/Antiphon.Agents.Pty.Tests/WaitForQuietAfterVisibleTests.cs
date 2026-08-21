@@ -43,11 +43,15 @@ public class WaitForQuietAfterVisibleTests
         using var bat = new TempBatch("@echo off\r\nping -n 3 127.0.0.1 > nul\r\nexit /b 0\r\n");
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
+        var quietPeriod = TimeSpan.FromMilliseconds(500);
+        await using var timeline = OutputGapTimeline.Start(runner);
         var afterVisible = await runner.WaitForQuietAfterVisibleAsync(
-            TimeSpan.FromMilliseconds(500),
+            quietPeriod,
             TimeSpan.FromSeconds(1));
 
-        afterVisible.ShouldBeFalse("helper requires visible output; a silent ping is not life");
+        afterVisible.ShouldBeFalse(
+            "helper requires visible output; a silent ping is not life; "
+            + await timeline.StopAndDescribeAsync(quietPeriod));
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
@@ -61,12 +65,14 @@ public class WaitForQuietAfterVisibleTests
         await runner.StartAsync(Cmd, new[] { "/d", "/c", bat.Path });
 
         var sw = Stopwatch.StartNew();
+        var quietPeriod = TimeSpan.FromMilliseconds(600);
+        await using var timeline = OutputGapTimeline.Start(runner);
         var afterVisible = await runner.WaitForQuietAfterVisibleAsync(
-            TimeSpan.FromMilliseconds(600),
+            quietPeriod,
             TimeSpan.FromSeconds(15));
         sw.Stop();
 
-        afterVisible.ShouldBeTrue();
+        afterVisible.ShouldBeTrue(await timeline.StopAndDescribeAsync(quietPeriod));
         runner.SnapshotText().ShouldContain("SLOW_START_BODY");
         sw.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(2),
             "must not fire during the ~4s silent ping window");

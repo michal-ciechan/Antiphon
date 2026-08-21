@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner.Contracts;
@@ -54,6 +55,7 @@ public class FakeClaudeContractTests
     private static async Task<PtyAgentRunner> LaunchReadyFakeAsync(
         IDictionary<string, string>? env = null, string? alsoAwaitBanner = null)
     {
+        var launch = Stopwatch.StartNew();
         var runner = new PtyAgentRunner("inbox");
         await runner.StartAsync(FakeClaudeExe, Array.Empty<string>(), cols: 120, rows: 30, env: env);
         ShouldBeInbox(runner);
@@ -62,9 +64,11 @@ public class FakeClaudeContractTests
         var ready = await runner.WaitForOutputAsync(
             s => s.Contains("Fake Claude ready") && (alsoAwaitBanner is null || s.Contains(alsoAwaitBanner)),
             TimeSpan.FromSeconds(45));
+        launch.Stop();
         ready.ShouldBeTrue(
             "fake Claude should print its readiness banner"
-            + (alsoAwaitBanner is null ? "" : $" and announce {alsoAwaitBanner}: " + runner.SnapshotText()));
+            + (alsoAwaitBanner is null ? "" : $" and announce {alsoAwaitBanner}")
+            + $"; spawn-to-banner={launch.Elapsed.TotalMilliseconds:F0}ms; raw: " + runner.SnapshotText());
         runner.ClearLiveBuffer();
         return runner;
     }
