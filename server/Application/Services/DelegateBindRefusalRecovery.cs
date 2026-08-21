@@ -48,10 +48,10 @@ public sealed class DelegateBindRefusalRecovery
     /// also not evidence that it did, so the caller still Fails.
     /// </summary>
     public async Task<DelegateBindRefusalEvidence?> TryFindAsync(
-        AgentTask task, AgentSession? session, CancellationToken ct)
+        AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds, CancellationToken ct)
     {
         var commits = await TryGitAsync(task, ct);
-        var jsonl = TryScanJsonl(task, session);
+        var jsonl = TryScanJsonl(task, session, knownSessionIds);
 
         if (commits.Count == 0 && jsonl is null)
             return null;
@@ -99,8 +99,13 @@ public sealed class DelegateBindRefusalRecovery
             .Where(s => s.Length > 0)];
     }
 
-    private string? TryScanJsonl(AgentTask task, AgentSession? session)
+    private string? TryScanJsonl(AgentTask task, AgentSession? session, IReadOnlySet<Guid> knownSessionIds)
     {
+        // This root contains Claude Code transcripts only. A hit for any other tool is therefore
+        // wrong-tool evidence, while the tool-agnostic git arm above remains available to all.
+        if (task.AgentKind != AgentKind.ClaudeCode)
+            return null;
+
         // C3 cannot be evaluated without a start time; recovering from a file we cannot date is
         // how the 2026-08-09 operator-collision would come back.
         if (session?.StartedAt is not { } startedAt)
@@ -110,7 +115,7 @@ public sealed class DelegateBindRefusalRecovery
         if (string.IsNullOrWhiteSpace(cwd))
             return null;
 
-        var needles = DistinctiveNeedles(task);
+        var needles = JsonlNeedles(task);
         if (needles.Count == 0)
             return null;
 
@@ -121,6 +126,11 @@ public sealed class DelegateBindRefusalRecovery
         {
             try
             {
+                // Claude launches its sessions with AgentSessionId as the transcript filename.
+                // A known session other than this task's is categorically somebody else's work.
+                if (IsAnotherSessionTranscript(file, task.AgentSessionId, knownSessionIds))
+                    continue;
+
                 if (TryMatchJsonl(file, cwd, startedAt, needles))
                     return file;
             }
@@ -154,8 +164,8 @@ public sealed class DelegateBindRefusalRecovery
     }
 
     /// <summary>
-    /// C2 then C3 then a distinctive-needle search of every record (assistant included). A C3
-    /// refusal stops the read — using that file would undermine CARD-0006.
+    /// C2 then C3 then a distinctive-needle search of user records. A C3 refusal stops the read
+    /// — using that file would undermine CARD-0006.
     /// </summary>
     private static bool TryMatchJsonl(
         string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles)
@@ -173,11 +183,16 @@ public sealed class DelegateBindRefusalRecovery
             try { doc = JsonDocument.Parse(line); }
             catch (JsonException) { continue; }
 
+            var isUserRecord = false;
             using (doc)
             {
                 var root = doc.RootElement;
                 if (root.ValueKind != JsonValueKind.Object)
                     continue;
+
+                isUserRecord = root.TryGetProperty("type", out var typeEl)
+                    && typeEl.ValueKind == JsonValueKind.String
+                    && string.Equals(typeEl.GetString(), "user", StringComparison.Ordinal);
 
                 if (cwd is null
                     && root.TryGetProperty("cwd", out var cwdEl)
@@ -204,7 +219,7 @@ public sealed class DelegateBindRefusalRecovery
             }
 
             // C2 must have matched (or we have not seen a cwd yet — keep scanning the lead).
-            if (cwd is not null && needles.Any(n => n.IsMatch(line)))
+            if (cwd is not null && isUserRecord && needles.Any(n => n.IsMatch(line)))
                 return true;
         }
 
@@ -228,6 +243,18 @@ public sealed class DelegateBindRefusalRecovery
 
         return list;
     }
+
+    private static IReadOnlyList<Needle> JsonlNeedles(AgentTask task) =>
+    [
+        Needle.Bounded(DelegationReportFormatter.Short(task.Id)),
+        Needle.Literal(DelegationReportFormatter.TaskMarker(task.Id)),
+    ];
+
+    private static bool IsAnotherSessionTranscript(
+        string path, Guid? ownSessionId, IReadOnlySet<Guid> knownSessionIds) =>
+        Guid.TryParse(Path.GetFileNameWithoutExtension(path), out var candidateSessionId)
+        && candidateSessionId != ownSessionId
+        && knownSessionIds.Contains(candidateSessionId);
 
     /// <summary>Claude's per-cwd project folder: every non-alphanumeric character becomes '-'.</summary>
     internal static string EncodeClaudeProjectDir(string cwd)
