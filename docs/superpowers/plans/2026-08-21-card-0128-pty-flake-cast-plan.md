@@ -155,6 +155,12 @@ body→CR assumption only with positive composer-delivery evidence. Preserve the
 two-write contract and prove the CRLF test green in repeated isolation and solo-suite runs. Do not
 widen its 5s observation window.
 
+**Designed:** `2026-08-22-card-0128-s2a-sendline-evidence-gate-plan.md` — mechanism traced (the
+writer's 20ms clock vs ConPTY's ~14ms delivery jitter vs the receiver's 12ms burst window; the
+CARD-0050 S3 `EchoGatedSubmit` analysis, never applied to the production primitive), fix shape
+(delegate-based gate helper, tail-or-placeholder evidence, 20ms settle after evidence, bounded
+fallback, single CR, no retry), and the deterministic deaf-start mechanism pin.
+
 ### S2b — preserve FakeGrok's idle OSC output through the PTY capture path
 
 Trace the write of `IdleTitle` to the runner's raw buffer/screen and repair the loss or ordering
