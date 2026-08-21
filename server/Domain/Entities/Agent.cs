@@ -111,6 +111,14 @@ public class Agent
     public DateTime? PoolIdleSince { get; set; }
 
     /// <summary>
+    /// The project scope under which this pool delegate's LIVE environment was resolved. Null
+    /// means global-only. It is stamped when a pool session launches (and restamped only when that
+    /// row is relaunched), then fences warm reuse: a live process cannot safely change environment
+    /// scope between tasks. Meaningless for agents that are not pool delegates (CARD-0115 S3).
+    /// </summary>
+    public Guid? PoolProjectId { get; set; }
+
+    /// <summary>
     /// For a reservation window after each task, the warm delegate answers only to the run that
     /// just used it — follow-ups keep their context. The window expiring releases it to anyone;
     /// that is a pure time comparison, so release needs no state change.
