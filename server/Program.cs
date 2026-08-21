@@ -397,6 +397,7 @@ try
     builder.Services.AddSingleton<AgentTuiOperationCoordinator>();
     builder.Services.AddScoped<AgentTuiProfileService>();
     builder.Services.AddScoped<AgentTuiProfileImporter>();
+    builder.Services.AddScoped<AgentTuiSecretMigrator>();
     builder.Services.AddScoped<AgentTuiLaunchResolver>();
     // CARD-0106: API key store CRUD. The protector itself is registered by
     // AgentTuiDataProtectionSetup.Configure, alongside the key ring both stores share.
@@ -518,6 +519,9 @@ try
         {
             try
             {
+                await scope.ServiceProvider
+                    .GetRequiredService<AgentTuiSecretMigrator>()
+                    .MigrateAsync(CancellationToken.None);
                 profileImport = await scope.ServiceProvider
                     .GetRequiredService<AgentTuiProfileImporter>()
                     .ImportAsync(CancellationToken.None);

@@ -126,6 +126,22 @@ public sealed class ApiKeyApiTests
         (await response.Content.ReadAsStringAsync()).ShouldNotContain(new string('x', 100));
     }
 
+    [Test]
+    public async Task a_query_string_value_is_explicitly_rejected_and_never_written()
+    {
+        using var client = _factory.CreateClient();
+        var name = NewName();
+        var canary = "sk-canary-query-0114";
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/api-keys/{name}?value={canary}", new { value = "body-value" });
+
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldNotContain(canary);
+        (await (await client.GetAsync("/api/api-keys")).Content.ReadAsStringAsync()).ShouldNotContain(name);
+    }
+
     private static string NewName() => $"http-{Guid.NewGuid():N}";
 
     private async Task<Guid> AddProjectAsync()
