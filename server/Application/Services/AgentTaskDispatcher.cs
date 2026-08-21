@@ -1121,10 +1121,8 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// Queue window (CARD-0074): a still-Pending check note whose task settled after enqueue
-    /// gets a SUPERSEDED banner prepended in place. Status is unchanged — mark, never suppress.
-    /// The amend goes through <see cref="SessionMessageQueueService.AmendPendingBodyAsync"/> so
-    /// it serialises with flush on the same per-session lock <c>CancelAsync</c> uses.
+    /// Queue window (CARD-0132): a still-Pending check note whose task settled after enqueue is
+    /// canceled before delivery once the completion note exists. Its digest is retained as an event.
     ///
     /// <para>Only <c>DeliveryAttempts == 0</c> rows are touched. A note that has been typed once
     /// carries a baseline sequence; amending it would make late-confirm hunt for banner text
@@ -1141,8 +1139,7 @@ public sealed class AgentTaskDispatcher
         if (pending.Count == 0)
             return 0;
 
-        var ceiling = _ptyProfile?.Ceilings.ReplyInlineMaxChars ?? _settings.ReplyInlineMaxChars;
-        var amended = 0;
+        var canceled = 0;
 
         foreach (var note in pending)
         {
@@ -1150,27 +1147,39 @@ public sealed class AgentTaskDispatcher
 
             if (!AgentTaskCheckService.TryParseCheckConversationKey(note.ConversationKey, out var taskId))
                 continue;
-            if (note.Body.StartsWith(AgentTaskCheckService.SupersededMarker, StringComparison.Ordinal))
+            var supersession = await AgentTaskCheckService.EvaluateAsync(_db, taskId, ct);
+            if (supersession is not { Settled: true } settled)
+                continue;
+            if (settled.SettledAt <= note.CreatedAt)
                 continue;
 
-            var task = await _db.AgentTasks.AsNoTracking()
-                .Where(t => t.Id == taskId)
-                .Select(t => new { t.Status, t.CompletedAt })
-                .FirstOrDefaultAsync(ct);
-            if (task is null || !AgentTaskService.IsSettled(task.Status))
-                continue;
-            if (task.CompletedAt is not { } settledAt || settledAt <= note.CreatedAt)
+            var task = await _db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId)
+                .Select(t => new { t.ParentSessionId, t.RootTaskId }).FirstOrDefaultAsync(ct);
+            if (task?.ParentSessionId is not Guid parentSession
+                || !await AgentTaskCheckService.HasCompletionNoteAsync(_db, parentSession, task.RootTaskId, ct))
                 continue;
 
             var capturedAt = AgentTaskCheckService.TryReadCapturedAt(note.Body, out var parsed)
                 ? parsed
                 : note.CreatedAt;
-            var banner = AgentTaskCheckService.SupersededBanner(task.Status, settledAt, capturedAt);
-            if (await _queue.AmendPendingBodyAsync(note.AgentSessionId, note.Id, banner, ceiling, ct))
-                amended++;
+            var banner = AgentTaskCheckService.SupersededBanner(
+                settled.Status, settled.SettledAt, capturedAt);
+            if (await _queue.CancelPendingIfUntypedAsync(note.AgentSessionId, note.Id, ct))
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = taskId,
+                    Type = AgentTaskEventType.Check,
+                    Detail = $"{banner}\n\n{note.Body}",
+                    At = UtcNow(),
+                });
+                await _db.SaveChangesAsync(ct);
+                canceled++;
+            }
         }
 
-        return amended;
+        return canceled;
     }
 
     /// <summary>

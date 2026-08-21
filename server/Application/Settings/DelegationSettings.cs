@@ -415,6 +415,13 @@ public sealed class DelegationSettings
     /// </summary>
     public int CheckMaxCount { get; set; } = 10;
 
+    /// <summary>
+    /// Briefly wait for the completion note that settlement normally queues immediately after it
+    /// writes the task status (CARD-0132). A superseded check is suppressed only when that note
+    /// exists, so a transient settle-to-enqueue gap cannot make a scheduled check disappear.
+    /// </summary>
+    public int CompletionNoteGraceSeconds { get; set; } = 5;
+
     // ── The check interpreter: a standing specialist agent (CARD-0047 slice 4 amendment) ────────
     //
     // A check delivers a deterministic digest today and always will. These five knobs govern the

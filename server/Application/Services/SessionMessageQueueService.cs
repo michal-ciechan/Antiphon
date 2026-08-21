@@ -338,6 +338,40 @@ public sealed class SessionMessageQueueService
     }
 
     /// <summary>
+    /// Cancels a still-Pending message only if it has never been typed. The superseded-check sweep
+    /// uses the same lock and re-check-under-lock shape as <see cref="CancelAsync"/> so it cannot
+    /// race a flush that has already captured the body for delivery.
+    /// </summary>
+    public async Task<bool> CancelPendingIfUntypedAsync(Guid sessionId, Guid messageId, CancellationToken ct)
+    {
+        var canceled = false;
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var message = await db.SessionQueuedMessages
+                .FirstOrDefaultAsync(m => m.Id == messageId && m.AgentSessionId == sessionId, ct);
+            if (message is null || message.Status != QueuedMessageStatus.Pending || message.DeliveryAttempts != 0)
+                return false;
+
+            message.Status = QueuedMessageStatus.Canceled;
+            message.CanceledAt = UtcNow();
+            await db.SaveChangesAsync(ct);
+            canceled = true;
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        if (canceled)
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        return canceled;
+    }
+
+    /// <summary>
     /// Keep the prefix whole and trim the original body's tail when the pair exceeds the
     /// ceiling. The banner is worth more to the reader than the last block of a snapshot
     /// they have just been told is historical.
@@ -706,6 +740,45 @@ public sealed class SessionMessageQueueService
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         pending = deliverable;
+
+        // CARD-0132 S1.3: the per-session lock already protects this read and cancellation from a
+        // concurrent flush. A check whose subject settled never consumes the caller's next turn;
+        // a missing completion note retains the CARD-0074 bannered fallback instead.
+        var changedSuperseded = false;
+        foreach (var message in pending.Where(m => m.Origin == QueuedMessageOrigin.Check).ToList())
+        {
+            if (!AgentTaskCheckService.TryParseCheckConversationKey(message.ConversationKey, out var taskId))
+                continue;
+            var supersession = await AgentTaskCheckService.EvaluateAsync(db, taskId, ct);
+            if (supersession is not { Settled: true } settled)
+                continue;
+
+            var task = await db.AgentTasks.AsNoTracking().Where(t => t.Id == taskId)
+                .Select(t => new { t.ParentSessionId, t.RootTaskId }).FirstOrDefaultAsync(ct);
+            if (task?.ParentSessionId is Guid parentSession
+                && await AgentTaskCheckService.HasCompletionNoteAsync(db, parentSession, task.RootTaskId, ct))
+            {
+                message.Status = QueuedMessageStatus.Canceled;
+                message.CanceledAt = UtcNow();
+                changedSuperseded = true;
+                continue;
+            }
+
+            var capturedAt = AgentTaskCheckService.TryReadCapturedAt(message.Body, out var parsed)
+                ? parsed : message.CreatedAt;
+            var banner = AgentTaskCheckService.SupersededBanner(
+                settled.Status, settled.SettledAt, capturedAt);
+            if (!message.Body.StartsWith(AgentTaskCheckService.SupersededMarker, StringComparison.Ordinal))
+            {
+                message.Body = PrependWithinCeiling(banner, message.Body, Ceilings.ReplyInlineMaxChars);
+                changedSuperseded = true;
+            }
+        }
+        if (changedSuperseded)
+            await db.SaveChangesAsync(ct);
+        pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+        if (pending.Count == 0)
+            return changedSuperseded ? FlushResult.LateConfirmed : FlushResult.Nothing;
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
 
