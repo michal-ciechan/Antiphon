@@ -87,8 +87,9 @@ namespace Antiphon.FakeClaude;
 /// separate writes can coalesce. So we re-group incoming bytes into bursts by a quiet gap (no new bytes
 /// for <c>ANTIPHON_FAKE_BURST_MS</c>, default 12ms). That is both robust to ConPTY fragmentation and
 /// faithful to how the real Claude input handler distinguishes a fast paste from a typed Enter. The
-/// runner's <c>SendLineAsync</c> waits 20ms between the body and the CR, comfortably above the gap, so
-/// they land as two bursts; a combined <c>"body\r"</c> write lands as one.</para>
+/// runner's <c>SendLineAsync</c> now waits for evidence that the composer's tail consumed the body,
+/// then waits 20ms before the CR. The gate prevents ConPTY delivery lag from compressing a writer-side
+/// gap below this burst window; a combined <c>"body\r"</c> write still lands as one.</para>
 ///
 /// Output markers (<c>SUBMITTED:&lt;line&gt;</c>) are for test assertions — not meant to look like Claude.
 /// Tests assert the contract, never the appearance, which is what keeps this from rotting.

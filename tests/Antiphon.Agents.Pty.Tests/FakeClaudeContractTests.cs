@@ -880,6 +880,31 @@ public class FakeClaudeContractTests
         await runner.KillAsync(TimeSpan.FromSeconds(2));
     }
 
+    /// <summary>
+    /// CARD-0128 S2a mechanism pin. Before the production gate, the 20ms writer-side pause and CR
+    /// both reached this deaf fake before it read stdin; on wake they drained as one burst and the
+    /// CR folded into the body. The gate cannot see tail evidence until wake, then creates the
+    /// discrete pause from that evidence, so this is deterministically red on the old code and
+    /// green on the gated code.
+    /// </summary>
+    [Test]
+    public async Task SendLineAsync_waits_for_deaf_start_composer_evidence_before_submitting()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync(
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_DEAF_START_MS"] = "300" },
+            alsoAwaitBanner: "DEAFSTART:");
+
+        const string body = "deterministic gated submit";
+        await runner.SendLineAsync(body);
+
+        runner.LastSendLineOutcome.ShouldBe(SendLineGateOutcome.EvidenceSeen);
+        (await runner.WaitForOutputAsync(s => s.Contains("SUBMITTED:" + body), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("the gated CR must arrive as a discrete Enter after the deaf fake consumes the body");
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
+
     // ------------------------------------------------------------------------------------------
     // CARD-0028 — the TUI's chunk clipping, modelled. OPT-IN (ANTIPHON_FAKE_STDIN_CLIP).
     //
