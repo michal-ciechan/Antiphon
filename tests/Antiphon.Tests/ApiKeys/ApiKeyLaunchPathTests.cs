@@ -85,6 +85,77 @@ public class ApiKeyLaunchPathTests
     }
 
     [Test]
+    public async Task a_pool_delegates_recorded_task_scope_selects_its_projects_key_over_the_global_one()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        var project = await AddProjectAsync(db);
+        var name = NewName();
+        await AddKeyAsync(db, projectId: null, value: "sk-global", name: name);
+        await AddKeyAsync(db, projectId: project.Id, value: "sk-project", name: name);
+        var poolDelegate = await AddAgentAsync(
+            db, launchEnv: new() { ["K"] = $"{{{{key:{name}}}}}" }, boardId: null);
+
+        (await ResolveLegacyAsync(db, poolDelegate, apiKeyProjectId: project.Id)).Spec.Env["K"]
+            .ShouldBe("sk-project");
+    }
+
+    [Test]
+    public async Task a_pool_delegates_task_scope_cannot_leak_another_projects_key()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        var projectA = await AddProjectAsync(db);
+        var projectB = await AddProjectAsync(db);
+        var name = NewName();
+        await AddKeyAsync(db, projectId: null, value: "sk-global", name: name);
+        await AddKeyAsync(db, projectId: projectA.Id, value: "sk-project-a", name: name);
+        await AddKeyAsync(db, projectId: projectB.Id, value: "sk-project-b", name: name);
+        var poolDelegate = await AddAgentAsync(
+            db, launchEnv: new() { ["K"] = $"{{{{key:{name}}}}}" }, boardId: null);
+
+        (await ResolveLegacyAsync(db, poolDelegate, apiKeyProjectId: projectA.Id)).Spec.Env["K"]
+            .ShouldBe("sk-project-a", "project B's same-named row must never resolve for project A");
+        (await ResolveLegacyAsync(db, poolDelegate)).Spec.Env["K"]
+            .ShouldBe("sk-global", "an unscoped task must not receive either project's key");
+    }
+
+    [Test]
+    public async Task a_tasks_recorded_project_scope_overrides_its_pinned_agents_board_project()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        var taskProject = await AddProjectAsync(db);
+        var agentProject = await AddProjectAsync(db);
+        var agentBoard = await AddBoardAsync(db, agentProject.Id);
+        var name = NewName();
+        await AddKeyAsync(db, projectId: taskProject.Id, value: "sk-task-project", name: name);
+        await AddKeyAsync(db, projectId: agentProject.Id, value: "sk-agent-project", name: name);
+        var pinnedAgent = await AddAgentAsync(
+            db, launchEnv: new() { ["K"] = $"{{{{key:{name}}}}}" }, boardId: agentBoard.Id);
+
+        (await ResolveLegacyAsync(db, pinnedAgent, apiKeyProjectId: taskProject.Id)).Spec.Env["K"]
+            .ShouldBe("sk-task-project");
+    }
+
+    [Test]
+    public async Task an_unknown_key_under_a_task_scope_names_the_project_then_global_scopes_it_searched()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = NewDb(schema);
+        var project = await AddProjectAsync(db);
+        var poolDelegate = await AddAgentAsync(
+            db, launchEnv: new() { ["K"] = "{{key:never-stored-for-task-scope}}" }, boardId: null);
+
+        var ex = await Should.ThrowAsync<ConflictException>(
+            ResolveLegacyAsync(db, poolDelegate, apiKeyProjectId: project.Id));
+
+        ex.Code.ShouldBe("api_key_not_found");
+        ex.Message.ShouldContain("never-stored-for-task-scope");
+        ex.Message.ShouldContain($"project {project.Id:D}, then the global scope");
+    }
+
+    [Test]
     public async Task an_agent_env_entry_cannot_take_over_the_orchestration_identity()
     {
         // A per-agent override of ANTIPHON_SESSION_ID would be a self-inflicted CARD-0006: the
@@ -215,7 +286,8 @@ public class ApiKeyLaunchPathTests
     private static async Task<ResolvedAgentTuiLaunch> ResolveLegacyAsync(
         AppDbContext db,
         Agent agent,
-        IReadOnlyDictionary<string, string>? extraEnv = null)
+        IReadOnlyDictionary<string, string>? extraEnv = null,
+        Guid? apiKeyProjectId = null)
     {
         var registry = new AgentRegistry(new OptionsMonitorStub(new AgentRegistrySettings
         {
@@ -229,7 +301,8 @@ public class ApiKeyLaunchPathTests
             agent,
             registry,
             launchResolver: null,
-            new AgentLaunchOptions(Cwd: Path.GetTempPath(), ExtraEnv: extraEnv),
+            new AgentLaunchOptions(
+                Cwd: Path.GetTempPath(), ExtraEnv: extraEnv, ApiKeyProjectId: apiKeyProjectId),
             Ct,
             apiKeys);
     }
