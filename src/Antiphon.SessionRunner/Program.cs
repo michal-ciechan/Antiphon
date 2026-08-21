@@ -32,6 +32,10 @@ builder.Host.UseSerilog((ctx, lc) =>
 });
 
 builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+// CARD-0120: the raw client is additive only. No launch or delivery path resolves it until the
+// explicitly separate Herdr backend slices opt a session in; HerdrSettings.Enabled defaults false.
+builder.Services.Configure<HerdrSettings>(builder.Configuration.GetSection("SessionRunner:Herdr"));
+builder.Services.AddSingleton<HerdrClient>();
 builder.Services.AddSingleton<SessionRunnerRuntime>();
 builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
