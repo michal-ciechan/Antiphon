@@ -10,10 +10,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
-using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Testcontainers.PostgreSql;
 
 namespace Antiphon.E2E.Fixtures;
@@ -215,9 +215,6 @@ public class AntiphonAppFixture
         // a leak must fail the run, and it must not do so by abandoning a Postgres container.
         await StopSessionsThisFixtureStartedAsync();
 
-        if (_isolatedSessionRunner is not null)
-            await _isolatedSessionRunner.DisposeAsync();
-
         // Covers the API-only tests, which have no page and so never called
         // CaptureOnCompletionAsync; a no-op when they did. Skipped for a fixture with a
         // caller-chosen directory, which is not tied to one test's pass/fail.
@@ -380,12 +377,13 @@ public class AntiphonAppFixture
     public string? SessionLeakVerdict { get; private set; }
 
     /// <summary>
-    /// CARD-0102, and item 1 of the coverage plan's P2-2: stop every session this fixture started,
-    /// then FAIL THE RUN if any pty-host it started is still alive.
+    /// CARD-0102, and item 1 of the coverage plan's P2-2: snapshot every session on this
+    /// fixture-owned runner, use its bulk kill endpoint, then FAIL THE RUN if any named pty-host
+    /// is still alive.
     ///
-    /// <para>The fixture owns a dedicated runner, so its session list cannot contain an operator or
-    /// delegate session. This S1 cleanup retains the existing database-backed ownership check; S2
-    /// will replace it with the owned runner's full-list kill-all path.</para>
+    /// <para>The fixture owns a dedicated runner, so its complete session list cannot contain an
+    /// operator or delegate session. Database rows remain a diagnostic cross-check only: a runner
+    /// session with no row is still ours and must be killed and censused.</para>
     ///
     /// <para><b>Ownership is now structural.</b> The fixture's private runner is configured with a
     /// per-run manifest root, so it cannot share pty-host state with the production daemon.</para>
@@ -401,79 +399,65 @@ public class AntiphonAppFixture
     /// </summary>
     private async Task StopSessionsThisFixtureStartedAsync()
     {
+        var runner = _isolatedSessionRunner;
+        if (runner is null)
+            return;
+
+        var censusStarted = false;
+        var censusCompleted = false;
+        try
+        {
+            var listed = await IsolatedSessionRunnerTeardown.SnapshotKillAllThenCensusAsync(
+                runner,
+                RecordSessionDatabaseCrossCheckAsync,
+                async hosts =>
+                {
+                    censusStarted = true;
+                    await AssertNoLeakedPtyHostsAsync(hosts);
+                    censusCompleted = true;
+                },
+                ex => _diagnostics?.Note($"[session-cleanup] kill-all failed: {ex.Message}"),
+                CancellationToken.None);
+
+            _diagnostics?.Note(
+                $"[session-cleanup] issued kill-all for {listed.Count} session(s) on this fixture's runner.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _diagnostics?.Note(
+                $"[session-cleanup] our isolated runner was unreachable at teardown ({ex.Message}); "
+                + "its sessions could not be verified. This is not a leak verdict.");
+        }
+        finally
+        {
+            // A runner tree-kill cannot reach detached hosts. It is safe only after the census
+            // above, and is bounded inside IsolatedSessionRunner so teardown cannot hang forever.
+            await runner.StopAsync();
+            if ((!censusStarted || censusCompleted) && SessionLeakVerdict is null)
+                await runner.DeleteRunDirectoryBestEffortAsync();
+        }
+    }
+
+    private async Task RecordSessionDatabaseCrossCheckAsync(IReadOnlyList<RunnerSessionDto> listed)
+    {
         if (_kestrelHost is null)
             return;
 
-        List<Guid> ours;
         try
         {
             using var scope = _kestrelHost.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            // Every row, not just the live ones: a row written off as Failed can still have a live
-            // host behind it — that is CARD-0056 exactly, and a cleanup that trusted the status
-            // column would leak the one session most worth stopping.
-            ours = await db.AgentSessions.Select(s => s.Id).ToListAsync();
-        }
-        catch (Exception ex)
-        {
-            _diagnostics?.Note($"[session-cleanup] could not read this fixture's sessions: {ex.Message}");
-            return;
-        }
-
-        if (ours.Count == 0)
-            return;
-
-        var runner = _kestrelHost.Services.GetRequiredService<ISessionRunnerClient>();
-        IReadOnlyList<SessionRunnerSessionDto> listed;
-        try
-        {
-            listed = await runner.ListAsync(CancellationToken.None);
+            var databaseSessionIds = await db.AgentSessions.Select(s => s.Id).ToListAsync();
+            var missingRows = listed.Count(s => !databaseSessionIds.Contains(s.SessionId));
+            _diagnostics?.Note(
+                $"[session-cleanup] runner snapshot contained {listed.Count} session(s); the fixture database "
+                + $"contained {databaseSessionIds.Count} row(s), with {missingRows} runner session(s) lacking a row.");
         }
         catch (Exception ex)
         {
             _diagnostics?.Note(
-                $"[session-cleanup] the session runner was unreachable at teardown ({ex.Message}); "
-                + $"{ours.Count} session row(s) were NOT verified. This is not a leak verdict.");
-            return;
+                $"[session-cleanup] could not cross-check the runner snapshot against this fixture's database: {ex.Message}");
         }
-
-        var owned = ours.ToHashSet();
-        var mine = listed.Where(s => owned.Contains(s.SessionId)).ToList();
-        if (mine.Count == 0)
-        {
-            _diagnostics?.Note(
-                $"[session-cleanup] none of this fixture's {ours.Count} session row(s) are on the runner — "
-                + "nothing to stop (most were seeded straight into the database and never launched).");
-            return;
-        }
-
-        // Snapshotted BEFORE the kills: once a session is gone the runner stops naming its host, and
-        // a pid we never recorded is a leak we can never detect.
-        var hosts = mine
-            .Where(s => s.HostPid is int pid && pid > 0)
-            .Select(s => (s.SessionId, HostPid: s.HostPid!.Value))
-            .ToList();
-
-        foreach (var session in mine)
-        {
-            try
-            {
-                await runner.KillAsync(session.SessionId, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                // Recorded, not swallowed: the census below is what decides the verdict, and a kill
-                // that threw on an already-dead session is normal.
-                _diagnostics?.Note(
-                    $"[session-cleanup] kill for {session.SessionId} failed: {ex.Message}");
-            }
-        }
-
-        _diagnostics?.Note(
-            $"[session-cleanup] stopped {mine.Count} runner session(s) this fixture started "
-            + $"({hosts.Count} with a named pty-host).");
-
-        await AssertNoLeakedPtyHostsAsync(hosts);
     }
 
     /// <summary>
@@ -484,13 +468,13 @@ public class AntiphonAppFixture
     /// that has cycled through them, a bare "is this pid alive" would fail the run over some
     /// unrelated program that happened to inherit the number.</para>
     /// </summary>
-    private async Task AssertNoLeakedPtyHostsAsync(IReadOnlyList<(Guid SessionId, int HostPid)> hosts)
+    private async Task AssertNoLeakedPtyHostsAsync(IReadOnlyList<SessionHostSnapshot> hosts)
     {
         if (hosts.Count == 0)
             return;
 
         var deadline = DateTime.UtcNow + HostShutdownBudget;
-        List<(Guid SessionId, int HostPid)> alive;
+        List<SessionHostSnapshot> alive;
         while (true)
         {
             alive = [.. hosts.Where(h => IsPtyHostAlive(h.HostPid))];

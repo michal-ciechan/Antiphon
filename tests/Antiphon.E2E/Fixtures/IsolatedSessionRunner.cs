@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.E2E.Fixtures;
 
@@ -8,9 +11,12 @@ namespace Antiphon.E2E.Fixtures;
 /// A real session-runner process owned by one E2E fixture. Its manifest and log roots are kept
 /// under TestOutput so an E2E run can never register a pty-host with the shared production runner.
 /// </summary>
-internal sealed class IsolatedSessionRunner : IAsyncDisposable
+internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSessionRunnerClient
 {
     private static readonly TimeSpan ReadinessBudget = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ProcessStartTimeTolerance = TimeSpan.FromSeconds(2);
+    private static readonly object CrashedRunSweepGate = new();
+    private static Task? _crashedRunSweep;
     private readonly Func<int> _getRandomAvailablePort;
     private Process? _process;
     private Task? _stdoutCopy;
@@ -34,6 +40,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable
 
     public async Task StartAsync()
     {
+        await SweepCrashedRunsOnceAsync(Path.GetDirectoryName(RunDirectory)!);
         Directory.CreateDirectory(RunDirectory);
 
         for (var attempt = 0; attempt < 2; attempt++)
@@ -80,9 +87,42 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_process is not null)
-            await StopProcessAsync(_process);
+        await StopAsync();
     }
+
+    /// <summary>
+    /// Gets the complete session list from this fixture's dedicated runner. Because the runner is
+    /// structurally owned by this fixture, this list is the teardown authority rather than a
+    /// database-derived subset of it.
+    /// </summary>
+    public async Task<IReadOnlyList<RunnerSessionDto>> ListSessionsAsync(CancellationToken cancellationToken)
+    {
+        using var client = CreateClient();
+        return await client.GetFromJsonAsync<IReadOnlyList<RunnerSessionDto>>("sessions", cancellationToken)
+            ?? [];
+    }
+
+    /// <summary>Uses the runner's sanctioned bulk endpoint to stop every session and pty-host.</summary>
+    public async Task KillAllSessionsAsync(CancellationToken cancellationToken)
+    {
+        using var client = CreateClient();
+        using var response = await client.PostAsync("sessions/kill-all", content: null, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Stops only the runner child. Detached pty-hosts must already have been proved gone by the
+    /// fixture census; a runner tree-kill intentionally cannot reach them.
+    /// </summary>
+    public async Task StopAsync()
+    {
+        var process = Interlocked.Exchange(ref _process, null);
+        if (process is not null)
+            await StopProcessAsync(process);
+    }
+
+    /// <summary>Removes a clean run's diagnostic root without masking teardown evidence on failure.</summary>
+    public Task DeleteRunDirectoryBestEffortAsync() => DeleteDirectoryBestEffortAsync(RunDirectory);
 
     private Process StartProcess(int port)
     {
@@ -207,4 +247,191 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable
         return content.Length <= maxCharacters ? content : content[^maxCharacters..];
     }
 
+    private HttpClient CreateClient() => new()
+    {
+        BaseAddress = new Uri(BaseUrl.TrimEnd('/') + "/"),
+        Timeout = TimeSpan.FromSeconds(10)
+    };
+
+    private static Task SweepCrashedRunsOnceAsync(string runnerRoot)
+    {
+        lock (CrashedRunSweepGate)
+            return _crashedRunSweep ??= SweepCrashedRunsAsync(runnerRoot, new SystemProcessInspector());
+    }
+
+    /// <summary>
+    /// Reaps detached hosts left by a previously crashed E2E process. This intentionally examines
+    /// only the fixed E2E TestOutput/runner root; no production manifest directory is ever swept.
+    /// </summary>
+    internal static async Task SweepCrashedRunsAsync(string runnerRoot, IProcessInspector processes)
+    {
+        if (!Directory.Exists(runnerRoot))
+            return;
+
+        foreach (var runDirectory in Directory.EnumerateDirectories(runnerRoot, "run-*", SearchOption.TopDirectoryOnly))
+        {
+            if (IsConcurrentRunner(runDirectory, processes))
+                continue;
+
+            var manifestDirectory = Path.Combine(runDirectory, "logs", "pty-hosts", "manifests");
+            if (Directory.Exists(manifestDirectory))
+            {
+                foreach (var manifestPath in Directory.EnumerateFiles(manifestDirectory, "*.json", SearchOption.TopDirectoryOnly))
+                {
+                    var manifest = PtyHostManifest.TryLoad(manifestPath);
+                    if (manifest is not null
+                        && processes.TryGet(manifest.HostPid, out var host)
+                        && Matches(host, "Antiphon.PtyHost", manifest.HostStartTimeUtc))
+                    {
+                        processes.KillTree(manifest.HostPid);
+                    }
+                }
+            }
+
+            await DeleteDirectoryBestEffortAsync(runDirectory);
+        }
+    }
+
+    private static bool IsConcurrentRunner(string runDirectory, IProcessInspector processes)
+    {
+        var markerPath = Path.Combine(runDirectory, "runner.json");
+        if (!File.Exists(markerPath))
+            return false;
+
+        try
+        {
+            var marker = JsonSerializer.Deserialize<RunnerMarker>(File.ReadAllText(markerPath));
+            return marker is not null
+                && processes.TryGet(marker.Pid, out var runner)
+                && Matches(runner, "Antiphon.SessionRunner", marker.ProcessStartTimeUtc);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool Matches(ProcessIdentity process, string expectedName, DateTime expectedStartTimeUtc) =>
+        string.Equals(process.Name, expectedName, StringComparison.OrdinalIgnoreCase)
+        && (process.StartTimeUtc.ToUniversalTime() - expectedStartTimeUtc.ToUniversalTime()).Duration()
+            <= ProcessStartTimeTolerance;
+
+    private static async Task DeleteDirectoryBestEffortAsync(string path)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                    return;
+
+                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(file, FileAttributes.Normal);
+
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            }
+        }
+    }
+
+    private sealed record RunnerMarker(int Pid, DateTime ProcessStartTimeUtc);
+
+}
+
+/// <summary>
+/// The deliberate teardown order. Keeping it outside the fixture makes the safety property unit
+/// testable without starting a PostgreSQL container, a runner executable, or real processes.
+/// </summary>
+internal static class IsolatedSessionRunnerTeardown
+{
+    public static async Task<IReadOnlyList<RunnerSessionDto>> SnapshotKillAllThenCensusAsync(
+        IIsolatedSessionRunnerClient runner,
+        Func<IReadOnlyList<RunnerSessionDto>, Task> snapshotObserved,
+        Func<IReadOnlyList<SessionHostSnapshot>, Task> census,
+        Action<Exception> killAllFailed,
+        CancellationToken cancellationToken)
+    {
+        var listed = await runner.ListSessionsAsync(cancellationToken);
+        await snapshotObserved(listed);
+
+        // Snapshot before kill-all: an exited session no longer names the host that must be
+        // censused, and no database subset is allowed to discard an unclaimed runner session.
+        var hosts = listed
+            .Where(session => session.HostPid is int pid && pid > 0)
+            .Select(session => new SessionHostSnapshot(session.SessionId, session.HostPid!.Value))
+            .ToList();
+
+        try
+        {
+            await runner.KillAllSessionsAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // The census still runs after an unsuccessful request: this is the only way a failed
+            // pipe cleanup becomes a red leak rather than an unobserved teardown error.
+            killAllFailed(ex);
+        }
+
+        await census(hosts);
+        return listed;
+    }
+}
+
+internal interface IIsolatedSessionRunnerClient
+{
+    Task<IReadOnlyList<RunnerSessionDto>> ListSessionsAsync(CancellationToken cancellationToken);
+    Task KillAllSessionsAsync(CancellationToken cancellationToken);
+}
+
+internal readonly record struct SessionHostSnapshot(Guid SessionId, int HostPid);
+
+/// <summary>A deliberately small seam so sweep tests never need to create or kill real processes.</summary>
+internal interface IProcessInspector
+{
+    bool TryGet(int pid, out ProcessIdentity process);
+    void KillTree(int pid);
+}
+
+internal readonly record struct ProcessIdentity(string Name, DateTime StartTimeUtc);
+
+internal sealed class SystemProcessInspector : IProcessInspector
+{
+    public bool TryGet(int pid, out ProcessIdentity identity)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (process.HasExited)
+            {
+                identity = default;
+                return false;
+            }
+
+            identity = new ProcessIdentity(process.ProcessName, process.StartTime.ToUniversalTime());
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            identity = default;
+            return false;
+        }
+    }
+
+    public void KillTree(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            // The host exited between the liveness check and its cleanup tree-kill.
+        }
+    }
 }
