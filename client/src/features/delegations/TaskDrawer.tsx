@@ -341,7 +341,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <Box>
       <Text size="xs" c="dimmed" tt="uppercase" fw={700}>

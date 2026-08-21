@@ -44,6 +44,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> = {}): AgentTaskSummaryDto
     expectedDurationMinutes: 30,
     nextCheckAt: '2026-08-17T13:02:00Z',
     checkCount: 1,
+    recoveredAt: null,
     ...overrides,
   }
 }
