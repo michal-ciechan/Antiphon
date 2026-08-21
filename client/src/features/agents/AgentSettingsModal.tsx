@@ -30,6 +30,7 @@ import {
 } from '../../api/agents'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
+import { envToText, textToEnv } from '../../shared/environmentText'
 import { AgentTuiSelection } from './AgentTuiSelection'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
@@ -63,6 +64,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [autoCompactEnabled, setAutoCompactEnabled] = useState<boolean | null>(null)
   const [autoCompactIdleMinutes, setAutoCompactIdleMinutes] = useState<number | null>(null)
   const [autoCompactContextPercent, setAutoCompactContextPercent] = useState<number | null>(null)
+  const [launchEnvText, setLaunchEnvText] = useState('')
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
@@ -107,6 +109,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setAutoCompactEnabled(agent.autoCompactEnabled ?? null)
     setAutoCompactIdleMinutes(agent.autoCompactIdleMinutes ?? null)
     setAutoCompactContextPercent(agent.autoCompactContextPercent ?? null)
+    setLaunchEnvText(envToText(agent.launchEnv ?? {}))
     setSystemPromptAppend(agent.systemPromptAppend ?? '')
     // An older server response omits the field entirely; Normal is what that means.
     setReplyStyle(agent.replyStyle ?? 'Normal')
@@ -157,6 +160,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         autoCompactEnabled,
         autoCompactIdleMinutes,
         autoCompactContextPercent,
+        launchEnv: textToEnv(launchEnvText),
         // Empty string clears the preamble server-side; null would mean "leave unchanged".
         systemPromptAppend: systemPromptAppend.trim(),
         tuiProfileId,
@@ -286,6 +290,14 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           allowNegative={false}
           value={autoCompactContextPercent ?? ''}
           onChange={(value) => setAutoCompactContextPercent(typeof value === 'number' ? value : null)}
+        />
+        <Textarea
+          label="Launch environment (KEY=value per line)"
+          description="values may reference stored API keys as {{key:NAME}}; resolved at launch, project keys override global"
+          autosize
+          minRows={3}
+          value={launchEnvText}
+          onChange={(event) => setLaunchEnvText(event.currentTarget.value)}
         />
 
         <Textarea

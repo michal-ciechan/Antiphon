@@ -13,6 +13,7 @@ import {
   ActionIcon,
   Tooltip,
   Alert,
+  Divider,
   Loader,
   Combobox,
   InputBase,
@@ -40,6 +41,7 @@ import {
 } from '../../api/projects'
 import { useBoards, useDeleteBoard, type BoardSummaryDto } from '../../api/boards'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
+import { ApiKeysSection } from './ApiKeysSection'
 
 export function ProjectConfig() {
   const { data: projects, isLoading, error } = useProjects()
@@ -442,6 +444,12 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             checked={formNotificationsEnabled}
             onChange={(e) => setFormNotificationsEnabled(e.currentTarget.checked)}
           />
+          {editingProject && (
+            <>
+              <Divider label="Project API keys" labelPosition="center" />
+              <ApiKeysSection projectId={editingProject.id} />
+            </>
+          )}
           <Group justify="flex-end">
             <Button variant="subtle" onClick={() => setEditModalOpen(false)}>
               Cancel

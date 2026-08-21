@@ -4,6 +4,7 @@ import { ProviderConfig } from './ProviderConfig'
 import { ProjectConfig } from './ProjectConfig'
 import { StatusTab } from './StatusTab'
 import { AgentTuiConfig } from './AgentTuiConfig'
+import { ApiKeysSection } from './ApiKeysSection'
 
 export function SettingsPage() {
   return (
@@ -17,6 +18,7 @@ export function SettingsPage() {
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>
             <Tabs.Tab value="projects">Projects</Tabs.Tab>
+            <Tabs.Tab value="api-keys">API Keys</Tabs.Tab>
             <Tabs.Tab value="agent-tui">AI Agent TUI</Tabs.Tab>
             <Tabs.Tab value="status">Status</Tabs.Tab>
           </Tabs.List>
@@ -31,6 +33,10 @@ export function SettingsPage() {
 
           <Tabs.Panel value="projects" pt="md">
             <ProjectConfig />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="api-keys" pt="md">
+            <ApiKeysSection />
           </Tabs.Panel>
 
           <Tabs.Panel value="agent-tui" pt="md">

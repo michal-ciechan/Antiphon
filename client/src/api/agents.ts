@@ -152,6 +152,8 @@ export interface AgentSummaryDto {
   autoCompactEnabled?: boolean | null
   autoCompactIdleMinutes?: number | null
   autoCompactContextPercent?: number | null
+  /** Per-agent launch environment. Values can refer to stored API keys as {{key:NAME}}. */
+  launchEnv?: Record<string, string> | null
 }
 
 export interface AgentSupervisionDto {
@@ -291,6 +293,8 @@ export interface UpdateAgentRequest {
   autoCompactEnabled?: boolean | null
   autoCompactIdleMinutes?: number | null
   autoCompactContextPercent?: number | null
+  /** Null/omitted leaves existing values unchanged; an empty object clears all launch environment. */
+  launchEnv?: Record<string, string> | null
 }
 
 export interface DraftAgentRequest {
