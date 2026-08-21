@@ -295,6 +295,12 @@ internal static class Program
         // without the working title the closing IdleTitle (same "grok" the session started with)
         // dedups away and never reaches the pty output at all.
         write("\x1b]0;Responding - grok\x07");
+        // Do not collapse the working and idle title mutations into one console scheduler turn.
+        // OpenConsole coalesces that zero-duration transition and can omit the closing OSC record
+        // from its pty output. A real turn has response work between these states; this short,
+        // deterministic fake turn gives the terminal a distinct working state to publish before
+        // we emit its measured completion record below.
+        Thread.Sleep(100);
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");

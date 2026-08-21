@@ -36,6 +36,8 @@ internal sealed class ConPtyHost : IAsyncDisposable
     private readonly SafeFileHandle _outRead;
     private readonly FileStream _writer;
     private readonly FileStream _reader;
+    private readonly FileStream _da1Reply;
+    private readonly Da1StartupResponder _da1;
     private readonly StringBuilder _output = new();
     private readonly TerminalScreen _screen;
     private DateTime _lastDataAt = DateTime.UtcNow;
@@ -51,6 +53,23 @@ internal sealed class ConPtyHost : IAsyncDisposable
     public static string Diagnostics { get; private set; } = "";
 
     public int Pid => _pi.dwProcessId;
+
+    /// <summary>DA1 queries emitted by the modern host; zero on the inbox backend.</summary>
+    public int Da1QueriesSeen => _da1.QueriesSeen;
+
+    /// <summary>When the modern host's single startup DA1 query was answered, if it asked.</summary>
+    public DateTimeOffset? Da1AnsweredAt => _da1.AnsweredAt;
+
+    /// <summary>The child exit code, if it has exited; null while it is running or unavailable.</summary>
+    public int? ExitCode
+    {
+        get
+        {
+            if (!GetExitCodeProcess(_pi.hProcess, out var code) || code == StillActive)
+                return null;
+            return code;
+        }
+    }
 
     private ConPtyHost(
         string backend,
@@ -73,6 +92,12 @@ internal sealed class ConPtyHost : IAsyncDisposable
         _pi = pi;
         _writer = new FileStream(inWrite, FileAccess.Write, bufferSize: 1, isAsync: false);
         _reader = new FileStream(outRead, FileAccess.Read, bufferSize: 4096, isAsync: false);
+        // This test-owned host bypasses ModernConPtyConnection, so it must answer OpenConsole's
+        // startup DA1 query itself or the child can remain stalled before the probe reports.
+        _da1Reply = new FileStream(
+            new SafeFileHandle(inWrite.DangerousGetHandle(), ownsHandle: false),
+            FileAccess.Write, bufferSize: 0, isAsync: false);
+        _da1 = new Da1StartupResponder(AnswerDa1);
         _readTask = Task.Run(ReadLoop);
     }
 
@@ -272,6 +297,9 @@ internal sealed class ConPtyHost : IAsyncDisposable
             {
                 var n = _reader.Read(buf, 0, buf.Length);
                 if (n <= 0) break;
+                // Transparent tap: scan the exact output bytes before preserving them in the raw
+                // buffer and screen, including a DA1 query split across reads.
+                _da1.Scan(buf.AsSpan(0, n));
                 var text = Encoding.UTF8.GetString(buf, 0, n);
                 lock (_gate)
                 {
@@ -325,6 +353,17 @@ internal sealed class ConPtyHost : IAsyncDisposable
         _writer.Flush();
     }
 
+    private void AnswerDa1()
+    {
+        try
+        {
+            _da1Reply.Write(Da1StartupResponder.ResponseBytes, 0, Da1StartupResponder.ResponseBytes.Length);
+            _da1Reply.Flush();
+        }
+        catch (IOException) { /* child or pty closed during startup */ }
+        catch (ObjectDisposedException) { /* teardown raced the handshake */ }
+    }
+
     public async Task<bool> WaitForAsync(string needle, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -342,6 +381,7 @@ internal sealed class ConPtyHost : IAsyncDisposable
         try { _close(_hPC); } catch { }
         try { _writer.Dispose(); } catch { }
         try { _reader.Dispose(); } catch { }
+        try { _da1Reply.Dispose(); } catch { }
         try { if (_attrList != IntPtr.Zero) { DeleteProcThreadAttributeList(_attrList); Marshal.FreeHGlobal(_attrList); } } catch { }
         try
         {
@@ -378,6 +418,9 @@ internal sealed class ConPtyHost : IAsyncDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr h);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr hProcess, out int lpExitCode);
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetConsoleWindow();
@@ -429,4 +472,6 @@ internal sealed class ConPtyHost : IAsyncDisposable
         public IntPtr hProcess, hThread;
         public int dwProcessId, dwThreadId;
     }
+
+    private const int StillActive = 259;
 }
