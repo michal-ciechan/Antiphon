@@ -30,7 +30,7 @@ import {
 } from '../../api/agents'
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
-import { envToText, textToEnv } from '../../shared/environmentText'
+import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { AgentTuiSelection } from './AgentTuiSelection'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
@@ -146,6 +146,15 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const handleSave = () => {
     if (!agent || !name.trim() || !workingDirectory.trim()) return
 
+    const parsedLaunchEnv = parseEnvironmentText(launchEnvText)
+    if (parsedLaunchEnv.warnings.length > 0) {
+      notifications.show({
+        color: 'yellow',
+        message: `Launch environment: ${parsedLaunchEnv.warnings.join(' ')}`,
+        autoClose: 10_000,
+      })
+    }
+
     updateAgent.mutate(
       {
         name: name.trim(),
@@ -160,7 +169,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         autoCompactEnabled,
         autoCompactIdleMinutes,
         autoCompactContextPercent,
-        launchEnv: textToEnv(launchEnvText),
+        launchEnv: parsedLaunchEnv.env,
         // Empty string clears the preamble server-side; null would mean "leave unchanged".
         systemPromptAppend: systemPromptAppend.trim(),
         tuiProfileId,

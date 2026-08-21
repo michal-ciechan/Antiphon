@@ -2,12 +2,15 @@ import { HttpResponse, http } from 'msw'
 import { fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, UpdateAgentRequest } from '../../api/agents'
+import { envToText, parseEnvironmentText, textToEnv } from '../../shared/environmentText'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentSettingsModal } from './AgentSettingsModal'
 
+const notificationMock = vi.hoisted(() => ({ show: vi.fn() }))
+
 vi.mock('@mantine/notifications', () => ({
-  notifications: { show: vi.fn() },
+  notifications: notificationMock,
 }))
 
 const agent: AgentSummaryDto = {
@@ -40,6 +43,19 @@ const agent: AgentSummaryDto = {
 const detail: AgentDetailDto = { ...agent, queue: [] }
 
 describe('AgentSettingsModal launch environment', () => {
+  it('preserves value whitespace and reports malformed or duplicate lines', () => {
+    const parsed = parseEnvironmentText('TOKEN= value \nMALFORMED\n=missing-key\nLOG_LEVEL=debug\nLOG_LEVEL=trace')
+
+    expect(parsed.env).toEqual({ TOKEN: ' value ', LOG_LEVEL: 'trace' })
+    expect(envToText(parsed.env)).toBe('TOKEN= value \nLOG_LEVEL=trace')
+    expect(textToEnv('VALUE=kept ')).toEqual({ VALUE: 'kept ' })
+    expect(parsed.warnings).toEqual([
+      'Line 2 was ignored because it is not KEY=value.',
+      'Line 3 was ignored because its key is empty.',
+      'Line 5 repeats LOG_LEVEL; its value replaces the earlier one.',
+    ])
+  })
+
   it('shows the placeholder guidance and submits parsed KEY=value entries', async () => {
     let submitted: UpdateAgentRequest | null = null
     server.use(
@@ -63,14 +79,18 @@ describe('AgentSettingsModal launch environment', () => {
     // user-event interprets braces as keyboard descriptors; a browser paste must preserve this
     // placeholder syntax literally.
     fireEvent.change(environment, {
-      target: { value: 'OPENAI_API_KEY={{key:openai-project}}\nLOG_LEVEL=debug' },
+      target: { value: 'OPENAI_API_KEY={{key:openai-project}} \nLOG_LEVEL=debug\nMALFORMED\nLOG_LEVEL=trace' },
     })
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(submitted).not.toBeNull())
     expect(submitted!.launchEnv).toEqual({
-      OPENAI_API_KEY: '{{key:openai-project}}',
-      LOG_LEVEL: 'debug',
+      OPENAI_API_KEY: '{{key:openai-project}} ',
+      LOG_LEVEL: 'trace',
     })
+    expect(notificationMock.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: 'yellow',
+      message: expect.stringContaining('Line 3 was ignored because it is not KEY=value.'),
+    }))
   })
 })

@@ -1,8 +1,6 @@
-function splitLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+export interface ParsedEnvironmentText {
+  env: Record<string, string>
+  warnings: string[]
 }
 
 /** Converts the environment dictionaries used by launch DTOs into editable KEY=value lines. */
@@ -12,13 +10,41 @@ export function envToText(env: Record<string, string>): string {
     .join('\n')
 }
 
-/** Parses editable KEY=value lines, ignoring blank lines and malformed entries. */
-export function textToEnv(text: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const line of splitLines(text)) {
+/**
+ * Parses editable KEY=value lines. Blank lines are ignored; malformed lines are omitted and
+ * reported, and duplicate keys keep their final value so the submitted environment is explicit.
+ */
+export function parseEnvironmentText(text: string): ParsedEnvironmentText {
+  const env: Record<string, string> = {}
+  const warnings: string[] = []
+
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue
+
     const idx = line.indexOf('=')
-    if (idx <= 0) continue
-    result[line.slice(0, idx).trim()] = line.slice(idx + 1)
+    const lineNumber = index + 1
+    if (idx < 0) {
+      warnings.push(`Line ${lineNumber} was ignored because it is not KEY=value.`)
+      continue
+    }
+
+    const key = line.slice(0, idx).trim()
+    if (!key) {
+      warnings.push(`Line ${lineNumber} was ignored because its key is empty.`)
+      continue
+    }
+
+    if (Object.prototype.hasOwnProperty.call(env, key))
+      warnings.push(`Line ${lineNumber} repeats ${key}; its value replaces the earlier one.`)
+
+    // Values are verbatim. In particular, leading/trailing whitespace after '=' is meaningful.
+    env[key] = line.slice(idx + 1)
   }
-  return result
+
+  return { env, warnings }
+}
+
+/** Parses editable KEY=value lines when the caller does not need validation warnings. */
+export function textToEnv(text: string): Record<string, string> {
+  return parseEnvironmentText(text).env
 }

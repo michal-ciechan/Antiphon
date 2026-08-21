@@ -27,9 +27,13 @@ oauth_config:
     bot:
       - chat:write
       - channels:history
+      - channels:read
       - groups:history
+      - groups:read
       - im:history
+      - im:read
       - mpim:history
+      - mpim:read
       - users:read
       - files:read
       - files:write
@@ -57,8 +61,9 @@ After creation:
 
 The bot scopes are intentional: `chat:write` sends replies; `channels:history`, `groups:history`,
 `im:history`, and `mpim:history` receive each conversation kind; `users:read` resolves author
-names and mentions; and `files:read`/`files:write` handle attachments. The sole app-level scope is
-`connections:write` for Socket Mode.
+names and mentions; `channels:read`, `groups:read`, `im:read`, and `mpim:read` resolve
+conversation titles with `conversations.info`; and `files:read`/`files:write` handle attachments.
+The sole app-level scope is `connections:write` for Socket Mode.
 
 ## Configure and deploy the gateway
 
