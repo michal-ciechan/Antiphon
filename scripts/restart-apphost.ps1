@@ -103,6 +103,7 @@ try {
     # Guard: which PID owns the session-runner port, so we never kill it.
     $srPid = Get-PortPids $sessionRunnerPort | Select-Object -First 1
     if ($srPid) { Write-Host "  preserving session-runner (PID $srPid on $sessionRunnerPort)" -ForegroundColor DarkGray }
+    & (Join-Path $PSScriptRoot 'check-daemon-build.ps1')
 
     # 1) Kill the AppHost wrapper + dotnet AppHost tree.
     $appHostPid = Read-PidFile $pidFile

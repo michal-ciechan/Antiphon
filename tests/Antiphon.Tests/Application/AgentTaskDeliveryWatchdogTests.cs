@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -31,6 +32,23 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public class AgentTaskDeliveryWatchdogTests
 {
+    [Test]
+    public async Task Explicit_runner_transcript_mismatch_fails_the_task_but_does_not_kill_the_session()
+    {
+        var (harness, stopper) = CreateHarness(runnerClient: new MismatchRunnerClient());
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11, kind: AgentKind.Codex);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("cannot tail a 'codex' transcript");
+        failed.FailureReason.ShouldContain("restart-session-runner.ps1");
+        stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value,
+            "positive runner blindness is evidence to withhold the destructive half of the watchdog");
+    }
+
     [Test]
     public async Task a_dispatched_task_with_no_transcript_after_the_window_fails_with_the_reason()
     {
@@ -530,7 +548,8 @@ public class AgentTaskDeliveryWatchdogTests
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
-        DelegateBindRefusalRecoverySettings? recoverySettings = null)
+        DelegateBindRefusalRecoverySettings? recoverySettings = null,
+        ISessionRunnerClient? runnerClient = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
@@ -548,6 +567,8 @@ public class AgentTaskDeliveryWatchdogTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<IDelegateSessionStopper>(stopper);
+        if (runnerClient is not null)
+            services.AddSingleton<ISessionRunnerClient>(runnerClient);
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddSingleton(Options.Create(new GitSettings
         {
@@ -572,7 +593,7 @@ public class AgentTaskDeliveryWatchdogTests
         return (provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>(), stopper);
     }
 
-    private static async Task<AgentTask> SeedDispatchedTaskAsync(int dispatchedMinutesAgo)
+    private static async Task<AgentTask> SeedDispatchedTaskAsync(int dispatchedMinutesAgo, AgentKind kind = AgentKind.ClaudeCode)
     {
         var sessionId = Guid.NewGuid();
         var id = Guid.NewGuid();
@@ -582,7 +603,7 @@ public class AgentTaskDeliveryWatchdogTests
         {
             Id = sessionId,
             DefinitionName = "fake",
-            AgentKind = AgentKind.ClaudeCode,
+            AgentKind = kind,
             Status = SessionStatus.Running,
             Cwd = Path.GetTempPath(),
             Cols = 120,
@@ -598,6 +619,7 @@ public class AgentTaskDeliveryWatchdogTests
             Title = "Delivery watchdog test",
             Goal = "Do the thing.",
             Role = AgentTaskRole.Plan,
+            AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = Path.GetTempPath(),
@@ -978,5 +1000,33 @@ public class AgentTaskDeliveryWatchdogTests
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    private sealed class MismatchRunnerClient : ISessionRunnerClient
+    {
+        private static readonly RunnerCapabilityMismatch Mismatch = new(
+            TranscriptFormats.Codex,
+            new RunnerCapabilitiesDto("InboxConhost", "inbox", "test", false,
+                [TranscriptFormats.Claude, TranscriptFormats.Grok]),
+            "The session runner at :17204 cannot tail a 'codex' transcript. Rebuild and restart it: pwsh -File scripts/restart-session-runner.ps1.");
+
+        public Task<RunnerCapabilityMismatch?> GetTranscriptCapabilityMismatchAsync(AgentKind kind, CancellationToken ct) =>
+            Task.FromResult<RunnerCapabilityMismatch?>(kind == AgentKind.Codex ? Mismatch : null);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            yield break;
+        }
     }
 }

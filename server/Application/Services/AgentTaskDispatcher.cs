@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
@@ -42,6 +43,7 @@ public sealed class AgentTaskDispatcher
     // CARD-0106 S2. Optional like everything else here; absent, a delegate whose agent env carries a
     // placeholder fails at the launch tripwire by name rather than exporting the literal token.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -78,9 +80,11 @@ public sealed class AgentTaskDispatcher
         // the same reason as the rest: a harness without it falls back to whatever streamed, which
         // is exactly today's behaviour, and the pull swallows its own failures anyway.
         AgentSessionRuntime? runtime = null,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _apiKeyEnvResolver = apiKeyEnvResolver;
+        _scopeFactory = scopeFactory;
         _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
@@ -421,6 +425,7 @@ public sealed class AgentTaskDispatcher
                 _db, sessionId, task.DispatchedAt, ct);
 
             string reason;
+            var withholdKill = false;
             if (!started)
             {
                 // CARD-0085: an empty TranscriptEntries table is not evidence the work did not
@@ -430,29 +435,40 @@ public sealed class AgentTaskDispatcher
                 if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
                     continue;
 
-                var marker = DelegationReportFormatter.TaskMarker(task.Id);
-                var briefStatus = await _db.SessionQueuedMessages
-                    .AsNoTracking()
-                    .Where(m => m.AgentSessionId == sessionId
-                        && m.Origin == QueuedMessageOrigin.Delegation
-                        && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
-                        && m.Body.Contains(marker))
-                    .OrderBy(m => m.Sequence)
-                    .Select(m => (QueuedMessageStatus?)m.Status)
-                    .FirstOrDefaultAsync(ct);
-                var evidence = briefStatus switch
+                // CARD-0112: an explicit capability omission is positive evidence that this runner
+                // cannot observe the task's transcript. Fail the uncorrelatable task, but do not
+                // kill a session that may have been doing the requested work all along.
+                if (await TryGetRunnerCapabilityMismatchAsync(task, sessionId, ct) is { } mismatch)
                 {
-                    QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
-                    QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a turn prompt for this task",
-                    null => "no brief was queued for this task after dispatch",
-                    _ => $"brief status: {briefStatus}",
-                };
-                reason =
-                    $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
-                    + $"the session has no turn prompt since this task was dispatched ({evidence}). "
-                    + "See the agent's incidents for the delivery errors — and if one of them is a "
-                    + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
-                    + "transcript bound to read (CARD-0064), so check the session before re-running.";
+                    reason = mismatch.Message;
+                    withholdKill = true;
+                }
+                else
+                {
+                    var marker = DelegationReportFormatter.TaskMarker(task.Id);
+                    var briefStatus = await _db.SessionQueuedMessages
+                        .AsNoTracking()
+                        .Where(m => m.AgentSessionId == sessionId
+                            && m.Origin == QueuedMessageOrigin.Delegation
+                            && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
+                            && m.Body.Contains(marker))
+                        .OrderBy(m => m.Sequence)
+                        .Select(m => (QueuedMessageStatus?)m.Status)
+                        .FirstOrDefaultAsync(ct);
+                    var evidence = briefStatus switch
+                    {
+                        QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
+                        QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a turn prompt for this task",
+                        null => "no brief was queued for this task after dispatch",
+                        _ => $"brief status: {briefStatus}",
+                    };
+                    reason =
+                        $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
+                        + $"the session has no turn prompt since this task was dispatched ({evidence}). "
+                        + "See the agent's incidents for the delivery errors — and if one of them is a "
+                        + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
+                        + "transcript bound to read (CARD-0064), so check the session before re-running.";
+                }
             }
             else if (await _db.AgentIncidents.AnyAsync(
                 i => i.SessionId == sessionId
@@ -476,15 +492,18 @@ public sealed class AgentTaskDispatcher
 
             await FailAsync(task, reason, ct);
 
-            try
+            if (!withholdKill)
             {
-                await _sessions.KillAsync(sessionId, CancellationToken.None);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(
-                    ex, "Could not stop never-started session {SessionId} for task {ShortId}",
-                    sessionId, DelegationReportFormatter.Short(task.Id));
+                try
+                {
+                    await _sessions.KillAsync(sessionId, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex, "Could not stop never-started session {SessionId} for task {ShortId}",
+                        sessionId, DelegationReportFormatter.Short(task.Id));
+                }
             }
 
             await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
@@ -518,6 +537,61 @@ public sealed class AgentTaskDispatcher
         }
 
         return failed;
+    }
+
+    private async Task<RunnerCapabilityMismatch?> TryGetRunnerCapabilityMismatchAsync(
+        AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        if (_runnerClient is null)
+            return null;
+
+        RunnerCapabilityMismatch? mismatch;
+        try
+        {
+            mismatch = await _runnerClient.GetTranscriptCapabilityMismatchAsync(task.AgentKind, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A failed probe is explicitly no evidence. The normal watchdog verdict remains the
+            // conservative behaviour until a runner positively enumerates an omission.
+            _logger.LogDebug(ex, "Could not probe session-runner transcript capabilities for task {ShortId}",
+                DelegationReportFormatter.Short(task.Id));
+            return null;
+        }
+
+        if (mismatch is null)
+            return null;
+
+        await RecordRunnerBuildStaleIncidentAsync(task.AgentId, sessionId, mismatch.Message, ct);
+        return mismatch;
+    }
+
+    private async Task RecordRunnerBuildStaleIncidentAsync(
+        Guid? agentId, Guid sessionId, string message, CancellationToken ct)
+    {
+        if (agentId is not Guid id || _scopeFactory is null)
+            return;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // A watchdog runs every tick. One incident per session is the useful diagnostic; a
+            // second identical row would only obscure that the runner was never restarted.
+            if (await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerBuildStale, ct))
+                return;
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                id, sessionId, AgentIncidentKind.RunnerBuildStale, AlertSeverity.Critical,
+                message, failureReason: message, ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not record stale-runner incident for session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>

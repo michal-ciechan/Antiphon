@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Interfaces;
@@ -15,6 +16,14 @@ public interface ISessionRunnerClient
     /// </summary>
     Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         Task.FromResult<RunnerCapabilitiesDto?>(null);
+
+    /// <summary>
+    /// Positive-evidence-only transcript compatibility verdict (CARD-0112). Null means either the
+    /// runner cannot answer or it explicitly supports the requested format; neither absence nor a
+    /// failed probe is evidence that a launch is unsafe.
+    /// </summary>
+    Task<RunnerCapabilityMismatch?> GetTranscriptCapabilityMismatchAsync(AgentKind kind, CancellationToken ct) =>
+        Task.FromResult<RunnerCapabilityMismatch?>(null);
 
     Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct);
     Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct);

@@ -500,7 +500,19 @@ public sealed record RunnerCapabilitiesDto(
     string PtyBackend,
     string PtyBackendRequested,
     string PtyBackendReason,
-    bool PtyBackendFellBack);
+    bool PtyBackendFellBack,
+    // CARD-0112: formats this particular runner binary has a tailer branch for. Null means an
+    // older runner cannot say; callers must treat that as no evidence, not as an omission.
+    IReadOnlyList<string>? TranscriptFormats = null,
+    // CARD-0112: additive so old/new server and runner binaries stay wire-compatible.
+    RunnerBuildDto? Build = null);
+
+/// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
+public sealed record RunnerBuildDto(
+    string InformationalVersion,
+    string? CommitSha,
+    DateTime AssemblyWriteTimeUtc,
+    DateTime ProcessStartUtc);
 
 public static class SessionRunnerEventNames
 {

@@ -17,6 +17,14 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 public sealed class SessionRunnerRuntime : IAsyncDisposable
 {
+    // The enum is the runner's actual dispatch surface. /capabilities derives its list from this
+    // rather than a separately-maintained contract list, so a new switch arm cannot be omitted
+    // from the advertised answer (CARD-0112 S1).
+    internal enum TranscriptTailerKind { Claude, Grok, Codex }
+
+    public static IReadOnlyList<string> SupportedTranscriptFormats { get; } =
+        Enum.GetValues<TranscriptTailerKind>().Select(FormatFor).ToArray();
+
     private readonly ConcurrentDictionary<Guid, RunnerSession> _sessions = new();
     private readonly SessionRunnerEventHub _events = new();
     // One transcript, one session (CARD-0006 rule C1). Process-wide because the runner process is
@@ -47,6 +55,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             throw new ArgumentException("Terminal size must be positive.", nameof(request));
         if (request.MemoryLimitMb < 0)
             throw new ArgumentException("MemoryLimitMb must not be negative.", nameof(request));
+        if (request.TranscriptFormat is { } format
+            && !TryResolveTranscriptTailer(format, out _))
+        {
+            throw new UnsupportedTranscriptFormatException(format, SupportedTranscriptFormats);
+        }
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims);
         if (!_sessions.TryAdd(request.SessionId, session))
@@ -89,6 +102,29 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             throw;
         }
     }
+
+    internal static bool TryResolveTranscriptTailer(string format, out TranscriptTailerKind tailer)
+    {
+        foreach (var candidate in Enum.GetValues<TranscriptTailerKind>())
+        {
+            if (string.Equals(FormatFor(candidate), format, StringComparison.OrdinalIgnoreCase))
+            {
+                tailer = candidate;
+                return true;
+            }
+        }
+
+        tailer = default;
+        return false;
+    }
+
+    private static string FormatFor(TranscriptTailerKind tailer) => tailer switch
+    {
+        TranscriptTailerKind.Claude => TranscriptFormats.Claude,
+        TranscriptTailerKind.Grok => TranscriptFormats.Grok,
+        TranscriptTailerKind.Codex => TranscriptFormats.Codex,
+        _ => throw new ArgumentOutOfRangeException(nameof(tailer), tailer, null),
+    };
 
     public IReadOnlyList<RunnerSessionDto> List() =>
         _sessions.Values.Select(session => session.ToDto()).OrderBy(session => session.StartedAt).ToList();
@@ -508,8 +544,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     await _client.AttachAsync(resync.LastSeq, ct);
                 }
 
-                if (request.TranscriptEnabled
-                    && string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
+                var transcriptTailer = request.TranscriptFormat is { } requestedFormat
+                    ? TryResolveTranscriptTailer(requestedFormat, out var resolvedTailer)
+                        ? resolvedTailer
+                        : throw new UnsupportedTranscriptFormatException(requestedFormat, SupportedTranscriptFormats)
+                    : TranscriptTailerKind.Claude;
+                if (request.TranscriptEnabled && transcriptTailer == TranscriptTailerKind.Grok)
                 {
                     // Grok's transcript path is DETERMINISTIC (we pass --session-id and grok
                     // honours it — measured 1.0.5, CARD-0080 S1), so the sidecar records the bound
@@ -532,8 +572,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
                     _tailer.Start();
                 }
-                else if (request.TranscriptEnabled
-                    && string.Equals(request.TranscriptFormat, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+                else if (request.TranscriptEnabled && transcriptTailer == TranscriptTailerKind.Codex)
                 {
                     // Codex's rollout path is NOT deterministic — there is no --session-id flag and
                     // the TUI never prints its id (CARD-0099 S1) — so this runs the same CARD-0006
@@ -639,6 +678,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 manifest.Rows > 0 ? manifest.Rows : 30);
 
             _client = await PtyHostClient.ConnectAsync(manifest.PipeName, TimeSpan.FromSeconds(5), ct);
+            var runnerVersion = RunnerBuildIdentity.Resolve().InformationalVersion;
+            if (!string.Equals(_client.Hello.HostVersion, runnerVersion, StringComparison.Ordinal))
+            {
+                _logger.LogInformation(
+                    "Adopted pty-host for session {SessionId} was built as {HostVersion}, while this session runner is {RunnerVersion}",
+                    _sessionId, _client.Hello.HostVersion, runnerVersion);
+            }
             _client.OnOutput += HandleOutput;
             _client.OnExited += HandleExited;
             _client.OnDisconnected += HandleDisconnected;

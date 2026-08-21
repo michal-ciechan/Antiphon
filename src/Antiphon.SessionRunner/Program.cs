@@ -64,6 +64,9 @@ builder.Services.AddHostedService<SessionCpuWatchdogService>();
 }
 
 var app = builder.Build();
+// The assembly stamp and process start cannot change during this process lifetime. Capture them
+// once; unlike the pty-backend flag there is no useful per-request re-resolution.
+var runnerBuild = RunnerBuildIdentity.Resolve();
 
 // CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
 // before a restart) - it must answer 404, not crash the request pipeline with an unhandled
@@ -118,7 +121,8 @@ app.MapGet("/capabilities", () =>
 {
     var decision = PtyBackendPolicy.Resolve();
     return Results.Ok(new RunnerCapabilitiesDto(
-        decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack));
+        decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
+        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
@@ -130,8 +134,15 @@ app.MapPost("/sessions", async (
     SessionRunnerRuntime runtime,
     CancellationToken cancellationToken) =>
 {
-    var session = await runtime.StartAsync(request, cancellationToken);
-    return Results.Created($"/sessions/{session.SessionId}", session);
+    try
+    {
+        var session = await runtime.StartAsync(request, cancellationToken);
+        return Results.Created($"/sessions/{session.SessionId}", session);
+    }
+    catch (UnsupportedTranscriptFormatException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapGet("/sessions/{id:guid}/buffer", (Guid id, SessionRunnerRuntime runtime) =>

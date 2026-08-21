@@ -272,4 +272,11 @@ public enum AgentIncidentKind
     /// fix).</para>
     /// </summary>
     PtyHostCensusDiverged = 28,
+
+    /// <summary>
+    /// The session runner explicitly reported that it cannot tail the transcript format an agent
+    /// kind requires. Refusing the launch (and withholding the never-started kill) prevents a
+    /// stale daemon from silently destroying a working delegate (CARD-0112).
+    /// </summary>
+    RunnerBuildStale = 29,
 }

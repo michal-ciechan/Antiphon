@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -13,6 +14,8 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 {
+    private static readonly TimeSpan CapabilityProbeTtl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CapabilityProbeTimeout = TimeSpan.FromSeconds(5);
     /// <summary>
     /// Named client for the /events SSE stream: registered with an INFINITE timeout, because
     /// HttpClient.Timeout covers the whole response body and the default 100 s tore the stream
@@ -26,6 +29,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     private readonly HttpClient _httpClient;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SessionRunnerSettings _settings;
+    private readonly object _capabilityGate = new();
+    private RunnerCapabilitiesDto? _cachedCapabilities;
+    private DateTimeOffset _capabilitiesProbedAt = DateTimeOffset.MinValue;
+    private Task? _capabilityProbe;
 
     public SessionRunnerHttpClient(
         HttpClient httpClient,
@@ -40,6 +47,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
+        if (await GetTranscriptCapabilityMismatchAsync(spec.Kind, ct) is { } mismatch)
+            throw new RunnerCapabilityMismatchException(mismatch.Message);
+
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -96,6 +106,83 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Uses one cached capability snapshot per TTL. The first launch waits for its bounded probe so
+    /// an explicit refusal is caught before a process starts; later stale snapshots refresh in the
+    /// background, mirroring PtyDeliveryProfile. A missing/failed answer remains no evidence.
+    /// </summary>
+    public async Task<RunnerCapabilityMismatch?> GetTranscriptCapabilityMismatchAsync(AgentKind kind, CancellationToken ct)
+    {
+        var format = TranscriptFormatFor(kind);
+        if (format is null)
+            return null;
+
+        Task? probe;
+        RunnerCapabilitiesDto? cached;
+        lock (_capabilityGate)
+        {
+            var stale = DateTimeOffset.UtcNow - _capabilitiesProbedAt >= CapabilityProbeTtl;
+            if (stale && (_capabilityProbe is null || _capabilityProbe.IsCompleted))
+            {
+                _capabilitiesProbedAt = DateTimeOffset.UtcNow;
+                _capabilityProbe = ProbeCapabilitiesAsync();
+            }
+
+            probe = _capabilityProbe;
+            cached = _cachedCapabilities;
+        }
+
+        // No snapshot means the first caller gets the answer (or its bounded no-answer) before it
+        // decides. Once one exists, refresh is intentionally background-only and bounded by the TTL.
+        if (cached is null && probe is not null)
+            await probe.WaitAsync(ct);
+
+        lock (_capabilityGate)
+            cached = _cachedCapabilities;
+
+        if (cached?.TranscriptFormats is not { } formats
+            || formats.Contains(format, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        var supported = formats.Count == 0 ? "none" : string.Join(", ", formats);
+        var build = DescribeBuild(cached.Build);
+        return new RunnerCapabilityMismatch(
+            format,
+            cached,
+            $"The session runner at :17204 cannot tail a '{format}' transcript — it reports support for {supported}{build}. "
+            + "Launching anyway would bind no transcript, and the delivery watchdog would read that as \"never started\" "
+            + "and kill a working session 10 minutes later (CARD-0112). Rebuild and restart it: "
+            + "pwsh -File scripts/restart-session-runner.ps1.");
+    }
+
+    private async Task ProbeCapabilitiesAsync()
+    {
+        RunnerCapabilitiesDto? result;
+        using var deadline = new CancellationTokenSource(CapabilityProbeTimeout);
+        try
+        {
+            result = await GetCapabilitiesAsync(deadline.Token);
+        }
+        catch
+        {
+            // GetCapabilitiesAsync deliberately makes ordinary transport/malformed-body failures
+            // null. This is only a last-resort guard for a future client implementation.
+            result = null;
+        }
+
+        lock (_capabilityGate)
+            _cachedCapabilities = result;
+    }
+
+    private static string DescribeBuild(RunnerBuildDto? build)
+    {
+        if (build is null)
+            return string.Empty;
+
+        var commit = build.CommitSha is { Length: > 0 } sha ? $"{sha[..Math.Min(7, sha.Length)]}" : "an unknown commit";
+        return $" and was built from {commit} on {build.AssemblyWriteTimeUtc:yyyy-MM-dd HH:mm} (running since {build.ProcessStartUtc:HH:mm})";
     }
 
     public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)

@@ -66,6 +66,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  Postgres container ensured" -ForegroundColor DarkGray
 }
 
+# Advisory only: AppHost adoption preserves long-lived daemons, so surface a relevant source-build
+# difference without disrupting their live pty-host pipes.
+& "$root\scripts\check-daemon-build.ps1"
+
 # ── Pre-flight: clean up old Aspire DCP temp state dirs ───────────────────
 $aspireDirs = Get-ChildItem 'C:\Users\lndco\AppData\Local\Temp' -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'aspire.*' -and $_.LastWriteTime -lt (Get-Date).AddHours(-2) }

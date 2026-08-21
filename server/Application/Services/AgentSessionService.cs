@@ -248,6 +248,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _logger.LogWarning(ex, "Failed to start agent session for card {CardId}", card.Id);
 
+            if (ex is RunnerCapabilityMismatchException && session is not null)
+                await RecordRunnerBuildStaleAsync(session.Id, ex.Message, CancellationToken.None);
+
             // FIRST, before any bookkeeping: kill what this launch started. Anything thrown outside
             // the two timeout branches above (WaitForReadyOrThrowAsync, the remote-control commands,
             // a SaveChanges) used to reach only DisposeAsync — which leaks the process (see
@@ -452,6 +455,46 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         await adapter.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The runner client knows the technical mismatch but not which delegate it was about to
+    /// launch. Resolve that ownership here and make the refusal a Critical supervisor incident.
+    /// This runs in a separate scope because the supervisor reaches the session-control graph.
+    /// </summary>
+    private async Task RecordRunnerBuildStaleAsync(Guid sessionId, string message, CancellationToken ct)
+    {
+        try
+        {
+            var agentId = await _db.AgentTasks
+                .Where(t => t.AgentSessionId == sessionId && t.AgentId != null)
+                .OrderByDescending(t => t.DispatchedAt)
+                .Select(t => t.AgentId)
+                .FirstOrDefaultAsync(ct);
+            if (agentId is not Guid id)
+            {
+                // Cardless/interactive sessions may not have an Agent row to alert through. The
+                // exception still preserves the actionable refusal for their caller.
+                return;
+            }
+
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.RunnerBuildStale, ct))
+                return;
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                id, sessionId, AgentIncidentKind.RunnerBuildStale, AlertSeverity.Critical,
+                message, failureReason: message, ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception incidentEx) when (incidentEx is not OperationCanceledException)
+        {
+            _logger.LogWarning(incidentEx,
+                "Could not record stale-runner incident for failed launch of session {SessionId}", sessionId);
+        }
     }
 
     // Internal control-flow marker: a Claude --resume launch failed because the conversation is gone.

@@ -15,6 +15,35 @@ namespace Antiphon.Tests.Agents;
 public class SessionRunnerRuntimeTests
 {
     [Test]
+    public async Task Unknown_non_null_transcript_format_is_rejected_before_a_session_or_host_is_created()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-format-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings { SessionLogPath = Path.Combine(tempRoot, "logs") }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+        try
+        {
+            var request = CmdRequest(Guid.NewGuid(), tempRoot) with
+            {
+                TranscriptEnabled = true,
+                TranscriptFormat = "zzz",
+            };
+
+            var error = await Should.ThrowAsync<UnsupportedTranscriptFormatException>(
+                () => runtime.StartAsync(request, CancellationToken.None));
+            error.Message.ShouldContain("zzz");
+            error.Message.ShouldContain(TranscriptFormats.Codex);
+            runtime.List().ShouldBeEmpty();
+        }
+        finally
+        {
+            await runtime.DisposeAsync();
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Session_runner_starts_shell_accepts_input_and_keeps_buffer()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-tests-{Guid.NewGuid():N}");

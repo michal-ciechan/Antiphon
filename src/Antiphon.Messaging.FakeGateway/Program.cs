@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Messaging;
@@ -43,7 +46,19 @@ builder.Services.AddHostedService(sp => new OutboundRecorderService(
 
 var app = builder.Build();
 
+var assembly = typeof(Program).Assembly;
+var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+var revisionMatch = Regex.Match(informationalVersion, @"\+([0-9a-f]{40})(?:$|[.+])", RegexOptions.IgnoreCase);
+var build = new
+{
+    informationalVersion,
+    commitSha = revisionMatch.Success ? revisionMatch.Groups[1].Value : null,
+    assemblyWriteTimeUtc = File.GetLastWriteTimeUtc(assembly.Location),
+    processStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime(),
+};
+
 app.MapGet("/health", () => Results.Ok(new { ok = true, bootstrap, inboundTopic, outboundTopic }));
+app.MapGet("/capabilities", () => Results.Ok(new { build }));
 
 // ── Assertions ───────────────────────────────────────────────────────────────────────────────
 app.MapGet("/deliveries", (DeliveryStore store, long? since, string? channel, string? conversationId) =>
