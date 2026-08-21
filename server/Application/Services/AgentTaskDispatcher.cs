@@ -1704,7 +1704,10 @@ public sealed class AgentTaskDispatcher
 
         var session = await _db.AgentSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-        var evidence = await _bindRefusalRecovery.TryFindAsync(task, session, ct);
+        var knownSessionIds = await _db.AgentSessions.AsNoTracking()
+            .Select(s => s.Id)
+            .ToHashSetAsync(ct);
+        var evidence = await _bindRefusalRecovery.TryFindAsync(task, session, knownSessionIds, ct);
         if (evidence is null)
             return false;
 

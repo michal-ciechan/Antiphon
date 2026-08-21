@@ -468,14 +468,15 @@ public class AgentTaskDeliveryWatchdogTests
             var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
             var projectDir = Path.Combine(projectsRoot, encoded);
             Directory.CreateDirectory(projectDir);
-            jsonl = Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl");
+            jsonl = Path.Combine(projectDir, task.AgentSessionId!.Value.ToString("D") + ".jsonl");
             var started = DateTime.UtcNow;
             await File.WriteAllTextAsync(jsonl,
-                JsonlUser(cwd, "green", started) + "\n"
-                + JsonlAssistant(
+                JsonlUser(
                     cwd,
-                    $"done. {DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
-                    started.AddMinutes(2))
+                    $"{DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
+                    started)
+                + "\n"
+                + JsonlAssistant(cwd, "done.", started.AddMinutes(2))
                 + "\n");
 
             await harness.FailNeverStartedAsync(CancellationToken.None);
@@ -491,6 +492,121 @@ public class AgentTaskDeliveryWatchdogTests
             incident.Message.ShouldContain(jsonl);
             incident.Severity.ShouldBe(AlertSeverity.Warning);
             stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task a_codex_task_never_recovers_from_a_matching_claude_jsonl_regression_753cdb4e()
+    {
+        // CARD-0127: task 753cdb4e was Codex but recovered from another delegate's Claude JSONL.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0127-codex").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0127-codex-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                sessionCwd: cwd,
+                kind: AgentKind.Codex);
+
+            var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
+            Directory.CreateDirectory(projectDir);
+            await File.WriteAllTextAsync(
+                Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl"),
+                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), DateTime.UtcNow) + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldContain("Boot prompt was never delivered");
+            stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task a_jsonl_named_for_another_known_session_is_not_recovery_evidence()
+    {
+        var projectsRoot = Directory.CreateTempSubdirectory("card0127-other-session").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0127-other-session-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                sessionCwd: cwd);
+            var otherSessionId = await SeedOtherSessionAsync(cwd, task.DispatchedAt!.Value);
+
+            var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
+            Directory.CreateDirectory(projectDir);
+            await File.WriteAllTextAsync(
+                Path.Combine(projectDir, otherSessionId.ToString("D") + ".jsonl"),
+                JsonlUser(cwd, DelegationReportFormatter.TaskMarker(task.Id), DateTime.UtcNow) + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldContain("Boot prompt was never delivered");
+            stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
+    public async Task a_card_id_in_an_assistant_record_is_not_jsonl_recovery_evidence()
+    {
+        var projectsRoot = Directory.CreateTempSubdirectory("card0127-card-id").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0127-card-id-cwd").FullName;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                title: "CARD-0010 incidental reference",
+                sessionCwd: cwd);
+
+            var projectDir = Path.Combine(projectsRoot, DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd));
+            Directory.CreateDirectory(projectDir);
+            await File.WriteAllTextAsync(
+                Path.Combine(projectDir, Guid.NewGuid().ToString("D") + ".jsonl"),
+                JsonlAssistant(cwd, "I read CARD-0010 in another task.", DateTime.UtcNow) + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            failed.Status.ShouldBe(AgentTaskStatus.Failed);
+            failed.FailureReason.ShouldContain("Boot prompt was never delivered");
+            stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
         }
         finally
         {
@@ -874,7 +990,8 @@ public class AgentTaskDeliveryWatchdogTests
         string? worktreeBranch = null,
         string? mergeTargetRef = null,
         string? repoPath = null,
-        string? sessionCwd = null)
+        string? sessionCwd = null,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
         var sessionId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
@@ -887,7 +1004,7 @@ public class AgentTaskDeliveryWatchdogTests
         {
             Id = sessionId,
             DefinitionName = "fake",
-            AgentKind = AgentKind.ClaudeCode,
+            AgentKind = kind,
             Status = SessionStatus.Running,
             Cwd = cwd,
             Cols = 120,
@@ -917,6 +1034,7 @@ public class AgentTaskDeliveryWatchdogTests
             Title = title ?? "Delivery watchdog recovery test",
             Goal = goal ?? "Do the thing.",
             Role = AgentTaskRole.Plan,
+            AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier,
             Workspace = workspace,
             WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
@@ -934,6 +1052,27 @@ public class AgentTaskDeliveryWatchdogTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
+    }
+
+    private static async Task<Guid> SeedOtherSessionAsync(string cwd, DateTime startedAt)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            DefinitionName = "other",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = cwd,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = startedAt,
+            StartedAt = startedAt,
+            LastSeenAt = startedAt,
+        });
+        await db.SaveChangesAsync();
+        return id;
     }
 
     private static AgentTask NewWorktreeDraft(string repoPath, string mergeTarget) => new()
