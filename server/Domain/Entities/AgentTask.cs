@@ -36,6 +36,15 @@ public class AgentTask
     public AgentTaskRole Role { get; set; } = AgentTaskRole.Custom;
 
     /// <summary>
+    /// The project on whose behalf this task runs — the scope its <c>{{key:NAME}}</c>
+    /// placeholders resolve against. Set once at creation from caller provenance (the parent task,
+    /// or the calling session's card/board binding), never from a filesystem path: sibling
+    /// worktrees make path matching unsafe. Null means no trustworthy project identity and thus
+    /// global-only key resolution (CARD-0115 S1).
+    /// </summary>
+    public Guid? ProjectId { get; set; }
+
+    /// <summary>
     /// WHICH AGENT PROGRAM runs this task — a different axis from <see cref="Kind"/> (which is
     /// worker-vs-orchestrator). Defaults to <see cref="AgentKind.ClaudeCode"/>, which is what every
     /// row created before CARD-0084 carries, so nothing about an existing task changes.
