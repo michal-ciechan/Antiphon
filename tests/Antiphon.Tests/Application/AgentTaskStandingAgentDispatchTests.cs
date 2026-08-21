@@ -85,7 +85,9 @@ public class AgentTaskStandingAgentDispatchTests
         var (dispatcher, _) = CreateHarness();
         var (agentId, sessionId) = await SeedStandingAgentAsync(workspace.Path, alwaysOn: true);
         var before = await AgentSnapshotAsync(agentId);
-        var task = await SeedQueuedTaskAsync(workspace.Path, pinnedAgentId: agentId);
+        var projectId = await SeedProjectAsync();
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, pinnedAgentId: agentId, projectId: projectId);
 
         await dispatcher.TickAsync(CancellationToken.None);
 
@@ -259,7 +261,8 @@ public class AgentTaskStandingAgentDispatchTests
     /// <summary>Every field the dispatcher or the pool could plausibly write, in one comparison.</summary>
     private sealed record AgentRowSnapshot(
         string? PersistentSessionId, AgentStatus Status, DateTime? PoolIdleSince,
-        Guid? PoolReservedForRootTaskId, bool IsPoolDelegate, bool AlwaysOn, string WorkingDirectory);
+        Guid? PoolReservedForRootTaskId, Guid? PoolProjectId, bool IsPoolDelegate, bool AlwaysOn,
+        string WorkingDirectory);
 
     private static async Task<AgentRowSnapshot> AgentSnapshotAsync(Guid agentId)
     {
@@ -267,7 +270,7 @@ public class AgentTaskStandingAgentDispatchTests
         var a = await db.Agents.AsNoTracking().SingleAsync(x => x.Id == agentId);
         return new AgentRowSnapshot(
             a.PersistentSessionId, a.Status, a.PoolIdleSince, a.PoolReservedForRootTaskId,
-            a.IsPoolDelegate, a.AlwaysOn, a.WorkingDirectory);
+            a.PoolProjectId, a.IsPoolDelegate, a.AlwaysOn, a.WorkingDirectory);
     }
 
     private static async Task<AgentTask> ReloadTaskAsync(Guid taskId)
@@ -452,8 +455,26 @@ public class AgentTaskStandingAgentDispatchTests
         return (agentId, sessionId);
     }
 
+    private static async Task<Guid> SeedProjectAsync()
+    {
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"standing-scope-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/standing-scope.git",
+            BaseBranch = "main",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+        return project.Id;
+    }
+
     private static async Task<AgentTask> SeedQueuedTaskAsync(
-        string directory, Guid pinnedAgentId, int createdSecondsAgo = 0)
+        string directory, Guid pinnedAgentId, int createdSecondsAgo = 0, Guid? projectId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -468,6 +489,7 @@ public class AgentTaskStandingAgentDispatchTests
             ModelLevel = AgentModelLevel.Low,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
+            ProjectId = projectId,
             AgentId = pinnedAgentId,
             Ephemeral = false,
             Status = AgentTaskStatus.Queued,

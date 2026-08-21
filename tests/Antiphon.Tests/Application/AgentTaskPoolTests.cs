@@ -59,6 +59,64 @@ public class AgentTaskPoolTests
     }
 
     [Test]
+    public async Task a_warm_agent_reuses_only_a_matching_non_null_project_scope()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var projectId = await SeedProjectAsync();
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, projectId: projectId);
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, projectId: projectId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldBe(agentId);
+        dispatched.AgentSessionId.ShouldBe(sessionId);
+    }
+
+    [Test]
+    public async Task a_warm_agent_from_project_a_is_not_reused_for_project_b()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var projectA = await SeedProjectAsync();
+        var projectB = await SeedProjectAsync();
+        var (warmAgentId, _) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, projectId: projectA);
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, projectId: projectB);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldNotBe(warmAgentId, "a project-A environment cannot serve project B");
+        (await verify.Agents.SingleAsync(a => a.Id == warmAgentId)).Status.ShouldBe(AgentStatus.Idle);
+        (await verify.Agents.SingleAsync(a => a.Id == dispatched.AgentId)).PoolProjectId.ShouldBe(projectB);
+    }
+
+    [Test]
+    public async Task a_project_scoped_warm_agent_is_not_reused_for_an_unscoped_task()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var projectId = await SeedProjectAsync();
+        var (warmAgentId, _) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, projectId: projectId);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentModelLevel.Medium);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldNotBe(warmAgentId, "a project environment cannot serve global-only work");
+        (await verify.Agents.SingleAsync(a => a.Id == dispatched.AgentId)).PoolProjectId.ShouldBeNull();
+    }
+
+    [Test]
     public async Task unrelated_work_compacts_the_session_first_focused_on_the_new_task()
     {
         // The reused context is only an asset for RELATED work. For unrelated work it is baggage —
@@ -216,6 +274,30 @@ public class AgentTaskPoolTests
             .ShouldBe(AgentTaskStatus.Queued, "still queued — it runs when its agent goes warm");
     }
 
+    [Test]
+    public async Task a_pinned_warm_agent_with_a_mismatched_scope_relaunches_fresh_and_restamps()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var projectA = await SeedProjectAsync();
+        var projectB = await SeedProjectAsync();
+        var (agentId, oldSessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, projectId: projectA);
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, pinnedAgentId: agentId, projectId: projectB);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.AgentId.ShouldBe(agentId, "the pin keeps its pool row");
+        dispatched.AgentSessionId.ShouldNotBe(oldSessionId, "a scope mismatch requires a new process");
+        (await verify.Agents.SingleAsync(a => a.Id == agentId)).PoolProjectId.ShouldBe(projectB);
+        (await verify.SessionQueuedMessages.AnyAsync(m =>
+            m.AgentSessionId == oldSessionId && m.Body.Contains(DelegationReportFormatter.TaskMarker(task.Id))))
+            .ShouldBeFalse("the stale environment receives no brief");
+    }
+
     // ---- the janitor -----------------------------------------------------------------------
 
     [Test]
@@ -320,7 +402,8 @@ public class AgentTaskPoolTests
     }
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
-        string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null)
+        string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null,
+        Guid? projectId = null)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -351,6 +434,7 @@ public class AgentTaskPoolTests
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-idleMinutes),
             PoolReservedForRootTaskId = reservedForRoot,
+            PoolProjectId = projectId,
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,
@@ -359,12 +443,31 @@ public class AgentTaskPoolTests
         return (agentId, sessionId);
     }
 
+    private static async Task<Guid> SeedProjectAsync()
+    {
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"pool-scope-{Guid.NewGuid():N}",
+            GitRepositoryUrl = "https://example.test/pool-scope.git",
+            BaseBranch = "main",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+        return project.Id;
+    }
+
     private static async Task<AgentTask> SeedQueuedTaskAsync(
         string directory,
         AgentModelLevel level,
         string goal = "do the next piece of work",
         Guid? rootTaskId = null,
-        Guid? pinnedAgentId = null)
+        Guid? pinnedAgentId = null,
+        Guid? projectId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -377,6 +480,7 @@ public class AgentTaskPoolTests
             ModelLevel = level,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
+            ProjectId = projectId,
             AgentId = pinnedAgentId,
             Ephemeral = pinnedAgentId is null,
             Status = AgentTaskStatus.Queued,

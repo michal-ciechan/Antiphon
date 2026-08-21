@@ -1279,6 +1279,13 @@ public sealed class AgentTaskDispatcher
         }
 
         var agent = await ResolveAgentAsync(claimed, now, ct);
+        // A pool delegate's environment is fixed for the life of its process. Record the task
+        // scope at every cold launch (including a deliberate relaunch of an existing pool row),
+        // so the warm-pool predicate can never hand that process work from another scope.
+        // Pool delegates have no board-derived scope: null is intentionally global-only.
+        if (agent.IsPoolDelegate)
+            agent.PoolProjectId = claimed.ProjectId;
+
         var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
         var session = new AgentSession
         {
@@ -1789,6 +1796,19 @@ public sealed class AgentTaskDispatcher
                 return ReuseOutcome.SpawnFresh;
             }
 
+            // This process was launched with the pool row's recorded scope. A live environment
+            // cannot be re-resolved for a new brief, so a differently-scoped pin must take the
+            // same cold-launch path as a kind mismatch. ResolveAgentAsync keeps the row but the
+            // spawn path gives it a fresh session and restamps PoolProjectId.
+            if (pinned.PoolProjectId != claimed.ProjectId)
+            {
+                _logger.LogInformation(
+                    "Task {ShortId} is pinned to warm delegate '{Agent}' with pool scope {ActualScope}, but needs {WantedScope} — relaunching it",
+                    DelegationReportFormatter.Short(claimed.Id), pinned.Name,
+                    pinned.PoolProjectId, claimed.ProjectId);
+                return ReuseOutcome.SpawnFresh;
+            }
+
             if (pinned.Status != AgentStatus.Idle || pinned.PoolIdleSince is null)
                 return ReuseOutcome.WaitForAgent;
 
@@ -1802,6 +1822,10 @@ public sealed class AgentTaskDispatcher
                     && a.Status == AgentStatus.Idle
                     && a.PoolIdleSince != null
                     && a.ModelLevel == claimed.ModelLevel
+                    // A warm process retains its launch environment. Scope equality includes
+                    // null == null: global-only delegates may serve global-only tasks, never a
+                    // task that needs project credentials (CARD-0115 S3).
+                    && a.PoolProjectId == claimed.ProjectId
                     // Kind is as hard a match as the tier, and for a stronger reason: a tier
                     // mismatch would merely run the work on the wrong model, a kind mismatch would
                     // deliver the brief to a program that is not the one the caller chose.
