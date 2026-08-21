@@ -49,10 +49,8 @@ public class AgentE2ETests
     {
         const string suffix = "foundation";
         var templateId = await CreateWorkflowTemplateAsync($"E2E Agent Queue {suffix}");
-        var projectId = await CreateProjectAsync($"Agent Queue Project {suffix}");
-        var boardId = await CreateBoardAsync(projectId, $"Agent Queue Board {suffix}");
         var cardTitle = $"Agent Queue Card {suffix}";
-        var (cardId, identifier) = await CreateCardAsync(boardId, cardTitle);
+        var cardDescription = "Created through the agents E2E Add Card flow.";
         var agentName = $"E2E Agent {suffix}";
         var workingDirectory = CreateWorkingDirectory(suffix);
 
@@ -91,28 +89,30 @@ public class AgentE2ETests
             await Expect(page.GetByRole(AriaRole.Heading, new PageGetByRoleOptions { Name = agentName })).ToBeVisibleAsync();
 
             await page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = "Add Card" }).ClickAsync();
-            var assignDialog = page.GetByRole(AriaRole.Dialog);
-            await assignDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Board" }).ClickAsync();
-            await page.GetByRole(AriaRole.Option, new PageGetByRoleOptions { Name = $"Agent Queue Project {suffix} / Agent Queue Board {suffix}" }).ClickAsync();
-            await assignDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Card" }).ClickAsync();
-            await page.GetByRole(AriaRole.Option, new PageGetByRoleOptions { Name = $"{identifier} - {cardTitle}" }).ClickAsync();
+            var addDialog = page.GetByRole(AriaRole.Dialog);
+            await addDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Title" }).FillAsync(cardTitle);
+            await addDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Description" }).FillAsync(cardDescription);
 
-            var assignResponse = await page.RunAndWaitForResponseAsync(
-                () => assignDialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Assign" }).ClickAsync(),
-                apiResponse => apiResponse.Url.Contains($"/api/agents/", StringComparison.Ordinal)
-                    && apiResponse.Url.Contains("/queue", StringComparison.Ordinal)
+            var createCardResponse = await page.RunAndWaitForResponseAsync(
+                () => addDialog.GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Add" }).ClickAsync(),
+                apiResponse => apiResponse.Url.Contains("/api/boards/", StringComparison.Ordinal)
+                    && apiResponse.Url.EndsWith("/cards", StringComparison.Ordinal)
                     && apiResponse.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase));
-            if (assignResponse.Status >= 300)
+            if (createCardResponse.Status >= 300)
             {
-                var responseBody = await assignResponse.TextAsync();
+                var responseBody = await createCardResponse.TextAsync();
                 throw new InvalidOperationException(
-                    $"Agent queue assignment failed with HTTP {assignResponse.Status}: {responseBody}");
+                    $"Card creation failed with HTTP {createCardResponse.Status}: {responseBody}");
             }
+
+            using var cardBody = JsonDocument.Parse(await createCardResponse.TextAsync());
+            var cardId = cardBody.RootElement.GetProperty("id").GetGuid();
+            var identifier = cardBody.RootElement.GetProperty("identifier").GetString()!;
 
             var queueRow = page.GetByRole(AriaRole.Row).Filter(new LocatorFilterOptions { HasText = cardTitle });
             await Expect(queueRow).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions { Timeout = 10_000 });
             await Expect(queueRow).ToContainTextAsync($"{identifier} - {cardTitle}");
-            await Expect(queueRow).ToContainTextAsync($"Agent Queue Board {suffix}");
+            await Expect(queueRow).ToContainTextAsync(agentName);
             await Expect(queueRow).ToContainTextAsync("Implement");
 
             await AssertCardAssignedAsync(cardId, templateId);
@@ -121,12 +121,6 @@ public class AgentE2ETests
                 State = WaitForSelectorState.Hidden,
                 Timeout = 10_000
             });
-            await page.GetByText("Card assigned").WaitForAsync(new LocatorWaitForOptions
-            {
-                State = WaitForSelectorState.Hidden,
-                Timeout = 10_000
-            });
-
             var screenshotPath = Path.Combine(
                 FindRepoRoot(),
                 "docs",
@@ -148,61 +142,6 @@ public class AgentE2ETests
             await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
             await context.DisposeAsync();
         }
-    }
-
-    private async Task<Guid> CreateProjectAsync(string name)
-    {
-        var response = await _appFixture.HttpClient.PostAsJsonAsync(
-            "/api/projects",
-            new
-            {
-                name,
-                gitRepositoryUrl = "https://github.com/example/agent-queue-e2e.git",
-                localRepositoryPath = (string?)null,
-                baseBranch = "main",
-                constitutionPath = (string?)null,
-                gitHubIntegrationEnabled = false,
-                notificationsEnabled = false
-            },
-            JsonOptions);
-        response.EnsureSuccessStatusCode();
-
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
-        return body.GetProperty("id").GetGuid();
-    }
-
-    private async Task<Guid> CreateBoardAsync(Guid projectId, string name)
-    {
-        var response = await _appFixture.HttpClient.PostAsJsonAsync(
-            "/api/boards",
-            new
-            {
-                projectId,
-                name
-            },
-            JsonOptions);
-        response.EnsureSuccessStatusCode();
-
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
-        return body.GetProperty("id").GetGuid();
-    }
-
-    private async Task<(Guid CardId, string Identifier)> CreateCardAsync(Guid boardId, string title)
-    {
-        var response = await _appFixture.HttpClient.PostAsJsonAsync(
-            $"/api/boards/{boardId}/cards",
-            new
-            {
-                boardColumnId = (Guid?)null,
-                title,
-                description = "Assigned through the agents E2E queue.",
-                labels = new[] { "e2e", "agents" }
-            },
-            JsonOptions);
-        response.EnsureSuccessStatusCode();
-
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
-        return (body.GetProperty("id").GetGuid(), body.GetProperty("identifier").GetString()!);
     }
 
     private async Task<Guid> CreateWorkflowTemplateAsync(string name)

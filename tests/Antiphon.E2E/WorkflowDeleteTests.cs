@@ -37,6 +37,7 @@ public class WorkflowDeleteTests
     public async Task SetupAsync()
     {
         _appFixture.UsePrebuiltFrontend = true;
+        _appFixture.UseMockExecutor = true;
         await _appFixture.InitializeAsync();
         await _playwrightFixture.InitializeAsync();
     }
