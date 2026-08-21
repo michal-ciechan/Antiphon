@@ -44,8 +44,8 @@ public readonly record struct TranscriptPart(
 /// Normalizes one line of a Claude Code session JSONL transcript into zero or more
 /// <see cref="TranscriptPart"/>s (user prompts, assistant text/thinking, tool calls/results,
 /// turn titles, turn-end markers). Lossy by design: pure-metadata records (mode, permission-mode,
-/// attachments, file-history snapshots, the redundant last-prompt) are skipped — the verbatim record
-/// still lives in the PTY .ansi.log and the .jsonl file itself.
+/// most attachments, file-history snapshots, the redundant last-prompt) are skipped — the verbatim
+/// record still lives in the PTY .ansi.log and the .jsonl file itself.
 /// </summary>
 public static class TranscriptNormalizer
 {
@@ -72,6 +72,7 @@ public static class TranscriptNormalizer
             {
                 "assistant" => FromAssistant(root),
                 "user" => FromUser(root),
+                "attachment" => FromAttachment(root),
                 "ai-title" => FromTitle(root),
                 "system" => FromSystem(root),
                 _ => [],
@@ -191,6 +192,32 @@ public static class TranscriptNormalizer
         }
 
         return parts;
+    }
+
+    // A queued_command attachment is written only after Claude drains its composer queue into the
+    // conversation. It is deliberately a distinct kind: its timestamp is the enqueue time, which
+    // can be older than preceding file-order records and must not affect turn or working-state
+    // logic. Delivery confirmation is its sole consumer.
+    private static List<TranscriptPart> FromAttachment(JsonElement root)
+    {
+        if (!root.TryGetProperty("attachment", out var attachment)
+            || attachment.ValueKind != JsonValueKind.Object
+            || GetString(attachment, "type") != "queued_command")
+        {
+            return [];
+        }
+
+        var prompt = GetString(attachment, "prompt");
+        return string.IsNullOrWhiteSpace(prompt)
+            ? []
+            : [new TranscriptPart(
+                TranscriptKinds.QueuedUserPrompt,
+                GetString(root, "uuid"),
+                GetString(root, "parentUuid"),
+                GetTimestamp(root),
+                "user",
+                prompt,
+                null, null, null, null, null)];
     }
 
     // System records are pure metadata EXCEPT the compact boundary — the signal compaction

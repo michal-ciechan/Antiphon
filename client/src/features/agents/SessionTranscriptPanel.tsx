@@ -371,6 +371,20 @@ export function SessionTranscriptPanel({
                   )}
 
                   {turn.items.map((item) => {
+                    if (item.kind === 'QueuedUserPrompt')
+                      return (
+                        <Group key={item.sequence} gap={6} align="flex-start" wrap="nowrap">
+                          <TbUser size={15} style={{ marginTop: 3, flexShrink: 0 }} color="var(--mantine-color-blue-4)" />
+                          <Stack gap={2} style={{ flexGrow: 1 }}>
+                            <Badge size="xs" variant="light" color="blue" style={{ alignSelf: 'flex-start' }}>
+                              queued
+                            </Badge>
+                            <Text size="sm" fw={500} style={{ whiteSpace: 'pre-wrap' }}>
+                              {item.text}
+                            </Text>
+                          </Stack>
+                        </Group>
+                      )
                     if (item.kind === 'Thinking') return <ThinkingRow key={item.sequence} entry={item} />
                     if (item.kind === 'ToolCall')
                       return (

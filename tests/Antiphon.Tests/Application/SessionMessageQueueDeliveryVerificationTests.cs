@@ -206,6 +206,38 @@ public class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.SubmittedBodies.ShouldBe(["after the compaction"]);
     }
 
+    [Test]
+    public async Task Queued_user_prompt_is_inert_for_the_server_working_rule()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.QueuedUserPrompt,
+            "a completion note accepted by a busy composer",
+            timestamp: DateTime.UtcNow.AddMinutes(1));
+
+        await using var db = CreateContext();
+        (await SessionMessageQueueService.IsWorkingAsync(db, h.SessionId, CancellationToken.None))
+            .ShouldBeFalse("a queued_command confirms delivery only; it is not turn activity");
+    }
+
+    [Test]
+    public async Task Queued_user_prompt_is_not_a_turn_prompt_for_settlement_or_the_delivery_watchdog()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var dispatchedAt = DateTime.UtcNow.AddMinutes(-1);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.QueuedUserPrompt,
+            "a queued completion note is not a task brief",
+            timestamp: DateTime.UtcNow);
+
+        await using var db = CreateContext();
+        var span = await TranscriptPromptSpan.LoadAsync(db, h.SessionId, dispatchedAt, CancellationToken.None);
+        span.TurnPrompts.ShouldBeEmpty();
+        (await TranscriptPromptSpan.HasTurnPromptSinceAsync(db, h.SessionId, dispatchedAt, CancellationToken.None))
+            .ShouldBeFalse();
+    }
+
     // ---- CARD-0041: a compacted session read "working" for two days --------------------------
     // The stored rows of session e77fb0a7 after its last real turn, verbatim (identifiers are the
     // stored sequences; note the timestamps are NON-monotonic against sequence — the boundary is
@@ -602,6 +634,46 @@ public class SessionMessageQueueDeliveryVerificationTests
         (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
     }
 
+    [Test]
+    public async Task Queued_user_prompt_confirms_delivery_without_a_second_enter()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, submitted);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        };
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "the completion note Claude accepted into its composer queue",
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(
+            ["the completion note Claude accepted into its composer queue", "\r"],
+            "the queued_command record is the confirmation; it must not cause an Enter re-press");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task Queued_user_prompt_late_confirm_never_types_the_body_twice()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "the completion note whose first attempt entered Claude's composer queue";
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, body);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("late-confirm must see the queued_command before any retry");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
     // The same thing end to end, which is the shape that actually happens in production: a delivery
     // fails verification, the body turns out to have gone in anyway, and the NEXT flush must not
     // put it in a second time.
@@ -969,6 +1041,25 @@ public class SessionMessageQueueDeliveryVerificationTests
         (await again.AgentIncidents.CountAsync(
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery))
             .ShouldBe(1, "deduped on the message id — late-confirm must not raise a second row");
+    }
+
+    [Test]
+    public async Task A_truncated_queued_user_prompt_parks_instead_of_becoming_sent()
+    {
+        await using var h = await ObservableHarnessAsync();
+        var body = LongQueuedBody();
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: floor);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, body[..250]);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("a clipped queued_command must not be re-typed");
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(3, "incomplete confirmation parks the row");
     }
 
     // ---- CARD-0103 slice 2: a pre-first-turn NoComposerEvidence does not consume an attempt ----

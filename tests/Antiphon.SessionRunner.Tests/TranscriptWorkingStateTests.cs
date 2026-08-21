@@ -81,6 +81,16 @@ public class TranscriptWorkingStateTests
         ]).ShouldBeTrue();
     }
 
+    [Test]
+    public void Queued_user_prompt_after_a_turn_end_stays_idle()
+    {
+        TranscriptWorkingState.IsProvenIdle(
+        [
+            Evt(1, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Evt(2, TranscriptKinds.QueuedUserPrompt, "a completion note accepted into the composer queue"),
+        ]).ShouldBeTrue("queued_command confirms delivery only; it is never a new turn");
+    }
+
     // ---- CARD-0041, in FILE order (which is what this judgement always sees) ------------------
     // The tailer's mirror follows the JSONL: raw typed prompt, boundary, continuation, wrapper,
     // stdout. There is no timestamp override here — deliberately, since file order is truthful —

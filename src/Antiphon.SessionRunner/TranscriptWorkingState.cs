@@ -44,6 +44,9 @@ public static class TranscriptWorkingState
             // boundary and would outrank it (CARD-0041).
             if (entry.Kind == TranscriptKinds.TurnTitle
                 || entry.Kind == TranscriptKinds.CompactBoundary
+                // queued_command carries the time it entered the composer, not its file-order
+                // position. It confirms delivery only and must not create a turn boundary.
+                || entry.Kind == TranscriptKinds.QueuedUserPrompt
                 || TranscriptKinds.IsCompactionContinuationPrompt(entry.Kind, entry.Text)
                 || TranscriptKinds.IsLocalCommandRecord(entry.Kind, entry.Text))
             {
