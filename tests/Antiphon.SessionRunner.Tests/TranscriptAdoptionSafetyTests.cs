@@ -779,8 +779,10 @@ public class TranscriptAdoptionSafetyTests
 
             await AssertBoundByDiscoveryAsync(hub, tailer, file);
             await Task.Delay(400);
-            tailer.Snapshot().Entries.ShouldBeEmpty(
-                "a queued_command attachment is C4 evidence only — it must not be ingested as a UserPrompt");
+            var entries = tailer.Snapshot().Entries;
+            entries.ShouldHaveSingleItem().Kind.ShouldBe(TranscriptKinds.QueuedUserPrompt);
+            entries.ShouldNotContain(e => e.Kind == TranscriptKinds.UserPrompt,
+                "the C4 harvest remains separate from turn-prompt ingestion");
         }
         finally
         {

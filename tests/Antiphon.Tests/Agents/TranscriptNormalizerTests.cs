@@ -142,6 +142,11 @@ public class TranscriptNormalizerTests
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToArray();
 
+    private static string[] QueuedCommandFixtureLines() =>
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "queued-command.jsonl"))
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToArray();
+
     /// <summary>
     /// The S1 carriage itself (CARD-0072): a wall stub's top-level error/isApiErrorMessage/
     /// apiErrorStatus — discarded entirely before this change — land on BOTH of the stub's parts.
@@ -419,20 +424,24 @@ public class TranscriptNormalizerTests
         TranscriptNormalizer.Normalize("""{"type":"last-prompt","lastPrompt":"x"}""").ShouldBeEmpty();
     }
 
-    // CARD-0064: queued-but-unsubmitted bodies stay out of the ingested stream. C4 harvests them
-    // inside TranscriptCandidateProbe; if they leaked through here, CARD-0055 could confirm Sent
-    // on a body still sitting in the composer queue.
+    // CARD-0132: only the attachment proves Claude drained the body into the conversation. The
+    // queue-operation records remain excluded: enqueue proves only that the composer accepted it,
+    // while remove is ambiguous between delivery and discard.
     [Test]
-    public void Queue_operation_and_queued_command_attachment_normalize_to_nothing()
+    public void Queued_command_attachment_normalizes_to_a_distinct_queued_user_prompt()
     {
-        TranscriptNormalizer.Normalize(
-                """{"type":"queue-operation","operation":"enqueue","content":"the brief this session was sent"}""")
-            .ShouldBeEmpty();
-        TranscriptNormalizer.Normalize(
-                """{"type":"queue-operation","operation":"remove","content":"the brief this session was sent"}""")
-            .ShouldBeEmpty();
-        TranscriptNormalizer.Normalize(
-                """{"type":"attachment","attachment":{"type":"queued_command","prompt":"the brief this session was sent"}}""")
-            .ShouldBeEmpty();
+        var lines = QueuedCommandFixtureLines();
+        var parts = lines.SelectMany(TranscriptNormalizer.Normalize).ToList();
+
+        var queued = parts.Where(p => p.Kind == TranscriptKinds.QueuedUserPrompt).ShouldHaveSingleItem();
+        queued.Text.ShouldBe("The complete completion note that Claude queued while it was busy.");
+        queued.Uuid.ShouldBe("queued-command-1");
+        queued.ParentUuid.ShouldBe("tool-result-1");
+        queued.Timestamp.ShouldBe(DateTimeOffset.Parse("2026-08-21T17:58:06.291Z"));
+        queued.Role.ShouldBe("user");
+
+        TranscriptNormalizer.Normalize(lines[0]).ShouldBeEmpty("enqueue is not confirmation");
+        TranscriptNormalizer.Normalize(lines[2]).ShouldBeEmpty("remove is ambiguous");
+        TranscriptNormalizer.Normalize(lines[4]).ShouldBeEmpty("metadata attachments stay excluded");
     }
 }

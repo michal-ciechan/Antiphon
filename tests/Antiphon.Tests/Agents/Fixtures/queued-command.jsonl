@@ -1,0 +1,6 @@
+{"type":"queue-operation","operation":"enqueue","content":"The complete completion note that Claude queued while it was busy.","timestamp":"2026-08-21T17:58:06.292Z"}
+{"type":"user","uuid":"tool-result-1","timestamp":"2026-08-21T17:58:37.774Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"command finished"}]}}
+{"type":"queue-operation","operation":"remove","content":"The complete completion note that Claude queued while it was busy.","timestamp":"2026-08-21T17:58:37.967Z"}
+{"type":"attachment","uuid":"queued-command-1","parentUuid":"tool-result-1","timestamp":"2026-08-21T17:58:06.291Z","attachment":{"type":"queued_command","prompt":"The complete completion note that Claude queued while it was busy."}}
+{"type":"attachment","uuid":"metadata-1","parentUuid":"tool-result-1","timestamp":"2026-08-21T17:58:38.000Z","attachment":{"type":"total_tokens_reminder","tokens":1000}}
+{"type":"assistant","uuid":"assistant-1","parentUuid":"queued-command-1","timestamp":"2026-08-21T17:58:45.644Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Acknowledged."}]}}

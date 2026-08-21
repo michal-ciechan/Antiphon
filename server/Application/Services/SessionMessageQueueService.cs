@@ -1421,7 +1421,8 @@ public sealed class SessionMessageQueueService
         var texts = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
                 && t.Sequence > baselineSequence)
             .OrderBy(t => t.Sequence)
             .Select(t => t.Text)
@@ -1889,6 +1890,10 @@ public sealed class SessionMessageQueueService
                 && t.Kind != TranscriptKinds.TurnEnd
                 && t.Kind != TranscriptKinds.TurnTitle
                 && t.Kind != TranscriptKinds.SessionRestartBoundary
+                // queued_command carries its composer enqueue timestamp, which can be older than
+                // preceding file-order records. It confirms delivery only; treating it as activity
+                // could make the timestamp override report a busy session idle.
+                && t.Kind != TranscriptKinds.QueuedUserPrompt
                 // Local slash-command records (/model, /status …) are housekeeping with NO
                 // TurnEnd — counting them as activity stranded WhenIdle deliveries (2026-07-31).
                 && !(t.Kind == TranscriptKinds.UserPrompt

@@ -72,6 +72,15 @@ describe('isWorking', () => {
     expect(isWorking([entry(1, 'AssistantText'), entry(2, 'TurnEnd'), entry(3, 'TurnTitle')])).toBe(false)
   })
 
+  it('ignores queued user prompts for working state', () => {
+    expect(
+      isWorking([
+        entry(1, 'TurnEnd', null, { timestamp: at(10) }),
+        entry(2, 'QueuedUserPrompt', 'a completion note accepted into the composer queue', { timestamp: at(20) }),
+      ]),
+    ).toBe(false)
+  })
+
   // Live miss 2026-07-29: an interrupted turn (Esc / rejected tool call) writes the
   // "[Request interrupted..." USER marker and no TurnEnd — the marker is the turn's end. Counting
   // it as activity showed a phantom permanently-working agent and stranded WhenIdle deliveries.

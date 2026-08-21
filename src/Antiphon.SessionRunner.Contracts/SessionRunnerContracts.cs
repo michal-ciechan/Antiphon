@@ -146,6 +146,14 @@ public sealed record RunnerTranscriptDto(
 public static class TranscriptKinds
 {
     public const string UserPrompt = "UserPrompt";
+
+    /// <summary>
+    /// A prompt the TUI accepted into its own composer queue while busy and later submitted; it
+    /// entered the conversation as an <c>attachment</c>/<c>queued_command</c> record, not as a
+    /// <c>user</c> record.
+    /// </summary>
+    public const string QueuedUserPrompt = "QueuedUserPrompt";
+
     public const string AssistantText = "AssistantText";
     public const string Thinking = "Thinking";
     public const string ToolCall = "ToolCall";

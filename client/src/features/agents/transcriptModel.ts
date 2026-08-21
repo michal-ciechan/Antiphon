@@ -110,6 +110,7 @@ export function isWorking(entries: TranscriptEntryDto[]): boolean {
     } else if (
       e.kind !== 'TurnTitle' &&
       e.kind !== 'CompactBoundary' &&
+      e.kind !== 'QueuedUserPrompt' &&
       !isCompactionContinuation(e) &&
       !isLocalCommandRecord(e)
     ) {

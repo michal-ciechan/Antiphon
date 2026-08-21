@@ -10,6 +10,7 @@ export interface AgentSessionBufferDto {
 
 export type TranscriptKind =
   | 'UserPrompt'
+  | 'QueuedUserPrompt'
   | 'AssistantText'
   | 'Thinking'
   | 'ToolCall'
