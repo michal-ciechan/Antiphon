@@ -1334,15 +1334,17 @@ public sealed class AgentTaskDispatcher
         // pinned one (CARD-0058 slice 6).
         var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
         var spec = BuildLaunchSpec(claimed, agent, session, attachedBundleKeys);
-        // CARD-0106 S2 — this is the other bottom-level path where Env is finalized, and it is the
-        // one a POOL DELEGATE takes. A pool delegate has no board, so it resolves GLOBAL keys only;
-        // a task PINNED to a standing agent with a board gets that project's keys, which is what
-        // makes the "Grok delegate on its own project credential" case work.
+        // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
+        // project scope wins; a task without one falls back to its pinned standing agent's board.
+        // A pool delegate has neither a board nor a path-derived fallback: no trustworthy scope
+        // means global-only resolution.
         if (_apiKeyEnvResolver is not null)
         {
+            var projectId = claimed.ProjectId
+                ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
             spec = await _apiKeyEnvResolver.ResolveSpecAsync(
                 spec,
-                agent,
+                projectId,
                 $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
                 ct);
         }

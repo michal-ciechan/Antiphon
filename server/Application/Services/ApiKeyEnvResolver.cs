@@ -20,9 +20,10 @@ namespace Antiphon.Server.Application.Services;
 ///
 /// <para><b>Project overrides global.</b> A project key exists precisely to specialize what the
 /// installation-wide default would do, and the narrower scope winning is the rule every other
-/// override in this codebase follows. A pool delegate has no board and therefore no project, so it
-/// resolves GLOBAL keys only — deriving a project from a working directory was rejected as
-/// unreliable (worktrees are sibling directories; a prefix match would silently mis-scope a secret).</para>
+/// override in this codebase follows. Task dispatch supplies its recorded project scope first,
+/// falling back only to a pinned agent's board; an unscoped pool delegate resolves GLOBAL keys
+/// only. Deriving a project from a working directory was rejected as unreliable (worktrees are
+/// sibling directories; a prefix match would silently mis-scope a secret).</para>
 ///
 /// <para>Every failure arm names the KEY NAME and the scopes searched. None of them carries a value,
 /// and this class logs key names only — never a value, never a substituted environment value.</para>
