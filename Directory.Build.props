@@ -3,12 +3,15 @@
     Keep MSBuild's default item globs (and NuGet restore's project evaluation) from crawling
     runtime/output directories that live inside project folders. The SDK only auto-excludes
     bin/ and obj/ — without this, the session-runner's workspace/ (session logs + pty-host
-    shadow copies) and the alternate build outputs (bin-verify/, bin-ptyhost/, used to build
-    while the daemons hold bin/ locked) get enumerated on EVERY evaluation. That once nested
-    recursively (shadow copies swallowing sibling output dirs) and drove restore+build of
-    Antiphon.SessionRunner past 10 minutes.
+    shadow copies) and the alternate build outputs (bin-verify/, bin-ptyhost/, bin-<name>/, used
+    to build while the daemons hold bin/ locked) get enumerated on EVERY evaluation. That once
+    nested recursively (shadow copies swallowing sibling output dirs) and drove restore+build of
+    Antiphon.SessionRunner past 10 minutes. A general bin-*/** glob replaces the four
+    hand-maintained prefixes (bin-verify/**, bin-ptyhost/**, bin-profile*/**, bin-c37*/**) that
+    used to live here — every delegate build picks its own bin-<task>/ name, and a name this list
+    didn't happen to cover broke a build with MSB3030 (found 2026-08-21, CARD-0110).
   -->
   <PropertyGroup>
-    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-verify/**;bin-ptyhost/**;bin-profile*/**;bin-c37*/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-*/**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>
