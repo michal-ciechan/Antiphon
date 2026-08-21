@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\server\Antiphon.Server.csproj" />
+    <!-- The E2E fixture starts this real HTTP runner from its own output directory. -->
+    <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
     <!-- Drives a REAL Claude in a ConPTY for the delegation end-to-end test. -->
     <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
   </ItemGroup>
