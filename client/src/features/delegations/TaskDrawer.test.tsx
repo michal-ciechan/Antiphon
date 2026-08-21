@@ -33,6 +33,7 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
     createdAt: '2026-08-07T10:00:00Z',
     dispatchedAt: '2026-08-07T10:00:00Z',
     completedAt: '2026-08-07T10:12:00Z',
+    recoveredAt: null,
     tokensIn: 12_000,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
@@ -73,6 +74,15 @@ describe('TaskDrawer', () => {
     expect(screen.getByText('task-77777777')).toBeInTheDocument()
     expect(screen.getByText('$0.03')).toBeInTheDocument()
     expect(screen.getByText('12m00')).toBeInTheDocument()
+  })
+
+  it('labels a recovered elapsed time as unobserved', async () => {
+    serve(detail({ recoveredAt: '2026-08-07T10:12:00Z' }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+
+    const elapsed = await screen.findByText('~12m00')
+    await userEvent.hover(elapsed)
+    expect(await screen.findByText(/recovered from an unbound session - completion was not observed/i)).toBeInTheDocument()
   })
 
   it('retries at the same tier', async () => {

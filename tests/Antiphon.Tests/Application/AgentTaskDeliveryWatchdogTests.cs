@@ -291,6 +291,7 @@ public class AgentTaskDeliveryWatchdogTests
             AgentTaskStatus.Succeeded,
             "no transcript arrives for a response that never writes text — only the sweep can end this");
         settled.Result.ShouldBe("I'll start by reading the spec.");
+        settled.RecoveredAt.ShouldBeNull("ordinary settlement observes the task's own transcript");
     }
 
     [Test]
@@ -382,6 +383,8 @@ public class AgentTaskDeliveryWatchdogTests
         await using var verify = CreateContext();
         var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         recovered.Status.ShouldBe(AgentTaskStatus.Succeeded, "the work landed — Failed would redispatch on it");
+        recovered.RecoveredAt.ShouldNotBeNull("a recovery settlement is not an observed completion");
+        recovered.RecoveredAt.ShouldBe(recovered.CompletedAt);
         recovered.Result.ShouldNotBeNull();
         recovered.Result.ShouldContain(sha, customMessage: "Result names the commit that recovered it");
         (await verify.AgentTaskEvents.AnyAsync(

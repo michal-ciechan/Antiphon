@@ -644,11 +644,14 @@ public class AgentTaskServiceIntegrationTests
             AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed, level: AgentModelLevel.Medium);
 
         await using var db = CreateContext();
+        (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).RecoveredAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
         var summary = await CreateService(db).RetryAsync(task.Id, CancellationToken.None);
 
         summary.Status.ShouldBe(AgentTaskStatus.Queued);
         summary.ModelLevel.ShouldBe(AgentModelLevel.Medium, "a retry is the same work, not a bigger model");
         summary.Attempt.ShouldBe(2);
+        summary.RecoveredAt.ShouldBeNull("a new attempt cannot inherit the prior settlement's provenance");
     }
 
     [Test]

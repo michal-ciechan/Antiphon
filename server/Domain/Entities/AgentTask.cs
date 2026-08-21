@@ -143,6 +143,12 @@ public class AgentTask
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>
+    /// When an unbound-session recovery settled this task. Unlike <see cref="CompletedAt"/>, this
+    /// is not an observed delegate completion, so duration consumers can label or exclude it.
+    /// </summary>
+    public DateTime? RecoveredAt { get; set; }
+
+    /// <summary>
     /// Roughly how long the caller thinks this will take, in minutes (CARD-0047). Resolved at
     /// creation from the request or <c>Delegation:DefaultExpectedMinutes</c>, so it is always a
     /// number and the scheduler never has to reason about "unset".
