@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Api.Endpoints;
@@ -31,15 +32,19 @@ public static class ApiKeyEndpoints
         // Upsert. The name is in the path because it is the key's identity to an operator; the id
         // is an implementation detail they never type.
         keys.MapPut("/{name}", async (
+            HttpContext context,
             string name,
             PutApiKeyRequest request,
             ApiKeyService service,
             CancellationToken cancellationToken) =>
-            Results.Ok(await service.PutAsync(
+        {
+            ValidatePutRequest(context);
+            return Results.Ok(await service.PutAsync(
                 name,
                 request.ProjectId,
                 request.Value,
-                cancellationToken)));
+                cancellationToken));
+        });
 
         keys.MapDelete("/{id:guid}", async (
             Guid id,
@@ -64,15 +69,25 @@ public static class ApiKeyEndpoints
         // The scope comes from the route, so a project-scoped write cannot land globally because a
         // caller forgot the body field.
         projectKeys.MapPut("/{name}", async (
+            HttpContext context,
             Guid projectId,
             string name,
             PutApiKeyRequest request,
             ApiKeyService service,
             CancellationToken cancellationToken) =>
-            Results.Ok(await service.PutAsync(
+        {
+            ValidatePutRequest(context);
+            return Results.Ok(await service.PutAsync(
                 name,
                 projectId,
                 request.Value,
-                cancellationToken)));
+                cancellationToken));
+        });
+    }
+
+    private static void ValidatePutRequest(HttpContext context)
+    {
+        if (context.Request.Query.ContainsKey("value"))
+            throw new ValidationException("request", "API key values are accepted only in the JSON request body.", "invalid_request");
     }
 }

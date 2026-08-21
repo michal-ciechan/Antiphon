@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -25,15 +26,18 @@ public sealed class ApiKeyService
     private readonly AppDbContext _db;
     private readonly IApiKeyProtector _protector;
     private readonly ILogger<ApiKeyService> _logger;
+    private readonly ICurrentUser? _currentUser;
 
     public ApiKeyService(
         AppDbContext db,
         IApiKeyProtector protector,
-        ILogger<ApiKeyService> logger)
+        ILogger<ApiKeyService> logger,
+        ICurrentUser? currentUser = null)
     {
         _db = db;
         _protector = protector;
         _logger = logger;
+        _currentUser = currentUser;
     }
 
     private DateTime UtcNow() => DateTime.UtcNow;
@@ -87,6 +91,7 @@ public sealed class ApiKeyService
         key.UpdatedAt = now;
         if (existing is null)
             _db.ApiKeys.Add(key);
+        RecordAudit(keyName, projectId, existing is null ? "created" : "replaced", now);
 
         try
         {
@@ -120,6 +125,7 @@ public sealed class ApiKeyService
         var name = key.Name;
         var scope = DescribeScope(key.ProjectId);
         _db.ApiKeys.Remove(key);
+        RecordAudit(name, key.ProjectId, "deleted", UtcNow());
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation("API key '{KeyName}' ({Scope}) deleted", name, scope);
     }
@@ -127,6 +133,18 @@ public sealed class ApiKeyService
     /// <summary>"the global scope" / "project {id}" — the phrase every message about a key uses.</summary>
     internal static string DescribeScope(Guid? projectId) =>
         projectId is { } id ? $"project {id:D}" : "the global scope";
+
+    // Adding this row directly keeps it in the same SaveChanges transaction as the key mutation.
+    private void RecordAudit(string keyName, Guid? projectId, string operation, DateTime occurredAt) =>
+        _db.AuditRecords.Add(new AuditRecord
+        {
+            Id = Guid.NewGuid(),
+            EventType = AuditEventType.ToolInvocation,
+            ClientIp = _currentUser?.IpAddress,
+            UserId = _currentUser?.UserId,
+            Summary = $"API key: name={keyName}; scope={DescribeScope(projectId)}; operation={operation}; result=succeeded; occurredAt={occurredAt:O}",
+            CreatedAt = occurredAt,
+        });
 
     private string ProtectOrThrow(Guid keyId, string keyName, string value)
     {

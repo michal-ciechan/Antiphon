@@ -101,6 +101,18 @@ public sealed class ApiKeyEnvResolver
         IReadOnlyDictionary<string, string> env,
         Guid? projectId,
         string subject,
+        CancellationToken ct) =>
+        (await ResolveWithSecretValuesAsync(env, projectId, subject, ct)).Environment;
+
+    /// <summary>
+    /// Resolves an environment and returns the plaintexts substituted while doing so. The latter is
+    /// deliberately only for a process probe's redaction list; it must never be persisted, logged,
+    /// or returned from an API.
+    /// </summary>
+    public async Task<ApiKeyEnvironmentResolution> ResolveWithSecretValuesAsync(
+        IReadOnlyDictionary<string, string> env,
+        Guid? projectId,
+        string subject,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(env);
@@ -131,7 +143,7 @@ public sealed class ApiKeyEnvResolver
         }
 
         if (referenced.Count == 0)
-            return env;
+            return new ApiKeyEnvironmentResolution(env, []);
 
         var candidates = await _db.ApiKeys
             .AsNoTracking()
@@ -219,9 +231,14 @@ public sealed class ApiKeyEnvResolver
             subject,
             ApiKeyService.DescribeScope(projectId));
 
-        return resolved;
+        return new ApiKeyEnvironmentResolution(resolved, values.Values.ToArray());
     }
 
     private static string DescribeSearchedScopes(Guid? projectId) =>
         projectId is { } id ? $"project {id:D}, then the global scope" : "the global scope";
 }
+
+/// <summary>Resolved environment plus plaintexts that must be redacted from child-process output.</summary>
+public sealed record ApiKeyEnvironmentResolution(
+    IReadOnlyDictionary<string, string> Environment,
+    IReadOnlyList<string> SecretValues);

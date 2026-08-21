@@ -34,6 +34,7 @@ public sealed partial class AgentTuiProfileService
     private readonly IEqualityComparer<string> _environmentNameComparer;
     private readonly AgentTuiOperationCoordinator? _operationCoordinator;
     private readonly IRunnerProcessProbe? _processProbe;
+    private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
 
     public AgentTuiProfileService(
         AppDbContext db,
@@ -51,7 +52,8 @@ public sealed partial class AgentTuiProfileService
             currentUser,
             AgentEnvironmentVariableNames.ForCurrentPlatform(),
             operationCoordinator: null,
-            processProbe: null)
+            processProbe: null,
+            apiKeyEnvResolver: null)
     {
     }
 
@@ -63,7 +65,8 @@ public sealed partial class AgentTuiProfileService
         TimeProvider timeProvider,
         ICurrentUser currentUser,
         AgentTuiOperationCoordinator operationCoordinator,
-        IRunnerProcessProbe processProbe)
+        IRunnerProcessProbe processProbe,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
         : this(
             db,
             secretProtector,
@@ -73,7 +76,8 @@ public sealed partial class AgentTuiProfileService
             currentUser,
             AgentEnvironmentVariableNames.ForCurrentPlatform(),
             operationCoordinator,
-            processProbe)
+            processProbe,
+            apiKeyEnvResolver)
     {
     }
 
@@ -94,7 +98,8 @@ public sealed partial class AgentTuiProfileService
             currentUser,
             environmentNameComparer,
             operationCoordinator: null,
-            processProbe: null)
+            processProbe: null,
+            apiKeyEnvResolver: null)
     {
     }
 
@@ -107,7 +112,8 @@ public sealed partial class AgentTuiProfileService
         ICurrentUser currentUser,
         IEqualityComparer<string> environmentNameComparer,
         AgentTuiOperationCoordinator? operationCoordinator,
-        IRunnerProcessProbe? processProbe)
+        IRunnerProcessProbe? processProbe,
+        ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
         _db = db;
         _secretProtector = secretProtector;
@@ -118,6 +124,7 @@ public sealed partial class AgentTuiProfileService
         _environmentNameComparer = environmentNameComparer;
         _operationCoordinator = operationCoordinator;
         _processProbe = processProbe;
+        _apiKeyEnvResolver = apiKeyEnvResolver;
     }
 
     public async Task<IReadOnlyList<AgentTuiProfileDto>> ListAsync(CancellationToken cancellationToken)
@@ -770,7 +777,7 @@ public sealed partial class AgentTuiProfileService
             return cachedModels;
         }
 
-        var auth = BuildAuthenticationEnvironment(snapshot);
+        var auth = await BuildAuthenticationEnvironmentAsync(snapshot, cancellationToken);
         if (!auth.Ready)
         {
             await MarkDiscoveredModelsStaleAsync(snapshot, cancellationToken);
@@ -786,8 +793,10 @@ public sealed partial class AgentTuiProfileService
             return await GetModelsAsync(profileId, cancellationToken);
         }
 
+        var request = BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth);
+        EnsureProbeRequestResolved(request);
         var result = await RequireProcessProbe().RunAsync(
-            BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
+            request,
             cancellationToken);
 
         var parsed = ParseDiscoveredModels(snapshot.Kind, result);
@@ -876,7 +885,7 @@ public sealed partial class AgentTuiProfileService
                 : AgentTuiValidationStageStatus.Failed,
             workingDirectory.Message));
 
-        var auth = BuildAuthenticationEnvironment(snapshot);
+        var auth = await BuildAuthenticationEnvironmentAsync(snapshot, cancellationToken);
         stages.Add(Stage(
             "authentication",
             auth.Ready
@@ -911,8 +920,10 @@ public sealed partial class AgentTuiProfileService
         }
         else
         {
+            var versionRequest = BuildProcessRequest(snapshot, snapshot.VersionArguments, auth);
+            EnsureProbeRequestResolved(versionRequest);
             var versionResult = await probe.RunAsync(
-                BuildProcessRequest(snapshot, snapshot.VersionArguments, auth),
+                versionRequest,
                 cancellationToken);
             timedOut |= versionResult.TimedOut || versionResult.Cancelled;
             runnerVersion = ParseRunnerVersion(snapshot.Kind, versionResult);
@@ -934,8 +945,10 @@ public sealed partial class AgentTuiProfileService
 
         if (SupportsModelDiscovery(snapshot.Kind))
         {
+            var discoveryRequest = BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth);
+            EnsureProbeRequestResolved(discoveryRequest);
             var discoveryResult = await probe.RunAsync(
-                BuildProcessRequest(snapshot, snapshot.DiscoveryArguments, auth),
+                discoveryRequest,
                 cancellationToken);
             timedOut |= discoveryResult.TimedOut || discoveryResult.Cancelled;
             var discovery = ParseDiscoveredModels(snapshot.Kind, discoveryResult);
@@ -966,12 +979,14 @@ public sealed partial class AgentTuiProfileService
                 "This runner uses its cached curated and operator catalogue."));
         }
 
-        var startupResult = await probe.RunAsync(
-            BuildProcessRequest(
+        var startupRequest = BuildProcessRequest(
                 snapshot,
                 snapshot.Arguments,
                 auth,
-                stopAfter: TimeSpan.FromSeconds(1)),
+                stopAfter: TimeSpan.FromSeconds(1));
+        EnsureProbeRequestResolved(startupRequest);
+        var startupResult = await probe.RunAsync(
+            startupRequest,
             cancellationToken);
         timedOut |= startupResult.TimedOut || startupResult.Cancelled;
         var startupPassed = startupResult.Started
@@ -1123,19 +1138,49 @@ public sealed partial class AgentTuiProfileService
             profile.Models.Select(CloneModel).ToArray());
     }
 
-    private AuthenticationEnvironment BuildAuthenticationEnvironment(
-        AgentTuiOperationSnapshot snapshot)
+    private async Task<AuthenticationEnvironment> BuildAuthenticationEnvironmentAsync(
+        AgentTuiOperationSnapshot snapshot,
+        CancellationToken cancellationToken)
     {
         var environment = new Dictionary<string, string>(
             snapshot.NonSecretEnvironment,
             _environmentNameComparer);
         if (snapshot.AuthenticationMode == AgentTuiAuthenticationMode.WrapperManaged)
         {
-            return new AuthenticationEnvironment(
-                true,
-                environment,
-                [],
-                "Authentication is owned by the configured wrapper; managed keys were not accessed.");
+            var keyNames = environment.Values
+                .Where(ApiKeyPlaceholder.ContainsMarker)
+                .SelectMany(ApiKeyPlaceholder.Names)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (keyNames.Length == 0)
+                return new AuthenticationEnvironment(
+                    true, environment, [],
+                    "Authentication is owned by the configured wrapper; managed keys were not accessed.");
+
+            if (_apiKeyEnvResolver is null)
+            {
+                return new AuthenticationEnvironment(
+                    false, new Dictionary<string, string>(), [],
+                    $"API key resolution is unavailable for referenced key(s): {string.Join(", ", keyNames)}.");
+            }
+
+            try
+            {
+                var resolved = await _apiKeyEnvResolver.ResolveWithSecretValuesAsync(
+                    environment,
+                    projectId: null,
+                    $"Agent TUI profile '{snapshot.ProfileId:D}' validation probe",
+                    cancellationToken);
+                return new AuthenticationEnvironment(
+                    true,
+                    resolved.Environment,
+                    resolved.SecretValues,
+                    $"Authentication is owned by the configured wrapper and references global API key(s): {string.Join(", ", keyNames)}.");
+            }
+            catch (HttpException exception)
+            {
+                return new AuthenticationEnvironment(false, new Dictionary<string, string>(), [], exception.Message);
+            }
         }
 
         var plaintextValues = new List<string>();
@@ -1274,6 +1319,12 @@ public sealed partial class AgentTuiProfileService
             new Dictionary<string, string>(authentication.Environment, _environmentNameComparer),
             authentication.SecretValues.ToArray(),
             stopAfter);
+
+    private static void EnsureProbeRequestResolved(RunnerProcessRequest request) =>
+        ApiKeyPlaceholder.EnsureResolved(
+            request.Environment,
+            request.Arguments,
+            "the Agent TUI validation probe request");
 
     private static bool SupportsModelDiscovery(AgentKind kind) =>
         kind is AgentKind.OpenCode or AgentKind.Grok;

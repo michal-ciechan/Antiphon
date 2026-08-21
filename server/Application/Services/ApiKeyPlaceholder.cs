@@ -136,6 +136,30 @@ public static class ApiKeyPlaceholder
         }
     }
 
+    /// <summary>Probe-path equivalent of the launch-spec tripwire.</summary>
+    public static void EnsureResolved(
+        IReadOnlyDictionary<string, string> environment,
+        IReadOnlyList<string> arguments,
+        string subject)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+        ArgumentNullException.ThrowIfNull(arguments);
+        foreach (var (name, value) in environment)
+        {
+            if (ContainsMarker(value))
+            {
+                throw new InvalidOperationException(
+                    $"{subject} still carries an unresolved API key placeholder in environment "
+                    + $"variable '{name}' ({DescribeTokens(value)}). A probe path that builds an Env "
+                    + "must run it through ApiKeyEnvResolver before launching a child process.");
+            }
+        }
+
+        for (var i = 0; i < arguments.Count; i++)
+            if (ContainsMarker(arguments[i]))
+                EnsureAbsent(arguments[i], $"{subject}, argument {i}");
+    }
+
     private static string DescribeTokens(string text)
     {
         var names = Names(text);
