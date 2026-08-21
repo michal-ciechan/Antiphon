@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
+      - name: Test Messaging packages
+        run: dotnet run --project tests/Antiphon.Messaging.Tests
       - name: Pack
         run: |
           dotnet pack src/Antiphon.Messaging/Antiphon.Messaging.csproj -c Release -o out

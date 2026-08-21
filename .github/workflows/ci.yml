@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - "feat/**"
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+      - name: Lint client
+        working-directory: client
+        run: npm run lint
+      - name: Build client
+        working-directory: client
+        run: npm run build
+      - name: Test client
+        working-directory: client
+        run: npx vitest run
+      - name: Test Messaging packages
+        run: dotnet run --project tests/Antiphon.Messaging.Tests
