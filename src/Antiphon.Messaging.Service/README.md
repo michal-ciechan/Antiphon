@@ -1,6 +1,7 @@
 # Antiphon.Messaging.Service
 
-A channel-agnostic messaging bridge: it long-polls a chat platform (Telegram today) and
+A channel-agnostic messaging bridge: it connects a chat platform (Telegram long-polling or Slack
+Socket Mode) and
 shuttles messages **to/from Kafka** — inbound messages land on `channels.inbound` (and a
 Postgres inbox), replies are consumed from `channels.outbound` and delivered back to the
 channel. It also exposes a small REST API (`/api/channels/...`) for listing/replying.
@@ -8,6 +9,8 @@ channel. It also exposes a small REST API (`/api/channels/...`) for listing/repl
 > **Telegram specifics** — outbound **Markdown → Telegram HTML formatting** (the full mapping,
 > parse modes, fallback behaviour), inbound normalization, and every `Telegram__*` setting are
 > documented in **[docs/telegram.md](../../docs/telegram.md)**.
+> **Slack specifics** — app manifest, scopes, token custody, binding, threading limitation, and
+> Socket Mode troubleshooting are in **[docs/slack-bot-ops.md](../../docs/slack-bot-ops.md)**.
 
 ## Run it standalone — one instance per bot
 
@@ -37,6 +40,11 @@ change per instance:
 | `Telegram__BotUsername`       | `Telegram:BotUsername`                | The bot's @username (display/identity). |
 | `Telegram__AllowedChatIds__0` | `Telegram:AllowedChatIds` (`[]` = all)| Optional allowlist of chat ids. |
 | `Telegram__ApiBaseUrl`        | `https://api.telegram.org`            | Telegram API base. |
+| `Slack__BotToken`             | `Slack:BotToken` (empty)              | **Required for Slack.** Installed bot token (`xoxb-…`). |
+| `Slack__AppToken`             | `Slack:AppToken` (empty)              | **Required for Slack.** Socket Mode app token (`xapp-…`, `connections:write`). |
+| `Slack__AllowedConversationIds__0` | `Slack:AllowedConversationIds` (`[]` = all) | Optional Slack `C…`/`G…`/`D…` allowlist. |
+| `Slack__BotUserId`            | `Slack:BotUserId` (resolved)          | Optional bot user id; otherwise discovered with `auth.test`. |
+| `Slack__ApiBaseUrl`           | `https://slack.com/api`               | Slack Web API base (fake/test override). |
 | `Kafka__BootstrapServers`     | `Kafka:BootstrapServers` (`localhost:19092`) | Point at *this instance's* broker, e.g. `redpanda:9092`. |
 | `Kafka__InboundTopic`         | `channels.inbound`                    | Inbound topic. |
 | `Kafka__OutboundTopic`        | `channels.outbound`                   | Outbound topic. |
@@ -58,6 +66,9 @@ change per instance:
     environment:
       Telegram__BotToken: "${TELEGRAM_BOT_TOKEN}"      # school_revision_bot
       Telegram__BotUsername: "school_revision_bot"
+      # A Slack-capable instance additionally needs both tokens:
+      # Slack__BotToken: "${SLACK_BOT_TOKEN}"
+      # Slack__AppToken: "${SLACK_APP_TOKEN}"
       Kafka__BootstrapServers: "messaging-redpanda:9092"
       Kafka__ConsumerGroup: "school-revision-messaging-service"
       ConnectionStrings__Messaging: "Host=postgres;Port=5432;Database=school_revision_messaging;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
@@ -76,6 +87,6 @@ token/username, its own Redpanda, and its own DB.
 ## Build the image
 
 ```bash
-# context = src/ (the three Antiphon.Messaging* projects are siblings)
+# context = src/ (the Antiphon.Messaging* projects are siblings)
 docker build -f src/Antiphon.Messaging.Service/Dockerfile -t ghcr.io/michal-ciechan/antiphon-messaging-telegram:latest src/
 ```

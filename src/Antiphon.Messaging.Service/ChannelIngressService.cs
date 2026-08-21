@@ -8,12 +8,12 @@ namespace Antiphon.Messaging.Service;
 /// Runs each channel adapter's ingress loop and publishes every normalized <c>ChannelMessage</c>
 /// to the inbound topic (keyed by conversation id for per-chat ordering).
 /// </summary>
-public sealed class TelegramIngressService(
+public sealed class ChannelIngressService(
     IEnumerable<IChannelAdapter> adapters,
     IProducer<string, string> producer,
     IOptions<KafkaSettings> kafka,
     JsonSerializerOptions json,
-    ILogger<TelegramIngressService> logger) : BackgroundService
+    ILogger<ChannelIngressService> logger) : BackgroundService
 {
     private readonly KafkaSettings _kafka = kafka.Value;
 

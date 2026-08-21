@@ -126,10 +126,10 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setSeededBundlesFor(detail.data.id)
   }, [opened, detail.data, seededBundlesFor])
 
-  const handleUsePreset = async () => {
+  const handleUsePreset = async (provider: 'telegram' | 'slack') => {
     setLoadingPreset(true)
     try {
-      const preset = await fetchPreamblePreset('telegram')
+      const preset = await fetchPreamblePreset(provider)
       setSystemPromptAppend(preset.template)
     } catch (error) {
       notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Failed to load preset') })
@@ -310,8 +310,11 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           onChange={(event) => setSystemPromptAppend(event.currentTarget.value)}
         />
         <Group justify="flex-start">
-          <Button variant="light" size="xs" onClick={handleUsePreset} loading={loadingPreset}>
+          <Button variant="light" size="xs" onClick={() => handleUsePreset('telegram')} loading={loadingPreset}>
             Use Telegram preset
+          </Button>
+          <Button variant="light" size="xs" onClick={() => handleUsePreset('slack')} loading={loadingPreset}>
+            Use Slack preset
           </Button>
         </Group>
 

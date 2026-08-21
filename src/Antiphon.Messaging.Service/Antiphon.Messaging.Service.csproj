@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+    <ProjectReference Include="..\Antiphon.Messaging.Slack\Antiphon.Messaging.Slack.csproj" />
     <ProjectReference Include="..\Antiphon.Messaging.Telegram\Antiphon.Messaging.Telegram.csproj" />
   </ItemGroup>
 

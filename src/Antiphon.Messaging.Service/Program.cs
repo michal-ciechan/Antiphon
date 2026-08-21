@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Service;
+using Antiphon.Messaging.Slack;
 using Antiphon.Messaging.Telegram;
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<KafkaSettings>(builder.Configuration.GetSection(KafkaSettings.SectionName));
 builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection(TelegramSettings.SectionName));
+builder.Services.Configure<SlackSettings>(builder.Configuration.GetSection(SlackSettings.SectionName));
 
 builder.Services.AddDbContext<MessagingDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Messaging")));
@@ -25,14 +27,28 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 
 builder.Services.AddHttpClient();
 
-// One adapter per channel. Telegram for now; WhatsApp/Teams register the same way.
-builder.Services.AddSingleton<IChannelAdapter>(sp =>
+// One adapter per configured channel. A single image may serve Telegram, Slack, or both.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["Telegram:BotToken"]))
 {
-    var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("telegram");
-    var settings = sp.GetRequiredService<IOptions<TelegramSettings>>().Value;
-    var logger = sp.GetRequiredService<ILogger<TelegramChannelAdapter>>();
-    return new TelegramChannelAdapter(http, settings, logger);
-});
+    builder.Services.AddSingleton<IChannelAdapter>(sp =>
+    {
+        var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("telegram");
+        var settings = sp.GetRequiredService<IOptions<TelegramSettings>>().Value;
+        var logger = sp.GetRequiredService<ILogger<TelegramChannelAdapter>>();
+        return new TelegramChannelAdapter(http, settings, logger);
+    });
+}
+
+if (!string.IsNullOrWhiteSpace(builder.Configuration["Slack:BotToken"]))
+{
+    builder.Services.AddSingleton<IChannelAdapter>(sp =>
+    {
+        var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient("slack");
+        var settings = sp.GetRequiredService<IOptions<SlackSettings>>().Value;
+        var logger = sp.GetRequiredService<ILogger<SlackChannelAdapter>>();
+        return new SlackChannelAdapter(http, settings, logger);
+    });
+}
 
 builder.Services.AddSingleton<IProducer<string, string>>(sp =>
 {
@@ -45,11 +61,17 @@ builder.Services.AddSingleton<IProducer<string, string>>(sp =>
     }).Build();
 });
 
-builder.Services.AddHostedService<TelegramIngressService>();
+builder.Services.AddHostedService<ChannelIngressService>();
 builder.Services.AddHostedService<InboxConsumerService>();
 builder.Services.AddHostedService<OutboundConsumerService>();
 
 var app = builder.Build();
+
+var registeredChannels = app.Services.GetServices<IChannelAdapter>().Select(adapter => adapter.Channel).ToArray();
+if (registeredChannels.Length == 0)
+    app.Logger.LogWarning("No messaging channel adapters are registered; configure Telegram:BotToken and/or Slack:BotToken.");
+else
+    app.Logger.LogInformation("Messaging channel adapters registered: {Channels}", registeredChannels);
 
 using (var scope = app.Services.CreateScope())
 {

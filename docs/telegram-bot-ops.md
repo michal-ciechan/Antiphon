@@ -4,6 +4,8 @@ How to stand up (and verify) a Telegram-bot-backed agent. Spec:
 [2026-07-21-telegram-bot-agents.md](superpowers/specs/2026-07-21-telegram-bot-agents.md) ·
 plan: [2026-07-21-telegram-bot-agents-plan.md](superpowers/plans/2026-07-21-telegram-bot-agents-plan.md) ·
 workspace convention: [agent-workspaces.md](agent-workspaces.md).
+Slack uses the same gateway shape but its own app manifest and Socket Mode procedure; see
+[slack-bot-ops.md](slack-bot-ops.md).
 
 ## Per-bot deployment model
 

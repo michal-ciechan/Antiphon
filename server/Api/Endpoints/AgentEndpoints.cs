@@ -43,11 +43,11 @@ public static class AgentEndpoints
         // render at launch time).
         agents.MapGet("/preamble-preset", (string? provider) =>
         {
-            return provider?.ToLowerInvariant() switch
-            {
-                null or "telegram" => Results.Ok(new PreamblePresetDto(ChannelPreamble.TelegramPresetTemplate)),
-                _ => Results.NotFound(new { error = $"No preamble preset for provider '{provider}'." }),
-            };
+            var requestedProvider = provider ?? "telegram";
+            var template = ChannelPreamble.PresetTemplateFor(requestedProvider);
+            return template is not null
+                ? Results.Ok(new PreamblePresetDto(template))
+                : Results.NotFound(new { error = $"No preamble preset for provider '{provider}'." });
         });
 
         // The instruction bundles an operator may attach to an agent (CARD-0058 slice 6). Read-only

@@ -1,9 +1,10 @@
-# Build context = the repo's src/ folder (the three messaging projects are siblings).
+# Build context = the repo's src/ folder (the messaging projects are siblings).
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY Messaging.Pack.props ./
 COPY Antiphon.Messaging/ ./Antiphon.Messaging/
 COPY Antiphon.Messaging.Telegram/ ./Antiphon.Messaging.Telegram/
+COPY Antiphon.Messaging.Slack/ ./Antiphon.Messaging.Slack/
 COPY Antiphon.Messaging.Service/ ./Antiphon.Messaging.Service/
 RUN dotnet publish Antiphon.Messaging.Service/Antiphon.Messaging.Service.csproj -c Release -o /app /p:UseAppHost=false
 
