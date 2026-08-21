@@ -161,4 +161,42 @@ public class ComposerDeliveryEvidenceTests
     {
         ComposerDeliveryEvidence.IsVisible(IdleScreen, "", "ship it").ShouldBeFalse();
     }
+
+    [Test]
+    public void Body_consumed_when_the_tail_fragment_is_visible()
+    {
+        var body = "HEAD-" + new string('a', 50) + "-TAIL-UNIQUE";
+        var after = IdleScreen + "\n❯ " + body[^ComposerDeliveryEvidence.FragmentSpan..];
+
+        ComposerDeliveryEvidence.BodyConsumed(IdleScreen, after, body).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Body_consumed_is_false_when_only_the_head_fragment_is_visible()
+    {
+        var body = "HEAD-UNIQUE-" + new string('a', 50) + new string('z', 50);
+        var after = IdleScreen + "\n❯ " + body[..ComposerDeliveryEvidence.FragmentSpan];
+
+        ComposerDeliveryEvidence.BodyConsumed(IdleScreen, after, body).ShouldBeFalse(
+            "the head can arrive while the tail is still in flight, so it must not release Enter");
+    }
+
+    [Test]
+    public void Body_consumed_when_a_new_placeholder_index_appears()
+    {
+        var before = IdleScreen + "\n❯ [Pasted text #7 +120 lines]";
+        var after = IdleScreen + "\n❯ [Pasted text #8 +899 lines]";
+
+        ComposerDeliveryEvidence.BodyConsumed(before, after, "body hidden by the collapsed paste")
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void Body_consumed_is_false_for_a_pre_existing_placeholder_index_alone()
+    {
+        var screen = IdleScreen + "\n❯ [Pasted text #7 +120 lines]";
+
+        ComposerDeliveryEvidence.BodyConsumed(screen, screen, "body hidden by the collapsed paste")
+            .ShouldBeFalse();
+    }
 }

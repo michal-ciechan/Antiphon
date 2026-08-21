@@ -46,8 +46,9 @@ public sealed record VerifiedSubmitOptions(
 /// </summary>
 public static class VerifiedPromptSubmitter
 {
-    // Same pre-Enter pause as SendLineAsync/DeliverAsync: the body and the CR must never coalesce
-    // into one chunk (the TUI folds a same-chunk CR into a literal newline instead of submitting).
+    // Same post-evidence pre-Enter pause semantics as SendLineAsync's production gate: the body and
+    // CR must never coalesce into one chunk (the TUI folds a same-chunk CR into a literal newline
+    // instead of submitting). This submitter retains its own evidence and retry logic.
     private static readonly TimeSpan PreSubmitPause = TimeSpan.FromMilliseconds(20);
 
     /// <param name="body">The prompt to type and submit (any line endings; encoded internally).</param>

@@ -11,7 +11,9 @@ namespace Antiphon.Agents.Pty.Tests;
 /// delivery of the body lags under load, so a legitimate two-write submit is misread as
 /// one paste burst — the composer holds the body and the CR never submits. An echo means
 /// the body burst was already consumed, so the CR cannot join it. Mirrors
-/// <see cref="VerifiedPromptSubmitter"/> (evidence-gated, not time-gated).
+/// <see cref="VerifiedPromptSubmitter"/> and production <see cref="EchoGatedLineSender"/>
+/// (evidence-gated, not time-gated). This remains a test helper in this slice; it may be replaced
+/// with the production helper later, but is intentionally not changed here.
 ///
 /// The one-write (paste) arm stays time-based: a single write can only be split, never
 /// merged, so it does not have this race. Do not retune <c>ANTIPHON_FAKE_BURST_MS</c>.

@@ -93,6 +93,37 @@ public static class ComposerDeliveryEvidence
     }
 
     /// <summary>
+    /// True when <paramref name="screenAfter"/> proves the final bytes of <paramref name="body"/>
+    /// were consumed by the composer: its tail fragment is visible, or a new paste placeholder is
+    /// visible. Unlike <see cref="IsVisible"/>, this deliberately has NO head-fragment arm: a
+    /// visible head only proves the first chunk arrived, while a submitting CR must not be sent
+    /// until the tail is consumed.
+    /// </summary>
+    public static bool BodyConsumed(string screenBefore, string screenAfter, string body)
+    {
+        var normalizedBody = Normalize(body);
+        if (normalizedBody.Length == 0)
+            return true;
+
+        var after = Normalize(screenAfter);
+        if (after.Length == 0)
+            return false;
+
+        var tail = normalizedBody.Length <= FragmentSpan
+            ? normalizedBody
+            : normalizedBody[^FragmentSpan..];
+        if (FragmentVisible(after, tail))
+            return true;
+
+        var indicesBefore = PlaceholderIndices(screenBefore);
+        if (PlaceholderIndices(screenAfter).Any(i => !indicesBefore.Contains(i)))
+            return true;
+
+        var before = Normalize(screenBefore);
+        return CountOccurrences(after, PastePlaceholder) > CountOccurrences(before, PastePlaceholder);
+    }
+
+    /// <summary>
     /// Is a short, self-chosen <paramref name="fragment"/> on the rendered screen, by the SAME
     /// normalisation and window matching <see cref="IsVisible"/> applies to a body's head/tail?
     ///

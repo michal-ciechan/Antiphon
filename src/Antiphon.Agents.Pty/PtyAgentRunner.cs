@@ -48,6 +48,13 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// </summary>
     public PtyBackendDecision? Backend { get; private set; }
 
+    /// <summary>
+    /// How the most recent <see cref="SendLineAsync"/> reached its one submitting CR. A timeout
+    /// is observable because the bounded evidence gate deliberately falls back for non-echoing
+    /// children instead of withholding the best-effort submit forever.
+    /// </summary>
+    public SendLineGateOutcome? LastSendLineOutcome { get; private set; }
+
     public async Task StartAsync(
         string app,
         string[] commandLine,
@@ -183,16 +190,12 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         await _writeGate.WaitAsync(ct);
         try
         {
-            // LF-normalized and bracket-wrapped when multi-line (PtyInputEncoding REQUIREMENT):
-            // a raw CR/CRLF body either fragments at each mid-body \r or — when the trailing CR
-            // lands inside the TUI's paste window — strands the whole body unsubmitted in the
-            // composer (live miss 2026-08-08: a CRLF card prompt sat there for half an hour).
-            await WriteCoreAsync(PtyInputEncoding.EncodeBody(line), ct);
-            // Flush the message text first, then send Enter in a separate write.
-            // ConPTY may drop the trailing \r if the entire line + Enter is sent as one
-            // large chunk that exceeds its internal input-record queue capacity.
-            await Task.Delay(20, ct);
-            await WriteCoreAsync("\r", ct);
+            LastSendLineOutcome = await EchoGatedLineSender.SendAsync(
+                line,
+                _ => Task.FromResult(SnapshotScreen()),
+                WriteCoreAsync,
+                EchoGatedLineSender.DefaultOptions,
+                ct);
         }
         finally
         {
