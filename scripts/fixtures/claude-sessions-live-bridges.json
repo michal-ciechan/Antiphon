@@ -1,0 +1,44 @@
+[
+  {
+    "pid": 1001,
+    "name": "Antiphon-Orchestrator",
+    "status": "busy",
+    "bridgeSessionId": "session_01CUD72fVwh8EQTg8LPS4FL3"
+  },
+  {
+    "pid": 1002,
+    "name": "live-1",
+    "status": "idle",
+    "bridgeSessionId": "session_01RiGUi9P1PrXp6X9oR7WEhk"
+  },
+  {
+    "pid": 1003,
+    "name": "live-2",
+    "status": "idle",
+    "bridgeSessionId": "session_01JB6WchwnrtDH7CcKNUHLw9"
+  },
+  {
+    "pid": 1004,
+    "name": "live-3",
+    "status": "idle",
+    "bridgeSessionId": "session_01LKaY7fXgtw7u2E1o93YqRc"
+  },
+  {
+    "pid": 1005,
+    "name": "live-4",
+    "status": "idle",
+    "bridgeSessionId": "session_01EEk37nM6Zh8rfD4mNExAji"
+  },
+  {
+    "pid": 1006,
+    "name": "school-revision",
+    "status": "idle",
+    "bridgeSessionId": "session_01VPMZ8VJbzp4D5EPA4v7Wxq"
+  },
+  {
+    "pid": 1007,
+    "name": "AZ Care",
+    "status": "idle",
+    "bridgeSessionId": "session_01U7SPMfVBcuuFmPq8sgQHPW"
+  }
+]
