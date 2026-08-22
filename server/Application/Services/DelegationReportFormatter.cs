@@ -192,6 +192,16 @@ public static class DelegationReportFormatter
     }
 
     /// <summary>
+    /// The short, lossless replacement for a completion report whose parent session already read
+    /// that exact report through a status poll. The supplied header is preserved verbatim so a
+    /// caller-facing warning cannot be lost at flush time.
+    /// </summary>
+    public static string BuildPolledNoteBody(string noteHeader, AgentTask task, int reportChars, DateTime polledAt) =>
+        $"{noteHeader}\n\n" +
+        $"Report withheld — you already read it: this task's result was returned to your status poll at {polledAt:O} ({reportChars:N0} chars).\n" +
+        $"Re-read it with: pwsh -File scripts/delegate.ps1 -Status {Short(task.Id)}";
+
+    /// <summary>
     /// Head + tail excerpt when a report exceeds the ceiling — never a plain truncation. A hard cut
     /// at the limit severs the conclusion, and the conclusion is the part the caller needed.
     ///

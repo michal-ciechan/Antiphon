@@ -45,6 +45,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public TimeProvider? TimeProvider { get; init; }
         public SupervisionSettings? Supervision { get; init; }
         public ChannelBridgeSettings? Bridge { get; init; }
+        public DelegationSettings? Delegation { get; init; }
         public Action<IServiceCollection>? ConfigureServices { get; init; }
     }
 
@@ -94,6 +95,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 },
             }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));
+        services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(
+            options.Delegation ?? new DelegationSettings()));
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings
         {
             SessionLogPath = Path.Combine(tempRoot, "session-logs"),

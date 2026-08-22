@@ -365,6 +365,22 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_polled_note_body_names_the_short_id_and_withheld_character_count()
+    {
+        var task = NewTask();
+
+        var body = DelegationReportFormatter.BuildPolledNoteBody(
+            "[task 7f3a2b91 done]", task, 4_812,
+            new DateTime(2026, 8, 22, 14, 3, 11, DateTimeKind.Utc));
+
+        body.ShouldStartWith("[task 7f3a2b91 done]");
+        body.ShouldContain("Report withheld");
+        body.ShouldContain("2026-08-22T14:03:11.0000000Z");
+        body.ShouldContain("4,812 chars");
+        body.ShouldContain("pwsh -File scripts/delegate.ps1 -Status 7f3a2b91");
+    }
+
+    [Test]
     public void a_note_digest_normalizes_line_endings_trailing_whitespace_and_outer_blank_lines()
     {
         var canonical = "first line\nsecond line";

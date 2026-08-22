@@ -128,4 +128,10 @@ public enum AgentTaskEventType
     /// SettleDeferredReportsAsync from re-entering the defer arm forever.
     /// </summary>
     ApiErrorDeferred = 15,
+
+    /// <summary>
+    /// The caller already read this completion report through a status poll, so the queued note was
+    /// reduced to a pointer while preserving its caller-facing header and warning.
+    /// </summary>
+    NoteShrunk = 16,
 }

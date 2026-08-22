@@ -783,6 +783,52 @@ public sealed class SessionMessageQueueService
         pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0)
             return changedSuperseded ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        // CARD-0132 S3b: a status poll only replaces a completion report when this particular
+        // queued row recorded the exact report the parent session read. Unlike the Check-origin
+        // supersession loop above, this never cancels a row: the short pointer is still delivered.
+        var changedShrunk = false;
+        if (_delegationSettings.ShrinkPolledCompletionNotes)
+        {
+            foreach (var message in pending.Where(m =>
+                         m.Origin == QueuedMessageOrigin.Delegation
+                         && m.DeliveryAttempts == 0
+                         && m.SourceTaskId is not null
+                         && m.ContentDigest is not null).ToList())
+            {
+                var contentDigest = message.ContentDigest;
+                var noteHeader = message.NoteHeader;
+                if (contentDigest is null || noteHeader is null)
+                    continue;
+                var task = await db.AgentTasks.AsNoTracking()
+                    .FirstOrDefaultAsync(t => t.Id == message.SourceTaskId, ct);
+                if (task is null
+                    || !AgentTaskService.IsSettled(task.Status)
+                    || task.LastPolledResultHash is null
+                    || task.LastPolledResultAt is null
+                    || !string.Equals(contentDigest, task.LastPolledResultHash, StringComparison.Ordinal))
+                    continue;
+
+                var reportChars = message.Body.Length;
+                message.Body = DelegationReportFormatter.BuildPolledNoteBody(
+                    noteHeader, task, reportChars, task.LastPolledResultAt.Value);
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = task.Id,
+                    Type = AgentTaskEventType.NoteShrunk,
+                    Detail = $"Polled {task.LastPolledResultAt.Value:O}; digest {contentDigest[..Math.Min(8, contentDigest.Length)]}; withheld {reportChars:N0} chars.",
+                    At = UtcNow(),
+                });
+                _logger.LogInformation(
+                    "Polled completion note on task {ShortId} {Outcome} for session {SessionId}",
+                    DelegationReportFormatter.Short(task.Id), "shrunk", sessionId);
+                changedShrunk = true;
+            }
+        }
+        if (changedShrunk)
+            await db.SaveChangesAsync(ct);
+
         var head = pending[0];
         var run = new List<SessionQueuedMessage> { head };
 

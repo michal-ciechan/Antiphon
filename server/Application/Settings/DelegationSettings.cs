@@ -61,6 +61,12 @@ public sealed class DelegationSettings
     /// </summary>
     public int ReplyInlineMaxChars { get; set; } = 3_000;
 
+    /// <summary>
+    /// Replace a pending completion note with a short status-poll pointer when its parent session
+    /// has already read the exact report. Disable to retain the full queued note in every case.
+    /// </summary>
+    public bool ShrinkPolledCompletionNotes { get; set; } = true;
+
     public int ReplyExcerptHeadChars { get; set; } = 1_800;
     public int ReplyExcerptTailChars { get; set; } = 900;
 
