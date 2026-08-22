@@ -1,5 +1,6 @@
 ﻿using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -44,6 +45,10 @@ public sealed class AgentTaskDispatcher
     // placeholder fails at the launch tripwire by name rather than exporting the literal token.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
     private readonly IServiceScopeFactory? _scopeFactory;
+    // CARD-0140 S2. Optional so every harness that predates this card stays on the registry path.
+    // Production wires it (S3); a missing registration here is not a launch of the wrong program,
+    // it is today's registry resolve.
+    private readonly AgentTuiLaunchResolver? _launchResolver;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -81,10 +86,12 @@ public sealed class AgentTaskDispatcher
         // is exactly today's behaviour, and the pull swallows its own failures anyway.
         AgentSessionRuntime? runtime = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        AgentTuiLaunchResolver? launchResolver = null)
     {
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
+        _launchResolver = launchResolver;
         _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
@@ -1258,11 +1265,12 @@ public sealed class AgentTaskDispatcher
         }
 
         // Resolved BEFORE anything with a side effect — no worktree is cut and no session row is
-        // written for a kind this installation cannot launch (CARD-0084 S3). The reuse paths above
+        // written for a kind this installation cannot launch (CARD-0084 S3), or for a pinned
+        // standing agent's disabled / unvalidated profile (CARD-0140 S2). The reuse paths above
         // are deliberately outside it: they launch nothing, so a definition they would never use
         // must not be able to fail them. The outer tick catches the throw and fails the task with
         // the configuration gap named.
-        var definitionName = _agentRegistry.DefinitionNameForKind(claimed.AgentKind);
+        var program = await ResolveDelegateProgramAsync(claimed, ct);
 
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge
@@ -1303,11 +1311,11 @@ public sealed class AgentTaskDispatcher
             Id = Guid.NewGuid(),
             CardId = null,
             WorktreeId = null,
-            DefinitionName = definitionName,
-            // The task's kind, not a constant. This one assignment is what makes every downstream
-            // reader — the brief's spill gate, the launch args, delivery, the tailer — agree about
-            // whose composer is on the other end.
-            AgentKind = claimed.AgentKind,
+            DefinitionName = program.DefinitionName,
+            // The program the pre-flight resolved, not a constant. This one assignment is what
+            // makes every downstream reader — the brief's spill gate, the launch args, delivery,
+            // the tailer — agree about whose composer is on the other end (CARD-0084 S3).
+            AgentKind = program.Kind,
             Status = SessionStatus.Starting,
             Cwd = cwd,
             Cols = _settings.DefaultCols,
@@ -1507,6 +1515,70 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
+    /// Which program a cold launch will start (CARD-0140 S2). For a pinned standing agent with a
+    /// TUI profile this is a projection over that profile — and it throws here, before a worktree
+    /// is cut or a session row is committed, so a disabled / unvalidated profile cannot leave a
+    /// Starting session with no process (the CARD-0056 leak shape). Everything else is the registry
+    /// path this method replaced: <c>(task.AgentKind, DefinitionNameForKind(task.AgentKind), null)</c>.
+    /// </summary>
+    internal readonly record struct DelegateProgram(AgentKind Kind, string DefinitionName, Guid? ProfileId);
+
+    internal async Task<DelegateProgram> ResolveDelegateProgramAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.AgentId is Guid pinnedId && _launchResolver is not null)
+        {
+            var agent = await _db.Agents.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == pinnedId, ct);
+            if (agent is { IsPoolDelegate: false, TuiProfileId: Guid profileId })
+            {
+                var profile = await _db.AgentTuiProfiles.AsNoTracking()
+                    .Where(p => p.Id == profileId)
+                    .Select(p => new
+                    {
+                        p.Kind,
+                        p.IsEnabled,
+                        p.ActiveRevisionId,
+                        p.SourceDefinitionName,
+                        p.DisplayName,
+                    })
+                    .FirstOrDefaultAsync(ct);
+                if (profile is not null)
+                {
+                    if (!profile.IsEnabled)
+                    {
+                        throw new ConflictException(
+                            "The selected runner profile is disabled.",
+                            "profile_disabled");
+                    }
+
+                    if (profile.ActiveRevisionId is null)
+                    {
+                        throw new ConflictException(
+                            "The selected runner profile has no active revision.",
+                            "profile_not_validated");
+                    }
+
+                    var definitionName = profile.SourceDefinitionName ?? profile.DisplayName;
+                    if (profile.Kind != task.AgentKind)
+                    {
+                        throw new ConflictException(
+                            $"Task {DelegationReportFormatter.Short(task.Id)} is {task.AgentKind}, but "
+                            + $"its pinned agent now runs {profile.Kind}. Recreate the task so it "
+                            + "inherits the agent's current kind.");
+                    }
+
+                    return new DelegateProgram(profile.Kind, definitionName, profileId);
+                }
+            }
+        }
+
+        return new DelegateProgram(
+            task.AgentKind,
+            _agentRegistry.DefinitionNameForKind(task.AgentKind),
+            null);
+    }
+
+    /// <summary>
     /// Launch args and environment for a delegate. Three things make delegation work here: the tier
     /// as <c>--model &lt;alias&gt;</c>, the standing instructions as <c>--append-system-prompt</c>,
     /// and the ANTIPHON_* env block that lets the delegate call back without being told who it is.
@@ -1600,6 +1672,11 @@ public sealed class AgentTaskDispatcher
         return _agentRegistry.Resolve(
             // By KIND, not the default definition: the default is only the right answer while every
             // delegate is a Claude, and a missing definition throws rather than substituting one.
+            // A pinned standing agent with a TUI profile is resolved earlier
+            // (ResolveDelegateProgramAsync) and, from CARD-0140 S3, launched through
+            // BuildLaunchSpecAsync; this registry path is the pool and the profile-less standing
+            // case. Do not "fix" a missing profile by falling through to the installation default
+            // — that is how a Grok task would launch Claude (CARD-0140 D2).
             _agentRegistry.DefinitionNameForKind(kind),
             new AgentLaunchOptions(
                 // A Worktree task lives in its worktree — launching in the shared directory would
@@ -1931,7 +2008,10 @@ public sealed class AgentTaskDispatcher
     /// <para>No live session and <see cref="Agent.AlwaysOn"/> means the supervisor is already on it
     /// (its sweep ensures every AlwaysOn agent that is not user-suspended has a session), so the task
     /// waits rather than racing it. A standing agent that nothing supervises keeps today's
-    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up.</para>
+    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up. From CARD-0140 the fresh
+    /// session's program is the agent's own TUI profile (via <see cref="ResolveDelegateProgramAsync"/>),
+    /// not the task-kind registry default that used to launch <c>claude.exe</c> under a Codex
+    /// agent's name.</para>
     /// </summary>
     private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
         AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)

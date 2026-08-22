@@ -1,9 +1,12 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Tui;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
@@ -207,6 +210,106 @@ public class AgentTaskStandingAgentDispatchTests
         (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace.Path)).ShouldBe(2);
     }
 
+    [Test]
+    public async Task T5_a_stopped_Codex_profile_standing_agent_writes_a_codex_session_not_claude()
+    {
+        // CARD-0140 probe 1 as a regression pin: the session row used to say DefinitionName=claude
+        // / AgentKind=ClaudeCode while launching under the Codex agent's name. After S1 the task
+        // is Codex; after S2 the session is too.
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _) = CreateHarness();
+        var profileId = await SeedCodexProfileAsync(enabled: true, withActiveRevision: true);
+        var (agentId, deadSessionId) = await SeedStandingAgentAsync(
+            workspace.Path,
+            alwaysOn: false,
+            sessionStatus: SessionStatus.Stopped,
+            kind: AgentKind.Codex,
+            tuiProfileId: profileId,
+            name: "CARD-0140 Repro Codex");
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, pinnedAgentId: agentId, agentKind: AgentKind.Codex);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        var dispatched = await ReloadTaskAsync(task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.AgentSessionId.ShouldNotBe(deadSessionId);
+
+        await using var verify = CreateContext();
+        var session = await verify.AgentSessions.AsNoTracking()
+            .SingleAsync(s => s.Id == dispatched.AgentSessionId!.Value);
+        session.AgentKind.ShouldBe(AgentKind.Codex);
+        session.DefinitionName.ShouldBe("codex");
+        session.DefinitionName.ShouldNotBe("claude");
+    }
+
+    [Test]
+    public async Task T6_a_disabled_or_unvalidated_profile_fails_before_worktree_or_session()
+    {
+        using var workspace = new TempWorkspace();
+        await InitGitRepoAsync(workspace.Path);
+        var worktreeRoot = Directory.CreateTempSubdirectory("antiphon-t6-wt").FullName;
+        try
+        {
+            var (dispatcher, _) = CreateHarness(worktreeBasePath: worktreeRoot);
+
+            var disabledProfile = await SeedCodexProfileAsync(enabled: false, withActiveRevision: true);
+            var (disabledAgent, _) = await SeedStandingAgentAsync(
+                workspace.Path,
+                alwaysOn: false,
+                sessionStatus: SessionStatus.Stopped,
+                kind: AgentKind.Codex,
+                tuiProfileId: disabledProfile,
+                name: "disabled-profile");
+            var disabledTask = await SeedQueuedTaskAsync(
+                workspace.Path,
+                pinnedAgentId: disabledAgent,
+                agentKind: AgentKind.Codex,
+                workspaceMode: WorkspaceMode.Worktree,
+                repoPath: workspace.Path);
+
+            var unvalidatedProfile = await SeedCodexProfileAsync(enabled: true, withActiveRevision: false);
+            var (unvalidatedAgent, _) = await SeedStandingAgentAsync(
+                workspace.Path,
+                alwaysOn: false,
+                sessionStatus: SessionStatus.Stopped,
+                kind: AgentKind.Codex,
+                tuiProfileId: unvalidatedProfile,
+                name: "no-revision");
+            var unvalidatedTask = await SeedQueuedTaskAsync(
+                workspace.Path,
+                pinnedAgentId: unvalidatedAgent,
+                agentKind: AgentKind.Codex,
+                workspaceMode: WorkspaceMode.Worktree,
+                repoPath: workspace.Path);
+
+            var sessionsBefore = await CountSessionsAsync(workspace.Path);
+            await dispatcher.TickAsync(CancellationToken.None);
+
+            var disabled = await ReloadTaskAsync(disabledTask.Id);
+            disabled.Status.ShouldBe(AgentTaskStatus.Failed);
+            disabled.FailureReason.ShouldNotBeNull().ShouldContain("disabled");
+            disabled.WorktreePath.ShouldBeNull();
+            disabled.AgentSessionId.ShouldBeNull();
+
+            var unvalidated = await ReloadTaskAsync(unvalidatedTask.Id);
+            unvalidated.Status.ShouldBe(AgentTaskStatus.Failed);
+            unvalidated.FailureReason.ShouldNotBeNull().ShouldContain("active revision");
+            unvalidated.WorktreePath.ShouldBeNull();
+            unvalidated.AgentSessionId.ShouldBeNull();
+
+            (await CountSessionsAsync(workspace.Path)).ShouldBe(
+                sessionsBefore, "no session row may exist for a profile that cannot launch");
+            Directory.GetDirectories(worktreeRoot).ShouldBeEmpty(
+                "a worktree cut before the throw is the CARD-0056 leak shape");
+        }
+        finally
+        {
+            try { Directory.Delete(worktreeRoot, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
     // ---- settlement, through the real turn-end trigger ------------------------------------------
 
     /// <summary>
@@ -306,7 +409,8 @@ public class AgentTaskStandingAgentDispatchTests
         ];
     }
 
-    private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness()
+    private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
+        string? worktreeBasePath = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -335,6 +439,7 @@ public class AgentTaskStandingAgentDispatchTests
         {
             s.DefaultDefinition = "claude";
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex" };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
@@ -345,7 +450,8 @@ public class AgentTaskStandingAgentDispatchTests
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddSingleton(Options.Create(new GitSettings
         {
-            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-standing-wt"),
+            WorktreeBasePath = worktreeBasePath
+                ?? Path.Combine(Path.GetTempPath(), "antiphon-standing-wt"),
         }));
         services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
         services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
@@ -355,6 +461,11 @@ public class AgentTaskStandingAgentDispatchTests
         // The settlement half of the end-to-end test: registered so the runtime's turn-end flush
         // can resolve it exactly as the server does.
         services.AddSingleton<AgentTaskReplyService>();
+        // CARD-0140 S2: the pre-flight takes the profile path only when the resolver is registered.
+        services.AddSingleton<IAgentTuiSecretProtector, StandingNoOpSecretProtector>();
+        services.AddSingleton<AgentTuiMetrics>();
+        services.AddSingleton<AgentTuiRunnerCatalog>();
+        services.AddScoped<AgentTuiLaunchResolver>();
         services.AddScoped<AgentTaskDispatcher>();
 
         var provider = services.BuildServiceProvider();
@@ -415,7 +526,12 @@ public class AgentTaskStandingAgentDispatchTests
     }
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedStandingAgentAsync(
-        string directory, bool alwaysOn, SessionStatus sessionStatus = SessionStatus.Running)
+        string directory,
+        bool alwaysOn,
+        SessionStatus sessionStatus = SessionStatus.Running,
+        AgentKind kind = AgentKind.ClaudeCode,
+        Guid? tuiProfileId = null,
+        string name = "standing-specialist")
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -424,8 +540,8 @@ public class AgentTaskStandingAgentDispatchTests
         db.AgentSessions.Add(new AgentSession
         {
             Id = sessionId,
-            DefinitionName = "fake",
-            AgentKind = AgentKind.ClaudeCode,
+            DefinitionName = kind == AgentKind.Codex ? "codex" : "fake",
+            AgentKind = kind,
             Status = sessionStatus,
             Cwd = directory,
             Cols = 120,
@@ -437,13 +553,15 @@ public class AgentTaskStandingAgentDispatchTests
         db.Agents.Add(new Agent
         {
             Id = agentId,
-            Name = "standing-specialist",
+            Name = name,
             // Unique per test, because the slug is uniquely indexed and the fixture DB is shared.
             Slug = $"standing-{agentId:N}"[..20],
             WorkingDirectory = directory,
             Details = "A standing agent nobody pooled.",
             Status = AgentStatus.Running,
             ModelLevel = AgentModelLevel.Low,
+            Kind = kind,
+            TuiProfileId = tuiProfileId,
             AlwaysOn = alwaysOn,
             RemoteControlEnabled = false,
             IsPoolDelegate = false,
@@ -474,7 +592,13 @@ public class AgentTaskStandingAgentDispatchTests
     }
 
     private static async Task<AgentTask> SeedQueuedTaskAsync(
-        string directory, Guid pinnedAgentId, int createdSecondsAgo = 0, Guid? projectId = null)
+        string directory,
+        Guid pinnedAgentId,
+        int createdSecondsAgo = 0,
+        Guid? projectId = null,
+        AgentKind agentKind = AgentKind.ClaudeCode,
+        WorkspaceMode workspaceMode = WorkspaceMode.Shared,
+        string? repoPath = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -486,9 +610,11 @@ public class AgentTaskStandingAgentDispatchTests
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Custom,
             ReplyTo = AgentTaskReplyTo.None,
+            AgentKind = agentKind,
             ModelLevel = AgentModelLevel.Low,
-            Workspace = WorkspaceMode.Shared,
+            Workspace = workspaceMode,
             WorkingDirectory = directory,
+            RepoPath = repoPath,
             ProjectId = projectId,
             AgentId = pinnedAgentId,
             Ephemeral = false,
@@ -501,6 +627,99 @@ public class AgentTaskStandingAgentDispatchTests
         return task;
     }
 
+    private static async Task<Guid> SeedCodexProfileAsync(bool enabled, bool withActiveRevision)
+    {
+        var now = DateTime.UtcNow;
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = $"codex-profile-{Guid.NewGuid():N}"[..24],
+            Kind = AgentKind.Codex,
+            IsEnabled = enabled,
+            IsDefault = false,
+            Source = AgentTuiProfileSource.Operator,
+            SourceDefinitionName = "codex",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+        if (withActiveRevision)
+        {
+            var revision = new AgentTuiProfileRevision
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profile.Id,
+                RevisionNumber = 1,
+                Executable = "codex",
+                ArgumentsJson = JsonSerializer.Serialize(new[]
+                {
+                    "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox",
+                }),
+                DiscoveryArgumentsJson = "[]",
+                VersionArgumentsJson = "[]",
+                AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+                NonSecretEnvironmentJson = "{}",
+                SecretEnvironmentNamesJson = "[]",
+                ModelArgumentName = "--model",
+                Guidance = "CARD-0140 S2",
+                CreatedAt = now,
+            };
+            db.AgentTuiProfileRevisions.Add(revision);
+            await db.SaveChangesAsync();
+            profile.ActiveRevisionId = revision.Id;
+            await db.SaveChangesAsync();
+        }
+
+        return profile.Id;
+    }
+
+    private static async Task<int> CountSessionsAsync(string directory)
+    {
+        await using var db = CreateContext();
+        return await db.AgentSessions.CountAsync(s => s.Cwd == directory);
+    }
+
+    private static async Task InitGitRepoAsync(string path)
+    {
+        await File.WriteAllTextAsync(Path.Combine(path, "README.md"), "card-0140");
+        await RunGitAsync(path, "init");
+        await RunGitAsync(path, "config", "user.email", "test@antiphon.dev");
+        await RunGitAsync(path, "config", "user.name", "Antiphon Test");
+        await RunGitAsync(path, "add", "README.md");
+        await RunGitAsync(path, "commit", "-m", "Initial commit");
+    }
+
+    private static async Task RunGitAsync(string workingDirectory, params string[] arguments)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("git failed to start");
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            var err = await process.StandardError.ReadToEndAsync();
+            throw new InvalidOperationException($"git {string.Join(" ", arguments)} failed: {err}");
+        }
+    }
+
+    private sealed class StandingNoOpSecretProtector : IAgentTuiSecretProtector
+    {
+        public string Protect(Guid profileId, string environmentName, string plaintext) => plaintext;
+
+        public string Unprotect(Guid profileId, string environmentName, string protectedValue) =>
+            protectedValue;
+    }
+
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
     private sealed class TempWorkspace : IDisposable
@@ -511,6 +730,7 @@ public class AgentTaskStandingAgentDispatchTests
         {
             try { Directory.Delete(Path, recursive: true); }
             catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }
