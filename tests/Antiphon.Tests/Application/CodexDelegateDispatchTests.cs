@@ -223,6 +223,33 @@ public class CodexDelegateDispatchTests
     // ---- the dispatch itself -------------------------------------------------------------------
 
     [Test]
+    public async Task a_spawn_on_a_standing_agent_leaves_Kind_alone_and_a_pool_delegate_is_restamped()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatchHarness();
+        var standingId = await SeedPinnedAgentAsync(
+            workspace.Path, isPoolDelegate: false, kind: AgentKind.Codex);
+        var poolId = await SeedPinnedAgentAsync(
+            workspace.Path, isPoolDelegate: true, kind: AgentKind.Grok);
+        var standingTask = await SeedQueuedTaskAsync(
+            workspace.Path, AgentKind.ClaudeCode, pinnedAgentId: standingId);
+        var poolTask = await SeedQueuedTaskAsync(
+            workspace.Path, AgentKind.ClaudeCode, pinnedAgentId: poolId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == standingId))
+            .Kind.ShouldBe(AgentKind.Codex);
+        (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == poolId))
+            .Kind.ShouldBe(AgentKind.ClaudeCode);
+        (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == standingTask.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        (await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == poolTask.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
+    [Test]
     public async Task dispatching_a_codex_task_writes_a_codex_session_and_a_codex_pool_row()
     {
         // The task's kind has to reach the SESSION row (which the brief's spill gate, the tailer and
@@ -378,7 +405,32 @@ public class CodexDelegateDispatchTests
         return task;
     }
 
-    private static async Task<AgentTask> SeedQueuedTaskAsync(string directory, AgentKind agentKind)
+    private static async Task<Guid> SeedPinnedAgentAsync(
+        string directory, bool isPoolDelegate, AgentKind kind)
+    {
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = isPoolDelegate ? $"task-{agentId:N}"[..13] : $"standing-{agentId:N}"[..20],
+            Slug = isPoolDelegate ? $"task-{agentId:N}"[..13] : $"standing-{agentId:N}"[..20],
+            WorkingDirectory = directory,
+            Details = isPoolDelegate ? "Pool delegate for restamp." : "Standing agent for restamp.",
+            Status = AgentStatus.Idle,
+            Kind = kind,
+            IsPoolDelegate = isPoolDelegate,
+            AlwaysOn = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return agentId;
+    }
+
+    private static async Task<AgentTask> SeedQueuedTaskAsync(
+        string directory, AgentKind agentKind, Guid? pinnedAgentId = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -393,6 +445,7 @@ public class CodexDelegateDispatchTests
             ModelLevel = AgentModelLevel.Medium,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,
+            AgentId = pinnedAgentId,
             Ephemeral = true,
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow,

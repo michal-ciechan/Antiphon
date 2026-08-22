@@ -1647,10 +1647,12 @@ public sealed class AgentTaskDispatcher
             {
                 // Reaching here means the reuse path declined this pin and a NEW session is about
                 // to be launched on the row — including the one case that lands here on purpose, a
-                // pinned pool delegate of the wrong kind (see TryReuseWarmAgentAsync). The row must
-                // follow the session it is about to own, or the pool would go on offering it as
-                // the kind it used to be.
-                existing.Kind = task.AgentKind;
+                // pinned pool delegate of the wrong kind (see TryReuseWarmAgentAsync). A pool
+                // row must follow the session it is about to own, or the pool would go on offering
+                // it as the kind it used to be. A standing agent's Kind is its own (CARD-0138):
+                // nothing reads it, and restamping it from the task would undo the profile sync.
+                if (existing.IsPoolDelegate)
+                    existing.Kind = task.AgentKind;
                 return existing;
             }
         }
@@ -1937,10 +1939,11 @@ public sealed class AgentTaskDispatcher
         if (await LiveSessionIdOfAsync(standing, ct) is not Guid session)
             return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
 
-        // The standing agent's own row is not the evidence here — nothing but the dispatcher writes
-        // Agent.Kind, so a user's Grok agent still reads ClaudeCode. Its LIVE SESSION is, and only
-        // when that session names a delegate kind: a legacy or hand-seeded row carries the enum's
-        // zero (Raw), which is absence of evidence and must not refuse a dispatch (CARD-0084 S3).
+        // The standing agent's own row is not the evidence here. CARD-0138 keeps that column in
+        // sync with the attached TUI profile, but the LIVE SESSION is still strictly better: it
+        // names the program that is actually running. Only when that session names a delegate
+        // kind: a legacy or hand-seeded row carries the enum's zero (Raw), which is absence of
+        // evidence and must not refuse a dispatch (CARD-0084 S3).
         var sessionKind = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == session)
             .Select(s => (AgentKind?)s.AgentKind)

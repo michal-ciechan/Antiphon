@@ -384,7 +384,21 @@ public sealed partial class AgentTuiProfileService
             ReconcileOperatorModels(profile, request.Models, now);
 
             profile.DisplayName = request.DisplayName.Trim();
+            var previousKind = profile.Kind;
             profile.Kind = request.Kind;
+            if (previousKind != request.Kind)
+            {
+                await _db.Agents
+                    .Where(agent => agent.TuiProfileId == profile.Id)
+                    .ExecuteUpdateAsync(
+                        updates => updates.SetProperty(agent => agent.Kind, request.Kind),
+                        cancellationToken);
+                foreach (var entry in _db.ChangeTracker.Entries<Agent>())
+                {
+                    if (entry.Entity.TuiProfileId == profile.Id)
+                        entry.Entity.Kind = request.Kind;
+                }
+            }
             profile.IsDefault = request.IsDefault || profile.IsDefault;
             profile.IsEnabled = request.IsEnabled || profile.IsDefault;
             profile.ActiveRevisionId = revision.Id;

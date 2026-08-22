@@ -80,6 +80,36 @@ public class AgentTuiProfileServiceTests
     }
 
     [Test]
+    public async Task Editing_a_profile_Kind_resyncs_attached_agents_and_leaves_other_profiles_alone()
+    {
+        var service = CreateService();
+        var codexRequest = NewRequest(UniqueName("Codex")) with { Kind = AgentKind.Codex };
+        var grokRequest = NewRequest(UniqueName("Grok")) with { Kind = AgentKind.Grok };
+        var codex = await service.CreateAsync(codexRequest, CancellationToken.None);
+        var grok = await service.CreateAsync(grokRequest, CancellationToken.None);
+
+        var attached = NewAgent(codex.Id, AgentModelLevel.High);
+        attached.Kind = AgentKind.Codex;
+        var other = NewAgent(grok.Id, AgentModelLevel.High);
+        other.Kind = AgentKind.Grok;
+        DbContext.Agents.AddRange(attached, other);
+        await DbContext.SaveChangesAsync();
+
+        await service.UpdateAsync(
+            codex.Id,
+            codexRequest with { ExpectedRevision = 1, Kind = AgentKind.OpenCode },
+            CancellationToken.None);
+
+        DbContext.ChangeTracker.Clear();
+        var resynced = await DbContext.Agents.AsNoTracking().SingleAsync(agent => agent.Id == attached.Id);
+        resynced.Kind.ShouldBe(AgentKind.OpenCode);
+        resynced.TuiProfileId.ShouldBe(codex.Id);
+        var untouched = await DbContext.Agents.AsNoTracking().SingleAsync(agent => agent.Id == other.Id);
+        untouched.Kind.ShouldBe(AgentKind.Grok);
+        untouched.TuiProfileId.ShouldBe(grok.Id);
+    }
+
+    [Test]
     public async Task Create_and_update_produce_immutable_monotonic_revisions()
     {
         var service = CreateService();

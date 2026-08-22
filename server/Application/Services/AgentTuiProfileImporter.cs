@@ -269,11 +269,12 @@ public sealed class AgentTuiProfileImporter
         CancellationToken cancellationToken)
     {
         var agents = await _db.Agents
-            .Where(agent => agent.TuiProfileId == null)
+            .Where(agent => agent.TuiProfileId == null && !agent.IsPoolDelegate)
             .ToListAsync(cancellationToken);
         foreach (var agent in agents)
         {
             agent.TuiProfileId = installationDefault.Id;
+            AgentProfileKind.Sync(agent, installationDefault);
             agent.ModelId ??= _runnerCatalog.MapLegacyModel(
                 installationDefault.Kind,
                 agent.ModelLevel);
