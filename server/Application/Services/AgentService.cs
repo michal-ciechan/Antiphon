@@ -958,6 +958,8 @@ public sealed class AgentService
             {
                 agent.TuiProfileId = null;
                 agent.ModelId = NormalizeModelId(requestedModelId);
+                // D1 second half: a row with no profile keeps its own Kind. A pool delegate's
+                // Kind is the only fact protecting it from being claimed by the wrong task kind.
                 return;
             }
         }
@@ -985,6 +987,7 @@ public sealed class AgentService
 
         agent.TuiProfileId = profile.Id;
         agent.ModelId = modelId;
+        AgentProfileKind.Sync(agent, profile);
     }
 
     private static string? NormalizeModelId(string? modelId) =>

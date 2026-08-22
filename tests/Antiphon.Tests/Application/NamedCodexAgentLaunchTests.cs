@@ -67,6 +67,35 @@ public class NamedCodexAgentLaunchTests
     }
 
     [Test]
+    public async Task A_null_profile_agent_keeps_default_Kind_and_still_launches_from_the_registry()
+    {
+        // CARD-0138 T3: Kind is the entity default (ClaudeCode) because no profile is attached,
+        // and launch still composes from the AgentRegistry — PeekProfileKindAsync does not
+        // consult Agent.Kind. If a later change started branching on the column, this would
+        // grow Claude flags (--name, --append-system-prompt) on a Codex definition.
+        await using var h = await CreateHarnessAsync();
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var stored = await db.Agents.SingleAsync(a => a.Id == h.AgentId);
+            stored.Kind.ShouldBe(AgentKind.ClaudeCode);
+            if (stored.TuiProfileId is not null)
+            {
+                await db.Agents.Where(a => a.Id == h.AgentId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.TuiProfileId, (Guid?)null));
+            }
+        }
+
+        await EndSessionAsync(h, SessionStatus.Failed);
+        await StartAsync(h);
+
+        var args = Factory(h).Created.ShouldHaveSingleItem().StartedArgs.ToList();
+        args[args.IndexOf("--model") + 1].ShouldBe("gpt-5.6-terra");
+        ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
+        args.ShouldNotContain("--append-system-prompt");
+        args.ShouldNotContain("--name");
+    }
+
+    [Test]
     public async Task A_codex_agent_with_an_exact_model_id_keeps_it_and_still_sets_effort()
     {
         // The exact-ModelId branch is unchanged and still wins over the tier ladder; the effort

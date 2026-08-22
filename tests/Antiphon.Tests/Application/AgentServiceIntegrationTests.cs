@@ -671,6 +671,98 @@ public class AgentServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task CreateAsync_with_a_Codex_profile_stores_Kind_Codex_and_a_Grok_profile_stores_Kind_Grok()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var grok = await SeedProfileAsync(db, AgentKind.Grok, "Grok");
+
+        var createdCodex = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Codex Kind"), "D:/src/codex-kind", TuiProfileId: codex.Id),
+            CancellationToken.None);
+        var createdGrok = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Grok Kind"), "D:/src/grok-kind", TuiProfileId: grok.Id),
+            CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var storedCodex = await verify.Agents.SingleAsync(a => a.Id == createdCodex.Id);
+        storedCodex.Kind.ShouldBe(AgentKind.Codex);
+        storedCodex.TuiProfileId.ShouldBe(codex.Id);
+        var storedGrok = await verify.Agents.SingleAsync(a => a.Id == createdGrok.Id);
+        storedGrok.Kind.ShouldBe(AgentKind.Grok);
+        storedGrok.TuiProfileId.ShouldBe(grok.Id);
+    }
+
+    [Test]
+    public async Task UpdateAsync_moving_between_claude_and_codex_profiles_moves_Kind_with_the_profile()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var claude = await SeedProfileAsync(db, AgentKind.ClaudeCode, "Claude");
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Profile Mover"), "D:/src/profile-mover", TuiProfileId: claude.Id),
+            CancellationToken.None);
+
+        await using (var verify = CreateContext())
+            (await verify.Agents.SingleAsync(a => a.Id == created.Id)).Kind.ShouldBe(AgentKind.ClaudeCode);
+
+        var toCodex = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                TuiProfileId: codex.Id),
+            CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var stored = await verify.Agents.SingleAsync(a => a.Id == toCodex.Id);
+            stored.Kind.ShouldBe(AgentKind.Codex);
+            stored.TuiProfileId.ShouldBe(codex.Id);
+        }
+
+        await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                TuiProfileId: claude.Id),
+            CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+            stored.Kind.ShouldBe(AgentKind.ClaudeCode);
+            stored.TuiProfileId.ShouldBe(claude.Id);
+        }
+    }
+
+    [Test]
+    public async Task CreateAsync_with_null_tui_profile_and_no_installation_default_leaves_Kind_untouched()
+    {
+        await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        (await db.AgentTuiProfiles.AnyAsync()).ShouldBeFalse();
+        var service = CreateService(db, new MockEventBus());
+
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Unprofiled"), "D:/src/unprofiled", TuiProfileId: null),
+            CancellationToken.None);
+
+        var stored = await db.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.TuiProfileId.ShouldBeNull();
+        stored.Kind.ShouldBe(AgentKind.ClaudeCode);
+    }
+
     /// <summary>
     /// A started agent as AgentControlService leaves it: lifecycle latch set, PersistentSessionId
     /// pointing at a seeded session in the given state. Transcript starts empty (= idle).
@@ -736,6 +828,46 @@ public class AgentServiceIntegrationTests
     {
         await using var db = CreateContext();
         await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
+    }
+
+    private static async Task<AgentTuiProfile> SeedProfileAsync(
+        AppDbContext db, AgentKind kind, string namePrefix)
+    {
+        var now = DateTime.UtcNow;
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = $"{namePrefix} {Guid.NewGuid():N}",
+            Kind = kind,
+            IsEnabled = true,
+            IsDefault = false,
+            Source = AgentTuiProfileSource.Operator,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+
+        var revision = new AgentTuiProfileRevision
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profile.Id,
+            RevisionNumber = 1,
+            Executable = "synthetic-wrapper",
+            ArgumentsJson = "[]",
+            DiscoveryArgumentsJson = "[]",
+            VersionArgumentsJson = "[]",
+            AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+            NonSecretEnvironmentJson = "{}",
+            SecretEnvironmentNamesJson = "[]",
+            Guidance = string.Empty,
+            CreatedAt = now,
+        };
+        db.AgentTuiProfileRevisions.Add(revision);
+        await db.SaveChangesAsync();
+        profile.ActiveRevisionId = revision.Id;
+        await db.SaveChangesAsync();
+        return profile;
     }
 
     private static AgentService CreateService(

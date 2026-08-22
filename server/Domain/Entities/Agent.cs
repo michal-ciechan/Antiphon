@@ -86,17 +86,22 @@ public class Agent
     public DateTime UpdatedAt { get; set; }
 
     /// <summary>
-    /// WHICH AGENT PROGRAM this delegate's session runs (CARD-0084 S3). Stored on the row rather
-    /// than derived from the latest session for two reasons the pool depends on: derivation is racy
-    /// against a session that is still starting, and a pool row can legitimately have no session at
-    /// all for a moment. A warm delegate is claimable only by a task of the SAME kind — a Claude
-    /// process cannot run a Grok task's brief, and reusing one for it would look like a successful
-    /// dispatch right up until the report never came.
+    /// WHICH AGENT PROGRAM this row is (CARD-0084 S3, CARD-0138). Invariant: if
+    /// <see cref="TuiProfileId"/> is set, this equals that profile's
+    /// <see cref="AgentTuiProfile.Kind"/>. If it is null, this is the row's own truth and
+    /// nothing derives it — a pool delegate is born with no profile, and this column is then
+    /// the only fact standing between a Grok task and a warm Claude process.
+    ///
+    /// <para>Stored on the row rather than derived from the latest session for two reasons the
+    /// pool depends on: derivation is racy against a session that is still starting, and a pool
+    /// row can legitimately have no session at all for a moment. A warm delegate is claimable
+    /// only by a task of the SAME kind — a Claude process cannot run a Grok task's brief, and
+    /// reusing one for it would look like a successful dispatch right up until the report never
+    /// came.</para>
     ///
     /// <para>Defaults to <see cref="AgentKind.ClaudeCode"/>, which every agent row that existed
-    /// before this column really was; only the dispatcher writes it today, so a user-created agent
-    /// keeps the default and the pool keeps ignoring it (<see cref="IsPoolDelegate"/> is what makes
-    /// a row pool furniture, not this).</para>
+    /// before this column really was. <see cref="IsPoolDelegate"/> is what makes a row pool
+    /// furniture, not this.</para>
     /// </summary>
     public AgentKind Kind { get; set; } = AgentKind.ClaudeCode;
 
