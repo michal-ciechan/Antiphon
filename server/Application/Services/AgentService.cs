@@ -377,6 +377,10 @@ public sealed class AgentService
                 profileRequired: true,
                 ct);
         }
+        // CARD-0139. After TuiProfileId so a PATCH that moves the profile AND asserts Kind is
+        // checked against the NEW profile, not the one this request is replacing.
+        if (request.Kind is { } requestedKind)
+            await ApplyKindAssertOrSetAsync(agent, requestedKind, ct);
         agent.UpdatedAt = UtcNow();
 
         await SaveChangesOrConflictAsync($"Agent '{agent.Name}' was modified by another operation.", ct);
@@ -837,7 +841,8 @@ public sealed class AgentService
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
             agent.AutoCompactContextPercent,
-            AgentLaunchEnv.Parse(agent.LaunchEnvJson));
+            AgentLaunchEnv.Parse(agent.LaunchEnvJson),
+            agent.Kind);
     }
 
     private static AgentDetailDto ToDetailDto(
@@ -901,7 +906,8 @@ public sealed class AgentService
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
             agent.AutoCompactContextPercent,
-            AgentLaunchEnv.Parse(agent.LaunchEnvJson));
+            AgentLaunchEnv.Parse(agent.LaunchEnvJson),
+            agent.Kind);
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)
@@ -988,6 +994,41 @@ public sealed class AgentService
         agent.TuiProfileId = profile.Id;
         agent.ModelId = modelId;
         AgentProfileKind.Sync(agent, profile);
+    }
+
+    /// <summary>
+    /// CARD-0139 assert-or-set. A pool delegate's Kind is owned by the dispatcher and is refused
+    /// even when the requested value agrees. A profiled agent's Kind is derived from the attached
+    /// profile (CARD-0138 D1): agreement is a no-op, disagreement is 409. Only a non-pool agent
+    /// with no profile at all takes the write.
+    /// </summary>
+    private async Task ApplyKindAssertOrSetAsync(Agent agent, AgentKind requestedKind, CancellationToken ct)
+    {
+        if (agent.IsPoolDelegate)
+        {
+            throw new ConflictException(
+                $"Agent '{agent.Name}' is a pool delegate; its Kind is owned by the task dispatcher and cannot be set. Omit kind.",
+                "agent_kind_pool_delegate");
+        }
+
+        if (agent.TuiProfileId is { } profileId)
+        {
+            var profile = await _db.AgentTuiProfiles
+                .AsNoTracking()
+                .Where(p => p.Id == profileId)
+                .Select(p => new { p.DisplayName, p.Kind })
+                .SingleOrDefaultAsync(ct)
+                ?? throw new NotFoundException(nameof(AgentTuiProfile), profileId);
+
+            if (requestedKind == profile.Kind)
+                return;
+
+            throw new ConflictException(
+                $"Agent '{agent.Name}' runs the '{profile.DisplayName}' runner profile ({profile.Kind}); its Kind cannot be set to {requestedKind}. Change the agent's runner profile instead, or omit kind.",
+                "agent_kind_profile_mismatch");
+        }
+
+        agent.Kind = requestedKind;
     }
 
     private static string? NormalizeModelId(string? modelId) =>

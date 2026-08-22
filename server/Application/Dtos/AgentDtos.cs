@@ -60,7 +60,11 @@ public sealed record AgentSummaryDto(
     // CARD-0106 S2. The agent's own launch environment. Values may reference a stored API key as
     // {{key:NAME}}; project keys (via the agent's board) override global ones at launch. Never
     // resolved here — this is what the operator typed, and a resolved value must never reach a DTO.
-    IReadOnlyDictionary<string, string>? LaunchEnv = null);
+    IReadOnlyDictionary<string, string>? LaunchEnv = null,
+    // CARD-0139. WHICH AGENT PROGRAM this row is. Read-only on the wire: with a TuiProfileId
+    // attached this equals that profile's Kind (CARD-0138 D1); without one it is the row's own
+    // truth. Default-valued so existing construction sites need no change.
+    AgentKind Kind = AgentKind.ClaudeCode);
 
 public sealed record AgentDetailDto(
     Guid Id,
@@ -109,7 +113,9 @@ public sealed record AgentDetailDto(
     // CARD-0106 S2. The agent's own launch environment. Values may reference a stored API key as
     // {{key:NAME}}; project keys (via the agent's board) override global ones at launch. Never
     // resolved here — this is what the operator typed, and a resolved value must never reach a DTO.
-    IReadOnlyDictionary<string, string>? LaunchEnv = null);
+    IReadOnlyDictionary<string, string>? LaunchEnv = null,
+    // CARD-0139. See AgentSummaryDto.Kind.
+    AgentKind Kind = AgentKind.ClaudeCode);
 
 /// <summary>
 /// One attachable bundle from the catalog (CARD-0058). The catalog is CODE — markdown files in the
@@ -239,7 +245,13 @@ public sealed record UpdateAgentRequest(
     // CARD-0106 S2. Null = leave unchanged (same contract as ReplyStyle/BundleKeys: an older caller
     // must not silently wipe an environment somebody configured). An EMPTY dictionary is the
     // explicit "clear it". Values may carry {{key:NAME}}; a placeholder in a NAME is rejected 422.
-    IReadOnlyDictionary<string, string>? LaunchEnv = null);
+    IReadOnlyDictionary<string, string>? LaunchEnv = null,
+    // CARD-0139. Null = leave unchanged (the convention every optional field on this record follows).
+    // ASSERT-OR-SET, not a free setter: with a TuiProfileId attached — the agent's existing one, or
+    // one this same request supplies — Kind is DERIVED from that profile (CARD-0138 D1) and this
+    // value is only checked against it; a disagreement is refused rather than written. It is applied
+    // as a value only for an agent with no profile at all, and never for a pool delegate.
+    AgentKind? Kind = null);
 
 // Fresh forces a brand-new conversation; by default a cardless (interactive) start resumes the
 // agent's previous Claude session so the terminal picks up where it left off.

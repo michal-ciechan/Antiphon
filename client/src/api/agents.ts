@@ -154,6 +154,11 @@ export interface AgentSummaryDto {
   autoCompactContextPercent?: number | null
   /** Per-agent launch environment. Values can refer to stored API keys as {{key:NAME}}. */
   launchEnv?: Record<string, string> | null
+  /**
+   * WHICH AGENT PROGRAM this row is (CARD-0139). With a tuiProfileId attached this equals that
+   * profile's kind; without one it is the row's own truth. Absent on an older server response.
+   */
+  kind?: AgentKind
 }
 
 export interface AgentSupervisionDto {
@@ -295,6 +300,12 @@ export interface UpdateAgentRequest {
   autoCompactContextPercent?: number | null
   /** Null/omitted leaves existing values unchanged; an empty object clears all launch environment. */
   launchEnv?: Record<string, string> | null
+  /**
+   * CARD-0139. Omit/null = leave unchanged. Assert-or-set: with a tuiProfileId attached this is
+   * checked against the profile's kind (agreement is a no-op, disagreement is 409), not written.
+   * Written only for a non-pool agent with no profile. Pool delegates always 409.
+   */
+  kind?: AgentKind | null
 }
 
 export interface DraftAgentRequest {

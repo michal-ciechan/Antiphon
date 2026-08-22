@@ -102,6 +102,11 @@ public class Agent
     /// <para>Defaults to <see cref="AgentKind.ClaudeCode"/>, which every agent row that existed
     /// before this column really was. <see cref="IsPoolDelegate"/> is what makes a row pool
     /// furniture, not this.</para>
+    ///
+    /// <para>In-place correction (CARD-0139 D6): re-PATCHing the agent's existing
+    /// <see cref="TuiProfileId"/> re-runs <c>ApplyTuiSelectionAsync</c> and re-syncs this from
+    /// the profile. There is no dedicated resync endpoint — a third writer of this column is
+    /// the wrong direction.</para>
     /// </summary>
     public AgentKind Kind { get; set; } = AgentKind.ClaudeCode;
 

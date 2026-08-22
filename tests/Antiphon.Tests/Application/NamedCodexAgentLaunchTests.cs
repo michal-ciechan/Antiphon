@@ -96,6 +96,59 @@ public class NamedCodexAgentLaunchTests
     }
 
     [Test]
+    public async Task A_Kind_PATCH_changes_the_column_and_not_the_composed_launch()
+    {
+        // CARD-0139 T4. Agent.Kind is not a launch input — PeekProfileKindAsync reads the profile,
+        // then the registry. A Kind write on a no-profile agent must leave argv identical (session
+        // ids aside) to the same start without the PATCH. The card asked for the opposite and
+        // that test cannot be written truthfully.
+        await using var h = await CreateHarnessAsync();
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            await db.Agents.Where(a => a.Id == h.AgentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.TuiProfileId, (Guid?)null));
+        }
+
+        await EndSessionAsync(h, SessionStatus.Failed);
+        await StartAsync(h);
+        var before = NormalizeLaunchArgs(Factory(h).Created.ShouldHaveSingleItem().StartedArgs);
+
+        using (var scope = h.Provider.CreateScope())
+        {
+            var agents = scope.ServiceProvider.GetRequiredService<AgentService>();
+            var agent = await agents.GetByIdAsync(h.AgentId, CancellationToken.None);
+            var updated = await agents.UpdateAsync(
+                h.AgentId,
+                new UpdateAgentRequest(
+                    agent.Name,
+                    agent.WorkingDirectory,
+                    agent.Details,
+                    agent.DefaultWorkflowTemplateId,
+                    agent.AssignmentPolicy,
+                    Kind: AgentKind.Grok),
+                CancellationToken.None);
+            updated.Kind.ShouldBe(AgentKind.Grok);
+            updated.TuiProfileId.ShouldBeNull();
+        }
+
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var liveId = (await db.Agents.SingleAsync(a => a.Id == h.AgentId)).PersistentSessionId;
+            liveId.ShouldNotBeNull();
+            await db.AgentSessions.Where(s => s.Id == Guid.Parse(liveId))
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Failed));
+        }
+
+        await StartAsync(h);
+        Factory(h).Created.Count.ShouldBe(2);
+        var after = NormalizeLaunchArgs(Factory(h).Created[1].StartedArgs);
+        after.ShouldBe(before);
+        after.ShouldContain("--model");
+        after.ShouldNotContain("--name");
+        after.ShouldNotContain("--append-system-prompt");
+    }
+
+    [Test]
     public async Task A_codex_agent_with_an_exact_model_id_keeps_it_and_still_sets_effort()
     {
         // The exact-ModelId branch is unchanged and still wins over the tier ladder; the effort
@@ -113,6 +166,9 @@ public class NamedCodexAgentLaunchTests
     }
 
     // ---- helpers -------------------------------------------------------------------------------
+
+    private static List<string> NormalizeLaunchArgs(IReadOnlyList<string> args) =>
+        [.. args.Select(a => Guid.TryParse(a, out _) ? "<id>" : a)];
 
     private static string? ConfigValue(IReadOnlyList<string> args, string key)
     {

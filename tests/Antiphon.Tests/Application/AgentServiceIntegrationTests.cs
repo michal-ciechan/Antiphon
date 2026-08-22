@@ -763,6 +763,234 @@ public class AgentServiceIntegrationTests
         stored.Kind.ShouldBe(AgentKind.ClaudeCode);
     }
 
+    [Test]
+    public async Task GetById_and_list_return_Kind_from_the_attached_Codex_profile()
+    {
+        // CARD-0139 T1 / D5: Kind is on both DTOs so a mismatch is visible without hand-written SQL.
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Visible Codex"), "D:/src/visible-codex", TuiProfileId: codex.Id),
+            CancellationToken.None);
+
+        created.Kind.ShouldBe(AgentKind.Codex);
+        created.TuiProfileId.ShouldBe(codex.Id);
+
+        var listed = (await service.GetAllAsync(CancellationToken.None))
+            .Single(a => a.Id == created.Id);
+        listed.Kind.ShouldBe(AgentKind.Codex);
+    }
+
+    [Test]
+    public async Task UpdateAsync_with_null_Kind_leaves_the_stored_value_unchanged()
+    {
+        // CARD-0139 T3. Null = leave unchanged, matching BoardId / ReplyStyle / LaunchEnv.
+        new UpdateAgentRequest("A", "C:\\tmp", null, null, AgentAssignmentPolicy.AutoPick)
+            .Kind.ShouldBeNull();
+
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Sticky Kind"), "D:/src/sticky-kind", TuiProfileId: codex.Id),
+            CancellationToken.None);
+        created.Kind.ShouldBe(AgentKind.Codex);
+
+        var updated = await service.UpdateAsync(
+            created.Id,
+            Patch(created, details: "edited without touching kind"),
+            CancellationToken.None);
+
+        updated.Kind.ShouldBe(AgentKind.Codex);
+        updated.Details.ShouldBe("edited without touching kind");
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == created.Id)).Kind.ShouldBe(AgentKind.Codex);
+    }
+
+    [Test]
+    public async Task UpdateAsync_Kind_on_a_pool_delegate_is_refused_even_when_it_agrees()
+    {
+        // CARD-0139 T5 / D3 — the dangerous edit. Refused unconditionally; the row is unchanged.
+        await using var db = CreateContext();
+        var created = await CreateService(db, new MockEventBus()).CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Pool Kind"), "D:/src/pool-kind"),
+            CancellationToken.None);
+
+        AgentKind originalKind;
+        await using (var setup = CreateContext())
+        {
+            originalKind = (await setup.Agents.SingleAsync(a => a.Id == created.Id)).Kind;
+            await setup.Agents.Where(a => a.Id == created.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.IsPoolDelegate, true));
+        }
+
+        await using var updateDb = CreateContext();
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            CreateService(updateDb, new MockEventBus()).UpdateAsync(
+                created.Id,
+                Patch(created, kind: originalKind),
+                CancellationToken.None));
+        ex.Code.ShouldBe("agent_kind_pool_delegate");
+        ex.StatusCode.ShouldBe(409);
+        ex.Message.ShouldContain("pool delegate");
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(originalKind);
+        stored.IsPoolDelegate.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task UpdateAsync_Kind_disagreeing_with_the_attached_profile_is_refused()
+    {
+        // CARD-0139 T6 / D2 rule 3b.
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Mismatch Kind"), "D:/src/mismatch-kind", TuiProfileId: codex.Id),
+            CancellationToken.None);
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            service.UpdateAsync(
+                created.Id,
+                Patch(created, kind: AgentKind.ClaudeCode),
+                CancellationToken.None));
+        ex.Code.ShouldBe("agent_kind_profile_mismatch");
+        ex.StatusCode.ShouldBe(409);
+        ex.Message.ShouldContain("Codex");
+        ex.Message.ShouldContain("ClaudeCode");
+        ex.Message.ShouldContain("runner profile");
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(AgentKind.Codex);
+        stored.TuiProfileId.ShouldBe(codex.Id);
+    }
+
+    [Test]
+    public async Task UpdateAsync_Kind_agreeing_with_the_attached_profile_succeeds_as_a_noop()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Agree Kind"), "D:/src/agree-kind", TuiProfileId: codex.Id),
+            CancellationToken.None);
+
+        var updated = await service.UpdateAsync(
+            created.Id,
+            Patch(created, kind: AgentKind.Codex),
+            CancellationToken.None);
+
+        updated.Kind.ShouldBe(AgentKind.Codex);
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(AgentKind.Codex);
+        stored.TuiProfileId.ShouldBe(codex.Id);
+    }
+
+    [Test]
+    public async Task UpdateAsync_re_sending_the_existing_tuiProfileId_re_syncs_a_corrupted_Kind()
+    {
+        // CARD-0139 T6 / D6 — the in-place correction. No dedicated resync endpoint.
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Resync Kind"), "D:/src/resync-kind", TuiProfileId: codex.Id),
+            CancellationToken.None);
+
+        await using (var setup = CreateContext())
+        {
+            await setup.Agents.Where(a => a.Id == created.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.Kind, AgentKind.ClaudeCode));
+            (await setup.Agents.SingleAsync(a => a.Id == created.Id)).Kind.ShouldBe(AgentKind.ClaudeCode);
+        }
+
+        await using var updateDb = CreateContext();
+        var updated = await CreateService(updateDb, new MockEventBus()).UpdateAsync(
+            created.Id,
+            Patch(created, tuiProfileId: created.TuiProfileId),
+            CancellationToken.None);
+
+        updated.Kind.ShouldBe(AgentKind.Codex);
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(AgentKind.Codex);
+        stored.TuiProfileId.ShouldBe(codex.Id);
+    }
+
+    [Test]
+    public async Task UpdateAsync_changing_profile_to_codex_and_asserting_Kind_is_checked_against_the_new_profile()
+    {
+        // CARD-0139 T7 / D2 application order. Red if the Kind check runs before ApplyTuiSelectionAsync:
+        // asserting Codex would be refused against the still-attached Claude profile, and asserting
+        // ClaudeCode would be accepted then overwritten by the Codex sync.
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var claude = await SeedProfileAsync(db, AgentKind.ClaudeCode, "Claude");
+        var codex = await SeedProfileAsync(db, AgentKind.Codex, "Codex");
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Order Kind"), "D:/src/order-kind", TuiProfileId: claude.Id),
+            CancellationToken.None);
+
+        var toCodex = await service.UpdateAsync(
+            created.Id,
+            Patch(created, kind: AgentKind.Codex, tuiProfileId: codex.Id),
+            CancellationToken.None);
+        toCodex.Kind.ShouldBe(AgentKind.Codex);
+        toCodex.TuiProfileId.ShouldBe(codex.Id);
+
+        var reset = await service.UpdateAsync(
+            created.Id,
+            Patch(created, tuiProfileId: claude.Id),
+            CancellationToken.None);
+        reset.Kind.ShouldBe(AgentKind.ClaudeCode);
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            service.UpdateAsync(
+                created.Id,
+                Patch(created, kind: AgentKind.ClaudeCode, tuiProfileId: codex.Id),
+                CancellationToken.None));
+        ex.Code.ShouldBe("agent_kind_profile_mismatch");
+
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(AgentKind.ClaudeCode);
+        stored.TuiProfileId.ShouldBe(claude.Id);
+    }
+
+    [Test]
+    public async Task UpdateAsync_Kind_on_a_no_profile_non_pool_agent_writes_it()
+    {
+        await using var db = CreateContext();
+        var created = await CreateService(db, new MockEventBus()).CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Free Kind"), "D:/src/free-kind"),
+            CancellationToken.None);
+
+        await using (var setup = CreateContext())
+        {
+            await setup.Agents.Where(a => a.Id == created.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.TuiProfileId, (Guid?)null));
+        }
+
+        await using var updateDb = CreateContext();
+        var updated = await CreateService(updateDb, new MockEventBus()).UpdateAsync(
+            created.Id,
+            Patch(created, kind: AgentKind.Grok),
+            CancellationToken.None);
+
+        updated.Kind.ShouldBe(AgentKind.Grok);
+        updated.TuiProfileId.ShouldBeNull();
+        await using var verify = CreateContext();
+        var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
+        stored.Kind.ShouldBe(AgentKind.Grok);
+        stored.TuiProfileId.ShouldBeNull();
+        stored.IsPoolDelegate.ShouldBeFalse();
+    }
+
     /// <summary>
     /// A started agent as AgentControlService leaves it: lifecycle latch set, PersistentSessionId
     /// pointing at a seeded session in the given state. Transcript starts empty (= idle).
@@ -869,6 +1097,20 @@ public class AgentServiceIntegrationTests
         await db.SaveChangesAsync();
         return profile;
     }
+
+    private static UpdateAgentRequest Patch(
+        AgentDetailDto agent,
+        AgentKind? kind = null,
+        Guid? tuiProfileId = null,
+        string? details = null) =>
+        new(
+            agent.Name,
+            agent.WorkingDirectory,
+            details ?? agent.Details,
+            agent.DefaultWorkflowTemplateId,
+            agent.AssignmentPolicy,
+            TuiProfileId: tuiProfileId,
+            Kind: kind);
 
     private static AgentService CreateService(
         AppDbContext db,
