@@ -518,7 +518,8 @@ public sealed class AgentTaskDispatcher
                 {
                     await _queue.EnqueueAsync(
                         parentSession, note.Body, MessageSendMode.WhenIdle, ct,
-                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+                        QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                        task.Id, DelegationNoteDigest.Compute(reason), note.Header);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -937,7 +938,8 @@ public sealed class AgentTaskDispatcher
             {
                 await _queue.EnqueueAsync(
                     parentSession, note.Body, MessageSendMode.WhenIdle, ct,
-                    QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+                    QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                    task.Id, DelegationNoteDigest.Compute(reason), note.Header);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

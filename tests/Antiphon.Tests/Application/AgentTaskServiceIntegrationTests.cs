@@ -338,6 +338,114 @@ public class AgentTaskServiceIntegrationTests
         detail.Summary.ChildCount.ShouldBe(1, "child count is direct children only");
     }
 
+    // ---- completion-note poll provenance ---------------------------------------------------
+
+    [Test]
+    public async Task a_parent_session_poll_of_a_settled_task_stamps_the_result_hash()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
+            result: "Landed the change.", parentSessionId: parentSessionId);
+
+        await using var db = CreateContext();
+        await CreateService(db).GetAsync(task.Id, CancellationToken.None, parentSessionId);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.LastPolledResultHash.ShouldBe(DelegationNoteDigest.Compute(task.Result));
+        stored.LastPolledResultAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task a_poll_of_an_unsettled_task_stamps_nothing()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Working,
+            result: "Still working.", parentSessionId: Guid.NewGuid());
+
+        await using var db = CreateContext();
+        await CreateService(db).GetAsync(task.Id, CancellationToken.None, task.ParentSessionId);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.LastPolledResultHash.ShouldBeNull();
+        stored.LastPolledResultAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_token_less_poll_stamps_nothing()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
+            result: "Landed the change.", parentSessionId: Guid.NewGuid());
+
+        await using var db = CreateContext();
+        await CreateService(db).GetAsync(task.Id, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.LastPolledResultHash.ShouldBeNull();
+        stored.LastPolledResultAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_poll_by_a_session_that_is_not_the_parent_stamps_nothing()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
+            result: "Landed the change.", parentSessionId: Guid.NewGuid());
+
+        await using var db = CreateContext();
+        await CreateService(db).GetAsync(task.Id, CancellationToken.None, Guid.NewGuid());
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.LastPolledResultHash.ShouldBeNull();
+        stored.LastPolledResultAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task a_poll_does_not_bump_the_concurrency_token_or_publish()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Succeeded,
+            result: "Landed the change.", parentSessionId: parentSessionId);
+        var events = new MockEventBus();
+
+        await using var db = CreateContext();
+        await CreateService(db, eventBus: events).GetAsync(task.Id, CancellationToken.None, parentSessionId);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.ConcurrencyToken.ShouldBe(task.ConcurrencyToken);
+        events.PublishedEvents.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task a_failed_task_hashes_its_failure_reason()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = Guid.NewGuid();
+        var task = await SeedTaskAsync(
+            AgentTaskKind.Worker, workspace.Path, status: AgentTaskStatus.Failed,
+            failureReason: "The test environment did not start.", parentSessionId: parentSessionId);
+
+        await using var db = CreateContext();
+        await CreateService(db).GetAsync(task.Id, CancellationToken.None, parentSessionId);
+
+        await using var verify = CreateContext();
+        var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.LastPolledResultHash.ShouldBe(DelegationNoteDigest.Compute(task.FailureReason));
+        stored.LastPolledResultAt.ShouldNotBeNull();
+    }
+
     [Test]
     public async Task cancelling_a_queued_task_settles_it()
     {
@@ -813,7 +921,9 @@ public class AgentTaskServiceIntegrationTests
         AgentModelLevel level = AgentModelLevel.High,
         AgentTaskRole role = AgentTaskRole.Custom,
         Guid? sessionId = null,
-        string? result = null)
+        string? result = null,
+        Guid? parentSessionId = null,
+        string? failureReason = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -832,7 +942,9 @@ public class AgentTaskServiceIntegrationTests
             Status = status,
             CostUsd = costUsd,
             AgentSessionId = sessionId,
+            ParentSessionId = parentSessionId,
             Result = result,
+            FailureReason = failureReason,
             CreatedAt = DateTime.UtcNow,
         };
 
@@ -845,7 +957,8 @@ public class AgentTaskServiceIntegrationTests
     private static AgentTaskService CreateService(
         AppDbContext db,
         IReadOnlyList<string>? allowedRoots = null,
-        RecordingSessionStopper? stopper = null)
+        RecordingSessionStopper? stopper = null,
+        MockEventBus? eventBus = null)
     {
         var settings = new DelegationSettings
         {
@@ -858,7 +971,7 @@ public class AgentTaskServiceIntegrationTests
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(settings),
-            new MockEventBus(),
+            eventBus ?? new MockEventBus(),
             stopper ?? new RecordingSessionStopper(),
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance);

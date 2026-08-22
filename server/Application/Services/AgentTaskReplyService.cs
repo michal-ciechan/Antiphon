@@ -1096,7 +1096,8 @@ public sealed class AgentTaskReplyService
             // size-aware batching stops before the combined body crosses the inline ceiling.
             await queue.EnqueueAsync(
                 parentSession, note.Body, MessageSendMode.WhenIdle, ct,
-                QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}");
+                QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                task.Id, DelegationNoteDigest.Compute(report), note.Header);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

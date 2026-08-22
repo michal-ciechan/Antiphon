@@ -401,10 +401,22 @@ public sealed class AgentTaskService
         return tasks.Select(t => ToSummary(t, tasks)).ToList();
     }
 
-    public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct)
+    public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct, Guid? pollingSessionId = null)
     {
         var task = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
+
+        var report = !string.IsNullOrEmpty(task.Result) ? task.Result : task.FailureReason;
+        if (IsSettled(task.Status)
+            && !string.IsNullOrEmpty(report)
+            && pollingSessionId is not null
+            && pollingSessionId == task.ParentSessionId)
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            await _db.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.LastPolledResultHash, DelegationNoteDigest.Compute(report))
+                .SetProperty(t => t.LastPolledResultAt, now), ct);
+        }
 
         // Subtree cost needs the whole run, not just this row.
         var family = await _db.AgentTasks.AsNoTracking()

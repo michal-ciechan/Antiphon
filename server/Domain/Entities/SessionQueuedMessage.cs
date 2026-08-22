@@ -30,6 +30,15 @@ public class SessionQueuedMessage
     /// </summary>
     public string? ConversationKey { get; set; }
 
+    /// <summary>The delegated task a completion note reports, when this is a delegation completion row.</summary>
+    public Guid? SourceTaskId { get; set; }
+
+    /// <summary>The normalized digest of the raw report carried by a completion note.</summary>
+    public string? ContentDigest { get; set; }
+
+    /// <summary>The exact non-report prefix of a completion note.</summary>
+    public string? NoteHeader { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? SentAt { get; set; }
     public DateTime? CanceledAt { get; set; }

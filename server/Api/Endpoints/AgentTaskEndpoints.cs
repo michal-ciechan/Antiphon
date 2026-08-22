@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 
@@ -40,11 +41,13 @@ public static class AgentTaskEndpoints
         // note, the board chip), so -Status and -Reply must accept them or they are unusable.
         tasks.MapGet("/{id}", async (
             string id,
+            HttpContext http,
             AgentTaskService service,
             CancellationToken ct) =>
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
-            return Results.Ok(await service.GetAsync(taskId, ct));
+            var caller = await ResolvePollingCallerAsync(http, service, ct);
+            return Results.Ok(await service.GetAsync(taskId, ct, caller?.SessionId));
         });
 
         tasks.MapPost("/{id:guid}/cancel", async (
@@ -117,5 +120,22 @@ public static class AgentTaskEndpoints
             return new AgentTaskService.Caller(null, null, string.Empty);
 
         return await service.AuthenticateAsync(token, ct);
+    }
+
+    /// <summary>
+    /// GET remains a public status read. An absent or stale delegation token simply means this
+    /// poll cannot be attributed to a receiving session.
+    /// </summary>
+    internal static async Task<AgentTaskService.Caller?> ResolvePollingCallerAsync(
+        HttpContext http, AgentTaskService service, CancellationToken ct)
+    {
+        try
+        {
+            return await ResolveCallerAsync(http, service, ct);
+        }
+        catch (ForbiddenException)
+        {
+            return null;
+        }
     }
 }

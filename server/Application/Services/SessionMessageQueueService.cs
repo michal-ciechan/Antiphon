@@ -135,7 +135,8 @@ public sealed class SessionMessageQueueService
     /// <summary>Queue a message ("wait until idle") or deliver it immediately ("send now").</summary>
     public async Task<SessionQueueDto> EnqueueAsync(
         Guid sessionId, string body, MessageSendMode mode, CancellationToken ct,
-        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null)
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui, string? conversationKey = null,
+        Guid? sourceTaskId = null, string? contentDigest = null, string? noteHeader = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -199,6 +200,9 @@ public sealed class SessionMessageQueueService
                 CreatedAt = now,
                 Origin = origin,
                 ConversationKey = conversationKey,
+                SourceTaskId = sourceTaskId,
+                ContentDigest = contentDigest,
+                NoteHeader = noteHeader,
             };
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync(ct);

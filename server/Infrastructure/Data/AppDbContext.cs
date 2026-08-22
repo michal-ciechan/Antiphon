@@ -1118,6 +1118,8 @@ public class AppDbContext : DbContext
             entity.Property(m => m.Body).IsRequired().HasColumnType("text");
             entity.Property(m => m.Status).IsRequired();
             entity.Property(m => m.Sequence).IsRequired();
+            entity.Property(m => m.ContentDigest).HasColumnType("text");
+            entity.Property(m => m.NoteHeader).HasColumnType("text");
             entity.Property(m => m.CreatedAt).IsRequired();
             entity.Property(m => m.DeliveryAttempts).IsRequired().HasDefaultValue(0);
 
@@ -1337,6 +1339,7 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Status).IsRequired();
             entity.Property(t => t.ReplyTo).IsRequired();
             entity.Property(t => t.FailureReason).HasMaxLength(4000);
+            entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
             entity.Property(t => t.TokenHash).HasMaxLength(128);
             entity.Property(t => t.CacheReadTokens).IsRequired();

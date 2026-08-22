@@ -347,6 +347,40 @@ public class DelegationReportFormatterTests
     }
 
     [Test]
+    public void a_completion_note_header_is_a_prefix_of_its_body()
+    {
+        var note = DelegationReportFormatter.BuildCompletionNote(NewTask(), Settings, "Rewrote the section.");
+
+        note.Body.ShouldStartWith(note.Header);
+    }
+
+    [Test]
+    public void a_completion_note_header_is_a_prefix_of_its_body_with_a_warning()
+    {
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            NewTask(), Settings, "Rewrote the section.", warning: "WARNING: verify the recovered task.");
+
+        note.Body.ShouldStartWith(note.Header);
+        note.Header.ShouldContain("WARNING: verify the recovered task.");
+    }
+
+    [Test]
+    public void a_note_digest_normalizes_line_endings_trailing_whitespace_and_outer_blank_lines()
+    {
+        var canonical = "first line\nsecond line";
+        var variant = "\r\n  first line  \r\nsecond line\t\r\n\r\n";
+
+        DelegationNoteDigest.Compute(variant).ShouldBe(DelegationNoteDigest.Compute(canonical));
+    }
+
+    [Test]
+    public void a_note_digest_preserves_an_interior_word_difference()
+    {
+        DelegationNoteDigest.Compute("Landed the implementation.")
+            .ShouldNotBe(DelegationNoteDigest.Compute("Landed the migration."));
+    }
+
+    [Test]
     public void a_brief_carries_the_task_marker_so_the_reply_can_be_correlated()
     {
         // Correlation matches this marker, NOT prompt text — a human typing in the delegate's

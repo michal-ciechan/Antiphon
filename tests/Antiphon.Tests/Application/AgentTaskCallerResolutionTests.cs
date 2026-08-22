@@ -47,6 +47,18 @@ public class AgentTaskCallerResolutionTests
     }
 
     [Test]
+    public async Task a_status_poll_with_an_unknown_token_stays_unattributed()
+    {
+        var (service, _) = CreateService();
+        var http = new DefaultHttpContext();
+        http.Request.Headers[AgentTaskEndpoints.TokenHeader] = "stale-token";
+
+        var caller = await AgentTaskEndpoints.ResolvePollingCallerAsync(http, service, CancellationToken.None);
+
+        caller.ShouldBeNull("GET /{id} remains a public status read when a stale token is present");
+    }
+
+    [Test]
     public async Task a_token_less_request_with_no_directory_is_refused_and_told_why()
     {
         var (service, _) = CreateService();

@@ -148,7 +148,7 @@ public static class DelegationReportFormatter
     public static string OrchestratorContract =>
         InstructionBundles.TextOf(InstructionBundles.Orchestrator);
 
-    public sealed record Note(string Body, bool Excerpted);
+    public sealed record Note(string Body, bool Excerpted, string Header);
 
     /// <summary>
     /// The completion note delivered to the parent. A header line carrying who/tier/duration/cost
@@ -185,9 +185,10 @@ public static class DelegationReportFormatter
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
+        var normalizedHeader = header.ToString().ReplaceLineEndings("\n");
         if (!string.IsNullOrWhiteSpace(warning))
-            body = $"{warning.Trim()}\n\n{body}";
-        return new Note($"{header}\n\n{body}".ReplaceLineEndings("\n"), excerpted);
+            normalizedHeader = $"{normalizedHeader}\n\n{warning.Trim()}".ReplaceLineEndings("\n");
+        return new Note($"{normalizedHeader}\n\n{body}".ReplaceLineEndings("\n"), excerpted, normalizedHeader);
     }
 
     /// <summary>

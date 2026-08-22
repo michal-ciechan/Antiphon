@@ -132,6 +132,12 @@ public class AgentTask
 
     public string? FailureReason { get; set; }
 
+    /// <summary>The normalized digest of the settled report last read by this task's parent session.</summary>
+    public string? LastPolledResultHash { get; set; }
+
+    /// <summary>When the parent session last read <see cref="LastPolledResultHash"/> through status polling.</summary>
+    public DateTime? LastPolledResultAt { get; set; }
+
     /// <summary>Guards against two dispatcher ticks claiming the same task.</summary>
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 
