@@ -248,3 +248,44 @@ actually read independent sources. If they share a table, a queue, a cache, or a
 point of truth, an outage in that one source doesn't degrade one brake to nothing — it silently
 removes both at once, and the two failing together looks like bad luck instead of what it is, a
 structural single point of failure.
+
+---
+
+## 2026-08-22 — Reading a task's own manual status poll looks exactly like a duplicate delivery
+
+**What we learned:** the orchestrator calling `delegate.ps1 -Status <taskId>` on a task whose
+completion note is still queued (`WhenIdle`, waiting for this session to go idle) reads the stored
+result straight from the database — a path completely separate from the queue delivery. Minutes
+later, once the caller session actually goes idle, the queue delivers that same text once, for the
+first and only time, as the normal `[task ... done]` notification. Seeing identical content twice —
+once from a manual poll, once from the automatic notification — is indistinguishable from a real
+duplicate-delivery bug unless someone checks the underlying `SessionQueuedMessages` row.
+
+**The evidence:** three tasks in one session (`ae8caefb`, `bf61f57b`, `bdd9a271`) were reported to
+CARD-0132 as duplicate/stale notifications, with a leading hypothesis blaming CARD-0132 S2's
+documented non-retroactive `queued_command` gap. A read-only debug investigation (task `241f5042`)
+found, for all three, exactly ONE `SessionQueuedMessages` row (`Origin=Delegation`,
+`DeliveryAttempts=1`, `Status=Sent`) and exactly one matching `UserPrompt` transcript record — no
+second attempt, no `QueuedUserPrompt` row, no reconnect/backfill. Cross-referencing the orchestrator's
+own command timestamps against each row's `CreatedAt`/`SentAt` showed the "first copy" in every case
+was this session's own `-Status` call, made while the note was still pending delivery. Independently
+re-queried live against Postgres for `ae8caefb` and it matched exactly. **The hypothesis being tested
+was wrong — no bug existed to find.**
+
+**A second, smaller error compounded the setup:** the debug brief stated the session-runner restart
+completed "around 23:50:30Z", taken directly from a Serilog console line timestamped `[23:50:29
+INF]` in `logs/session-runner.log`. That line is **local wall-clock time (BST, UTC+1)**, not UTC —
+the same class of mistake the 2026-08-16 entry above documents, on the exact same machine, now a
+second time. The debug agent caught and corrected it (`23:49:57 +01:00` = `22:49:57Z`) while
+resolving the real question, so it cost nothing here, but it is worth restating: **this repo's own
+log files mix timestamp conventions** — Postgres/API timestamps are UTC, Serilog console lines on
+this machine are local BST/GMT. Never assume one from the other's format; convert or state which you
+have, per the existing rule.
+
+**What changed:** CARD-0132 corrected in place (not superseded) once the real explanation landed.
+Generalizable lesson for future briefs: before treating "the same text arrived twice" as a delivery
+bug, check whether the caller itself already fetched that content through a different path (a
+manual status/log read) before the automatic delivery had a chance to land — the append-only nature
+of `SessionQueuedMessages` (one row, one `DeliveryAttempts` count) makes this a one-query check, and
+it should be the FIRST thing checked, not the last, whenever "duplicate" is really "seen twice by
+one reader through two different paths."
