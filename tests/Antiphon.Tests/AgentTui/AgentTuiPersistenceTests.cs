@@ -308,6 +308,63 @@ public class AgentTuiPersistenceTests
     }
 
     [Test]
+    public async Task SyncAgentKindWithTuiProfile_corrects_mismatched_standing_rows_and_leaves_pool_and_null_alone()
+    {
+        await using var db = NewDatabaseContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+
+        var applied = await db.Database.GetAppliedMigrationsAsync();
+        applied.ShouldContain(migration =>
+            migration.EndsWith("_SyncAgentKindWithTuiProfile", StringComparison.Ordinal));
+
+        var migrationsAssembly = db.GetService<IMigrationsAssembly>();
+        var migrationType = migrationsAssembly.Migrations
+            .Single(pair => pair.Key.EndsWith("_SyncAgentKindWithTuiProfile", StringComparison.Ordinal))
+            .Value;
+        var migration = migrationsAssembly.CreateMigration(migrationType, db.Database.ProviderName!);
+        migration.DownOperations.ShouldBeEmpty(
+            "Down is a no-op: restoring ClaudeCode would restore the bug");
+        migration.UpOperations.OfType<SqlOperation>().ShouldHaveSingleItem().Sql
+            .ShouldContain("NOT a.\"IsPoolDelegate\"");
+
+        var now = DateTime.UtcNow;
+        var codexProfile = NewProfile("codex-sync", now);
+        codexProfile.Kind = AgentKind.Codex;
+        var grokProfile = NewProfile("grok-sync", now);
+        grokProfile.Kind = AgentKind.Grok;
+        db.AgentTuiProfiles.AddRange(codexProfile, grokProfile);
+        await db.SaveChangesAsync();
+
+        var standingCodex = NewAgent("standing-codex", now, AgentKind.ClaudeCode, codexProfile.Id, isPoolDelegate: false);
+        var standingGrok = NewAgent("standing-grok", now, AgentKind.ClaudeCode, grokProfile.Id, isPoolDelegate: false);
+        var mismatchedPool = NewAgent("pool-mismatch", now, AgentKind.ClaudeCode, grokProfile.Id, isPoolDelegate: true);
+        var nullProfile = NewAgent("null-profile", now, AgentKind.Codex, tuiProfileId: null, isPoolDelegate: false);
+        db.Agents.AddRange(standingCodex, standingGrok, mismatchedPool, nullProfile);
+        await db.SaveChangesAsync();
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE "Agents" a
+            SET    "Kind" = p."Kind"
+            FROM   "AgentTuiProfiles" p
+            WHERE  p."Id" = a."TuiProfileId"
+              AND  a."Kind" <> p."Kind"
+              AND  NOT a."IsPoolDelegate";
+            """);
+
+        db.ChangeTracker.Clear();
+        (await db.Agents.AsNoTracking().SingleAsync(a => a.Id == standingCodex.Id))
+            .Kind.ShouldBe(AgentKind.Codex);
+        (await db.Agents.AsNoTracking().SingleAsync(a => a.Id == standingGrok.Id))
+            .Kind.ShouldBe(AgentKind.Grok);
+        (await db.Agents.AsNoTracking().SingleAsync(a => a.Id == mismatchedPool.Id))
+            .Kind.ShouldBe(AgentKind.ClaudeCode);
+        var untouchedNull = await db.Agents.AsNoTracking().SingleAsync(a => a.Id == nullProfile.Id);
+        untouchedNull.Kind.ShouldBe(AgentKind.Codex);
+        untouchedNull.TuiProfileId.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Migration_applies_five_tables_four_columns_and_no_seed_operations()
     {
         await using var db = NewDatabaseContext();
@@ -464,6 +521,21 @@ public class AgentTuiPersistenceTests
         Source = AgentTuiProfileSource.Operator,
         CreatedAt = now,
         UpdatedAt = now
+    };
+
+    private static Agent NewAgent(
+        string suffix, DateTime now, AgentKind kind, Guid? tuiProfileId, bool isPoolDelegate) => new()
+    {
+        Id = Guid.NewGuid(),
+        Name = $"Persistence {suffix} {Guid.NewGuid():N}",
+        Slug = $"persist-{suffix}-{Guid.NewGuid():N}"[..40],
+        WorkingDirectory = Path.GetTempPath(),
+        Details = string.Empty,
+        Kind = kind,
+        TuiProfileId = tuiProfileId,
+        IsPoolDelegate = isPoolDelegate,
+        CreatedAt = now,
+        UpdatedAt = now,
     };
 
     private static AgentTuiProfileRevision NewRevision(Guid profileId, DateTime now) => new()
