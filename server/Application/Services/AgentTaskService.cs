@@ -144,6 +144,29 @@ public sealed class AgentTaskService
             };
         }
 
+        // CARD-0140 S1: a bare pin to a STANDING agent settles kind the same way a follow-up
+        // does. Unset inherits the agent's Kind (which CARD-0138 keeps equal to its profile);
+        // an explicit mismatch is refused rather than silently reinterpreted. Pool delegates
+        // are carved out — FollowUpOnTask already covers "same delegate again", and
+        // TryReuseWarmAgentAsync plus ResolveAgentAsync own the kind-mismatch relaunch.
+        if (string.IsNullOrWhiteSpace(request.FollowUpOnTask) && request.AgentId is Guid pinId)
+        {
+            var pinned = await _db.Agents.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == pinId, ct);
+            if (pinned is { IsPoolDelegate: false })
+            {
+                if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
+                {
+                    throw new ConflictException(
+                        $"Agent '{pinned.Name}' is {pinned.Kind}, so a task pinned to it cannot run on "
+                        + $"{wantedKind}. Pin it to a {wantedKind} agent, or omit agentKind to inherit "
+                        + $"{pinned.Kind}.");
+                }
+
+                request = request with { AgentKind = pinned.Kind };
+            }
+        }
+
         // THE recursion boundary. A worker's token carries no create scope, so a worker cannot start
         // a fan-out even if it decides it wants to — this is what keeps nesting bounded, not MaxDepth.
         if (!caller.MayDelegate)
