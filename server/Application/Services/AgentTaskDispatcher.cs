@@ -1340,6 +1340,7 @@ public sealed class AgentTaskDispatcher
         agent.Status = AgentStatus.Running;
         agent.UpdatedAt = now;
 
+        var shippedModel = ShippedModelDisplay(claimed, agent, program);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
@@ -1347,7 +1348,7 @@ public sealed class AgentTaskDispatcher
             Type = AgentTaskEventType.Dispatched,
             ModelLevel = claimed.ModelLevel,
             Detail = $"Dispatched to agent '{agent.Name}' "
-                + $"({ModelLevelAliases.For(claimed.AgentKind, claimed.ModelLevel)}) in {claimed.WorkingDirectory}",
+                + $"({shippedModel}) in {claimed.WorkingDirectory}",
             At = now,
         });
 
@@ -1359,12 +1360,13 @@ public sealed class AgentTaskDispatcher
         // this is a lookup that costs nothing in the common case and is the whole point in the
         // pinned one (CARD-0058 slice 6).
         var attachedBundleKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
-        var spec = BuildLaunchSpec(claimed, agent, session, attachedBundleKeys);
+        var spec = await BuildLaunchSpecAsync(claimed, agent, session, program, attachedBundleKeys, ct);
         // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
         // project scope wins; a task without one falls back to its pinned standing agent's board.
         // A pool delegate has neither a board nor a path-derived fallback: no trustworthy scope
-        // means global-only resolution.
-        if (_apiKeyEnvResolver is not null)
+        // means global-only resolution. The profile path already resolved keys inside
+        // AgentLaunchResolution (CARD-0140 D5), so running this again would double-substitute.
+        if (program.ProfileId is null && _apiKeyEnvResolver is not null)
         {
             var projectId = claimed.ProjectId
                 ?? await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
@@ -1404,7 +1406,7 @@ public sealed class AgentTaskDispatcher
         _logger.LogInformation(
             "Dispatched task {ShortId} ({Kind}/{Role} at {Alias}) to session {SessionId} in {Dir}",
             DelegationReportFormatter.Short(claimed.Id), claimed.Kind, claimed.Role,
-            ModelLevelAliases.For(claimed.AgentKind, claimed.ModelLevel), session.Id, claimed.WorkingDirectory);
+            shippedModel, session.Id, claimed.WorkingDirectory);
         return true;
     }
 
@@ -1597,6 +1599,90 @@ public sealed class AgentTaskDispatcher
         AgentSession session,
         IReadOnlyList<string>? attachedBundleKeys = null)
     {
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, includeModelAlias: true);
+        var kind = session.AgentKind;
+
+        return _agentRegistry.Resolve(
+            // By KIND, not the default definition: the default is only the right answer while every
+            // delegate is a Claude, and a missing definition throws rather than substituting one.
+            // A pinned standing agent with a TUI profile is resolved earlier
+            // (ResolveDelegateProgramAsync) and, from CARD-0140 S3, launched through
+            // BuildLaunchSpecAsync; this registry path is the pool and the profile-less standing
+            // case. Do not "fix" a missing profile by falling through to the installation default
+            // — that is how a Grok task would launch Claude (CARD-0140 D2).
+            _agentRegistry.DefinitionNameForKind(kind),
+            new AgentLaunchOptions(
+                // A Worktree task lives in its worktree — launching in the shared directory would
+                // silently defeat the isolation the caller opted into.
+                Cwd: task.WorktreePath ?? task.WorkingDirectory,
+                Cols: session.Cols,
+                Rows: session.Rows,
+                ExtraArgs: extraArgs,
+                // The agent's own launch env, merged BEFORE ExtraEnv so the ANTIPHON_* block below
+                // always wins (CARD-0106 S2). A pool delegate's row carries "{}" and contributes
+                // nothing; a pinned standing agent contributes whatever its settings say.
+                AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
+                ExtraEnv: BuildEnv(task, agent, session)));
+    }
+
+    /// <summary>
+    /// Profile-aware sibling of <see cref="BuildLaunchSpec"/> (CARD-0140 D6). The existing
+    /// synchronous method keeps the unpinned pool-delegate contract byte-identical for the four
+    /// suites that call it; this one takes the managed-profile funnel when
+    /// <see cref="DelegateProgram.ProfileId"/> is set.
+    /// </summary>
+    internal async Task<AgentLaunchSpec> BuildLaunchSpecAsync(
+        AgentTask task,
+        Agent agent,
+        AgentSession session,
+        DelegateProgram program,
+        IReadOnlyList<string>? attachedBundleKeys,
+        CancellationToken ct)
+    {
+        if (program.ProfileId is null)
+            return BuildLaunchSpec(task, agent, session, attachedBundleKeys);
+
+        // D4: an exact ModelId wins, so the tier alias is omitted and the resolver appends the
+        // catalogue-validated model. Two --model flags would otherwise reach the process, the
+        // first of them the Claude/Codex tier alias.
+        var includeModelAlias = string.IsNullOrWhiteSpace(agent.ModelId);
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, includeModelAlias);
+
+        Guid? apiKeyProjectId = task.ProjectId;
+        if (apiKeyProjectId is null && _apiKeyEnvResolver is not null)
+            apiKeyProjectId = await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
+
+        var resolved = await AgentLaunchResolution.ResolveForAgentAsync(
+            agent,
+            _agentRegistry,
+            _launchResolver,
+            new AgentLaunchOptions(
+                Cwd: task.WorktreePath ?? task.WorkingDirectory,
+                Cols: session.Cols,
+                Rows: session.Rows,
+                ExtraArgs: extraArgs,
+                AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
+                ExtraEnv: BuildEnv(task, agent, session),
+                ApiKeyProjectId: apiKeyProjectId),
+            ct,
+            _apiKeyEnvResolver);
+
+        // D7: the session entity is still tracked after the dispatch commit. Without these
+        // stamps the drift badge and CARD-0136's usage reader cannot tell which revision a
+        // delegate ran under.
+        session.TuiProfileRevisionId = resolved.ProfileRevisionId;
+        session.EffectiveModelId = resolved.EffectiveModelId;
+        await _db.SaveChangesAsync(ct);
+        return resolved.Spec;
+    }
+
+    private List<string> ComposeDelegateArgs(
+        AgentTask task,
+        Agent agent,
+        AgentSession session,
+        IReadOnlyList<string>? attachedBundleKeys,
+        bool includeModelAlias)
+    {
         // WHICH PROGRAM is being launched, read off the session row the dispatch just wrote — the
         // same value BuildEnv, the brief's spill gate and the pool claim all key on, so there is one
         // answer to "what is on the other end of this pty" rather than four (CARD-0084 S3).
@@ -1615,14 +1701,19 @@ public sealed class AgentTaskDispatcher
         // gpt-5.6-* slug (see ModelLevelAliases.ForCodex; a bare `-m luna` is a 400). Branched
         // EXPLICITLY rather than through ModelLevelAliases.For: a wrong alias here is a wrong
         // process, not a wrong word, so a new kind must be added deliberately at this site.
-        extraArgs.AddRange([
-            "--model",
-            isCodex
-                ? ModelLevelAliases.ForCodex(task.ModelLevel)
-                : isGrok
-                    ? ModelLevelAliases.ForGrok(task.ModelLevel)
-                    : ModelLevelAliases.ForClaude(task.ModelLevel),
-        ]);
+        // CARD-0140 D4: a pinned standing agent with an exact ModelId omits this so the resolver
+        // supplies one --model, not two.
+        if (includeModelAlias)
+        {
+            extraArgs.AddRange([
+                "--model",
+                isCodex
+                    ? ModelLevelAliases.ForCodex(task.ModelLevel)
+                    : isGrok
+                        ? ModelLevelAliases.ForGrok(task.ModelLevel)
+                        : ModelLevelAliases.ForClaude(task.ModelLevel),
+            ]);
+        }
         if (isCodex)
         {
             // Explicit, because Codex's own default for the FRONTIER slug is `low` and the operator's
@@ -1669,27 +1760,14 @@ public sealed class AgentTaskDispatcher
                 subject, string.Join(", ", composed.Stamps));
         }
 
-        return _agentRegistry.Resolve(
-            // By KIND, not the default definition: the default is only the right answer while every
-            // delegate is a Claude, and a missing definition throws rather than substituting one.
-            // A pinned standing agent with a TUI profile is resolved earlier
-            // (ResolveDelegateProgramAsync) and, from CARD-0140 S3, launched through
-            // BuildLaunchSpecAsync; this registry path is the pool and the profile-less standing
-            // case. Do not "fix" a missing profile by falling through to the installation default
-            // — that is how a Grok task would launch Claude (CARD-0140 D2).
-            _agentRegistry.DefinitionNameForKind(kind),
-            new AgentLaunchOptions(
-                // A Worktree task lives in its worktree — launching in the shared directory would
-                // silently defeat the isolation the caller opted into.
-                Cwd: task.WorktreePath ?? task.WorkingDirectory,
-                Cols: session.Cols,
-                Rows: session.Rows,
-                ExtraArgs: extraArgs,
-                // The agent's own launch env, merged BEFORE ExtraEnv so the ANTIPHON_* block below
-                // always wins (CARD-0106 S2). A pool delegate's row carries "{}" and contributes
-                // nothing; a pinned standing agent contributes whatever its settings say.
-                AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
-                ExtraEnv: BuildEnv(task, agent, session)));
+        return extraArgs;
+    }
+
+    private static string ShippedModelDisplay(AgentTask task, Agent agent, DelegateProgram program)
+    {
+        if (program.ProfileId is not null && !string.IsNullOrWhiteSpace(agent.ModelId))
+            return $"{agent.ModelId.Trim()} from agent ModelId";
+        return ModelLevelAliases.For(program.Kind, task.ModelLevel);
     }
 
     /// <summary>

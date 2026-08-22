@@ -251,6 +251,8 @@ try
     builder.Services.AddSingleton<DelegationWorkspaceResolver>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskService>();
+    // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
+    // constructor parameter picks it up so a pinned standing agent launches from its own profile.
     builder.Services.AddScoped<AgentTaskDispatcher>();
     builder.Services.AddSingleton<AgentTaskReplyService>();
     // Scheduled check-ins on a running delegate (CARD-0047). The probe is read-only by
