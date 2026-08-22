@@ -2375,6 +2375,64 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("StageExecutions", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.SubscriptionUsageSample", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AgentSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ParseStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PlanLabel")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RawExcerpt")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<double?>("RemainingPercent")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTime?>("ResetsAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ResetsAtRaw")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("SourceCommand")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("SubscriptionKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Provider", "SubscriptionKey", "ObservedAt")
+                        .IsDescending(false, false, true)
+                        .HasDatabaseName("IX_SubscriptionUsageSamples_Provider_SubscriptionKey_ObservedAt");
+
+                    b.ToTable("SubscriptionUsageSamples", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TemplateGroup", b =>
                 {
                     b.Property<Guid>("Id")

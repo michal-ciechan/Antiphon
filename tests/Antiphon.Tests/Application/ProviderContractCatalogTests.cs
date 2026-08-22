@@ -49,6 +49,7 @@ public sealed class ProviderContractCatalogTests
             Axis(c.UsageLimitSignal.State, c.UsageLimitSignal.Reason, $"{kind}.UsageLimitSignal");
             Axis(c.Compaction.State, c.Compaction.Reason, $"{kind}.Compaction");
             Axis(c.BlockingStartupModal.State, c.BlockingStartupModal.Reason, $"{kind}.BlockingStartupModal");
+            Axis(c.SubscriptionUsagePoll.State, c.SubscriptionUsagePoll.Reason, $"{kind}.SubscriptionUsagePoll");
         }
     }
 
@@ -66,7 +67,20 @@ public sealed class ProviderContractCatalogTests
                 c.DeliveryVerification.Reason.ShouldNotBeNullOrWhiteSpace();
             if (c.SessionResume.State == AgentTuiCapabilityState.Supported)
                 c.SessionResume.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.SubscriptionUsagePoll.State == AgentTuiCapabilityState.Supported)
+                c.SubscriptionUsagePoll.Reason.ShouldNotBeNullOrWhiteSpace();
         }
+    }
+
+    [Test]
+    public void The_catalog_forbids_slash_usage_for_Codex_with_a_reason()
+    {
+        var poll = ProviderContractCatalog.For(AgentKind.Codex).SubscriptionUsagePoll;
+        poll.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        poll.Command.ShouldBe("/status");
+        poll.Forbidden.ContainsKey("/usage").ShouldBeTrue();
+        poll.Forbidden["/usage"].ShouldNotBeNullOrWhiteSpace();
+        poll.Forbidden["/usage"].ShouldContain("reset", Case.Insensitive);
     }
 
     [Test]

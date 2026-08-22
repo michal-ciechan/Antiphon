@@ -12,6 +12,9 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public static class ProviderContractCatalog
 {
+    private static readonly IReadOnlyDictionary<string, string> EmptyForbidden =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     public static ProviderContract For(AgentKind kind) => kind switch
     {
         AgentKind.ClaudeCode => Claude,
@@ -57,7 +60,14 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Supported,
             "First launch into an unseen cwd parks on the trust dialog. ClaudeBlockingPromptDetector auto-answers it (CARD-0047); the decision is per-cwd in ~/.claude.json.",
             BlockingStartupModalKind.AutoAnswerable,
-            BlockingStartupModalScope.Cwd));
+            BlockingStartupModalScope.Cwd),
+        SubscriptionUsagePoll: new SubscriptionUsagePollContract(
+            AgentTuiCapabilityState.Unknown,
+            "No established TUI command that renders Claude's subscription-usage panel. Skip; do not guess.",
+            Command: null,
+            Navigation: [],
+            OpensOverlay: false,
+            Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Grok = new(
         AgentKind.Grok,
@@ -94,7 +104,14 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Supported,
             "An unauthenticated GROK_HOME parks on a device-code login that swallows input (measured 1.0.5). Fail-fast — do not auto-answer. Scope is global (per GROK_HOME), not per-cwd. A fresh cwd with existing auth does not block.",
             BlockingStartupModalKind.FailFast,
-            BlockingStartupModalScope.Global));
+            BlockingStartupModalScope.Global),
+        SubscriptionUsagePoll: new SubscriptionUsagePollContract(
+            AgentTuiCapabilityState.Degraded,
+            "Command `/usage` is measured (CARD-0136) but tab navigation to the `Usage limit` tab and the progress-bar percentage polarity are unmeasured. Weaker guarantee: the sweep holds Grok behind IncludeDegradedProviders until S5 settles both. Overlay-opening (CARD-0137).",
+            Command: "/usage",
+            Navigation: [],
+            OpensOverlay: true,
+            Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Codex = new(
         AgentKind.Codex,
@@ -131,7 +148,18 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Supported,
             "Codex shows a per-directory trust prompt ('Do you trust the contents of this directory?') on the FIRST launch into any unseen cwd, even under --dangerously-bypass-approvals-and-sandbox (measured 0.147.0), plus a startup update-available modal that swallows keystrokes the same way; AcceptTrustPromptIfVisibleAsync auto-accepts the trust prompt.",
             BlockingStartupModalKind.AutoAnswerable,
-            BlockingStartupModalScope.Cwd));
+            BlockingStartupModalScope.Cwd),
+        SubscriptionUsagePoll: new SubscriptionUsagePollContract(
+            AgentTuiCapabilityState.Supported,
+            "Codex `/status` renders the weekly-limit panel directly into scrollback with no overlay (CARD-0141). `/usage` is forbidden: it opens a picker whose highlighted option redeems the account's one usage-limit reset.",
+            Command: "/status",
+            Navigation: [],
+            OpensOverlay: false,
+            Forbidden: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["/usage"] =
+                    "opens a `1. Show usage` / `2. Redeem usage limit reset` picker; a `Mode:\"Now\"`-style send auto-confirms the highlighted option and can redeem the account's one usage-limit reset (CARD-0141)",
+            }));
 
     private static readonly ProviderContract OpenCode = new(
         AgentKind.OpenCode,
@@ -168,7 +196,14 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Unknown,
             "A blocking first-launch modal has not been probed.",
             BlockingStartupModalKind.Unknown,
-            BlockingStartupModalScope.Unknown));
+            BlockingStartupModalScope.Unknown),
+        SubscriptionUsagePoll: new SubscriptionUsagePollContract(
+            AgentTuiCapabilityState.Unknown,
+            "No established TUI command that renders OpenCode's subscription-usage panel. Skip; do not guess.",
+            Command: null,
+            Navigation: [],
+            OpensOverlay: false,
+            Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Raw = new(
         AgentKind.Raw,
@@ -205,5 +240,12 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Unknown,
             "A blocking first-launch modal has not been probed.",
             BlockingStartupModalKind.Unknown,
-            BlockingStartupModalScope.Unknown));
+            BlockingStartupModalScope.Unknown),
+        SubscriptionUsagePoll: new SubscriptionUsagePollContract(
+            AgentTuiCapabilityState.Unsupported,
+            "Raw commands have no provider subscription-usage panel to poll.",
+            Command: null,
+            Navigation: [],
+            OpensOverlay: false,
+            Forbidden: EmptyForbidden));
 }

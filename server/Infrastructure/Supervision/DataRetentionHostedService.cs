@@ -57,8 +57,9 @@ public sealed class DataRetentionHostedService : BackgroundService
             var retention = scope.ServiceProvider.GetRequiredService<DataRetentionService>();
             var result = await retention.RunOnceAsync(stoppingToken);
             _logger.LogInformation(
-                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s), {AuditRecords} audit record(s)",
-                result.Sessions, result.Transcripts, result.QueuedMessages, result.Tasks, result.AuditRecords);
+                "Retention sweep deleted {Sessions} session row(s), {Transcripts} transcript row(s), {QueuedMessages} queued message(s), {Tasks} task row(s), {AuditRecords} audit record(s), {UsageSamples} subscription-usage sample(s)",
+                result.Sessions, result.Transcripts, result.QueuedMessages, result.Tasks, result.AuditRecords,
+                result.SubscriptionUsageSamples);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

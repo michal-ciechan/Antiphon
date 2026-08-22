@@ -2073,6 +2073,119 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    /// <summary>
+    /// CARD-0143: type a local TUI command (e.g. Codex <c>/status</c>) into a live idle session
+    /// without going through prompt delivery. Holds the per-session lock throughout so a poll
+    /// cannot race a real message. Deliberately does NOT transcript-confirm, re-press Enter,
+    /// call <c>HandleDeliveryFailureAsync</c>, or create a <c>SessionQueuedMessage</c> row —
+    /// a local command writes no <c>UserPrompt</c>, so the normal path would time out and kill
+    /// every always-on agent twice an hour.
+    /// </summary>
+    public async Task<LocalCommandPollResult> TryPollLocalCommandAsync(
+        Guid sessionId, LocalCommandPoll poll, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(poll);
+        if (string.IsNullOrWhiteSpace(poll.Command))
+            throw new ArgumentException("Local-command poll requires a command body.", nameof(poll));
+
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            if (!_runtime.ListLiveSessions().Contains(sessionId))
+                return new LocalCommandPollResult.Skipped("not live");
+            if (!await IsAcceptingInputAsync(sessionId, ct))
+                return new LocalCommandPollResult.Skipped("not Running");
+            if (await IsWorkingAsync(db, sessionId, ct))
+                return new LocalCommandPollResult.Skipped("working");
+            if (await db.SessionQueuedMessages.AsNoTracking()
+                .AnyAsync(m => m.AgentSessionId == sessionId
+                    && m.Status == QueuedMessageStatus.Pending, ct))
+            {
+                return new LocalCommandPollResult.Skipped("pending messages");
+            }
+
+            var forbidden = ProviderContractCatalog.For(poll.Kind).SubscriptionUsagePoll.Forbidden;
+            foreach (var (body, reason) in forbidden)
+            {
+                if (string.Equals(body, poll.Command, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Forbidden local-command poll body '{poll.Command}' for {poll.Kind}: {reason}");
+                }
+            }
+
+            var settle = TimeSpan.FromMilliseconds(Math.Max(0, poll.OverlaySettleMs));
+            if (poll.OpensOverlay)
+            {
+                await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
+                if (settle > TimeSpan.Zero)
+                    await Task.Delay(settle, _timeProvider, ct);
+            }
+
+            if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+                return new LocalCommandPollResult.NotAccepted();
+
+            await _runtime.SendInputAsync(sessionId, poll.Command, ct, trackManualTurn: false);
+
+            if (!await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, poll.Command, ct))
+                return new LocalCommandPollResult.NotAccepted();
+
+            long sequenceBefore = 0;
+            if (_runtime.TryGetLiveMetadata(sessionId, out var metaBefore))
+                sequenceBefore = metaBefore.LastSequence;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
+            await _runtime.SendInputAsync(sessionId, "\r", ct, trackManualTurn: false);
+
+            var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, poll.PanelTimeoutSeconds));
+            var advanced = false;
+            while (true)
+            {
+                if (_runtime.TryGetLiveMetadata(sessionId, out var meta) && meta.LastSequence > sequenceBefore)
+                {
+                    advanced = true;
+                    break;
+                }
+
+                if (UtcNow() >= deadline)
+                    break;
+
+                await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+            }
+
+            if (!advanced)
+            {
+                if (poll.OpensOverlay)
+                    await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
+                return new LocalCommandPollResult.PanelNotRendered();
+            }
+
+            foreach (var key in poll.Navigation)
+            {
+                if (string.IsNullOrEmpty(key))
+                    continue;
+                await _runtime.SendInputAsync(sessionId, key, ct, trackManualTurn: false);
+                if (settle > TimeSpan.Zero)
+                    await Task.Delay(settle, _timeProvider, ct);
+            }
+
+            var snapshot = _runtime.GetBufferSnapshot(sessionId);
+
+            if (poll.OpensOverlay)
+                await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
+
+            return new LocalCommandPollResult.Sent(snapshot.Buffer);
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
+
     internal SemaphoreSlim GetLock(Guid sessionId) =>
         _locks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
 

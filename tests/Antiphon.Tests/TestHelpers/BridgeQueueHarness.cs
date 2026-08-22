@@ -444,6 +444,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 .Where(s => s.CardId == null && s.Cwd.StartsWith(TempRoot))
                 .Select(s => s.Id)
                 .ToListAsync();
+            await db.SubscriptionUsageSamples
+                .Where(s => sessionIds.Contains(s.AgentSessionId) || s.AgentSessionId == SessionId)
+                .ExecuteDeleteAsync();
             await db.SessionQueuedMessages
                 .Where(m => sessionIds.Contains(m.AgentSessionId) || m.AgentSessionId == SessionId)
                 .ExecuteDeleteAsync();
