@@ -16,6 +16,12 @@ public sealed class RetentionSettings
 
     public int TaskRetentionDays { get; set; } = 180;
 
+    /// <summary>
+    /// Append-only subscription-usage samples (CARD-0143). Independent of session liveness —
+    /// the quota fact outlives the session that collected it.
+    /// </summary>
+    public int SubscriptionUsageRetentionDays { get; set; } = 30;
+
     /// <summary>How often <c>DataRetentionHostedService</c> runs. <c>&lt;= 0</c> disables the hosted sweep.</summary>
     public int SweepHours { get; set; } = 6;
 }

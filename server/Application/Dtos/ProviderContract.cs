@@ -47,7 +47,8 @@ public sealed record ProviderContract(
     ContextWindowUsageContract ContextWindowUsage,
     UsageLimitSignalContract UsageLimitSignal,
     CompactionContract Compaction,
-    BlockingStartupModalContract BlockingStartupModal);
+    BlockingStartupModalContract BlockingStartupModal,
+    SubscriptionUsagePollContract SubscriptionUsagePoll);
 
 /// <summary>
 /// Structured-transcript axis. <see cref="Format"/> is a <c>TranscriptFormats</c> value when
@@ -94,3 +95,21 @@ public sealed record BlockingStartupModalContract(
     string Reason,
     BlockingStartupModalKind Kind,
     BlockingStartupModalScope PerScope);
+
+/// <summary>
+/// Kind-static poll of a TUI subscription-usage panel (CARD-0143).
+/// <see cref="Command"/> is the ONLY body this feature may type for this kind, and is null
+/// unless <see cref="State"/> is Supported or Degraded. <see cref="Forbidden"/> is enforced
+/// both by test and at runtime so a Codex session can never be sent <c>/usage</c>.
+/// </summary>
+public sealed record SubscriptionUsagePollContract(
+    AgentTuiCapabilityState State,
+    string Reason,
+    /// <summary>The ONLY body this code may type for this kind. Null unless State is Supported/Degraded.</summary>
+    string? Command,
+    /// <summary>Keys to press after the command to reach the quota view, in order. Empty = renders directly.</summary>
+    IReadOnlyList<string> Navigation,
+    /// <summary>Whether the command opens a focus-stealing overlay (CARD-0137) that must be Esc'd closed.</summary>
+    bool OpensOverlay,
+    /// <summary>Bodies that must NEVER be typed for this kind, with the reason. Enforced by test AND at runtime.</summary>
+    IReadOnlyDictionary<string, string> Forbidden);

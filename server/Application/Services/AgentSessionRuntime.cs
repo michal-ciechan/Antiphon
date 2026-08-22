@@ -732,7 +732,8 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+    public async Task SendInputAsync(
+        Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true)
     {
         if (string.IsNullOrEmpty(input))
             return;
@@ -742,7 +743,7 @@ public sealed class AgentSessionRuntime
             var testSequenceBeforeInput = GetDeltaSequenceOrDefault(sessionId);
             var testSubmittedCommand = RecordTerminalInput(sessionId, input);
             await adapter.SendInputAsync(input, ct);
-            if (testSubmittedCommand)
+            if (testSubmittedCommand && trackManualTurn)
                 TryStartManualTurnTracking(sessionId, testSequenceBeforeInput);
             return;
         }
@@ -750,7 +751,7 @@ public sealed class AgentSessionRuntime
         var sequenceBeforeInput = GetRunnerSequenceOrDefault(sessionId, ct);
         var submittedCommand = RecordTerminalInput(sessionId, input);
         await _runnerClient.SendInputAsync(sessionId, input, ct);
-        if (submittedCommand)
+        if (submittedCommand && trackManualTurn)
             TryStartManualTurnTracking(sessionId, sequenceBeforeInput);
     }
 

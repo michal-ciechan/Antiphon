@@ -145,6 +145,8 @@ try
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
+    builder.Services.Configure<SubscriptionUsageMonitoringSettings>(
+        builder.Configuration.GetSection("SubscriptionUsageMonitoring"));
     builder.Services.Configure<TranscriptBindingSettings>(builder.Configuration.GetSection("TranscriptBinding"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
     builder.Services.AddSingleton<IValidateOptions<ContextCompactionSettings>, ContextCompactionSettingsValidator>();
@@ -354,6 +356,8 @@ try
     // CARD-0082 S3: idle auto-compact sweep. Singleton because the in-memory per-session attempt
     // stamp has to survive the supervisor hosted service's per-tick scope.
     builder.Services.AddSingleton<ContextCompactionService>();
+    builder.Services.AddSingleton<SubscriptionUsageMonitorService>();
+    builder.Services.AddScoped<SubscriptionUsageReader>();
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
@@ -425,6 +429,7 @@ try
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SubscriptionUsageMonitorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService>();

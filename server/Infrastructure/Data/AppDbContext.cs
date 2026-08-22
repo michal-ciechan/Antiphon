@@ -59,6 +59,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentTuiModel> AgentTuiModels => Set<AgentTuiModel>();
     public DbSet<AgentTuiValidationRun> AgentTuiValidationRuns => Set<AgentTuiValidationRun>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<SubscriptionUsageSample> SubscriptionUsageSamples => Set<SubscriptionUsageSample>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1391,6 +1392,27 @@ public class AppDbContext : DbContext
                 .WithMany(t => t.Events)
                 .HasForeignKey(e => e.AgentTaskId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SubscriptionUsageSample>(entity =>
+        {
+            entity.ToTable("SubscriptionUsageSamples");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.Provider).IsRequired();
+            entity.Property(s => s.SubscriptionKey).IsRequired().HasMaxLength(64);
+            entity.Property(s => s.PlanLabel).HasMaxLength(100);
+            entity.Property(s => s.ResetsAtRaw).HasMaxLength(200);
+            entity.Property(s => s.ObservedAt).IsRequired();
+            entity.Property(s => s.AgentSessionId).IsRequired();
+            entity.Property(s => s.SourceCommand).IsRequired().HasMaxLength(100);
+            entity.Property(s => s.ParseStatus).IsRequired();
+            entity.Property(s => s.RawExcerpt).HasMaxLength(500);
+
+            // Provenance only — no FK. Samples outlive the session (CARD-0143 §5.1) and
+            // the quota belongs to a subscription, not a row that retention will prune.
+            entity.HasIndex(s => new { s.Provider, s.SubscriptionKey, s.ObservedAt })
+                .IsDescending(false, false, true)
+                .HasDatabaseName("IX_SubscriptionUsageSamples_Provider_SubscriptionKey_ObservedAt");
         });
 
     }

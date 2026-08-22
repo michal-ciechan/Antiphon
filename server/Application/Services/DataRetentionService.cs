@@ -51,6 +51,7 @@ public sealed class DataRetentionService
         var transcripts = await PruneTranscriptsAsync(ct);
         var queued = await PruneQueuedMessagesAsync(ct);
         var tasks = await PruneTasksAsync(ct);
+        var usage = await PruneSubscriptionUsageSamplesAsync(ct);
         var auditRecords = 0;
         if (_auditSettings.RetentionDays > 0)
         {
@@ -58,7 +59,7 @@ public sealed class DataRetentionService
             auditRecords = archive.ArchivedCount;
         }
 
-        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords);
+        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords, usage);
     }
 
     /// <summary>
@@ -247,6 +248,30 @@ public sealed class DataRetentionService
     }
 
     /// <summary>
+    /// Deletes subscription-usage samples older than
+    /// <see cref="RetentionSettings.SubscriptionUsageRetentionDays"/>. Independent of session
+    /// liveness — the quota belongs to a subscription. <c>&lt;= 0</c> disables the pass.
+    /// </summary>
+    public async Task<int> PruneSubscriptionUsageSamplesAsync(CancellationToken ct)
+    {
+        if (_settings.SubscriptionUsageRetentionDays <= 0)
+            return 0;
+
+        var cutoff = UtcNow().AddDays(-_settings.SubscriptionUsageRetentionDays);
+        var removed = await _db.SubscriptionUsageSamples
+            .Where(s => s.ObservedAt < cutoff)
+            .ExecuteDeleteAsync(ct);
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} subscription-usage sample(s) past retention",
+                removed);
+        }
+
+        return removed;
+    }
+
+    /// <summary>
     /// PersistentSessionId is a loose string (no FK). Parse with the same Guid.TryParse
     /// semantics AgentSupervisorService.FindPersistentSessionAsync uses so a Failed row that
     /// CARD-0056 may re-adopt is never emptied or deleted.
@@ -271,4 +296,5 @@ public sealed class DataRetentionService
 }
 
 public sealed record DataRetentionSweepResult(
-    int Transcripts, int QueuedMessages, int Sessions, int Tasks, int AuditRecords);
+    int Transcripts, int QueuedMessages, int Sessions, int Tasks, int AuditRecords,
+    int SubscriptionUsageSamples = 0);

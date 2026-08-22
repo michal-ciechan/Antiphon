@@ -279,4 +279,12 @@ public enum AgentIncidentKind
     /// stale daemon from silently destroying a working delegate (CARD-0112).
     /// </summary>
     RunnerBuildStale = 29,
+
+    /// <summary>
+    /// Consecutive subscription-usage polls of one session failed (CARD-0143). Warning, never
+    /// Critical: a missing quota reading is a convenience, not a broken agent. Deduped per
+    /// session and not re-raised until a poll succeeds, so a permanently-broken poll is
+    /// visible without writing 48 identical rows a day.
+    /// </summary>
+    SubscriptionUsagePollDegraded = 30,
 }
