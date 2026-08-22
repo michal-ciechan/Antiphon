@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Application;
 /// test that would have caught probe 1 at the level probe 1 was measured.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("MessageQueue")]
+[NotInParallel(["MessageQueue", "AgentQueue"])]
 public class PinnedCodexProfileDispatchLaunchTests
 {
     [Test]
@@ -45,7 +45,12 @@ public class PinnedCodexProfileDispatchLaunchTests
         await h.Provider.GetRequiredService<AgentSessionLaunchQueue>()
             .WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
 
-        var adapter = factory.Created.ShouldHaveSingleItem();
+        // TickAsync is a global sweep over the shared fixture DB, so leftover Queued rows from a
+        // sibling test may also launch. Identify THIS pin by the revision arguments only the
+        // managed Codex profile puts on the command line.
+        factory.Created.ShouldNotBeEmpty();
+        var adapter = factory.Created.Single(a =>
+            a.StartedArgs.Contains("--dangerously-bypass-approvals-and-sandbox"));
         var args = adapter.StartedArgs.ToList();
         args.ShouldContain("--no-alt-screen");
         args.ShouldContain("--dangerously-bypass-approvals-and-sandbox");
