@@ -57,7 +57,7 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
                 if (result.SweepFailures > 0)
                 {
                     _logger.LogWarning(
-                        "Delegation tick ran DEGRADED: {SweepFailures} of its 5 sweeps threw "
+                        "Delegation tick ran DEGRADED: {SweepFailures} of its 9 sweeps threw "
                         + "(see the errors above for which)", result.SweepFailures);
                 }
             }

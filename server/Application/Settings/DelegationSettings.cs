@@ -577,4 +577,43 @@ public sealed class DelegationSettings
         /// </summary>
         public AgentKind? Kind { get; set; }
     }
+
+    /// <summary>
+    /// Working-session stall detection (CARD-0153). Detection only: a Warning incident and an
+    /// attention row, never a kill, never an auto-escalate, never an auto-compact. The phase
+    /// deadline owns "nothing landed"; this owns "rows keep landing and none of them is new".
+    /// </summary>
+    public StallDetectionSettings StallDetection { get; set; } = new();
+}
+
+/// <summary>Knobs for <c>TaskProgressPolicy</c> / the ninth dispatcher clock (CARD-0153).</summary>
+public sealed class StallDetectionSettings
+{
+    /// <summary>The whole feature's off switch. False and the sweep loads nothing.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Minutes without a novel transcript (or file) row before a working task is stalled.
+    /// 30 is the measured "too long" figure from 2026-08-23; one config key to move.
+    /// </summary>
+    public int StallMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// How far back the fingerprint window looks. Must exceed <see cref="StallMinutes"/> so a
+    /// borderline verdict still contains the last novel row.
+    /// </summary>
+    public int LookBackMinutes { get; set; } = 45;
+
+    /// <summary>
+    /// Below this many rows in the look-back window the session is slow, not looping, and the
+    /// phase deadline owns it. Default 6 is "at least one row every ~7 minutes" inside 45.
+    /// </summary>
+    public int MinRowsInWindow { get; set; } = 6;
+
+    /// <summary>
+    /// Re-raise the stall incident as Error (Critical if the owner is channel-bound) once the
+    /// stall has lasted this long. Default 90 = the local-execution deadline, so a wedged task
+    /// about to be failed by that clock has an Error row first. <c>&lt;= 0</c> disables the step.
+    /// </summary>
+    public int EscalateToErrorAfterMinutes { get; set; } = 90;
 }

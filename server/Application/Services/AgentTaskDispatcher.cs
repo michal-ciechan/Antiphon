@@ -127,7 +127,7 @@ public sealed class AgentTaskDispatcher
     internal bool TranscriptPullArmed => _runtime is not null;
 
     /// <param name="SweepFailures">
-    /// How many of the tick's eight clocks threw. Non-zero means the tick ran DEGRADED — the failed
+    /// How many of the tick's nine clocks threw. Non-zero means the tick ran DEGRADED — the failed
     /// sweep did nothing this time round — and each failure is logged at Error by
     /// <see cref="RunSweepAsync"/> naming which one it was.
     /// </param>
@@ -140,7 +140,7 @@ public sealed class AgentTaskDispatcher
         if (!_settings.Enabled)
             return new TickResult(0, 0, 0, 0, 0);
 
-        // The eight clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
+        // The nine clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
         // used to be five bare awaits, which quietly made every one of them a single point of
         // failure for all the others AND for dispatching: one poisoned session in the settlement
         // sweep would abort the tick before the check sweep and the dispatch loop had run, on every
@@ -169,6 +169,11 @@ public sealed class AgentTaskDispatcher
         // one of them for as long as it ran. RolePolicyEntry.TimeoutMinutes was declared for this
         // and read nowhere, so until now there was no deadline on a working task at all.
         sweepFailures += await RunSweepAsync("overdue-task deadline", FailOverdueTasksAsync, ct);
+
+        // And with work that is still writing rows but none of them is new (CARD-0153). After the
+        // overdue deadline on purpose: a task that clock is about to fail does not need a stall
+        // row on top. Detection only — this sweep never fails, kills, or escalates.
+        sweepFailures += await RunSweepAsync("progress stall", DetectStalledProgressAsync, ct);
 
         // And with warm delegates that have sat idle too long — the pool trades memory for
         // startup latency, and the janitor is what keeps that trade bounded.
@@ -966,6 +971,20 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
+    /// CARD-0153 test seam. Production is null and uses <see cref="CatchUpTranscriptAsync"/>'s
+    /// runtime pull. Tests set this to land (or withhold) transcript rows at the moment the stall
+    /// sweep is about to raise, without constructing a live runner.
+    /// </summary>
+    internal Func<Guid, CancellationToken, Task>? CatchUpOverride { get; set; }
+
+    /// <summary>
+    /// CARD-0153 test seam. Production is null. Tests set this so the ninth clock throws and
+    /// <see cref="TickResult.SweepFailures"/> can be shown to count it without taking the other
+    /// eight down.
+    /// </summary>
+    internal Exception? ProgressStallSweepFault { get; set; }
+
+    /// <summary>
     /// Pull the runner's own transcript view and persist it, so the next read is judging current
     /// evidence (CARD-0055). Never throws and never touches the message queue —
     /// <see cref="AgentSessionRuntime.CatchUpTranscriptAsync"/> is the fetch-and-persist half of the
@@ -975,6 +994,12 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     private async Task CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
+        if (CatchUpOverride is { } hook)
+        {
+            await hook(sessionId, ct);
+            return;
+        }
+
         if (_runtime is null)
             return;
 
@@ -990,6 +1015,136 @@ public sealed class AgentTaskDispatcher
             // never be the reason a watchdog stops running.
             _logger.LogDebug(ex, "Transcript catch-up failed for session {SessionId}", sessionId);
         }
+    }
+
+    /// <summary>
+    /// The ninth clock (CARD-0153): a working task whose rows keep landing and none of them is
+    /// new. Detection only — records a <see cref="AgentIncidentKind.TaskProgressStalled"/> incident
+    /// (Warning, then Error at 90 minutes, Critical only when channel-bound) and never fails,
+    /// kills, escalates, or retypes. Deduped per stall episode against the newest incident of this
+    /// kind on the same session, so a restart cannot re-raise every open stall.
+    ///
+    /// <para><b>Pull before you raise</b> (CARD-0055): only for a task that already has a stall
+    /// verdict on the stored rows, so the round trip is bounded by tasks about to be reported
+    /// rather than paid on every tick. A pull that yields novel rows withholds the incident.</para>
+    /// </summary>
+    internal async Task<int> DetectStalledProgressAsync(CancellationToken ct)
+    {
+        if (ProgressStallSweepFault is { } fault)
+            throw fault;
+
+        var stall = _settings.StallDetection;
+        if (!stall.Enabled || stall.StallMinutes <= 0)
+            return 0;
+
+        var open = await _db.AgentTasks
+            .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                && t.DispatchedAt != null && t.AgentSessionId != null)
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            return 0;
+
+        var raised = 0;
+        foreach (var task in open)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (await TryRaiseProgressStallAsync(task, ct))
+                    raised++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    ex, "Progress-stall evaluation of task {ShortId} failed; the sweep continues "
+                    + "with the remaining task(s)",
+                    DelegationReportFormatter.Short(task.Id));
+            }
+        }
+
+        return raised;
+    }
+
+    private async Task<bool> TryRaiseProgressStallAsync(AgentTask task, CancellationToken ct)
+    {
+        var suspected = await TaskProgressPolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        if (suspected is null)
+            return false;
+
+        var sessionId = task.AgentSessionId!.Value;
+        await CatchUpTranscriptAsync(sessionId, ct);
+        var verdict = await TaskProgressPolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        if (verdict is null)
+        {
+            _logger.LogInformation(
+                "Task {ShortId} stall withheld: novel rows on pull",
+                DelegationReportFormatter.Short(task.Id));
+            return false;
+        }
+
+        var latest = await _db.AgentIncidents.AsNoTracking()
+            .Where(i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.TaskProgressStalled)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => new { i.CreatedAt, i.Severity })
+            .FirstOrDefaultAsync(ct);
+
+        var severity = StallSeverity(
+            verdict, await IsChannelBoundAsync(sessionId, ct), alreadyRaised: latest is not null);
+
+        if (latest is not null && latest.CreatedAt >= verdict.LastProgressAt)
+        {
+            if (latest.Severity >= severity)
+                return false;
+        }
+
+        if (task.AgentId is not Guid agentId)
+            return false;
+
+        _db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agentId,
+            SessionId = sessionId,
+            Kind = AgentIncidentKind.TaskProgressStalled,
+            Severity = severity,
+            Message = verdict.Summary,
+            FailureReason = verdict.FailureReason,
+            CreatedAt = UtcNow(),
+        });
+        await _db.SaveChangesAsync(ct);
+        _logger.LogWarning(
+            "Task {ShortId} progress stalled ({Severity}): {Summary}",
+            DelegationReportFormatter.Short(task.Id), severity, verdict.Summary);
+        return true;
+    }
+
+    private AlertSeverity StallSeverity(
+        TaskProgressPolicy.Verdict verdict, bool channelBound, bool alreadyRaised)
+    {
+        var errorAfter = _settings.StallDetection.EscalateToErrorAfterMinutes;
+        var atError = alreadyRaised
+            && errorAfter > 0
+            && verdict.StalledFor >= TimeSpan.FromMinutes(errorAfter);
+        if (!atError)
+            return AlertSeverity.Warning;
+        return channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
+    }
+
+    /// <summary>
+    /// Same shape as <c>ApiErrorRecoveryService.IsChannelBoundAsync</c>: the agent whose
+    /// persistent session is this one, bound to a chat channel. A wedged ordinary delegate is a
+    /// task, not an outage; a wedged channel-bound agent is a human waiting on a dead line.
+    /// </summary>
+    private async Task<bool> IsChannelBoundAsync(Guid sessionId, CancellationToken ct)
+    {
+        var sessionIdText = sessionId.ToString("D");
+        var agentId = await _db.Agents
+            .Where(a => a.PersistentSessionId == sessionIdText)
+            .Select(a => (Guid?)a.Id)
+            .FirstOrDefaultAsync(ct);
+        if (agentId is not Guid id)
+            return false;
+        return await _db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == id, ct);
     }
 
     /// <summary>

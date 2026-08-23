@@ -297,4 +297,27 @@ public enum AgentIncidentKind
     /// immediately. No migration: stored as an int on the existing column.
     /// </summary>
     ForbiddenTerminalBody = 31,
+
+    /// <summary>
+    /// A Dispatched/Working task whose session is mid-turn, still writing transcript rows, and
+    /// has made no novel progress for <c>StallDetection.StallMinutes</c> (CARD-0153). "Novel"
+    /// means a fingerprint (tool name+input, tool-result text, assistant text) not already seen
+    /// in the look-back window, or a file/commit in the worktree newer than that. Thinking is
+    /// never progress; a user prompt always is.
+    ///
+    /// <para><b>Detection only. It never kills, never auto-escalates, never auto-compacts, never
+    /// retypes.</b> Five of the last twelve reliability cards in this repo are a kill or a retype
+    /// fired on evidence that turned out to be wrong; a stall detector's evidence is weaker than
+    /// any of those — "nothing new for a while" is exactly what a slow, legitimate task also
+    /// looks like — so this kind gets a row the operator can act on, not a trigger finger.</para>
+    ///
+    /// <para>Warning at the stall threshold; re-raised as Error once
+    /// <c>EscalateToErrorAfterMinutes</c> (default 90) has passed; Critical only when the owning
+    /// agent is channel-bound, and only at that Error step. Deduped per stall episode against
+    /// the newest row of this kind on the same session: same episode is not re-raised unless the
+    /// severity step changed; a novel row then another stall is a new episode. Survives a
+    /// server restart (no in-memory set). No migration: stored as an int on the existing
+    /// column.</para>
+    /// </summary>
+    TaskProgressStalled = 32,
 }
