@@ -48,6 +48,13 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     /// <summary>Makes GetTranscriptAsync throw, i.e. a session whose transcript is not observable at all.</summary>
     public bool ThrowOnTranscript { get; set; }
 
+    /// <summary>
+    /// GetTranscriptAsync calls that should fail once each, then succeed. Models a transient
+    /// transport miss at the SendPromptAsync baseline capture (CARD-0113). Independent of
+    /// <see cref="ThrowOnTranscript"/>, which throws forever.
+    /// </summary>
+    public int RemainingTranscriptFailures { get; set; }
+
     /// <summary>Rendered screen when the indicator is not showing; the failure-look reads this.</summary>
     public string QuietScreen { get; set; } = IdleScreen;
 
@@ -103,6 +110,11 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     {
         if (ThrowOnTranscript)
             throw new InvalidOperationException("no transcript for this session");
+        if (RemainingTranscriptFailures > 0)
+        {
+            RemainingTranscriptFailures--;
+            throw new InvalidOperationException("transient transcript failure");
+        }
 
         return Task.FromResult(new SessionRunnerTranscriptDto(
             sessionId,

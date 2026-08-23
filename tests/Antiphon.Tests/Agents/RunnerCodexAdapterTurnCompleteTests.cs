@@ -89,6 +89,59 @@ public class RunnerCodexAdapterTurnCompleteTests
     }
 
     [Test]
+    public async Task A_first_turn_with_no_transcript_yet_still_uses_baseline_zero()
+    {
+        // Production first-ever turn: the rollout file does not exist, so the capture fetch
+        // throws, and 0 is the correct floor. Once the file appears, this turn's rows (all of
+        // them) must still complete the wait — CARD-0113 must not hold the first turn off
+        // transcript verdicts just because the capture missed.
+        var client = new ScriptedCodexRunnerClient { RemainingTranscriptFailures = 1 };
+        var adapter = NewAdapter(client, doneQuietMs: 60_000, doneMaxWaitMs: 15_000);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("do the thing please", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "the first-turn reply from the rollout");
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+
+        turn.TurnCompleted.ShouldBeTrue();
+        turn.ResponseText.ShouldBe("the first-turn reply from the rollout");
+        client.RemainingTranscriptFailures.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task A_transient_fetch_failure_on_a_later_turn_preserves_the_baseline_instead_of_replaying_the_previous_reply()
+    {
+        var client = new ScriptedCodexRunnerClient();
+        var adapter = NewAdapter(client, doneQuietMs: 60_000, doneMaxWaitMs: 1_500);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("the first prompt of some length", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "reply one — must not leak into turn two");
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var first = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        first.ResponseText.ShouldBe("reply one — must not leak into turn two");
+
+        // Turn 2: the capture fetch is the one that fails. Without CARD-0113 the floor resets to
+        // 0, turn 1's TurnEnd satisfies the query, and the adapter reports turn 2 complete with
+        // turn 1's text before any new row exists.
+        client.RemainingTranscriptFailures = 1;
+        await adapter.SendPromptAsync("the brand new prompt", CancellationToken.None);
+
+        var stale = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        stale.TurnCompleted.ShouldBeFalse(
+            "a missed capture on turn 2+ must keep the last-known floor; the previous TurnEnd is history");
+        stale.ResponseText.ShouldNotBe("reply one — must not leak into turn two");
+
+        client.Append(TranscriptKinds.AssistantText, "reply two — the real answer");
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var second = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        second.TurnCompleted.ShouldBeTrue();
+        second.ResponseText.ShouldBe("reply two — the real answer");
+    }
+
+    [Test]
     public async Task A_session_that_never_visibly_works_reports_the_turn_incomplete_instead_of_scraping_the_status_bar()
     {
         var client = new ScriptedCodexRunnerClient

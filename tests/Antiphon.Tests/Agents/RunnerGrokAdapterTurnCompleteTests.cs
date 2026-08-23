@@ -96,6 +96,58 @@ public class RunnerGrokAdapterTurnCompleteTests
     }
 
     [Test]
+    public async Task A_first_turn_with_no_transcript_yet_still_uses_baseline_zero()
+    {
+        var client = new ScriptedRunnerClient { RemainingTranscriptFailures = 1 };
+        var adapter = NewAdapter(client, doneQuietMs: 60_000, doneMaxWaitMs: 15_000);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("do the thing", CancellationToken.None);
+        client.SetTranscript(
+            Row(client.SessionId, 1, TranscriptKinds.UserPrompt, text: "do the thing"),
+            Row(client.SessionId, 2, TranscriptKinds.AssistantText, text: "the first-turn reply from the transcript"),
+            Row(client.SessionId, 3, TranscriptKinds.TurnEnd, stopReason: "end_turn"));
+
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        turn.TurnCompleted.ShouldBeTrue();
+        turn.ResponseText.ShouldBe("the first-turn reply from the transcript");
+    }
+
+    [Test]
+    public async Task A_transient_fetch_failure_on_a_later_turn_preserves_the_baseline_instead_of_replaying_the_previous_reply()
+    {
+        var client = new ScriptedRunnerClient();
+        var adapter = NewAdapter(client, doneQuietMs: 60_000, doneMaxWaitMs: 1_500);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("do the thing", CancellationToken.None);
+        client.SetTranscript(
+            Row(client.SessionId, 1, TranscriptKinds.UserPrompt, text: "do the thing"),
+            Row(client.SessionId, 2, TranscriptKinds.AssistantText, text: "reply one — must not leak into turn two"),
+            Row(client.SessionId, 3, TranscriptKinds.TurnEnd, stopReason: "end_turn"));
+        var first = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        first.ResponseText.ShouldBe("reply one — must not leak into turn two");
+
+        client.RemainingTranscriptFailures = 1;
+        await adapter.SendPromptAsync("the new prompt", CancellationToken.None);
+
+        var stale = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        stale.TurnCompleted.ShouldBeFalse(
+            "a missed capture on turn 2+ must keep the last-known floor; the previous TurnEnd is history");
+
+        client.SetTranscript(
+            Row(client.SessionId, 1, TranscriptKinds.UserPrompt, text: "do the thing"),
+            Row(client.SessionId, 2, TranscriptKinds.AssistantText, text: "reply one — must not leak into turn two"),
+            Row(client.SessionId, 3, TranscriptKinds.TurnEnd, stopReason: "end_turn"),
+            Row(client.SessionId, 4, TranscriptKinds.UserPrompt, text: "the new prompt"),
+            Row(client.SessionId, 5, TranscriptKinds.AssistantText, text: "reply two — the real answer"),
+            Row(client.SessionId, 6, TranscriptKinds.TurnEnd, stopReason: "end_turn"));
+        var second = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        second.TurnCompleted.ShouldBeTrue();
+        second.ResponseText.ShouldBe("reply two — the real answer");
+    }
+
+    [Test]
     public async Task Quiet_fallback_does_not_complete_an_empty_snapshot()
     {
         var client = new ScriptedRunnerClient();
@@ -150,6 +202,7 @@ public class RunnerGrokAdapterTurnCompleteTests
         public Guid SessionId { get; private set; }
         public string RawOutput { get; set; } = "";
         public bool AdvanceSequenceOnEveryBufferRead { get; set; }
+        public int RemainingTranscriptFailures { get; set; }
 
         public void SetTranscript(params SessionRunnerTranscriptEvent[] entries) => _entries = entries;
 
@@ -177,9 +230,17 @@ public class RunnerGrokAdapterTurnCompleteTests
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSnapshotDto(sessionId, RawOutput, RawOutput, _sequence, DateTime.UtcNow));
 
-        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerTranscriptDto(
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+        {
+            if (RemainingTranscriptFailures > 0)
+            {
+                RemainingTranscriptFailures--;
+                throw new InvalidOperationException("transient transcript failure");
+            }
+
+            return Task.FromResult(new SessionRunnerTranscriptDto(
                 sessionId, _entries, _entries.Count == 0 ? 0 : _entries[^1].Sequence));
+        }
 
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
         {

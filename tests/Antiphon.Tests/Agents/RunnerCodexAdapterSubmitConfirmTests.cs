@@ -100,6 +100,30 @@ public class RunnerCodexAdapterSubmitConfirmTests
     }
 
     [Test]
+    public async Task A_transient_fetch_failure_on_a_later_turn_does_not_confirm_against_the_previous_UserPrompt()
+    {
+        // CARD-0113 sibling: the same `?? 0` floor is the submit-confirmation baseline. A
+        // second send of the same body whose capture fetch misses would otherwise match the
+        // previous turn's UserPrompt (sequence > 0) and report Sent without this Enter landing.
+        var client = new ScriptedCodexRunnerClient { ConfirmAfterEnters = 1 };
+        var adapter = NewAdapter(client);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync(Body, CancellationToken.None);
+        client.BodyWrites.ShouldBe(1);
+        client.Enters.ShouldBe(1);
+
+        client.RemainingTranscriptFailures = 1;
+        client.ConfirmAfterEnters = 0; // the second Enter must not be treated as a submit
+
+        var ex = await Should.ThrowAsync<PromptDeliveryException>(
+            () => adapter.SendPromptAsync(Body, CancellationToken.None));
+
+        ex.Message.ShouldContain("no UserPrompt transcript row");
+        client.BodyWrites.ShouldBe(2, "the second turn types the body once");
+    }
+
+    [Test]
     public async Task A_confirmed_first_CR_costs_no_extra_enters()
     {
         var client = new ScriptedCodexRunnerClient { ConfirmAfterEnters = 1 };

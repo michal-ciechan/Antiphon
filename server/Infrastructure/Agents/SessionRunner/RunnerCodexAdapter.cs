@@ -22,6 +22,9 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
     private readonly ILogger? _logger;
     private long _promptStartSequence;
     private long _transcriptBaselineSequence;
+    // CARD-0113: last successful GetTranscript LastSequence. Distinct from the per-turn floor
+    // below — a failed capture must fall back here, not to 0, once this adapter has observed rows.
+    private long? _lastKnownTranscriptSequence;
     private string? _lastPrompt;
     private bool _acceptedTrustPrompt;
     private bool _started;
@@ -74,8 +77,9 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
         _promptStartSequence = await _terminal.GetLastSequenceAsync(ct);
         // The confirmation floor for this turn: rows past it are THIS prompt's — for the submit
         // confirmation below AND for WaitForTurnCompleteAsync's TurnEnd. Captured before a byte is
-        // typed, same discipline as the queue's baseline (CARD-0055).
-        _transcriptBaselineSequence = (await TryGetTranscriptAsync(ct))?.LastSequence ?? 0;
+        // typed, same discipline as the queue's baseline (CARD-0055). A transient miss preserves
+        // the last successful read rather than collapsing onto 0 (CARD-0113).
+        CaptureTranscriptBaseline(await TryGetTranscriptAsync(ct));
 
         await CodexSubmitConfirmation.SubmitAsync(
             prompt,
@@ -232,11 +236,25 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter
             RawSnapshot: raw);
     }
 
+    private void CaptureTranscriptBaseline(SessionRunnerTranscriptDto? snapshot)
+    {
+        long? fetched = snapshot?.LastSequence;
+        _transcriptBaselineSequence = TranscriptTurnBaseline.Resolve(fetched, _lastKnownTranscriptSequence);
+        if (TranscriptTurnBaseline.PreservedLastKnown(fetched, _lastKnownTranscriptSequence))
+        {
+            _logger?.LogWarning(
+                "Session {SessionId}: transcript fetch failed while capturing the turn baseline; preserving last-known sequence {Sequence} instead of resetting to 0",
+                _terminal.SessionId, _transcriptBaselineSequence);
+        }
+    }
+
     private async Task<SessionRunnerTranscriptDto?> TryGetTranscriptAsync(CancellationToken ct)
     {
         try
         {
-            return await _client.GetTranscriptAsync(_terminal.SessionId, ct);
+            var transcript = await _client.GetTranscriptAsync(_terminal.SessionId, ct);
+            _lastKnownTranscriptSequence = transcript.LastSequence;
+            return transcript;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
