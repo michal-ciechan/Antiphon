@@ -55,7 +55,9 @@ jobs:
           --api-key "${{ secrets.GITHUB_TOKEN }}"
           --skip-duplicate
       - name: Require NuGet.org API key
-        if: ${{ secrets.NUGET_API_KEY == '' }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        if: ${{ env.NUGET_API_KEY == '' }}
         run: |
           echo "::error::NUGET_API_KEY repo secret is not set. Set it from the Bitwarden item 'NuGet.org - Antiphon publish key' (card CARD-0150 secret-handling note), then re-run."
           exit 1
@@ -74,8 +76,6 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    env:
-      NUGET_PACKAGES: ${{ runner.temp }}/nuget-proof/packages
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -84,6 +84,7 @@ jobs:
       - name: Restore EchoGateway from nuget.org and self-test
         run: |
           set -euo pipefail
+          export NUGET_PACKAGES="$RUNNER_TEMP/nuget-proof/packages"
           mkdir -p "$RUNNER_TEMP/nuget-proof"
           cat > "$RUNNER_TEMP/nuget-proof/nuget.config" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
