@@ -33,14 +33,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly SessionRunnerSettings _settings;
     private readonly ShadowCopyStore _shadowStore;
     private readonly PtyHostLauncher _launcher;
+    private readonly HerdrClient? _herdrClient;
     private readonly ILogger<SessionRunnerRuntime> _logger;
 
     public SessionRunnerRuntime(
         IOptions<SessionRunnerSettings> settings,
-        ILogger<SessionRunnerRuntime> logger)
+        ILogger<SessionRunnerRuntime> logger,
+        HerdrClient? herdrClient = null)
     {
         _settings = settings.Value;
         _logger = logger;
+        _herdrClient = herdrClient;
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
     }
@@ -60,6 +63,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             throw new UnsupportedTranscriptFormatException(format, SupportedTranscriptFormats);
         }
+
+        // CARD-0160: Backend validation. Null = pty-host (pre-herdr meaning). Unknown → throw.
+        var backend = request.Backend;
+        if (backend is not null
+            && !string.Equals(backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Unsupported session backend '{backend}'. Supported: {SessionBackends.PtyHost}, {SessionBackends.Herdr}.",
+                nameof(request));
+        }
+
+        var useHerdr = string.Equals(backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase);
+        if (useHerdr && request.Herdr is null)
+            throw new ArgumentException("Herdr launch requires HerdrLaunchOptions.", nameof(request));
+        if (useHerdr && _herdrClient is null)
+            throw new HerdrBackendUnavailableException(
+                "Herdr backend is not available in this runner process (HerdrClient was not registered).");
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims);
         if (!_sessions.TryAdd(request.SessionId, session))
@@ -89,7 +110,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         try
         {
-            await session.StartAsync(request, _launcher, ct);
+            if (useHerdr)
+            {
+                await session.StartHerdrAsync(
+                    request,
+                    _herdrClient!,
+                    () => CollectLiveAntiphonPanes(request.Herdr!.WorkspaceKey),
+                    ct);
+            }
+            else
+            {
+                await session.StartAsync(request, _launcher, ct);
+            }
+
             return session.ToDto();
         }
         catch
@@ -101,6 +134,25 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             await session.DisposeAsync();
             throw;
         }
+    }
+
+    /// <summary>Live Antiphon herdr panes for the allocator (sidecar + still in this runner).</summary>
+    private IReadOnlyList<HerdrPaneAllocator.LivePane> CollectLiveAntiphonPanes(string workspaceKey)
+    {
+        var result = new List<HerdrPaneAllocator.LivePane>();
+        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        {
+            if (!string.Equals(sidecar.WorkspaceKey, workspaceKey, StringComparison.Ordinal))
+                continue;
+            if (!_sessions.TryGetValue(sidecar.SessionId, out var session) || session.HasExited)
+                continue;
+            // TabNumber unknown from sidecar alone — use 0 and let allocator order by TabId as tiebreak.
+            // Callers that have tab.get can refine; for gap refill within one tab, number equality is fine.
+            result.Add(new HerdrPaneAllocator.LivePane(
+                sidecar.SessionId, sidecar.TabId, sidecar.PaneId, TabNumber: 0));
+        }
+
+        return result;
     }
 
     internal static bool TryResolveTranscriptTailer(string format, out TranscriptTailerKind tailer)
@@ -283,6 +335,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // session can never race the restore and discover a file a surviving session still owns.
         RestoreTranscriptClaims();
 
+        // CARD-0160: herdr adoption arm AFTER claims. Sidecar present + pane/pid/read evidence →
+        // re-adopt; restored-but-empty or unknown pane → Exited(HerdrRestartPresumedDead);
+        // herdr unreachable → no verdict (alert + retry via liveness).
+        if (_herdrClient is not null)
+            await AdoptHerdrSessionsAsync(ct);
+
         var manifestDir = _settings.PtyHostManifestDir;
         if (!Directory.Exists(manifestDir))
             return 0;
@@ -336,6 +394,81 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         return adopted;
+    }
+
+    /// <summary>
+    /// CARD-0160 §6A: adopt or mark-exited each <see cref="HerdrPaneSidecar"/>. Evidence bar is
+    /// CARD-0056 transposed: named child pid present in pane.process_info AND pane.read answers.
+    /// Restored-but-empty panes (herdr restart) are positively DEAD — never false-adopted.
+    /// </summary>
+    private async Task AdoptHerdrSessionsAsync(CancellationToken ct)
+    {
+        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_sessions.ContainsKey(sidecar.SessionId))
+                continue;
+
+            try
+            {
+                await _herdrClient!.ConnectAndValidateAsync(ct);
+                HerdrPaneInfo pane;
+                try
+                {
+                    pane = await _herdrClient.PaneGetAsync(sidecar.PaneId, ct);
+                }
+                catch (HerdrApiException)
+                {
+                    // Unknown pane → Exited(HerdrRestartPresumedDead).
+                    RegisterHerdrExited(sidecar, "HerdrRestartPresumedDead");
+                    continue;
+                }
+
+                var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
+                var childPresent = sidecar.ChildPid is int child
+                    && proc.ForegroundProcesses?.Any(p => p.Pid == child) == true;
+                if (!childPresent)
+                {
+                    // Restored-but-empty trap: pane exists, our child pid is gone.
+                    RegisterHerdrExited(sidecar, "HerdrRestartPresumedDead");
+                    continue;
+                }
+
+                // Positive evidence: pid present — also require pane.read to answer.
+                _ = await _herdrClient.PaneReadAsync(sidecar.PaneId, "visible", stripAnsi: true, lines: 1, ct);
+
+                var session = new RunnerSession(sidecar.SessionId, _settings, _events, _logger, _transcriptClaims);
+                await session.AdoptHerdrAsync(sidecar, _herdrClient, ct);
+                _sessions.TryAdd(sidecar.SessionId, session);
+                _logger.LogInformation(
+                    "Adopted herdr pane {PaneId} for session {SessionId} (child pid {Pid})",
+                    sidecar.PaneId, sidecar.SessionId, sidecar.ChildPid);
+            }
+            catch (HerdrBackendUnavailableException ex)
+            {
+                // Unreachable → no verdict. Leave sidecar; liveness/retry will try again.
+                _logger.LogWarning(ex,
+                    "Herdr unreachable while adopting session {SessionId}; leaving unadopted",
+                    sidecar.SessionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Herdr adoption failed for session {SessionId}; registering Exited",
+                    sidecar.SessionId);
+                RegisterHerdrExited(sidecar, "HerdrRestartPresumedDead");
+            }
+        }
+    }
+
+    private void RegisterHerdrExited(HerdrPaneSidecar sidecar, string reason)
+    {
+        var exited = RunnerSession.CreateAdoptedHerdrExited(sidecar, _settings, _events, _logger, reason);
+        _sessions.TryAdd(sidecar.SessionId, exited);
+        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+        _logger.LogWarning(
+            "Herdr pane {PaneId} for session {SessionId} registered as Exited ({Reason})",
+            sidecar.PaneId, sidecar.SessionId, reason);
     }
 
     /// <summary>
@@ -445,6 +578,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private readonly SessionInputLog _inputLog = new();
 
         private PtyHostClient? _client;
+        private ISessionChild? _herdrChild;
         private int _hostPid;
         private int? _childPid;
         private DateTime _startedAt;
@@ -474,6 +608,97 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         public DateTime StartedAt => _startedAt;
+
+        /// <summary>CARD-0160 herdr lane — shares transcript/input-log machinery with the pty path.</summary>
+        public async Task StartHerdrAsync(
+            RunnerLaunchRequest request,
+            HerdrClient herdrClient,
+            Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
+            CancellationToken ct)
+        {
+            Directory.CreateDirectory(_settings.SessionLogPath);
+            _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
+            _screen = new TerminalScreen(request.Cols > 0 ? request.Cols : 120, request.Rows > 0 ? request.Rows : 30);
+
+            try
+            {
+                _herdrChild = new HerdrPaneChild(herdrClient, _settings, _logger, liveAntiphonPanes);
+                _herdrChild.Exited += exit =>
+                {
+                    lock (_gate)
+                    {
+                        if (_status == "Exited") return;
+                        _status = "Exited";
+                        _exitCode = exit.ExitCode;
+                        _exitReason = exit.Reason;
+                    }
+
+                    _clientReady.TrySetResult(false);
+                    _exited.TrySetResult();
+                    _events.Publish(
+                        SessionRunnerEventNames.SessionExited,
+                        new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                };
+
+                var started = await _herdrChild.LaunchAsync(request, ct);
+                _childPid = started.ChildPid;
+                _startedAt = started.ChildStartUtc;
+                lock (_gate)
+                    _status = "Running";
+                _clientReady.TrySetResult(true);
+
+                _events.Publish(
+                    SessionRunnerEventNames.SessionStarted,
+                    new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
+
+                // Same transcript binding as pty — S1 proved herdr-launched Claude writes cwd-keyed JSONL.
+                StartTranscriptTailer(request, started.ChildStartUtc);
+            }
+            catch
+            {
+                _clientReady.TrySetResult(false);
+                if (_herdrChild is not null)
+                {
+                    try { await _herdrChild.KillAsync(CancellationToken.None); }
+                    catch { /* tear-down must not replace the launch exception */ }
+                    await _herdrChild.DisposeAsync();
+                    _herdrChild = null;
+                }
+
+                throw;
+            }
+        }
+
+        private void StartTranscriptTailer(RunnerLaunchRequest request, DateTime childStartUtc)
+        {
+            if (!request.TranscriptEnabled)
+                return;
+
+            // Herdr S2 only spikes Claude (plan §7). Other formats stay on the pty-host lane.
+            var agentName = FindArgValue(request.Args, "--name");
+            var resumeLaunch = IsResumeLaunch(request.Args);
+            SaveSidecar(new TranscriptSidecar
+            {
+                SessionId = _sessionId,
+                Cwd = request.Cwd,
+                AgentName = agentName,
+                ChildStartUtc = childStartUtc,
+                ResumeLaunch = resumeLaunch,
+                TranscriptPath = null,
+                How = null,
+                Format = TranscriptFormats.Claude,
+            });
+
+            _tailer = new TranscriptTailer(
+                _sessionId, request.Cwd, _events, _logger,
+                claims: _transcriptClaims,
+                inputLog: _inputLog,
+                childStartUtc: childStartUtc,
+                agentName: agentName,
+                resumeLaunch: resumeLaunch,
+                onBound: RecordTranscriptBinding);
+            _tailer.Start();
+        }
 
         public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher, CancellationToken ct)
         {
@@ -876,6 +1101,82 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return session;
         }
 
+        public static RunnerSession CreateAdoptedHerdrExited(
+            HerdrPaneSidecar sidecar,
+            SessionRunnerSettings settings,
+            SessionRunnerEventHub events,
+            ILogger logger,
+            string reason)
+        {
+            var session = new RunnerSession(sidecar.SessionId, settings, events, logger)
+            {
+                _childPid = sidecar.ChildPid,
+                _startedAt = sidecar.LaunchedAtUtc,
+                _adopted = true,
+                _status = "Exited",
+                _exitCode = null,
+                _exitReason = reason,
+            };
+            session._clientReady.TrySetResult(false);
+            session._exited.TrySetResult();
+            events.Publish(
+                SessionRunnerEventNames.SessionExited,
+                new RunnerSessionExitedEvent(sidecar.SessionId, null, reason, LastSequence: 0));
+            return session;
+        }
+
+        /// <summary>Re-attach a surviving herdr pane after a runner restart (CARD-0160 §6A positive arm).</summary>
+        public async Task AdoptHerdrAsync(HerdrPaneSidecar sidecar, HerdrClient client, CancellationToken ct)
+        {
+            _adopted = true;
+            _childPid = sidecar.ChildPid;
+            _startedAt = sidecar.LaunchedAtUtc;
+            _herdrChild = new HerdrPaneChild(
+                client,
+                _settings,
+                _logger,
+                liveAntiphonPanes: () => Array.Empty<HerdrPaneAllocator.LivePane>());
+            // Re-bind the existing pane without re-launching: reconstruct the child's identity fields.
+            await ((HerdrPaneChild)_herdrChild).AttachExistingAsync(sidecar, ct);
+            _herdrChild.Exited += exit =>
+            {
+                lock (_gate)
+                {
+                    if (_status == "Exited") return;
+                    _status = "Exited";
+                    _exitCode = exit.ExitCode;
+                    _exitReason = exit.Reason;
+                }
+
+                _clientReady.TrySetResult(false);
+                _exited.TrySetResult();
+                _events.Publish(
+                    SessionRunnerEventNames.SessionExited,
+                    new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+            };
+            lock (_gate)
+                _status = "Running";
+            _clientReady.TrySetResult(true);
+            _events.Publish(
+                SessionRunnerEventNames.SessionAdopted,
+                new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, LastSequence: 0));
+
+            // Re-tail via existing TranscriptSidecar if present.
+            var transcript = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
+            if (transcript?.TranscriptPath is { } path)
+            {
+                _tailer = new TranscriptTailer(
+                    _sessionId, transcript.Cwd ?? sidecar.Cwd ?? "", _events, _logger,
+                    claims: _transcriptClaims,
+                    inputLog: _inputLog,
+                    childStartUtc: transcript.ChildStartUtc ?? sidecar.LaunchedAtUtc,
+                    agentName: transcript.AgentName,
+                    resumeLaunch: transcript.ResumeLaunch,
+                    onBound: RecordTranscriptBinding);
+                _tailer.Start();
+            }
+        }
+
         private void RebuildInterpretationFromAnsiLog(long lastSeq)
         {
             // ReadAnsiLog already bounds itself to ReplayBufferMaxChars.
@@ -941,6 +1242,33 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public RunnerSnapshotDto GetSnapshot()
         {
+            // Herdr has no push stream in S2 — serve an on-demand pane.read when asked.
+            if (_herdrChild is { } herdr)
+            {
+                try
+                {
+                    var screen = herdr.ReadScreenAsync(CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    if (screen is not null)
+                    {
+                        lock (_gate)
+                        {
+                            _lastSequence = Math.Max(_lastSequence, screen.Revision);
+                            return new RunnerSnapshotDto(
+                                _sessionId,
+                                screen.Text,
+                                screen.Text,
+                                _lastSequence,
+                                _startedAt);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Herdr pane.read failed for snapshot of {SessionId}", _sessionId);
+                }
+            }
+
             lock (_gate)
             {
                 return new RunnerSnapshotDto(
@@ -957,10 +1285,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task WriteAsync(string input, CancellationToken ct)
         {
-            var client = await AwaitClientAsync(ct);
             // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
             // the input log is always ahead of the transcript record that rule C4 matches it to.
             _inputLog.Append(input);
+            if (_herdrChild is { } herdr)
+            {
+                // Wait for LaunchAsync to finish (same _clientReady gate the pty path uses).
+                if (!await _clientReady.Task.WaitAsync(ct))
+                    throw new InvalidOperationException("Herdr session ended before it was ready for input.");
+                await herdr.WriteAsync(input, ct);
+                return;
+            }
+
+            var client = await AwaitClientAsync(ct);
             await client.InputAsync(input, ct);
         }
 
@@ -974,13 +1311,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task ResizeAsync(int cols, int rows, CancellationToken ct)
         {
+            if (_herdrChild is { } herdr)
+            {
+                await herdr.ResizeAsync(cols, rows, ct);
+                return;
+            }
+
             var client = await AwaitClientAsync(ct);
             await client.ResizeAsync(cols, rows, ct);
         }
 
         public async Task KillAsync(TimeSpan timeout, CancellationToken ct, string? exitReasonOverride = null)
         {
-            if (HasExited || _client is not { } client)
+            if (HasExited)
                 return;
 
             if (exitReasonOverride is not null)
@@ -988,6 +1331,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 lock (_gate)
                     _exitReasonOverride = exitReasonOverride;
             }
+
+            if (_herdrChild is { } herdr)
+            {
+                await herdr.KillAsync(ct);
+                await Task.WhenAny(_exited.Task, Task.Delay(timeout + TimeSpan.FromSeconds(2), ct));
+                return;
+            }
+
+            if (_client is not { } client)
+                return;
 
             await client.KillAsync(timeout, ct);
             // Parity with the old in-proc KillAsync: wait for the exit (with a grace margin for

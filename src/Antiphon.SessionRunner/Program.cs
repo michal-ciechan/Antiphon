@@ -1,6 +1,7 @@
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
