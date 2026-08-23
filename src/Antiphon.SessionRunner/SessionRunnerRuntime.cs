@@ -183,6 +183,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public RunnerSessionDto Get(Guid sessionId) => GetSession(sessionId).ToDto();
 
+    /// <summary>
+    /// CARD-0161: for herdr sessions, refresh LastSequence + AgentStatus via one pane.get before
+    /// answering. List() stays cheap (no herdr calls).
+    /// </summary>
+    public async Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+    {
+        var session = GetSession(sessionId);
+        await session.RefreshHerdrSurfaceAsync(ct);
+        return session.ToDto();
+    }
+
     public RunnerBufferDto GetBuffer(Guid sessionId) => GetSession(sessionId).GetBuffer();
 
     public RunnerSnapshotDto GetSnapshot(Guid sessionId) => GetSession(sessionId).GetSnapshot();
@@ -579,6 +590,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         private PtyHostClient? _client;
         private ISessionChild? _herdrChild;
+        private string? _herdrAgentStatus;
         private int _hostPid;
         private int? _childPid;
         private DateTime _startedAt;
@@ -608,6 +620,27 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         public DateTime StartedAt => _startedAt;
+
+        /// <summary>CARD-0161: fold pane.get revision into LastSequence and capture AgentStatus.</summary>
+        public async Task RefreshHerdrSurfaceAsync(CancellationToken ct)
+        {
+            if (_herdrChild is not HerdrPaneChild herdr)
+                return;
+
+            try
+            {
+                var (revision, status) = await herdr.RefreshStatusAsync(ct);
+                lock (_gate)
+                {
+                    _lastSequence = Math.Max(_lastSequence, revision);
+                    _herdrAgentStatus = status;
+                }
+            }
+            catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+            {
+                _logger.LogDebug(ex, "Herdr pane.get refresh failed for session {SessionId}", _sessionId);
+            }
+        }
 
         /// <summary>CARD-0160 herdr lane — shares transcript/input-log machinery with the pty path.</summary>
         public async Task StartHerdrAsync(
@@ -1228,7 +1261,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exitReason,
                     _lastSequence,
                     _hostPid > 0 ? _hostPid : null,
-                    _adopted);
+                    _adopted,
+                    _herdrAgentStatus);
             }
         }
 

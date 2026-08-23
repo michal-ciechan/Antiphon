@@ -83,7 +83,10 @@ public sealed record RunnerSessionDto(
     // Pid of the detached pty-host process owning this session's ConPTY (null pre-split/unknown).
     int? HostPid = null,
     // True when this runner re-attached to a host that survived a previous runner's death.
-    bool Adopted = false);
+    bool Adopted = false,
+    // CARD-0161: herdr pane.get agent_status verbatim; null for pty sessions and older runners.
+    // Only the literal "blocked" may gate delivery (done ≠ idle — measured 2026-08-23).
+    string? AgentStatus = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,

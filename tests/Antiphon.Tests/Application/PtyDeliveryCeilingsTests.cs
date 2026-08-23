@@ -171,7 +171,7 @@ public class PtyDeliveryCeilingsTests
 
         var ceilings = await profile.Value.RefreshAsync(CancellationToken.None);
 
-        ceilings.Backend.ShouldBe(PtyBackend.InboxConhost);
+        ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost);
         ceilings.BriefInlineMaxBytes.ShouldBe(900);
         ceilings.Reason.ShouldContain("session runner",
             customMessage: "and it must say WHY, or the next person re-raises them");
@@ -188,7 +188,7 @@ public class PtyDeliveryCeilingsTests
 
         var ceilings = await profile.Value.RefreshAsync(CancellationToken.None);
 
-        ceilings.Backend.ShouldBe(PtyBackend.ModernConPty);
+        ceilings.Backend.ShouldBe(DeliveryBackend.ModernConPty);
         ceilings.BriefInlineMaxBytes.ShouldBe(43_200);
     }
 
@@ -203,12 +203,12 @@ public class PtyDeliveryCeilingsTests
     {
         await using var silentInbox = BuildProfile("inbox", reported: null);
         (await silentInbox.Value.RefreshAsync(CancellationToken.None))
-            .Backend.ShouldBe(PtyBackend.InboxConhost);
+            .Backend.ShouldBe(DeliveryBackend.InboxConhost);
 
         RequireRedistributable();
         await using var silentModern = BuildProfile("modern", reported: null);
         (await silentModern.Value.RefreshAsync(CancellationToken.None))
-            .Backend.ShouldBe(PtyBackend.ModernConPty);
+            .Backend.ShouldBe(DeliveryBackend.ModernConPty);
     }
 
     /// <summary>
@@ -221,7 +221,7 @@ public class PtyDeliveryCeilingsTests
         await using var profile = BuildProfile("inbox", PtyBackend.ModernConPty);
 
         (await profile.Value.RefreshAsync(CancellationToken.None))
-            .Backend.ShouldBe(PtyBackend.InboxConhost);
+            .Backend.ShouldBe(DeliveryBackend.InboxConhost);
     }
 
     private static void RequireRedistributable()

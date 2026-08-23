@@ -1,24 +1,25 @@
-using Antiphon.Agents.Pty;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Settings;
 
 /// <summary>
-/// The three delivery ceilings that are COUPLED TO THE PSEUDOCONSOLE, resolved for one backend.
+/// The three delivery ceilings resolved for one <see cref="DeliveryBackend"/> write path
+/// (CARD-0037 / CARD-0161).
 ///
 /// <para>CARD-0030/CARD-0037: a pseudoconsole is served by a conhost binary, and the inbox one
 /// (<c>%SystemRoot%\System32\conhost.exe</c>) strips <c>ESC[200~</c>/<c>ESC[201~</c> out of written
 /// input, so every body we send arrives as TYPING and the TUI keeps one ~1 KB read chunk of it. The
 /// shipped modern <c>conpty.dll</c> + <c>OpenConsole.exe</c> forward the markers, the TUI takes its
 /// paste path instead, and real Claude accepted <b>86 400 bytes in a single write with zero loss,
-/// 2/2</b>, through <see cref="PtyAgentRunner"/> and the production encoding (2026-08-12).</para>
+/// 2/2</b>, through the production encoding (2026-08-12). CARD-0161: herdr's <c>pane.send_text</c>
+/// is a third paste path with the same measured envelope (86 400 B exact, 2026-08-23 M1/M2).</para>
 ///
 /// <para><b>Which is why these are a record and not constants.</b> A machine without the
-/// redistributable falls back to the inbox conhost (<c>PtyBackendPolicy</c>), and on that machine
-/// every number below has to be the old one — raising them unconditionally would re-open the exact
-/// bug the ceilings were introduced for.</para>
+/// redistributable falls back to the inbox conhost, and on that machine every number below has to
+/// be the old one — raising them unconditionally would re-open the exact bug the ceilings were
+/// introduced for. Herdr never becomes a <c>PtyBackend</c> value (process-wide spawn invariant).</para>
 /// </summary>
-/// <param name="Backend">The pseudoconsole these numbers were measured against.</param>
+/// <param name="Backend">The write path these numbers were measured against.</param>
 /// <param name="BriefInlineMaxBytes">
 /// Largest delegation brief typed inline (UTF-8 bytes); above it the brief spills to a file and a
 /// pointer is typed instead.
@@ -34,7 +35,7 @@ namespace Antiphon.Server.Application.Settings;
 /// </param>
 /// <param name="Reason">Why this backend was chosen; carried so a log line can explain the numbers.</param>
 public sealed record PtyDeliveryCeilings(
-    PtyBackend Backend,
+    DeliveryBackend Backend,
     int BriefInlineMaxBytes,
     int ReplyInlineMaxChars,
     int SingleWriteMaxBytes,
@@ -42,10 +43,10 @@ public sealed record PtyDeliveryCeilings(
 {
     /// <summary>
     /// True when these are the paste-path ceilings. Read it as "the markers reach the TUI", not as
-    /// "large bodies are safe": everything here is a SINGLE-WRITE envelope (see
-    /// <see cref="DelegationSettings.ModernPtySingleWriteMaxBytes"/>).
+    /// "large bodies are safe": everything here is a SINGLE-WRITE envelope. Herdr is a paste path
+    /// (CARD-0161 M1/M2 measured placeholder collapse and marker survival).
     /// </summary>
-    public bool IsPastePath => Backend == PtyBackend.ModernConPty;
+    public bool IsPastePath => Backend != DeliveryBackend.InboxConhost;
 
     /// <summary>
     /// True when this agent kind's delivery must be rendered JOIN-SAFE: brief and refinement

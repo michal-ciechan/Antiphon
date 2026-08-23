@@ -724,7 +724,7 @@ public sealed class AgentSessionRuntime
                 return false;
             }
 
-            metadata = new AgentSessionLiveMetadata(sessionId, session.LastSequence);
+            metadata = new AgentSessionLiveMetadata(sessionId, session.LastSequence, session.AgentStatus);
             return true;
         }
         catch
@@ -1188,7 +1188,14 @@ public sealed record AgentSessionLiveSnapshot(
     string Buffer,
     long LastSequence);
 
-public sealed record AgentSessionLiveMetadata(Guid SessionId, long LastSequence);
+/// <param name="AgentStatus">
+/// CARD-0161: herdr <c>pane.get.agent_status</c> verbatim for herdr sessions; null for pty
+/// sessions and older runners. Only the literal <c>"blocked"</c> may gate delivery.
+/// </param>
+public sealed record AgentSessionLiveMetadata(
+    Guid SessionId,
+    long LastSequence,
+    string? AgentStatus = null);
 
 public static class AgentSessionGroups
 {

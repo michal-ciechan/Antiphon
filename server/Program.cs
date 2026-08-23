@@ -358,6 +358,8 @@ try
     // Which delivery ceilings are in force, from the pseudoconsole actually serving the ptys
     // (CARD-0037). Must be registered before anything that types into a terminal.
     builder.Services.AddSingleton<PtyDeliveryProfile>();
+    // CARD-0161: per-session ceilings (herdr vs pty). Composes PtyDeliveryProfile.
+    builder.Services.AddSingleton<SessionDeliveryProfile>();
     builder.Services.AddSingleton<SessionMessageQueueService>();
     // CARD-0082 S3: idle auto-compact sweep. Singleton because the in-memory per-session attempt
     // stamp has to survive the supervisor hosted service's per-tick scope.

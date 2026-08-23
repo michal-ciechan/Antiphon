@@ -35,6 +35,7 @@ public sealed class SessionMessageQueueService
     private readonly Settings.ChannelBridgeSettings _bridgeSettings;
     private readonly DelegationSettings _delegationSettings;
     private readonly PtyDeliveryProfile? _ptyProfile;
+    private readonly SessionDeliveryProfile? _sessionProfile;
     private readonly ILogger<SessionMessageQueueService> _logger;
 
     public SessionMessageQueueService(
@@ -46,9 +47,11 @@ public sealed class SessionMessageQueueService
         IOptions<SupervisionSettings>? supervisionSettings = null,
         IOptions<Settings.ChannelBridgeSettings>? bridgeSettings = null,
         IOptions<DelegationSettings>? delegationSettings = null,
-        PtyDeliveryProfile? ptyProfile = null)
+        PtyDeliveryProfile? ptyProfile = null,
+        SessionDeliveryProfile? sessionProfile = null)
     {
         _ptyProfile = ptyProfile;
+        _sessionProfile = sessionProfile;
         _scopeFactory = scopeFactory;
         _runtime = runtime;
         _eventBus = eventBus;
@@ -60,14 +63,21 @@ public sealed class SessionMessageQueueService
     }
 
     /// <summary>
-    /// The ceilings for the pty on the other end (CARD-0037). No profile — every test construction,
-    /// which passes none — is the inbox conhost and the numbers that shipped with it: the raised
-    /// paste-path ceilings are only ever reached by explicitly resolving the backend, never by
-    /// defaulting into them.
+    /// Process-wide pty ceilings (CARD-0037) — no-profile / test fallback. Delivery paths that
+    /// know a session id resolve via <see cref="CeilingsForSessionAsync"/> (CARD-0161).
     /// </summary>
     private PtyDeliveryCeilings Ceilings =>
         _ptyProfile?.Ceilings
         ?? _delegationSettings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend");
+
+    /// <summary>CARD-0161: per-session ceilings. Falls back to process-wide when no session profile.</summary>
+    private async Task<PtyDeliveryCeilings> CeilingsForSessionAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        if (_sessionProfile is null)
+            return Ceilings;
+        return await _sessionProfile.ForSessionAsync(db, sessionId, ct);
+    }
 
     private string NowModeFileStem() =>
         $"now-{_timeProvider.GetUtcNow().UtcDateTime:yyyyMMddHHmmss}";
@@ -84,9 +94,13 @@ public sealed class SessionMessageQueueService
         string fileStem,
         string? channelEnvelope,
         AppDbContext? db,
-        CancellationToken ct)
+        CancellationToken ct,
+        PtyDeliveryCeilings? ceilings = null)
     {
-        if (System.Text.Encoding.UTF8.GetByteCount(body) <= Ceilings.SingleWriteMaxBytes)
+        ceilings ??= db is not null
+            ? await CeilingsForSessionAsync(db, sessionId, ct)
+            : Ceilings;
+        if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)
             return body;
 
         string? cwd = null;
@@ -118,7 +132,7 @@ public sealed class SessionMessageQueueService
 
         return TypedBodySpill.Fit(new TypedBodySpill.Request(
             Body: body,
-            CeilingBytes: Ceilings.SingleWriteMaxBytes,
+            CeilingBytes: ceilings.SingleWriteMaxBytes,
             AbsoluteSpillPath: absolute,
             RelativeSpillPath: TypedBodySpill.InboxRelativePath(fileStem),
             AgentKind: kind,
@@ -154,6 +168,20 @@ public sealed class SessionMessageQueueService
             {
                 throw new ConflictException(
                     $"Agent session '{sessionId}' is still starting; its terminal is not ready for input yet.");
+            }
+
+            // CARD-0161: resolve ceilings + blocked defer for send-now (same as flush).
+            await using (var preScope = _scopeFactory.CreateAsyncScope())
+            {
+                var preDb = preScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var nowCeilings = await CeilingsForSessionAsync(preDb, sessionId, ct);
+                if (nowCeilings.Backend == DeliveryBackend.HerdrPane
+                    && _runtime.TryGetLiveMetadata(sessionId, out var nowMeta)
+                    && string.Equals(nowMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ConflictException(
+                        $"Agent session '{sessionId}' is blocked in herdr (permission/approval UI); try again when idle.");
+                }
             }
 
             var nowBody = await SpillQueueBodyAsync(
@@ -755,6 +783,19 @@ public sealed class SessionMessageQueueService
         if (pending.Count == 0)
             return FlushResult.Nothing;
 
+        // CARD-0161: resolve ceilings once per flush for this session (herdr vs pty).
+        var ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
+
+        // CARD-0161 B4: herdr agent_blocked → defer (Nothing). Never park/fail/kill.
+        if (ceilings.Backend == DeliveryBackend.HerdrPane
+            && _runtime.TryGetLiveMetadata(sessionId, out var blockedMeta)
+            && string.Equals(blockedMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogDebug(
+                "Deferring delivery to herdr session {SessionId}: agent_status=blocked", sessionId);
+            return FlushResult.Nothing;
+        }
+
         // THE anti-duplicate keystone (CARD-0055 D3): nothing may re-type a message that has been
         // typed before without first asking the transcript whether it actually went in. A delivery
         // fails verification for two very different reasons — the body never reached Claude, or it
@@ -803,7 +844,7 @@ public sealed class SessionMessageQueueService
                 settled.Status, settled.SettledAt, capturedAt);
             if (!message.Body.StartsWith(AgentTaskCheckService.SupersededMarker, StringComparison.Ordinal))
             {
-                message.Body = PrependWithinCeiling(banner, message.Body, Ceilings.ReplyInlineMaxChars);
+                message.Body = PrependWithinCeiling(banner, message.Body, ceilings.ReplyInlineMaxChars);
                 changedSuperseded = true;
             }
         }
@@ -873,7 +914,7 @@ public sealed class SessionMessageQueueService
         if (batches)
         {
             var budget = head.Origin == QueuedMessageOrigin.Delegation
-                ? Math.Max(head.Body.Length, Ceilings.ReplyInlineMaxChars)
+                ? Math.Max(head.Body.Length, ceilings.ReplyInlineMaxChars)
                 : int.MaxValue;
             var used = head.Body.Length;
 
@@ -903,7 +944,7 @@ public sealed class SessionMessageQueueService
             ? TypedBodySpill.TryReadChannelEnvelope(run[^1].Body)
             : null;
         var body = await SpillQueueBodyAsync(
-            sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct);
+            sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings);
         var spilled = !ReferenceEquals(body, composed) && body != composed;
 
         // Stamped BEFORE a byte is typed, and deliberately NOT undone by the revert on failure: the
@@ -926,7 +967,7 @@ public sealed class SessionMessageQueueService
         DeliveryOutcome outcome;
         try
         {
-            outcome = await DeliverAsync(sessionId, body, ct, baseline);
+            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1239,7 +1280,8 @@ public sealed class SessionMessageQueueService
     // the message rows before typing; passing it through keeps the stored baseline and the one this
     // confirm loop reads identical. Callers with nothing to persist (Now-mode) pass none.
     private async Task<DeliveryOutcome> DeliverAsync(
-        Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null)
+        Guid sessionId, string body, CancellationToken ct, TranscriptBaseline? stampedBaseline = null,
+        PtyDeliveryCeilings? ceilings = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -1289,7 +1331,8 @@ public sealed class SessionMessageQueueService
         // has ever watched arrive is exactly what this exists to name. CARD-0025 spills at the
         // call sites, so this arm is the backstop for a write failure (or a future typer). A
         // successful spill must not reach here.
-        var ceilings = Ceilings;
+        // CARD-0161: caller threads per-session ceilings; fall back to process-wide for tests.
+        ceilings ??= Ceilings;
         var bodyBytes = System.Text.Encoding.UTF8.GetByteCount(trimmed);
         if (bodyBytes > ceilings.SingleWriteMaxBytes)
         {
@@ -1408,7 +1451,7 @@ public sealed class SessionMessageQueueService
         await _runtime.SendInputAsync(sessionId, "\r", ct);
 
         if (confirmTranscript)
-            return await WaitForTranscriptConfirmAsync(sessionId, trimmed, baseline, sequenceBeforeSubmit, ct);
+            return await WaitForTranscriptConfirmAsync(sessionId, trimmed, baseline, sequenceBeforeSubmit, ct, ceilings);
 
         if (sequenceBeforeSubmit is { } advanceFrom
             && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
@@ -1445,7 +1488,8 @@ public sealed class SessionMessageQueueService
     /// match, so the re-press submits ours and the next record matches.
     /// </summary>
     private async Task<DeliveryOutcome> WaitForTranscriptConfirmAsync(
-        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct)
+        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct,
+        PtyDeliveryCeilings? ceilings = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
@@ -1502,14 +1546,27 @@ public sealed class SessionMessageQueueService
 
             if (entersSent < _verification.SubmitAttempts && UtcNow() - lastEnter >= reEnterAfter)
             {
-                _logger.LogInformation(
-                    "No transcript record yet for the delivery to session {SessionId}; pressing Enter again "
-                    + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
-                    + "submit, the composer is empty and this is a no-op",
-                    sessionId, entersSent + 1, _verification.SubmitAttempts);
-                await _runtime.SendInputAsync(sessionId, "\r", ct);
-                entersSent++;
-                lastEnter = UtcNow();
+                // CARD-0161 B4: withhold re-press Enter while herdr reports blocked (CARD-0141
+                // hazard — a keystroke into a permission picker). entersSent not incremented.
+                if (ceilings?.Backend == DeliveryBackend.HerdrPane
+                    && _runtime.TryGetLiveMetadata(sessionId, out var live)
+                    && string.Equals(live.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation(
+                        "Withholding confirm-loop Enter for herdr session {SessionId}: agent_status=blocked",
+                        sessionId);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "No transcript record yet for the delivery to session {SessionId}; pressing Enter again "
+                        + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
+                        + "submit, the composer is empty and this is a no-op",
+                        sessionId, entersSent + 1, _verification.SubmitAttempts);
+                    await _runtime.SendInputAsync(sessionId, "\r", ct);
+                    entersSent++;
+                    lastEnter = UtcNow();
+                }
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);

@@ -13,7 +13,9 @@ public sealed record SessionRunnerSessionDto(
     // Pid of the detached pty-host owning this session's ConPTY (null pre-split/unknown).
     int? HostPid = null,
     // True when the runner re-attached to a host that survived a previous runner's death.
-    bool Adopted = false);
+    bool Adopted = false,
+    // CARD-0161: herdr agent_status; null for pty / older runners.
+    string? AgentStatus = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

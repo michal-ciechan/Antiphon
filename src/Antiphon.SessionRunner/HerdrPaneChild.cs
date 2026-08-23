@@ -123,6 +123,19 @@ internal sealed class HerdrPaneChild : ISessionChild
         return new ChildStarted(childPid, HostPid: null, launchedAt);
     }
 
+    /// <summary>
+    /// CARD-0161: one <c>pane.get</c> for revision + agent_status. Used by the single-session GET
+    /// so LastSequence can advance without a full pane.read, and the queue can see "blocked".
+    /// </summary>
+    public async Task<(long Revision, string? AgentStatus)> RefreshStatusAsync(CancellationToken ct)
+    {
+        if (_paneId is null)
+            throw new InvalidOperationException("HerdrPaneChild has not been launched.");
+
+        var pane = await _client.PaneGetAsync(_paneId, ct);
+        return (pane.Revision, pane.AgentStatus);
+    }
+
     public async Task WriteAsync(string input, CancellationToken ct)
     {
         if (_paneId is null)

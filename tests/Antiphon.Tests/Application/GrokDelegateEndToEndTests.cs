@@ -114,7 +114,7 @@ public class GrokDelegateEndToEndTests
         // The ceilings the whole test hangs on. If the modern backend were unavailable and the
         // profile had fallen back, "it spilled" would stop being evidence of anything.
         harness.Provider.GetRequiredService<PtyDeliveryProfile>().Ceilings.Backend
-            .ShouldBe(PtyBackend.ModernConPty, "the spill assertions below are only meaningful on the raised ceilings");
+            .ShouldBe(DeliveryBackend.ModernConPty, "the spill assertions below are only meaningful on the raised ceilings");
 
         Guid sessionId = Guid.Empty;
         try

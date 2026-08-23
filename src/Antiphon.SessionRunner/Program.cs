@@ -139,7 +139,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
 
-app.MapGet("/sessions/{id:guid}", (Guid id, SessionRunnerRuntime runtime) => Results.Ok(runtime.Get(id)));
+app.MapGet("/sessions/{id:guid}", async (Guid id, SessionRunnerRuntime runtime, CancellationToken ct) =>
+    Results.Ok(await runtime.GetAsync(id, ct)));
 
 app.MapPost("/sessions", async (
     RunnerLaunchRequest request,

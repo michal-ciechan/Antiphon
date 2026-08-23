@@ -199,17 +199,49 @@ public sealed class DelegationSettings
     /// </summary>
     public int ModernPtySingleWriteMaxBytes { get; set; } = 86_400;
 
+    // ── Herdr pane.send_text ceilings (CARD-0161) ───────────────────────────────────────────────
+    //
+    // Separate knobs from modern because they are separate measurements — a herdr upgrade
+    // re-measures herdr, not the pty. Numbers match modern because the envelope was measured
+    // identical (86 400 exact: S1 twice + plan M1 + M2, 2026-08-23) and herdr 0.8.2 ships the
+    // modern ConPTY runtime app-local.
+
+    /// <summary>
+    /// Brief inline ceiling on herdr <c>pane.send_text</c> (CARD-0161). 43 200 = 2× margin under
+    /// the measured 86 400 single-write envelope (plan M1/M2, 2026-08-23, herdr 0.8.2 + Claude
+    /// 2.1.241): exact byte-for-byte UserPrompt, zero ESC bytes in the record.
+    /// </summary>
+    public int HerdrPaneBriefInlineMaxBytes { get; set; } = 43_200;
+
+    /// <summary>
+    /// Reply inline ceiling on herdr: 14 400 = 43 200 / 3 (same char/byte derivation as modern).
+    /// </summary>
+    public int HerdrPaneReplyInlineMaxChars { get; set; } = 14_400;
+
+    /// <summary>
+    /// Oversize tripwire on herdr: 86 400 bytes — largest body measured exact through one
+    /// <c>pane.send_text</c> (CARD-0161 plan M1 single-write AND M2 paced, 2026-08-23). Edge of
+    /// the evidence, not a measured cliff; the single-write rule is kept.
+    /// </summary>
+    public int HerdrPaneSingleWriteMaxBytes { get; set; } = 86_400;
+
+    /// <summary>Herdr-lane ceilings record (CARD-0161). Only consulted for SessionBackend.Herdr sessions.</summary>
+    public PtyDeliveryCeilings HerdrCeilings(string reason) => new(
+        DeliveryBackend.HerdrPane, HerdrPaneBriefInlineMaxBytes,
+        HerdrPaneReplyInlineMaxChars, HerdrPaneSingleWriteMaxBytes, reason);
+
     /// <summary>
     /// The ceilings for one pseudoconsole. <see cref="PtyBackend.InboxConhost"/> — the default, and
     /// anything we are not sure about — returns exactly what shipped before CARD-0037.
+    /// Maps onto <see cref="DeliveryBackend"/> (CARD-0161); herdr is not a PtyBackend value.
     /// </summary>
     public PtyDeliveryCeilings CeilingsFor(PtyBackend backend, string reason) => backend switch
     {
         PtyBackend.ModernConPty => new PtyDeliveryCeilings(
-            backend, ModernPtyBriefInlineMaxBytes, ModernPtyReplyInlineMaxChars,
+            DeliveryBackend.ModernConPty, ModernPtyBriefInlineMaxBytes, ModernPtyReplyInlineMaxChars,
             ModernPtySingleWriteMaxBytes, reason),
         _ => new PtyDeliveryCeilings(
-            PtyBackend.InboxConhost, BriefInlineMaxBytes, ReplyInlineMaxChars,
+            DeliveryBackend.InboxConhost, BriefInlineMaxBytes, ReplyInlineMaxChars,
             PtySingleChunkBytes, reason),
     };
 

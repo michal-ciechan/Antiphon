@@ -502,7 +502,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             MapExitReason(dto.ExitReason),
             dto.LastSequence,
             dto.HostPid,
-            dto.Adopted);
+            dto.Adopted,
+            dto.AgentStatus);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)
