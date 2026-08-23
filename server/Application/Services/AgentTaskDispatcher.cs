@@ -386,8 +386,8 @@ public sealed class AgentTaskDispatcher
     /// happens, and it reports which:
     ///
     /// <list type="bullet">
-    /// <item>The brief never arrived — no non-housekeeping UserPrompt after this task's
-    /// <c>DispatchedAt</c>. On a fresh session that is "zero transcript entries" (four tasks sat
+    /// <item>The brief never arrived — no non-housekeeping typed or queued prompt after this
+    /// task's <c>DispatchedAt</c>. On a fresh session that is "zero transcript entries" (four tasks sat
     /// like that for up to 26 minutes on 2026-08-09). On a reused warm-pool session the inherited
     /// history made the old "any entry at all" test always true, so this branch was unreachable
     /// even when the NEW brief never landed (CARD-0077). The predicate is
@@ -429,12 +429,23 @@ public sealed class AgentTaskDispatcher
             // minutes after dispatch, on a query that returns nothing on a healthy day.
             await CatchUpTranscriptAsync(sessionId, ct);
 
-            // A non-housekeeping UserPrompt after THIS task's dispatch is the proof the brief
-            // landed. "Any transcript entry at all" is the wrong test on a reused session: it
-            // inherited the previous task's history, so this branch was unreachable (CARD-0077).
-            // Slow work with a real prompt still belongs to the stall scan, not here.
-            var started = await TranscriptPromptSpan.HasTurnPromptSinceAsync(
+            // A non-housekeeping typed or queued prompt after THIS task's dispatch is the proof
+            // the brief landed. "Any transcript entry at all" is the wrong test on a reused
+            // session: it inherited the previous task's history, so this branch was unreachable
+            // (CARD-0077). Slow work with a real prompt still belongs to the stall scan, not here.
+            // HasTurnPromptSinceAsync stays for any other caller; this arm takes the Result so
+            // a queued-only hit can be named in the log (CARD-0135 D6).
+            var span = await TranscriptPromptSpan.LoadAsync(
                 _db, sessionId, task.DispatchedAt, ct);
+            var started = span.TurnPrompts.Count > 0;
+            if (started
+                && span.TurnPrompts.All(p => p.Kind == TranscriptKinds.QueuedUserPrompt))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId}: delivery watchdog sees queued-only turn evidence on session {SessionId} "
+                    + "({Count} QueuedUserPrompt row(s) after dispatch); withholding the never-started failure",
+                    DelegationReportFormatter.Short(task.Id), sessionId, span.TurnPrompts.Count);
+            }
 
             // CARD-0117 D7: the brief's own queue row outranks the transcript. A Pending brief is
             // direct, positive evidence about THIS task's own message; `started` is evidence about
@@ -498,7 +509,7 @@ public sealed class AgentTaskDispatcher
                           + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
                           + "transcript bound to read (CARD-0064), so check the session before re-running."
                         : $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
-                          + $"the session has no turn prompt since this task was dispatched ({evidence}). "
+                          + $"the session wrote no turn prompt of either kind for this task ({evidence}). "
                           + "See the agent's incidents for the delivery errors — and if one of them is a "
                           + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
                           + "transcript bound to read (CARD-0064), so check the session before re-running.";

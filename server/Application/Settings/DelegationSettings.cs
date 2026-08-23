@@ -285,7 +285,10 @@ public sealed class DelegationSettings
     /// transcript entries" — that was true until CARD-0077 and is what this comment used to say. A
     /// REUSED warm-pool session inherits the previous task's history, so "any entry at all" was
     /// always true on one and this whole clock was unreachable for it, however completely the new
-    /// brief was lost. Compaction's own housekeeping records do not count as a prompt either.</para>
+    /// brief was lost. Compaction's own housekeeping records do not count as a prompt either.
+    /// A drained composer-queue command (<c>QueuedUserPrompt</c>) does count — it is the record
+    /// of a body that reached the model while the TUI was busy, and there is no accompanying
+    /// <c>user</c> record for the watchdog to fall back on (CARD-0135).</para>
     ///
     /// <para>This is the DELIVERY clock and nothing else: it only ever asks whether work STARTED. A
     /// task that started and then ran forever is <see cref="DefaultTimeoutMinutes"/> /

@@ -11,6 +11,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -119,7 +120,7 @@ public class AgentTaskDeliveryWatchdogTests
         var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         failed.Status.ShouldBe(AgentTaskStatus.Failed, "inherited history is not this task starting");
         failed.FailureReason.ShouldContain("never delivered");
-        failed.FailureReason.ShouldContain("no turn prompt since this task was dispatched");
+        failed.FailureReason.ShouldContain("no turn prompt of either kind for this task");
         stopper.Killed.ShouldContain(sessionId);
     }
 
@@ -217,6 +218,109 @@ public class AgentTaskDeliveryWatchdogTests
         await using var verify = CreateContext();
         (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
             .FailureReason.ShouldContain("no brief was queued for this task after dispatch");
+    }
+
+    // ---- CARD-0135: a queued brief is started, for the watchdog too --------------------------
+
+    [Test]
+    public async Task a_queued_brief_after_dispatch_is_left_alone()
+    {
+        // The card's shape: the only post-dispatch prompt is a marker-bearing QueuedUserPrompt.
+        // Delivery already marked the queue row Sent; the watchdog used to fail and kill at T+10.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Sent);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            task.DispatchedAt!.Value.AddMinutes(1));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stopper.Killed.ShouldNotContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_reused_session_with_a_queued_brief_after_dispatch_is_left_alone()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[antiphon-task:deadbeef] The previous task's brief.",
+            dispatched.AddMinutes(-20));
+        await SeedReuseCompactionHousekeepingAsync(sessionId, dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            dispatched.AddMinutes(4));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stopper.Killed.ShouldNotContain(sessionId);
+    }
+
+    [Test]
+    public async Task no_prompt_of_either_kind_after_dispatch_still_fails_with_either_kind_wording()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Sent);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("never delivered");
+        failed.FailureReason.ShouldContain("no turn prompt of either kind for this task");
+        stopper.Killed.ShouldContain(task.AgentSessionId!.Value);
+    }
+
+    [Test]
+    public async Task a_previous_tasks_queued_prompt_is_not_this_tasks_started_evidence()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            "[antiphon-task:deadbeef] The previous task's queued brief.",
+            task.DispatchedAt!.Value.AddMinutes(-20));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("no turn prompt of either kind for this task");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task queued_only_evidence_is_named_in_the_information_log()
+    {
+        var logs = new List<string>();
+        var (harness, _) = CreateHarness(logs: logs);
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedEntryAsync(
+            task.AgentSessionId!.Value, TranscriptKinds.QueuedUserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            task.DispatchedAt!.Value.AddMinutes(1));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        logs.ShouldContain(l => l.Contains("queued-only turn evidence", StringComparison.Ordinal)
+            && l.Contains(task.AgentSessionId!.Value.ToString(), StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -867,11 +971,14 @@ public class AgentTaskDeliveryWatchdogTests
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
         DelegateBindRefusalRecoverySettings? recoverySettings = null,
-        ISessionRunnerClient? runnerClient = null)
+        ISessionRunnerClient? runnerClient = null,
+        List<string>? logs = null)
     {
         var stopper = new RecordingSessionStopper();
         var services = new ServiceCollection();
         services.AddLogging();
+        if (logs is not null)
+            services.AddSingleton<ILogger<AgentTaskDispatcher>>(new ListLogger<AgentTaskDispatcher>(logs));
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
@@ -1345,6 +1452,16 @@ public class AgentTaskDeliveryWatchdogTests
             message = new { role = "user", content = text },
         });
 
+    private static string JsonlQueuedCommand(string cwd, string prompt, DateTimeOffset timestamp) =>
+        JsonSerializer.Serialize(new
+        {
+            type = "attachment",
+            uuid = Guid.NewGuid().ToString("D"),
+            cwd,
+            timestamp = timestamp.UtcDateTime.ToString("o"),
+            attachment = new { type = "queued_command", prompt },
+        });
+
     private static string JsonlAssistant(string cwd, string text, DateTimeOffset timestamp) =>
         JsonSerializer.Serialize(new
         {
@@ -1367,6 +1484,24 @@ public class AgentTaskDeliveryWatchdogTests
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (sink)
+                sink.Add($"{formatter(state, exception)}");
+        }
     }
 
     private sealed class MismatchRunnerClient : ISessionRunnerClient
