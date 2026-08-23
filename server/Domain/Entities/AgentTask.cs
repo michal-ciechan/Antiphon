@@ -45,6 +45,13 @@ public class AgentTask
     public Guid? ProjectId { get; set; }
 
     /// <summary>
+    /// Launch-time env overlay for this task (CARD-0106). JSON object, default <c>{}</c>.
+    /// Re-applied on dispatch and on a task-session relaunch; a non-empty overlay excludes
+    /// the task from warm-pool reuse because reuse launches no process.
+    /// </summary>
+    public string LaunchEnvOverrideJson { get; set; } = "{}";
+
+    /// <summary>
     /// WHICH AGENT PROGRAM runs this task — a different axis from <see cref="Kind"/> (which is
     /// worker-vs-orchestrator). Defaults to <see cref="AgentKind.ClaudeCode"/>, which is what every
     /// row created before CARD-0084 carries, so nothing about an existing task changes.

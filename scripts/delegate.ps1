@@ -81,6 +81,13 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreSubscriptionQuota,
 
+    # Overlay env vars on this task's process launch (CARD-0106). ANTIPHON_* names are refused
+    # 422. A non-empty overlay excludes the task from warm-pool reuse (reuse launches no
+    # process, so the overlay could never apply). Combined with -OnAgent is refused 422.
+    # Usage: -EnvOverride @{ ANTHROPIC_BASE_URL='http://proxy:8080'; ANTHROPIC_API_KEY='{{key:proxy-key}}' }
+    [Parameter(ParameterSetName = 'Create')]
+    [hashtable]$EnvOverride,
+
     # Answer a blocked delegate's question: -Reply <taskId> "your answer"
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
@@ -194,6 +201,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
+        if ($EnvOverride -and $EnvOverride.Count -gt 0) { $body['launchEnvOverride'] = $EnvOverride }
 
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
         # The RESOLVED kind is echoed, not the requested one - a role policy promoted to Grok in

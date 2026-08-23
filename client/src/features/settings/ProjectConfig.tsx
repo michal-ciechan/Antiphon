@@ -8,6 +8,7 @@ import {
   Table,
   Text,
   TextInput,
+  Textarea,
   Switch,
   Badge,
   ActionIcon,
@@ -42,6 +43,8 @@ import {
 import { useBoards, useDeleteBoard, type BoardSummaryDto } from '../../api/boards'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { ApiKeysSection } from './ApiKeysSection'
+import { envToText, parseEnvironmentText } from '../../shared/environmentText'
+import { notifications } from '@mantine/notifications'
 
 export function ProjectConfig() {
   const { data: projects, isLoading, error } = useProjects()
@@ -89,6 +92,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const [formConstitutionPath, setFormConstitutionPath] = useState('AGENTS.md;CLAUDE.md;README.md')
   const [formGitHubEnabled, setFormGitHubEnabled] = useState(false)
   const [formNotificationsEnabled, setFormNotificationsEnabled] = useState(false)
+  const [formDefaultLaunchEnvText, setFormDefaultLaunchEnvText] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
 
   const combobox = useCombobox({
@@ -111,6 +115,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setFormConstitutionPath('AGENTS.md;CLAUDE.md;README.md')
     setFormGitHubEnabled(false)
     setFormNotificationsEnabled(false)
+    setFormDefaultLaunchEnvText('')
     setFormError(null)
     setTestResult(null)
     setEditModalOpen(true)
@@ -126,6 +131,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setFormConstitutionPath(project.constitutionPath)
     setFormGitHubEnabled(project.gitHubIntegrationEnabled)
     setFormNotificationsEnabled(project.notificationsEnabled)
+    setFormDefaultLaunchEnvText(envToText(project.defaultLaunchEnv ?? {}))
     setFormError(null)
     setTestResult(null)
     setEditModalOpen(true)
@@ -153,6 +159,13 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
   const handleSave = async () => {
     setFormError(null)
+    const parsedDefaultEnv = parseEnvironmentText(formDefaultLaunchEnvText)
+    if (parsedDefaultEnv.warnings.length > 0) {
+      notifications.show({
+        color: 'yellow',
+        message: `Default launch environment: ${parsedDefaultEnv.warnings.join(' ')}`,
+      })
+    }
     try {
       if (editingProject) {
         await updateMutation.mutateAsync({
@@ -165,6 +178,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             constitutionPath: formConstitutionPath || undefined,
             gitHubIntegrationEnabled: formGitHubEnabled,
             notificationsEnabled: formNotificationsEnabled,
+            defaultLaunchEnv: parsedDefaultEnv.env,
           },
         })
       } else {
@@ -176,6 +190,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           constitutionPath: formConstitutionPath || undefined,
           gitHubIntegrationEnabled: formGitHubEnabled,
           notificationsEnabled: formNotificationsEnabled,
+          defaultLaunchEnv: parsedDefaultEnv.env,
         })
       }
       setEditModalOpen(false)
@@ -443,6 +458,14 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
             description="Enable notifications for workflow events in this project."
             checked={formNotificationsEnabled}
             onChange={(e) => setFormNotificationsEnabled(e.currentTarget.checked)}
+          />
+          <Textarea
+            label="Default launch environment (KEY=value per line)"
+            description="inherited by every agent and pool delegate under this project unless its own launch env sets the same variable; values may reference stored API keys as {{key:NAME}}"
+            autosize
+            minRows={3}
+            value={formDefaultLaunchEnvText}
+            onChange={(event) => setFormDefaultLaunchEnvText(event.currentTarget.value)}
           />
           {editingProject && (
             <>

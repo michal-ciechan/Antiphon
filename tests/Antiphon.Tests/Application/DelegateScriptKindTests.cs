@@ -133,6 +133,33 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task EnvOverride_is_posted_as_launchEnvOverride()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateCommandAsync(
+            server,
+            "-Role Test -Goal 'run the suite' -EnvOverride @{ ANTHROPIC_BASE_URL = 'http://proxy:8080'; ANTHROPIC_API_KEY = '{{key:proxy-key}}' }");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        var overlay = body.RootElement.GetProperty("launchEnvOverride");
+        overlay.GetProperty("ANTHROPIC_BASE_URL").GetString().ShouldBe("http://proxy:8080");
+        overlay.GetProperty("ANTHROPIC_API_KEY").GetString().ShouldBe("{{key:proxy-key}}");
+    }
+
+    [Test]
+    public async Task an_omitted_EnvOverride_sends_no_launchEnvOverride_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("launchEnvOverride", out _)
+            .ShouldBeFalse("an omitted -EnvOverride must leave the request exactly as it was before the flag existed");
+    }
+
+    [Test]
     public async Task an_omitted_IgnoreSubscriptionQuota_sends_no_ignoreSubscriptionQuota_at_all()
     {
         using var server = new StubApi();
@@ -151,6 +178,36 @@ public sealed class DelegateScriptKindTests
     // argument-list quoting.
     private static Task<(int ExitCode, string Output)> RunDelegateAsync(StubApi server, params string[] args) =>
         DelegateScriptRunner.RunAsync(server.BaseUrl, args);
+
+    /// <summary>
+    /// <c>-File</c> cannot bind a hashtable literal (every argument is a string). An agent at a
+    /// prompt writes <c>-EnvOverride @{ ... }</c>, so this path drives the script via
+    /// <c>-Command</c> the same way.
+    /// </summary>
+    private static async Task<(int ExitCode, string Output)> RunDelegateCommandAsync(
+        StubApi server, string argumentTail)
+    {
+        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "delegate.ps1");
+        var startInfo = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-Command");
+        startInfo.ArgumentList.Add($"& '{scriptPath}' {argumentTail}");
+        startInfo.Environment["ANTIPHON_API"] = server.BaseUrl.TrimEnd('/');
+        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = string.Empty;
+
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException("pwsh did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await process.WaitForExitAsync(timeout.Token);
+        return (process.ExitCode, await stdout + await stderr);
+    }
 
     /// <summary>
     /// The smallest thing that can answer POST /api/agent-tasks and keep what it was sent.

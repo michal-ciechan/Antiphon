@@ -41,6 +41,8 @@ internal static class AgentLaunchResolution
         {
             AgentEnv = options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent)
         };
+        options = await AttachProjectContextAsync(
+            options, agent.BoardId, apiKeyEnvResolver, cancellationToken);
 
         if (launchResolver is null)
         {
@@ -74,6 +76,9 @@ internal static class AgentLaunchResolution
         CancellationToken cancellationToken,
         ApiKeyEnvResolver? apiKeyEnvResolver = null)
     {
+        options = await AttachProjectContextAsync(
+            options, boardId: null, apiKeyEnvResolver, cancellationToken);
+
         if (launchResolver is null)
         {
             return await ResolveLegacyAsync(
@@ -89,6 +94,31 @@ internal static class AgentLaunchResolution
             return await ResolveLegacyAsync(
                 agentRegistry, options, agent: null, apiKeyEnvResolver, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// One project-identity decision per launch, used for both API-key scope and project default
+    /// env (CARD-0106). Callers that bypass the funnel still have their own
+    /// <c>options.ApiKeyProjectId ?? …</c> fallbacks; when they go through here those fallbacks
+    /// read the hoisted value and cannot disagree with the defaults fetch.
+    /// </summary>
+    private static async Task<AgentLaunchOptions> AttachProjectContextAsync(
+        AgentLaunchOptions options,
+        Guid? boardId,
+        ApiKeyEnvResolver? apiKeyEnvResolver,
+        CancellationToken cancellationToken)
+    {
+        if (apiKeyEnvResolver is null)
+            return options;
+
+        var projectId = options.ApiKeyProjectId
+            ?? await apiKeyEnvResolver.ResolveProjectIdAsync(boardId, cancellationToken);
+        return options with
+        {
+            ApiKeyProjectId = projectId,
+            ProjectDefaultEnv = await apiKeyEnvResolver.GetProjectDefaultEnvAsync(
+                projectId, cancellationToken),
+        };
     }
 
     /// <summary>
@@ -299,13 +329,27 @@ public sealed class AgentTuiLaunchResolver
             }
         }
 
-        // Merge order (CARD-0106 S2): profile non-secret env and managed secrets -> the AGENT's own
-        // launch env -> ExtraEnv. The agent's field outranks the profile because it is the more
-        // specific thing somebody wrote about THIS agent; it never outranks ExtraEnv, which carries
-        // Antiphon's own ANTIPHON_* orchestration identity. Null means "read it off the agent" —
-        // an explicit (possibly empty) dictionary from a caller wins.
+        // Merge order (CARD-0106): profile non-secret env and managed secrets -> project default
+        // -> the AGENT's own launch env -> launch-time override -> ExtraEnv. The agent's field
+        // outranks the profile because it is the more specific thing somebody wrote about THIS
+        // agent; a project default outranks the shared profile (a credential/endpoint fact about
+        // this project's agents) and loses to the agent. Neither outranks ExtraEnv, which carries
+        // Antiphon's own ANTIPHON_* orchestration identity. Null AgentEnv means "read it off the
+        // agent" — an explicit (possibly empty) dictionary from a caller wins.
+        if (options.ProjectDefaultEnv is not null)
+        {
+            foreach (var (key, value) in options.ProjectDefaultEnv)
+                environment[key] = value;
+        }
+
         foreach (var (key, value) in options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent))
             environment[key] = value;
+
+        if (options.LaunchEnvOverride is not null)
+        {
+            foreach (var (key, value) in options.LaunchEnvOverride)
+                environment[key] = value;
+        }
 
         if (options.ExtraEnv is not null)
         {

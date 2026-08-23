@@ -118,20 +118,25 @@ public sealed class AgentControlService
         var remoteControl = request.RemoteControl ?? agent.RemoteControlEnabled;
         var remoteControlName = remoteControl ? agent.Name : null;
         var card = await ResolveStartCardAsync(agent, ct);
+        var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
+            request.LaunchEnvOverride, "launchEnvOverride");
 
         Guid sessionId;
         if (card is not null)
         {
             var spawn = await _cardService.SpawnAsync(
                 card.Id,
-                new SpawnCardRequest(RemoteControlName: remoteControlName),
+                new SpawnCardRequest(
+                    RemoteControlName: remoteControlName,
+                    LaunchEnvOverride: launchEnvOverride.Count == 0 ? null : launchEnvOverride),
                 ct);
             sessionId = spawn.SessionId;
             agent.CurrentCardId = card.Id;
         }
         else
         {
-            sessionId = await StartInteractiveSessionAsync(agent, remoteControlName, request.Fresh, ct);
+            sessionId = await StartInteractiveSessionAsync(
+                agent, remoteControlName, request.Fresh, launchEnvOverride, ct);
             agent.CurrentCardId = null;
         }
 
@@ -149,7 +154,11 @@ public sealed class AgentControlService
     // By default the agent's previous Claude session is resumed (same id, `claude --resume`) so the
     // terminal picks up where it left off; `fresh` forces a brand-new conversation.
     private async Task<Guid> StartInteractiveSessionAsync(
-        Agent agent, string? remoteControlName, bool fresh, CancellationToken ct)
+        Agent agent,
+        string? remoteControlName,
+        bool fresh,
+        IReadOnlyDictionary<string, string>? launchEnvOverride,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
             throw new ConflictException($"Agent '{agent.Name}' has no working directory to start a session in.");
@@ -280,7 +289,8 @@ public sealed class AgentControlService
                 Cols: 120,
                 Rows: 30,
                 ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
-                ExtraEnv: extraEnv),
+                ExtraEnv: extraEnv,
+                LaunchEnvOverride: launchEnvOverride),
             ct,
             _apiKeyEnvResolver);
         var spec = resolved.Spec;

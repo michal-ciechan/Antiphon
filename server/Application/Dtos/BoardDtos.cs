@@ -233,6 +233,12 @@ public sealed record SpawnCardRequest(
     Guid? ConcurrencyToken = null,
     // When set, the launched agent is renamed to this and put into remote-control mode
     // (via /rename + /remote-control) before the work prompt is sent.
-    string? RemoteControlName = null);
+    string? RemoteControlName = null,
+    /// <summary>
+    /// Overlay on this spawn only (CARD-0106). Same contract as
+    /// <c>StartAgentRequest.LaunchEnvOverride</c>: ephemeral, ANTIPHON_* refused 422,
+    /// no cascade to child tasks.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
 
 public sealed record SpawnCardResult(Guid CardId, Guid SessionId);

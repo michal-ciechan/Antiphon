@@ -1878,7 +1878,8 @@ public sealed class AgentTaskDispatcher
         AgentTask task,
         Agent agent,
         AgentSession session,
-        IReadOnlyList<string>? attachedBundleKeys = null)
+        IReadOnlyList<string>? attachedBundleKeys = null,
+        IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
     {
         var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, includeModelAlias: true);
         var kind = session.AgentKind;
@@ -1903,7 +1904,9 @@ public sealed class AgentTaskDispatcher
                 // always wins (CARD-0106 S2). A pool delegate's row carries "{}" and contributes
                 // nothing; a pinned standing agent contributes whatever its settings say.
                 AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
-                ExtraEnv: BuildEnv(task, agent, session)));
+                ExtraEnv: BuildEnv(task, agent, session),
+                LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
+                ProjectDefaultEnv: projectDefaultEnv));
     }
 
     /// <summary>
@@ -1921,7 +1924,15 @@ public sealed class AgentTaskDispatcher
         CancellationToken ct)
     {
         if (program.ProfileId is null)
-            return BuildLaunchSpec(task, agent, session, attachedBundleKeys);
+        {
+            Guid? projectId = task.ProjectId;
+            if (projectId is null && _apiKeyEnvResolver is not null)
+                projectId = await _apiKeyEnvResolver.ResolveProjectIdAsync(agent.BoardId, ct);
+            var defaults = _apiKeyEnvResolver is not null
+                ? await _apiKeyEnvResolver.GetProjectDefaultEnvAsync(projectId, ct)
+                : null;
+            return BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults);
+        }
 
         // D4: an exact ModelId wins, so the tier alias is omitted and the resolver appends the
         // catalogue-validated model. Two --model flags would otherwise reach the process, the
@@ -1944,7 +1955,8 @@ public sealed class AgentTaskDispatcher
                 ExtraArgs: extraArgs,
                 AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
                 ExtraEnv: BuildEnv(task, agent, session),
-                ApiKeyProjectId: apiKeyProjectId),
+                ApiKeyProjectId: apiKeyProjectId,
+                LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson)),
             ct,
             _apiKeyEnvResolver);
 
@@ -2216,6 +2228,16 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     internal async Task<ReuseOutcome> TryReuseWarmAgentAsync(AgentTask claimed, DateTime now, CancellationToken ct)
     {
+        // A reused process cannot change its environment. Honouring an override by reusing
+        // anyway would mark the task running with the operator's overlay silently ignored.
+        if (AgentLaunchEnv.Parse(claimed.LaunchEnvOverrideJson).Count > 0)
+        {
+            _logger.LogInformation(
+                "Task {ShortId} carries a launch-env override — declining warm reuse so a fresh process can apply it",
+                DelegationReportFormatter.Short(claimed.Id));
+            return ReuseOutcome.SpawnFresh;
+        }
+
         Agent? agent = null;
 
         if (claimed.AgentId is Guid pinnedId)

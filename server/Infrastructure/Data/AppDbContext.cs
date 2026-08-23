@@ -319,6 +319,10 @@ public class AppDbContext : DbContext
             entity.Property(p => p.NotificationsEnabled).IsRequired();
             entity.Property(p => p.CreatedAt).IsRequired();
             entity.Property(p => p.UpdatedAt).IsRequired();
+            entity.Property(p => p.DefaultLaunchEnvJson)
+                .IsRequired()
+                .HasColumnType("jsonb")
+                .HasDefaultValue("{}");
 
             entity.HasIndex(p => p.Name).IsUnique();
         });
@@ -1325,6 +1329,10 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Kind).IsRequired();
             entity.Property(t => t.Role).IsRequired();
             entity.Property(t => t.ProjectId).IsRequired(false);
+            entity.Property(t => t.LaunchEnvOverrideJson)
+                .IsRequired()
+                .HasColumnType("jsonb")
+                .HasDefaultValue("{}");
             // CARD-0084 S2. ClaudeCode on every pre-existing row, which is what they actually ran —
             // the default is a backfill, not a guess.
             entity.Property(t => t.AgentKind).IsRequired().HasDefaultValue(AgentKind.ClaudeCode);

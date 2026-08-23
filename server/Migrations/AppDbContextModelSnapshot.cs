@@ -452,6 +452,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("LastPolledResultHash")
                         .HasColumnType("text");
 
+                    b.Property<string>("LaunchEnvOverrideJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
                     b.Property<int>("MaxAttempts")
                         .HasColumnType("integer");
 
@@ -1974,6 +1980,12 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultLaunchEnvJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
 
                     b.Property<bool>("GitHubIntegrationEnabled")
                         .HasColumnType("boolean");

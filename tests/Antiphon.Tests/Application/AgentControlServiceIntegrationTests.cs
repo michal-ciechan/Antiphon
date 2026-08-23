@@ -1030,6 +1030,40 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Start_with_an_ANTIPHON_override_name_is_refused_422()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "override-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [adapter]);
+            var agent = await SeedAgentAsync(db, "Override Agent", workspace, AgentKind.Raw, profileId: null);
+
+            var ex = await Should.ThrowAsync<ValidationException>(() => harness.Control.StartAsync(
+                agent.Id,
+                new StartAgentRequest(
+                    Fresh: true,
+                    LaunchEnvOverride: new Dictionary<string, string>
+                    {
+                        ["ANTIPHON_SESSION_ID"] = "hijacked",
+                    }),
+                CancellationToken.None));
+
+            ex.StatusCode.ShouldBe(422);
+            ex.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("ANTIPHON_SESSION_ID"));
+            adapter.Started.ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
     {
         await using var db = CreateContext();

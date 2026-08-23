@@ -33,10 +33,9 @@ public class ProjectService
     {
         var projects = await _db.Projects
             .OrderBy(p => p.Name)
-            .Select(p => ToDto(p))
             .ToListAsync(cancellationToken);
 
-        return projects;
+        return projects.Select(ToDto).ToList();
     }
 
     public async Task<ProjectDto> GetByIdAsync(Guid id, CancellationToken cancellationToken)
@@ -66,7 +65,11 @@ public class ProjectService
             GitHubIntegrationEnabled = request.GitHubIntegrationEnabled,
             NotificationsEnabled = request.NotificationsEnabled,
             CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            UpdatedAt = DateTime.UtcNow,
+            DefaultLaunchEnvJson = request.DefaultLaunchEnv is null
+                ? "{}"
+                : AgentLaunchEnv.Serialize(
+                    AgentLaunchEnv.ValidateOverride(request.DefaultLaunchEnv, "defaultLaunchEnv")),
         };
 
         _db.Projects.Add(project);
@@ -95,6 +98,12 @@ public class ProjectService
         project.ConstitutionPath = request.ConstitutionPath ?? "AGENTS.md;CLAUDE.md;README.md";
         project.GitHubIntegrationEnabled = request.GitHubIntegrationEnabled;
         project.NotificationsEnabled = request.NotificationsEnabled;
+        if (request.DefaultLaunchEnv is not null)
+        {
+            project.DefaultLaunchEnvJson = AgentLaunchEnv.Serialize(
+                AgentLaunchEnv.ValidateOverride(request.DefaultLaunchEnv, "defaultLaunchEnv"));
+        }
+
         project.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -331,7 +340,8 @@ public class ProjectService
             entity.GitHubIntegrationEnabled,
             entity.NotificationsEnabled,
             entity.CreatedAt,
-            entity.UpdatedAt);
+            entity.UpdatedAt,
+            AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson));
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);

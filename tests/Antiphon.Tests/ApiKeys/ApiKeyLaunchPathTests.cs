@@ -276,6 +276,79 @@ public class ApiKeyLaunchPathTests
         resolved.Spec.Env.ShouldContainKey("DISABLE_AUTOUPDATER");
     }
 
+    [Test]
+    public async Task the_launch_override_beats_the_agent_env_and_loses_to_ExtraEnv_on_the_managed_path()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(schema.ConnectionString);
+        var profile = await SeedProfileAsync(
+            provider,
+            nonSecretEnv: new Dictionary<string, string> { ["FROM_PROFILE"] = "profile" });
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Managed",
+            TuiProfileId = profile,
+            LaunchEnvJson = JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["CONTESTED"] = "agent",
+            }),
+        };
+
+        var resolved = await ResolveManagedAsync(
+            provider,
+            agent,
+            extraEnv: new Dictionary<string, string> { ["ANTIPHON_SESSION_ID"] = "the-real-session" },
+            launchEnvOverride: new Dictionary<string, string>
+            {
+                ["CONTESTED"] = "override",
+                ["ANTIPHON_SESSION_ID"] = "hijacked",
+            });
+
+        resolved.Spec.Env["FROM_PROFILE"].ShouldBe("profile");
+        resolved.Spec.Env["CONTESTED"].ShouldBe("override");
+        resolved.Spec.Env["ANTIPHON_SESSION_ID"].ShouldBe("the-real-session");
+    }
+
+    [Test]
+    public async Task a_project_default_beats_the_profile_env_and_loses_to_the_agent_on_the_managed_path()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(schema.ConnectionString);
+        var profile = await SeedProfileAsync(
+            provider,
+            nonSecretEnv: new Dictionary<string, string>
+            {
+                ["FROM_PROFILE"] = "profile",
+                ["CONTESTED_PROFILE_PROJ"] = "profile",
+            });
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Managed",
+            TuiProfileId = profile,
+            LaunchEnvJson = JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["CONTESTED_PROJ_AGENT"] = "agent",
+            }),
+        };
+
+        var resolved = await ResolveManagedAsync(
+            provider,
+            agent,
+            projectDefaultEnv: new Dictionary<string, string>
+            {
+                ["CONTESTED_PROFILE_PROJ"] = "project",
+                ["CONTESTED_PROJ_AGENT"] = "project",
+                ["FROM_PROJECT"] = "project",
+            });
+
+        resolved.Spec.Env["FROM_PROFILE"].ShouldBe("profile");
+        resolved.Spec.Env["FROM_PROJECT"].ShouldBe("project");
+        resolved.Spec.Env["CONTESTED_PROFILE_PROJ"].ShouldBe("project");
+        resolved.Spec.Env["CONTESTED_PROJ_AGENT"].ShouldBe("agent");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static string NewName() => $"launch-{Guid.NewGuid():N}";
@@ -310,13 +383,22 @@ public class ApiKeyLaunchPathTests
     private static async Task<ResolvedAgentTuiLaunch> ResolveManagedAsync(
         ServiceProvider provider,
         Agent agent,
-        IReadOnlyList<string>? extraArgs = null)
+        IReadOnlyList<string>? extraArgs = null,
+        IReadOnlyDictionary<string, string>? extraEnv = null,
+        IReadOnlyDictionary<string, string>? launchEnvOverride = null,
+        IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
     {
         await using var scope = provider.CreateAsyncScope();
         var resolver = scope.ServiceProvider.GetRequiredService<AgentTuiLaunchResolver>();
         return await resolver.ResolveForAgentAsync(
             agent,
-            new AgentLaunchOptions(Cols: 120, Rows: 30, ExtraArgs: extraArgs),
+            new AgentLaunchOptions(
+                Cols: 120,
+                Rows: 30,
+                ExtraArgs: extraArgs,
+                ExtraEnv: extraEnv,
+                LaunchEnvOverride: launchEnvOverride,
+                ProjectDefaultEnv: projectDefaultEnv),
             Ct);
     }
 

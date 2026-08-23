@@ -55,7 +55,16 @@ public sealed record CreateAgentTaskRequest(
     /// reading refuses create with 409 <c>subscription_quota_low</c>. Re-send the same
     /// request with this true to queue anyway; the warning is recorded on the task.
     /// </summary>
-    bool IgnoreSubscriptionQuota = false);
+    bool IgnoreSubscriptionQuota = false,
+    /// <summary>
+    /// Overlay applied when this task's process is launched (CARD-0106). Persisted on the
+    /// task row so async dispatch and a task-session relaunch re-apply it. ANTIPHON_* names
+    /// are refused 422. A non-empty overlay excludes the task from warm-pool reuse (reuse
+    /// launches no process, so the overlay could never apply). Combined with
+    /// <see cref="FollowUpOnTask"/> is refused 422 — a follow-up continues an existing
+    /// process. Does not cascade to child tasks; blanket a subtree with a project default.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

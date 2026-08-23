@@ -265,7 +265,13 @@ public sealed record StartAgentRequest(
     /// reading refuses the start with 409 <c>subscription_quota_low</c>. Internal
     /// callers that cannot choose a provider pass true.
     /// </summary>
-    bool IgnoreSubscriptionQuota = false);
+    bool IgnoreSubscriptionQuota = false,
+    /// <summary>
+    /// Overlay on this launch only (CARD-0106). Not persisted; an AlwaysOn restart or
+    /// resume-recovery rebuilds from the agent's stored <c>launchEnv</c>. ANTIPHON_* names
+    /// are refused 422. Does not cascade to child tasks — that is what a project default is for.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
 
 public sealed record AssignAgentCardRequest(Guid CardId);
 

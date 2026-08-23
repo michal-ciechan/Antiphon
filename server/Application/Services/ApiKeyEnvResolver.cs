@@ -62,6 +62,26 @@ public sealed class ApiKeyEnvResolver
     }
 
     /// <summary>
+    /// The project's default launch environment, or empty when <paramref name="projectId"/> is
+    /// null or the row is missing/unreadable. Unreadable JSON is empty rather than a launch
+    /// failure — same stance as <see cref="AgentLaunchEnv.Parse"/>.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>> GetProjectDefaultEnvAsync(
+        Guid? projectId, CancellationToken ct)
+    {
+        if (projectId is not { } id)
+            return AgentLaunchEnv.Empty;
+
+        var json = await _db.Projects
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => p.DefaultLaunchEnvJson)
+            .FirstOrDefaultAsync(ct);
+
+        return AgentLaunchEnv.Parse(json);
+    }
+
+    /// <summary>
     /// Resolves a spec's environment for this agent, deriving the project from the agent's board.
     /// The spec's ARGUMENTS are checked too and refused if they carry a placeholder — this is the
     /// enforcement half of "env values only", ahead of the launch-time tripwire so the message names

@@ -14,6 +14,7 @@ export interface ProjectDto {
   notificationsEnabled: boolean
   createdAt: string
   updatedAt: string
+  defaultLaunchEnv?: Record<string, string>
 }
 
 export interface CreateProjectRequest {
@@ -24,6 +25,7 @@ export interface CreateProjectRequest {
   constitutionPath?: string
   gitHubIntegrationEnabled: boolean
   notificationsEnabled: boolean
+  defaultLaunchEnv?: Record<string, string> | null
 }
 
 export interface UpdateProjectRequest {
@@ -34,6 +36,7 @@ export interface UpdateProjectRequest {
   constitutionPath?: string
   gitHubIntegrationEnabled: boolean
   notificationsEnabled: boolean
+  defaultLaunchEnv?: Record<string, string> | null
 }
 
 export interface TestGitConnectivityResult {

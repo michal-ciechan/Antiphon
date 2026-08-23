@@ -24,7 +24,14 @@ public sealed record AgentLaunchOptions(
     // The project whose API keys this launch resolves against (CARD-0106 S2). Null = derive it from
     // the agent's board, which for an agent with no board means GLOBAL keys only. Set explicitly by
     // the CARD paths, where the card's own board names the project even when no agent is involved.
-    Guid? ApiKeyProjectId = null);
+    Guid? ApiKeyProjectId = null,
+    // Overlay for THIS launch (CARD-0106 gap 1). Merged after the agent's LaunchEnvJson and before
+    // ExtraEnv, in both resolvers. Null or empty means "no overlay". Never replaces the stored
+    // agent env — that is AgentEnv's internal ??-replace hook, which this does not reuse.
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null,
+    // Project-level default env (CARD-0106 gap 2). Merged after definition/profile env and before
+    // the agent's LaunchEnvJson. Null means "none" (no project identity, or not yet fetched).
+    IReadOnlyDictionary<string, string>? ProjectDefaultEnv = null);
 
 /// <summary>
 /// Fully-resolved launch instruction passed to <c>IAgentProtocolAdapter.StartAsync</c>.

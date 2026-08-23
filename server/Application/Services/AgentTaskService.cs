@@ -99,6 +99,16 @@ public sealed class AgentTaskService
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
 
+        var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
+            request.LaunchEnvOverride, "launchEnvOverride");
+        if (launchEnvOverride.Count > 0 && !string.IsNullOrWhiteSpace(request.FollowUpOnTask))
+        {
+            throw new ValidationException(
+                "launchEnvOverride",
+                "A follow-up continues an existing process, so a launch-time env override cannot "
+                + "apply. Drop the override, or PATCH the agent's launchEnv for a durable change.");
+        }
+
         // Rejected rather than reinterpreted. 0 does NOT mean "never check" and a negative is not a
         // silent default: opting a single task out of checking is not offered until someone needs
         // it, and a caller who typed a nonsense number should hear about it (CARD-0047 §1.5).
@@ -270,6 +280,7 @@ public sealed class AgentTaskService
             Kind = request.Kind,
             Role = request.Role,
             ProjectId = projectId,
+            LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(launchEnvOverride),
             AgentKind = agentKind,
             ModelLevel = level,
             Workspace = workspace,

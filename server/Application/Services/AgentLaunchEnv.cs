@@ -115,4 +115,31 @@ public static class AgentLaunchEnv
 
         return result;
     }
+
+    /// <summary>
+    /// Write-time refusal for NEW env surfaces (launch-time override, project default). Same
+    /// rules as <see cref="Validate"/> plus: any name starting <c>ANTIPHON_</c> (OrdinalIgnoreCase)
+    /// is refused 422 naming the variable. Reject, do not strip — a stripped key is a silent no-op
+    /// the operator discovers only when their launch behaves as if they typed nothing.
+    ///
+    /// <para>Not retrofitted onto the existing agent PATCH <c>LaunchEnv</c> surface: refusing there
+    /// now could 422 an already-stored config on its next unrelated save.</para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ValidateOverride(
+        IReadOnlyDictionary<string, string>? env,
+        string field = "launchEnvOverride")
+    {
+        var validated = Validate(env, field);
+        foreach (var name in validated.Keys)
+        {
+            if (name.StartsWith("ANTIPHON_", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException(
+                    field,
+                    $"'{name}' is Antiphon's own orchestration plumbing and cannot be overridden.");
+            }
+        }
+
+        return validated;
+    }
 }

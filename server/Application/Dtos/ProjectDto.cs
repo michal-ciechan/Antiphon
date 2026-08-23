@@ -10,4 +10,5 @@ public record ProjectDto(
     bool GitHubIntegrationEnabled,
     bool NotificationsEnabled,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    IReadOnlyDictionary<string, string> DefaultLaunchEnv);

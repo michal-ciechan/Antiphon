@@ -7,4 +7,5 @@ public record CreateProjectRequest(
     bool GitHubIntegrationEnabled,
     bool NotificationsEnabled,
     string? LocalRepositoryPath,
-    string? BaseBranch);
+    string? BaseBranch,
+    IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null);

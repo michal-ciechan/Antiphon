@@ -114,13 +114,26 @@ public sealed class AgentRegistry
             args.AddRange(options.ExtraArgs);
 
         var env = new Dictionary<string, string>(def.Env, StringComparer.Ordinal);
-        // Merge order (CARD-0106 S2): definition env -> the AGENT's own launch env -> ExtraEnv.
-        // ExtraEnv stays last on purpose — it is Antiphon's orchestration block, and an agent-level
-        // override of ANTIPHON_SESSION_ID would be a self-inflicted CARD-0006. Kind defaults below
-        // still only fill gaps, so an agent may deliberately override one of those.
+        // Merge order (CARD-0106): definition env -> project default -> the AGENT's own launch env
+        // -> launch-time override -> ExtraEnv. ExtraEnv stays last among overlays on purpose — it
+        // is Antiphon's orchestration block, and an operator override of ANTIPHON_SESSION_ID would
+        // be a self-inflicted CARD-0006. Kind defaults below still only fill gaps, so an agent or
+        // override may deliberately set DISABLE_AUTOUPDATER=0 etc.
+        if (options.ProjectDefaultEnv is not null)
+        {
+            foreach (var (k, v) in options.ProjectDefaultEnv)
+                env[k] = v;
+        }
+
         if (options.AgentEnv is not null)
         {
             foreach (var (k, v) in options.AgentEnv)
+                env[k] = v;
+        }
+
+        if (options.LaunchEnvOverride is not null)
+        {
+            foreach (var (k, v) in options.LaunchEnvOverride)
                 env[k] = v;
         }
 

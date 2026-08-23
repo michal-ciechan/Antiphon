@@ -187,6 +187,173 @@ public class AgentLaunchEnvTests
         AgentLaunchEnv.Validate(new Dictionary<string, string>()).ShouldBeEmpty();
     }
 
+    // ---- CARD-0106 gap 1/2: launch-time override + project default merge order -----------------
+
+    [Test]
+    public void the_launch_override_beats_the_agent_env_and_loses_to_the_orchestration_block()
+    {
+        var registry = NewRegistry();
+
+        var spec = registry.Resolve("test", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            AgentEnv: new Dictionary<string, string>
+            {
+                ["CONTESTED"] = "agent",
+                ["FROM_AGENT"] = "agent",
+            },
+            ExtraEnv: new Dictionary<string, string>
+            {
+                ["ANTIPHON_SESSION_ID"] = "the-real-session",
+            },
+            LaunchEnvOverride: new Dictionary<string, string>
+            {
+                ["CONTESTED"] = "override",
+                ["FROM_OVERRIDE"] = "override",
+                ["ANTIPHON_SESSION_ID"] = "hijacked",
+            }));
+
+        spec.Env["FROM_AGENT"].ShouldBe("agent");
+        spec.Env["FROM_OVERRIDE"].ShouldBe("override");
+        spec.Env["CONTESTED"].ShouldBe(
+            "override", "the launch-time overlay is more specific than the agent's stored env");
+        spec.Env["ANTIPHON_SESSION_ID"].ShouldBe(
+            "the-real-session",
+            "ExtraEnv is Antiphon's orchestration identity and must outrank a launch-time override, "
+            + "even when the override maliciously names ANTIPHON_SESSION_ID");
+    }
+
+    [Test]
+    public void the_agents_own_launch_env_beats_a_project_default()
+    {
+        var registry = NewRegistry(definitionEnv: new Dictionary<string, string>
+        {
+            ["FROM_DEFINITION"] = "definition",
+            ["CONTESTED_DEF_PROJ"] = "definition",
+        });
+
+        var spec = registry.Resolve("test", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            AgentEnv: new Dictionary<string, string>
+            {
+                ["CONTESTED_PROJ_AGENT"] = "agent",
+                ["FROM_AGENT"] = "agent",
+            },
+            ProjectDefaultEnv: new Dictionary<string, string>
+            {
+                ["CONTESTED_DEF_PROJ"] = "project",
+                ["CONTESTED_PROJ_AGENT"] = "project",
+                ["FROM_PROJECT"] = "project",
+            }));
+
+        spec.Env["FROM_DEFINITION"].ShouldBe("definition");
+        spec.Env["FROM_PROJECT"].ShouldBe("project");
+        spec.Env["FROM_AGENT"].ShouldBe("agent");
+        spec.Env["CONTESTED_DEF_PROJ"].ShouldBe(
+            "project", "a project default is more specific than a shared definition");
+        spec.Env["CONTESTED_PROJ_AGENT"].ShouldBe(
+            "agent", "the agent's own setting is more specific than a project default");
+    }
+
+    [Test]
+    public void five_layers_contest_pairwise_and_the_more_specific_one_wins_each_time()
+    {
+        // The single test that fails loudest if a future edit reorders a merge loop.
+        // definition < project default < agent < override < ExtraEnv.
+        var registry = NewRegistry(definitionEnv: new Dictionary<string, string>
+        {
+            ["A"] = "definition",
+            ["B"] = "definition",
+        });
+
+        var spec = registry.Resolve("test", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            AgentEnv: new Dictionary<string, string>
+            {
+                ["C"] = "agent",
+                ["D"] = "agent",
+            },
+            ExtraEnv: new Dictionary<string, string>
+            {
+                ["E"] = "extra",
+            },
+            LaunchEnvOverride: new Dictionary<string, string>
+            {
+                ["D"] = "override",
+                ["E"] = "override",
+            },
+            ProjectDefaultEnv: new Dictionary<string, string>
+            {
+                ["B"] = "project",
+                ["C"] = "project",
+            }));
+
+        spec.Env["A"].ShouldBe("definition");
+        spec.Env["B"].ShouldBe("project");
+        spec.Env["C"].ShouldBe("agent");
+        spec.Env["D"].ShouldBe("override");
+        spec.Env["E"].ShouldBe("extra");
+    }
+
+    [Test]
+    public void an_override_can_deliberately_set_a_kind_default_that_would_otherwise_be_gap_filled()
+    {
+        var registry = NewRegistry();
+        // The test definition is Raw, which has no kind defaults. Use ClaudeCode so the
+        // DISABLE_AUTOUPDATER gap-fill is in play.
+        var claude = new AgentDefinition { Kind = nameof(AgentKind.ClaudeCode), Exe = "claude.exe" };
+        var claudeRegistry = new AgentRegistry(new OptionsMonitorStub(new AgentRegistrySettings
+        {
+            DefaultDefinition = "claude",
+            Definitions = { ["claude"] = claude },
+        }));
+
+        var spec = claudeRegistry.Resolve("claude", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            LaunchEnvOverride: new Dictionary<string, string> { ["DISABLE_AUTOUPDATER"] = "0" }));
+
+        spec.Env["DISABLE_AUTOUPDATER"].ShouldBe("0");
+    }
+
+    [Test]
+    public void ValidateOverride_refuses_ANTIPHON_prefixed_names_including_lowercase()
+    {
+        var upper = Should.Throw<ValidationException>(() => AgentLaunchEnv.ValidateOverride(
+            new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "stolen" }));
+        upper.StatusCode.ShouldBe(422);
+        upper.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("ANTIPHON_TASK_TOKEN"));
+        upper.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("orchestration plumbing"));
+
+        var lower = Should.Throw<ValidationException>(() => AgentLaunchEnv.ValidateOverride(
+            new Dictionary<string, string> { ["antiphon_x"] = "nope" }));
+        lower.StatusCode.ShouldBe(422);
+        lower.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("antiphon_x"));
+    }
+
+    [Test]
+    public void ValidateOverride_accepts_ordinary_names_and_placeholder_values()
+    {
+        var validated = AgentLaunchEnv.ValidateOverride(
+            new Dictionary<string, string>
+            {
+                ["ANTHROPIC_BASE_URL"] = "http://proxy:8080",
+                ["ANTHROPIC_API_KEY"] = "{{key:proxy-key}}",
+            });
+
+        validated["ANTHROPIC_BASE_URL"].ShouldBe("http://proxy:8080");
+        validated["ANTHROPIC_API_KEY"].ShouldBe("{{key:proxy-key}}");
+    }
+
+    [Test]
+    public void Validate_still_accepts_ANTIPHON_names_the_existing_agent_PATCH_must_not_422()
+    {
+        // Verdict 2: the shipped PATCH launchEnv surface keeps accepted-but-inert reserved names.
+        // Refusing them here would 422 an already-stored config on its next unrelated save.
+        var validated = AgentLaunchEnv.Validate(
+            new Dictionary<string, string> { ["ANTIPHON_SESSION_ID"] = "stored-and-inert" });
+
+        validated["ANTIPHON_SESSION_ID"].ShouldBe("stored-and-inert");
+    }
+
     private static AgentRegistry NewRegistry(IDictionary<string, string>? definitionEnv = null)
     {
         var definition = new AgentDefinition

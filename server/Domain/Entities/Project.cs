@@ -17,6 +17,15 @@ public class Project
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>
+    /// Default launch environment inherited by every agent and pool delegate under this
+    /// project unless the agent's own <c>LaunchEnvJson</c> (or a launch-time override) sets
+    /// the same variable (CARD-0106 gap 2). JSON object, default <c>{}</c>. Values may
+    /// reference stored API keys as <c>{{key:NAME}}</c>; reserved <c>ANTIPHON_*</c> names
+    /// are refused at write time.
+    /// </summary>
+    public string DefaultLaunchEnvJson { get; set; } = "{}";
+
     public ICollection<Board> Boards { get; set; } = new List<Board>();
 
     /// <summary>

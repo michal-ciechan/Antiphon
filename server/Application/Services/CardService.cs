@@ -579,11 +579,16 @@ public sealed class CardService
                 Cols: request.Cols,
                 Rows: request.Rows,
                 ExtraArgs: null,
-                ExtraEnv: null));
+                ExtraEnv: null,
+                ApiKeyProjectId: card.Board.ProjectId,
+                LaunchEnvOverride: request.LaunchEnvOverride,
+                ProjectDefaultEnv: _apiKeyEnvResolver is not null
+                    ? await _apiKeyEnvResolver.GetProjectDefaultEnvAsync(card.Board.ProjectId, ct)
+                    : null));
             // This is a direct registry resolve with no agent, so it is where the spec is finalized
             // and where API keys have to be resolved (CARD-0106 S2). The card's board names the
             // project, so an explicitly-named definition spawned onto a project's card still gets
-            // that project's keys.
+            // that project's keys (and, CARD-0106 gap 2, its default env).
             if (_apiKeyEnvResolver is not null)
             {
                 spec = await _apiKeyEnvResolver.ResolveSpecAsync(
@@ -607,7 +612,8 @@ public sealed class CardService
                     ExtraEnv: null,
                     // The CARD's board names the project for a card spawn (plan section 4), whether
                     // or not the agent that runs it happens to sit on the same board.
-                    ApiKeyProjectId: card.Board.ProjectId),
+                    ApiKeyProjectId: card.Board.ProjectId,
+                    LaunchEnvOverride: request.LaunchEnvOverride),
                 ct,
                 _apiKeyEnvResolver);
             definitionName = resolved.Spec.DefinitionName;
@@ -628,7 +634,8 @@ public sealed class CardService
                     ExtraEnv: null,
                     // The CARD's board names the project for a card spawn (plan section 4), whether
                     // or not the agent that runs it happens to sit on the same board.
-                    ApiKeyProjectId: card.Board.ProjectId),
+                    ApiKeyProjectId: card.Board.ProjectId,
+                    LaunchEnvOverride: request.LaunchEnvOverride),
                 ct,
                 _apiKeyEnvResolver);
             definitionName = resolved.Spec.DefinitionName;
@@ -965,6 +972,8 @@ public sealed class CardService
             errors[nameof(request.Rows)] = ["Terminal rows must be positive."];
         if (errors.Count > 0)
             throw new ValidationException(errors);
+
+        AgentLaunchEnv.ValidateOverride(request.LaunchEnvOverride, "launchEnvOverride");
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
