@@ -329,6 +329,11 @@ export interface StartAgentRequest {
   remoteControl?: boolean | null
   /** Force a brand-new conversation. By default an interactive start resumes the agent's previous Claude session. */
   fresh?: boolean
+  /**
+   * Bypass the subscription-quota launch gate. A 409 `subscription_quota_low` is the
+   * refusal; re-send with this true to launch anyway. No UI wires it in CARD-0136.
+   */
+  ignoreSubscriptionQuota?: boolean
 }
 
 export const agentKeys = {

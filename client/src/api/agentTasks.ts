@@ -156,6 +156,11 @@ export interface CreateAgentTaskRequest {
    * "delegate this instead"). Null follows the server's config default.
    */
   denyDirectEdits?: boolean | null
+  /**
+   * Bypass the subscription-quota launch gate. A 409 `subscription_quota_low` is the
+   * refusal; re-send with this true to queue anyway.
+   */
+  ignoreSubscriptionQuota?: boolean
 }
 
 export interface AgentTaskCreatedDto {

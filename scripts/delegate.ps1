@@ -74,6 +74,13 @@ param(
     [ValidateRange(1, 1440)]
     [int]$ExpectAbout,
 
+    # Bypass the subscription-quota launch gate (CARD-0136). Without this, a fresh
+    # reading past the remaining-%-vs-time-to-reset threshold is refused with 409
+    # subscription_quota_low. Two ways out: pick another -Kind / agent, or re-run
+    # the same command with this switch to launch anyway.
+    [Parameter(ParameterSetName = 'Create')]
+    [switch]$IgnoreSubscriptionQuota,
+
     # Answer a blocked delegate's question: -Reply <taskId> "your answer"
     [Parameter(ParameterSetName = 'Reply', Mandatory = $true)]
     [string]$Reply,
@@ -186,6 +193,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($Scope) { $body['scopeGlob'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
+        if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }
 
         $created = Invoke-Antiphon -Method POST -Path '/api/agent-tasks' -Body $body
         # The RESOLVED kind is echoed, not the requested one - a role policy promoted to Grok in

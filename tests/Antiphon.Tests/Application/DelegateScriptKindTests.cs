@@ -120,6 +120,30 @@ public sealed class DelegateScriptKindTests
         run.Output.ShouldNotContain("ClaudeCode", customMessage: "the default kind is not news");
     }
 
+    [Test]
+    public async Task IgnoreSubscriptionQuota_sends_ignoreSubscriptionQuota_true()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(
+            server, "-Role", "Test", "-Goal", "run anyway", "-IgnoreSubscriptionQuota");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.GetProperty("ignoreSubscriptionQuota").GetBoolean().ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task an_omitted_IgnoreSubscriptionQuota_sends_no_ignoreSubscriptionQuota_at_all()
+    {
+        using var server = new StubApi();
+        var run = await RunDelegateAsync(server, "-Role", "Test", "-Goal", "run the suite");
+
+        run.ExitCode.ShouldBe(0, run.Output);
+        var body = server.LastBody.ShouldNotBeNull();
+        body.RootElement.TryGetProperty("ignoreSubscriptionQuota", out _)
+            .ShouldBeFalse("the flag is sent only when chosen, matching -Kind / -ExpectAbout");
+    }
+
     // ---- harness -------------------------------------------------------------------------------
 
     // The script runner itself lives in DelegateScriptRunner so S6's end-to-end test invokes
