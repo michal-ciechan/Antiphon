@@ -19,6 +19,13 @@ public static class DelegationReportFormatter
     public static string Short(Guid id) => id.ToString("N")[..8];
 
     /// <summary>
+    /// Folded into the marked brief when a reuse lands on a kind that does not implement a typed
+    /// <c>/compact</c> as housekeeping (CARD-0117). Marked, correlated, costs no extra turn.
+    /// </summary>
+    internal const string UnrelatedWorkRefocusLine =
+        "This session previously worked on UNRELATED work — ignore that context; everything you need is in this brief.";
+
+    /// <summary>
     /// The full brief: marker, metadata, the caller's goal verbatim, then the reporting contract.
     /// Composed SERVER-SIDE so a calling agent cannot forget it and every delegate gets the same one.
     /// </summary>
@@ -28,8 +35,15 @@ public static class DelegationReportFormatter
     /// caller passes the resolved value. Null keeps <see cref="DelegationSettings.ReplyInlineMaxChars"/>,
     /// the conservative inbox-conhost number.
     /// </param>
+    /// <param name="refocus">
+    /// When true, a one-line "ignore the previous unrelated work" note is inserted right after the
+    /// marker header (CARD-0117 D2). Used for pool reuse onto a kind whose <c>RefocusCompact</c>
+    /// axis is not Supported — never a second unmarked prompt, never in
+    /// <see cref="BuildBriefPointer"/> (the pointer stays one transport chunk; the spill file is
+    /// built from this method, so the line rides along for free).
+    /// </param>
     public static string BuildBrief(
-        AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null)
+        AgentTask task, DelegationSettings settings, int? replyInlineMaxChars = null, bool refocus = false)
     {
         var sb = new StringBuilder();
         sb.Append(TaskMarker(task.Id))
@@ -39,6 +53,9 @@ public static class DelegationReportFormatter
         if (!string.IsNullOrWhiteSpace(task.ScopeGlob))
             sb.Append(" scope=").Append(task.ScopeGlob);
         sb.AppendLine().AppendLine();
+
+        if (refocus)
+            sb.AppendLine(UnrelatedWorkRefocusLine).AppendLine();
 
         sb.AppendLine(task.Goal.Trim()).AppendLine();
 

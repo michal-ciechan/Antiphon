@@ -49,6 +49,9 @@ public sealed class AgentTaskDispatcher
     // Production wires it (S3); a missing registration here is not a launch of the wrong program,
     // it is today's registry resolve.
     private readonly AgentTuiLaunchResolver? _launchResolver;
+    // CARD-0117 D7: parked-at-MaxDeliveryAttempts wording. Optional so predating harnesses keep
+    // the shipped default of 3.
+    private readonly int _maxDeliveryAttempts;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -87,11 +90,13 @@ public sealed class AgentTaskDispatcher
         AgentSessionRuntime? runtime = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         IServiceScopeFactory? scopeFactory = null,
-        AgentTuiLaunchResolver? launchResolver = null)
+        AgentTuiLaunchResolver? launchResolver = null,
+        IOptions<SupervisionSettings>? supervision = null)
     {
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
         _launchResolver = launchResolver;
+        _maxDeliveryAttempts = Math.Max(1, supervision?.Value.DeliveryVerification.MaxDeliveryAttempts ?? 3);
         _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
@@ -431,70 +436,105 @@ public sealed class AgentTaskDispatcher
             var started = await TranscriptPromptSpan.HasTurnPromptSinceAsync(
                 _db, sessionId, task.DispatchedAt, ct);
 
+            // CARD-0117 D7: the brief's own queue row outranks the transcript. A Pending brief is
+            // direct, positive evidence about THIS task's own message; `started` is evidence about
+            // some prompt, and the uncorrelated incident is evidence about some turn.
+            var marker = DelegationReportFormatter.TaskMarker(task.Id);
+            var briefRow = await _db.SessionQueuedMessages
+                .AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId
+                    && m.Origin == QueuedMessageOrigin.Delegation
+                    && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
+                    && m.Body.Contains(marker))
+                .OrderBy(m => m.Sequence)
+                .Select(m => new { m.Status, m.DeliveryAttempts })
+                .FirstOrDefaultAsync(ct);
+            var briefNeverTyped = briefRow is { Status: QueuedMessageStatus.Pending };
+
+            // CARD-0117 D8: decline to judge a provably-untyped brief on a provably-working session.
+            // The queue row is a different subsystem from the transcript, so this is not the pair
+            // CARD-0055 forbids. Every later tick re-evaluates: Sent → the normal arms; idle with
+            // the brief still Pending → arm 1 below; never-stops → TaskDeadlinePolicy (no kill).
+            if (briefNeverTyped && await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId}: delivery watchdog deferring — the brief is still queued Pending "
+                    + "and session {SessionId} is working; the clock passes to TaskDeadlinePolicy",
+                    DelegationReportFormatter.Short(task.Id), sessionId);
+                continue;
+            }
+
             string reason;
             var withholdKill = false;
-            if (!started)
+            if (!started || briefNeverTyped)
             {
                 // CARD-0085: an empty TranscriptEntries table is not evidence the work did not
                 // happen. Pull git / later-JSONL evidence before writing Failed (and killing).
                 // After CARD-0077 this also covers a reused session whose only new records are
                 // the compact's housekeeping — the work may still have landed unbound.
-                if (await TryRecoverBindRefusalAsync(task, sessionId, ct))
+                // Only when `started` is false: a Pending brief with real prompts since dispatch
+                // is a delivery miss, not a bind refusal.
+                if (!started && await TryRecoverBindRefusalAsync(task, sessionId, ct))
                     continue;
 
                 // CARD-0112: an explicit capability omission is positive evidence that this runner
                 // cannot observe the task's transcript. Fail the uncorrelatable task, but do not
                 // kill a session that may have been doing the requested work all along.
-                if (await TryGetRunnerCapabilityMismatchAsync(task, sessionId, ct) is { } mismatch)
+                if (!started
+                    && await TryGetRunnerCapabilityMismatchAsync(task, sessionId, ct) is { } mismatch)
                 {
                     reason = mismatch.Message;
                     withholdKill = true;
                 }
                 else
                 {
-                    var marker = DelegationReportFormatter.TaskMarker(task.Id);
-                    var briefStatus = await _db.SessionQueuedMessages
-                        .AsNoTracking()
-                        .Where(m => m.AgentSessionId == sessionId
-                            && m.Origin == QueuedMessageOrigin.Delegation
-                            && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
-                            && m.Body.Contains(marker))
-                        .OrderBy(m => m.Sequence)
-                        .Select(m => (QueuedMessageStatus?)m.Status)
-                        .FirstOrDefaultAsync(ct);
-                    var evidence = briefStatus switch
-                    {
-                        QueuedMessageStatus.Pending => "the brief is still queued Pending, so every delivery attempt failed",
-                        QueuedMessageStatus.Sent => "the brief is marked Sent, but the session never wrote a turn prompt for this task",
-                        null => "no brief was queued for this task after dispatch",
-                        _ => $"brief status: {briefStatus}",
-                    };
-                    reason =
-                        $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
-                        + $"the session has no turn prompt since this task was dispatched ({evidence}). "
-                        + "See the agent's incidents for the delivery errors — and if one of them is a "
-                        + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
-                        + "transcript bound to read (CARD-0064), so check the session before re-running.";
+                    var evidence = DescribeBriefQueueEvidence(
+                        briefRow?.Status, briefRow?.DeliveryAttempts ?? 0);
+                    reason = started && briefNeverTyped
+                        ? $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
+                          + "the session has written prompts since dispatch, but none of them was this "
+                          + $"task's brief — it is still queued Pending ({evidence}). "
+                          + "See the agent's incidents for the delivery errors — and if one of them is a "
+                          + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
+                          + "transcript bound to read (CARD-0064), so check the session before re-running."
+                        : $"Boot prompt was never delivered: {(int)timeout.TotalMinutes} minutes after dispatch "
+                          + $"the session has no turn prompt since this task was dispatched ({evidence}). "
+                          + "See the agent's incidents for the delivery errors — and if one of them is a "
+                          + "TranscriptBindFailed, the delegate may have been WORKING all along with no "
+                          + "transcript bound to read (CARD-0064), so check the session before re-running.";
                 }
             }
-            else if (await _db.AgentIncidents.AnyAsync(
-                i => i.SessionId == sessionId
-                    && i.Kind == AgentIncidentKind.DelegateReportUncorrelated, ct))
+            else
             {
+                var uncorrelated = await _db.AgentIncidents.AsNoTracking()
+                    .Where(i => i.SessionId == sessionId
+                        && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)
+                    .Select(i => new { i.SessionId, i.CreatedAt })
+                    .ToListAsync(ct);
+                if (!uncorrelated.Any(i =>
+                    UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt)))
+                    continue;
+
                 // The opposite failure to the one above, and the one that actually stranded three
                 // tasks overnight (2026-08-11): the session ran, worked and REPORTED, but no turn
                 // could be matched to the task, so nothing ever settled it. Starting is not the
                 // test of a healthy task — settling is. Without this branch the check above waves
                 // it through forever on the strength of a transcript it cannot use.
+                // CARD-0117 S1: scoped to THIS task via UncorrelatedReportEvidence, not the session.
                 reason =
                     $"Delegate reported but the result could not be attributed: {(int)timeout.TotalMinutes} "
                     + "minutes after dispatch the session has ended a turn with a report whose prompt "
                     + "carries no task marker (most likely the brief was mangled in delivery). The work "
                     + $"may be real — read session {sessionId} before re-running this task.";
             }
-            else
+
+            // CARD-0117 D9: negative transcript evidence about a mid-turn session is not grounds
+            // to destroy the work on screen. The task still Fails; the session lives (CARD-0056
+            // "unclaimed never implies kill" — RemoveEphemeralAgentAsync may leave it unclaimed).
+            if (!withholdKill
+                && await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
             {
-                continue;
+                withholdKill = true;
             }
 
             await FailAsync(task, reason, ct);
@@ -546,6 +586,26 @@ public sealed class AgentTaskDispatcher
 
         return failed;
     }
+
+    /// <summary>
+    /// CARD-0117 D7: the Pending-arm evidence used to read "every delivery attempt failed" when
+    /// <c>DeliveryAttempts</c> was 0 — the queue never tried, because the session was mid-turn
+    /// at every flush. Project the attempt count and say which it was.
+    /// </summary>
+    private string DescribeBriefQueueEvidence(QueuedMessageStatus? status, int deliveryAttempts) =>
+        status switch
+        {
+            QueuedMessageStatus.Pending when deliveryAttempts <= 0
+                => "the brief is still queued Pending and was never attempted",
+            QueuedMessageStatus.Pending when deliveryAttempts >= _maxDeliveryAttempts
+                => "the brief is still queued Pending, parked at MaxDeliveryAttempts",
+            QueuedMessageStatus.Pending
+                => $"the brief is still queued Pending after {deliveryAttempts} delivery attempt(s) failed",
+            QueuedMessageStatus.Sent
+                => "the brief is marked Sent, but the session never wrote a turn prompt for this task",
+            null => "no brief was queued for this task after dispatch",
+            _ => $"brief status: {status}",
+        };
 
     private async Task<RunnerCapabilityMismatch?> TryGetRunnerCapabilityMismatchAsync(
         AgentTask task, Guid sessionId, CancellationToken ct)
@@ -1478,11 +1538,12 @@ public sealed class AgentTaskDispatcher
         DelegationSettings settings,
         PtyDeliveryCeilings? ceilings = null,
         ILogger? logger = null,
-        AgentKind agentKind = AgentKind.ClaudeCode)
+        AgentKind agentKind = AgentKind.ClaudeCode,
+        bool refocus = false)
     {
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
-        var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars);
+        var brief = DelegationReportFormatter.BuildBrief(task, settings, limits.ReplyInlineMaxChars, refocus);
         // UTF-8 bytes, not string.Length: the read quantum the TUI drops whole is measured in bytes,
         // and an em-dash costs 3 of them (CARD-0027).
         var briefBytes = System.Text.Encoding.UTF8.GetByteCount(brief);
@@ -2189,32 +2250,44 @@ public sealed class AgentTaskDispatcher
             .Select(t => (Guid?)t.RootTaskId)
             .FirstOrDefaultAsync(ct);
 
+        // The live session's own kind (CARD-0084 S1 / CARD-0117 S3). Looked up BEFORE the compact
+        // so a kind that does not implement /compact as housekeeping never receives one. A missing
+        // session row is not evidence and sends nothing; the brief's own rendering keeps the
+        // existing ?? ClaudeCode default so no current rendering changes.
+        var sessionKind = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == session)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct);
+
         // A Check task NEVER compacts its session. Every interpretation is its own root, so the
         // "unrelated work" test is true of every single one — and it is exactly wrong here: the
         // specialist's work is homogeneous, and the accumulated experience of reading bundles is
         // the whole reason it is a standing agent rather than a fresh Claude per check.
-        if (task.Role != AgentTaskRole.Check
-            && previousRoot is not null && previousRoot != task.RootTaskId)
+        var unrelated = task.Role != AgentTaskRole.Check
+            && previousRoot is not null && previousRoot != task.RootTaskId;
+
+        var compact = sessionKind is AgentKind kind
+            ? ProviderContractCatalog.For(kind).RefocusCompact
+            : null;
+        var compactSupported = compact is { State: AgentTuiCapabilityState.Supported, Command: not null };
+
+        if (unrelated && compactSupported)
         {
             // One line: a slash command is parsed from the submitted composer text, and the
             // focus argument tells the summariser what the surviving context must serve.
+            // Type only the catalog's declared Command — never a guessed body.
             var focus = task.Goal.ReplaceLineEndings(" ").Trim();
             if (focus.Length > 300) focus = focus[..300];
             await TryEnqueueReuseAsync(
                 task, session,
-                $"/compact This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
+                $"{compact!.Command} This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
                 "refocus compact", ct);
         }
 
-        // The live session's own kind (CARD-0084 S1). Unlike the spawn path this is NOT always
-        // ClaudeCode today: a task pinned to a STANDING agent is delivered into whatever that
-        // agent already is, and one of those is a Grok session.
-        var kind = await _db.AgentSessions.AsNoTracking()
-            .Where(s => s.Id == session)
-            .Select(s => (AgentKind?)s.AgentKind)
-            .FirstOrDefaultAsync(ct) ?? AgentKind.ClaudeCode;
-
-        var brief = FitBriefForTyping(task, _settings, _ptyProfile?.Ceilings, _logger, kind);
+        var briefKind = sessionKind ?? AgentKind.ClaudeCode;
+        var brief = FitBriefForTyping(
+            task, _settings, _ptyProfile?.Ceilings, _logger, briefKind,
+            refocus: unrelated && !compactSupported);
         await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
     }
 

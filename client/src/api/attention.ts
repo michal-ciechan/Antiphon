@@ -23,6 +23,11 @@ export type AttentionKind =
   | 'DeadSession'
   /** Dispatched, past the grace, and the session has written not one transcript entry. */
   | 'NeverStarted'
+  /**
+   * Dispatched, past the delivery grace, the brief is still Pending, and the session is mid-turn.
+   * The watchdog deferred this rather than fail-and-kill (CARD-0117).
+   */
+  | 'BriefUndelivered'
   /** The delegate reported and the report could not be tied back to the task. */
   | 'UncorrelatedReport'
   /** Well past the estimate AND idle at the prompt — "finished but never reported". */

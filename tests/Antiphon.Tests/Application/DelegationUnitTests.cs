@@ -446,6 +446,57 @@ public class DelegationReportFormatterTests
         DelegationReportFormatter.BuildBrief(task, Settings).ShouldContain("Do NOT modify any files");
     }
 
+    [Test]
+    public void a_refocus_brief_carries_the_unrelated_work_line_after_the_marker()
+    {
+        var task = NewTask();
+        var brief = DelegationReportFormatter.BuildBrief(task, Settings, refocus: true);
+
+        brief.ShouldStartWith(DelegationReportFormatter.TaskMarker(task.Id));
+        brief.ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        var markerEnd = brief.IndexOf(task.Goal.Trim(), StringComparison.Ordinal);
+        markerEnd.ShouldBeGreaterThan(0);
+        brief[..markerEnd].ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+    }
+
+    [Test]
+    public void a_brief_pointer_does_not_carry_the_refocus_line()
+    {
+        var pointer = DelegationReportFormatter.BuildBriefPointer(
+            NewTask(), Settings, spillPath: null, fullLength: 5_203);
+
+        pointer.ShouldNotContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        pointer.ShouldNotContain("UNRELATED work");
+    }
+
+    [Test]
+    public void a_refocus_spill_file_carries_the_line_the_pointer_does_not()
+    {
+        var dir = Directory.CreateTempSubdirectory("antiphon-refocus-spill").FullName;
+        try
+        {
+            var task = NewTask();
+            task.WorkingDirectory = dir;
+            task.Goal = string.Join(" ", Enumerable.Range(0, 400).Select(i => $"context{i:D3}"));
+
+            var typed = AgentTaskDispatcher.FitBriefForTyping(task, Settings, refocus: true);
+
+            typed.ShouldNotContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+            typed.ShouldContain("YOUR BRIEF IS NOT IN THIS MESSAGE");
+
+            var spill = Path.Combine(
+                dir, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            File.Exists(spill).ShouldBeTrue("FitBriefForTyping writes BuildBrief to the spill file");
+            File.ReadAllText(spill).ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
     // ---- the 2026-08-10 live miss: a report reached its caller spliced, and looked complete ----
 
     /// <summary>

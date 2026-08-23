@@ -85,7 +85,11 @@ public static class ProviderContractCatalog
                     WritesUserPrompt: true,
                     Evidence: "CARD-0041: Claude writes the raw typed /compact text as a plain UserPrompt record in addition to the <command-name> wrapper; CARD-0082 auto-compact depends on that row."),
             },
-            Forbidden: EmptyForbidden));
+            Forbidden: EmptyForbidden),
+        RefocusCompact: new RefocusCompactContract(
+            AgentTuiCapabilityState.Supported,
+            "Claude records /compact as <command-name>/<local-command-stdout> wrappers plus a raw echo, all already housekeeping to IsHousekeepingPrompt; a manual CompactBoundary is a turn END that flushes the queue (CARD-0041). Measured 106 s on the CARD-0077 miss.",
+            Command: "/compact"));
 
     private static readonly ProviderContract Grok = new(
         AgentKind.Grok,
@@ -144,7 +148,11 @@ public static class ProviderContractCatalog
                     WritesUserPrompt: false,
                     Evidence: "CARD-0136 + CARD-0137 §3.2: /usage opens a focus-stealing overlay and writes no UserPrompt row."),
             },
-            Forbidden: EmptyForbidden));
+            Forbidden: EmptyForbidden),
+        RefocusCompact: new RefocusCompactContract(
+            AgentTuiCapabilityState.Unknown,
+            "Never probed. Grok auto-compacts (compaction_checkpoint / auto_compact_completed); a manual command has not been measured. Unknown behaves as Unsupported for enabling machinery.",
+            Command: null));
 
     private static readonly ProviderContract Codex = new(
         AgentKind.Codex,
@@ -207,7 +215,11 @@ public static class ProviderContractCatalog
             {
                 ["/usage"] =
                     "opens a `1. Show usage` / `2. Redeem usage limit reset` picker; a `Mode:\"Now\"`-style send auto-confirms the highlighted option and can redeem the account's one usage-limit reset (CARD-0141)",
-            }));
+            }),
+        RefocusCompact: new RefocusCompactContract(
+            AgentTuiCapabilityState.Unsupported,
+            "Measured 2026-08-21, session 51ee57fc seq 19 and seq 30: recorded as a plain UserMessage and answered as a work turn. Codex compaction is automatic and separately marked (compacted + event_msg/context_compacted), so nothing is lost by not asking.",
+            Command: null));
 
     private static readonly ProviderContract OpenCode = new(
         AgentKind.OpenCode,
@@ -260,7 +272,11 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Unknown,
             "Local TUI commands have not been probed. Absence of a declaration is not a claim of absence.",
             Commands: EmptyCommands,
-            Forbidden: EmptyForbidden));
+            Forbidden: EmptyForbidden),
+        RefocusCompact: new RefocusCompactContract(
+            AgentTuiCapabilityState.Unsupported,
+            "No structured transcript at all — an extra typed prompt could not be told from the brief afterwards.",
+            Command: null));
 
     private static readonly ProviderContract Raw = new(
         AgentKind.Raw,
@@ -313,5 +329,9 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Unsupported,
             "Raw commands have no TUI-local command contract.",
             Commands: EmptyCommands,
-            Forbidden: EmptyForbidden));
+            Forbidden: EmptyForbidden),
+        RefocusCompact: new RefocusCompactContract(
+            AgentTuiCapabilityState.Unsupported,
+            "Not a TUI with commands.",
+            Command: null));
 }

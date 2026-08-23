@@ -121,13 +121,16 @@ public class AgentTaskPoolTests
     {
         // The reused context is only an asset for RELATED work. For unrelated work it is baggage —
         // shrink it down to whatever could still help, before the new brief lands.
+        // CARD-0117 S3: pinned to ClaudeCode so this is not silently vacuous when Codex/Grok
+        // stop receiving a typed /compact.
         using var workspace = new TempWorkspace();
         var (dispatcher, _, _) = CreateHarness();
         var (agentId, sessionId) = await SeedWarmAgentAsync(
-            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3);
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, kind: AgentKind.ClaudeCode);
         await SeedSettledTaskOnAsync(agentId, sessionId, workspace.Path, tokenHash: null);
         var task = await SeedQueuedTaskAsync(
-            workspace.Path, AgentModelLevel.Medium, goal: "migrate the compose file to Postgres 18");
+            workspace.Path, AgentModelLevel.Medium, goal: "migrate the compose file to Postgres 18",
+            kind: AgentKind.ClaudeCode);
 
         await dispatcher.TickAsync(CancellationToken.None);
 
@@ -143,6 +146,50 @@ public class AgentTaskPoolTests
             "the compaction is FOCUSED on the incoming work, not a generic squeeze");
         messages[0].Body.Contains('\n').ShouldBeFalse("a slash command must be a single line");
         messages[1].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        messages[1].Body.ShouldNotContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+    }
+
+    [Test]
+    public async Task unrelated_codex_reuse_enqueues_one_marked_brief_with_the_refocus_line()
+    {
+        // CARD-0117 S3: Codex records a typed /compact as a work turn (session 51ee57fc). The
+        // reuse path must not send one; the refocus note folds into the marked brief instead.
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Medium, idleMinutes: 3, kind: AgentKind.Codex);
+        await SeedSettledTaskOnAsync(agentId, sessionId, workspace.Path, tokenHash: null);
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Medium, goal: "migrate the compose file to Postgres 18",
+            kind: AgentKind.Codex);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).AgentSessionId.ShouldBe(sessionId);
+        var messages = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId)
+            .OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
+            .ToListAsync();
+
+        messages.Count.ShouldBe(1, "Codex reuse is one marked brief, not compact-then-brief");
+        messages[0].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        messages[0].Body.ShouldNotStartWith("/");
+        messages.ShouldNotContain(m => m.Body.StartsWith("/compact"));
+        // D2: the refocus line lives in BuildBrief, never in the pointer. Codex's conservative
+        // spill means the queued body is usually the pointer; the spill file is BuildBrief.
+        if (messages[0].Body.Contains("YOUR BRIEF IS NOT IN THIS MESSAGE", StringComparison.Ordinal))
+        {
+            var spill = Path.Combine(
+                workspace.Path, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            File.Exists(spill).ShouldBeTrue();
+            File.ReadAllText(spill).ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        }
+        else
+        {
+            messages[0].Body.ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        }
     }
 
     [Test]
@@ -380,6 +427,7 @@ public class AgentTaskPoolTests
         {
             s.DefaultDefinition = "claude";
             s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex" };
         });
         services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>();
@@ -403,7 +451,7 @@ public class AgentTaskPoolTests
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
         string directory, AgentModelLevel level, int idleMinutes, Guid? reservedForRoot = null,
-        Guid? projectId = null)
+        Guid? projectId = null, AgentKind kind = AgentKind.ClaudeCode)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -413,7 +461,7 @@ public class AgentTaskPoolTests
         {
             Id = sessionId,
             DefinitionName = "fake",
-            AgentKind = AgentKind.ClaudeCode,
+            AgentKind = kind,
             Status = SessionStatus.Running,
             Cwd = directory,
             Cols = 120,
@@ -430,6 +478,7 @@ public class AgentTaskPoolTests
             WorkingDirectory = directory,
             Details = "Warm pool delegate.",
             Status = AgentStatus.Idle,
+            Kind = kind,
             ModelLevel = level,
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-idleMinutes),
@@ -467,7 +516,8 @@ public class AgentTaskPoolTests
         string goal = "do the next piece of work",
         Guid? rootTaskId = null,
         Guid? pinnedAgentId = null,
-        Guid? projectId = null)
+        Guid? projectId = null,
+        AgentKind kind = AgentKind.ClaudeCode)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -477,6 +527,7 @@ public class AgentTaskPoolTests
             Title = goal,
             Goal = goal,
             Role = AgentTaskRole.Docs,
+            AgentKind = kind,
             ModelLevel = level,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = directory,

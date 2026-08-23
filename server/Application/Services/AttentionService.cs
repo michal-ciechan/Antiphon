@@ -27,7 +27,7 @@ namespace Antiphon.Server.Application.Services;
 /// condition and nothing else: <see cref="AttentionDto.RunnerConsulted"/> goes false and the
 /// DB-derived rows are returned exactly as they were.</para>
 ///
-/// <para><b>One row per piece of work.</b> The six task-scoped conditions are evaluated in priority
+/// <para><b>One row per piece of work.</b> The task-scoped conditions are evaluated in priority
 /// order and the first match wins, so a task whose session died before writing anything appears once
 /// as <see cref="AttentionKind.DeadSession"/> rather than twice. The order is most-explanatory
 /// first: the row a human reads should name the cause, not a downstream symptom of it.</para>
@@ -48,6 +48,13 @@ public sealed class AttentionService
     /// recoverable instead of reading about it afterwards in the failure list.
     /// </summary>
     private static readonly TimeSpan NeverStartedGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// The delivery watchdog's own clock, read from delegation settings so this projection and the
+    /// sweep cannot disagree about when a brief is overdue for typing (CARD-0117 S5).
+    /// </summary>
+    private TimeSpan DeliveryFailTimeout =>
+        TimeSpan.FromMinutes(Math.Max(0, _delegation.DeliveryFailTimeoutMinutes));
 
     /// <summary>
     /// The absolute floor added to the caller's estimate before "past expected" means anything.
@@ -261,6 +268,12 @@ public sealed class AttentionService
             .Select(i => new { i.Id, i.SessionId, i.Message, i.CreatedAt })
             .ToListAsync(ct);
 
+        var briefs = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.Origin == QueuedMessageOrigin.Delegation
+                && sessionIds.Contains(m.AgentSessionId))
+            .Select(m => new { m.AgentSessionId, m.Body, m.Status, m.CreatedAt })
+            .ToListAsync(ct);
+
         foreach (var task in open)
         {
             AgentTaskLiveness.SessionSnapshot? session =
@@ -318,10 +331,43 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 5. UncorrelatedReport — it reported, and the report could not be tied back to the task.
+            // 5. BriefUndelivered — dispatched, past the delivery grace, brief still Pending,
+            // session working (CARD-0117 S5). The watchdog deferred this; without a row here the
+            // task is silent until Overdue previews the ceiling at 80%.
+            if (task.Status == AgentTaskStatus.Dispatched
+                && elapsed is { } deliveredAgo
+                && deliveredAgo > DeliveryFailTimeout
+                && task.AgentSessionId is Guid briefSession
+                && briefs.Any(m => m.AgentSessionId == briefSession
+                    && (task.DispatchedAt is null || m.CreatedAt >= task.DispatchedAt)
+                    && m.Status == QueuedMessageStatus.Pending
+                    && m.Body.Contains(DelegationReportFormatter.TaskMarker(task.Id)))
+                && await SessionMessageQueueService.IsWorkingAsync(_db, briefSession, ct))
+            {
+                items.Add(new AttentionItemDto(
+                    AttentionKind.BriefUndelivered,
+                    AlertSeverity.Warning,
+                    task.Id,
+                    task.AgentSessionId,
+                    task.AgentId,
+                    null,
+                    task.Title,
+                    $"Brief still queued Pending after {Duration(deliveredAgo)}; the session is working.",
+                    Evidence(
+                        "The delivery watchdog declined to fail this: the brief's own queue row is "
+                        + "still Pending and the session is mid-turn. TaskDeadlinePolicy owns the bound "
+                        + "(20/90/240 minutes) and does not kill.",
+                        digest),
+                    task.DispatchedAt is { } at ? at + DeliveryFailTimeout : task.DispatchedAt,
+                    cost,
+                    [AttentionAction.OpenDrawer, AttentionAction.Retry, AttentionAction.Cancel,
+                        AttentionAction.Escalate]));
+                continue;
+            }
+
+            // 6. UncorrelatedReport — it reported, and the report could not be tied back to the task.
             var orphanReport = uncorrelated
-                .Where(i => i.SessionId == task.AgentSessionId
-                    && (task.DispatchedAt is null || i.CreatedAt >= task.DispatchedAt))
+                .Where(i => UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt))
                 .OrderByDescending(i => i.CreatedAt)
                 .FirstOrDefault();
             if (orphanReport is not null)
@@ -343,7 +389,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 6. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
+            // 7. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
             // listed, however far past the estimate it has run. The working verdict is the shared
             // one, and it is asked LAST — only for tasks that already crossed the clock — so the
             // query cost is bounded by the handful of rows that could qualify.
@@ -376,7 +422,7 @@ public sealed class AttentionService
                 }
             }
 
-            // 7. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
+            // 8. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
             // asked AFTER PastExpectedIdle because that condition owns the idle case and declines
             // the mid-turn one; the deadline that matters for a working session is the phase clock,
             // and the ceiling covers both. Same shared policy the dispatcher's sweep acts on, so a

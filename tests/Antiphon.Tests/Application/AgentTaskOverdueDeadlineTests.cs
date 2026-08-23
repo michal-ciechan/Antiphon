@@ -90,6 +90,29 @@ public class AgentTaskOverdueDeadlineTests
     }
 
     [Test]
+    public async Task a_deferred_dispatched_task_still_fails_on_the_model_wait_deadline()
+    {
+        // CARD-0117 D8: the delivery watchdog hands a Pending-brief + working session to
+        // TaskDeadlinePolicy. The bound is ModelWaitDeadlineMinutes, and this sweep already
+        // covers Dispatched rows, already pulls, already does not kill.
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 70_000, status: AgentTaskStatus.Dispatched);
+        await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 69_000));
+        await scenario.SeedPendingBriefAsync(task);
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "the deferred case is not open-ended");
+        failed.FailureReason.ShouldContain("waiting on the model");
+        failed.FailureReason.ShouldContain($"{ModelWait}-minute deadline");
+        stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task a_mid_turn_session_past_the_model_wait_deadline_is_failed_naming_the_phase()
     {
         // The S3 tightening: the ceiling has not been reached, and the task is failed anyway
@@ -322,7 +345,8 @@ public class AgentTaskOverdueDeadlineTests
             string? workingDirectory = null,
             string? title = null,
             bool withAgent = false,
-            Guid? replyToSession = null)
+            Guid? replyToSession = null,
+            AgentTaskStatus status = AgentTaskStatus.Working)
         {
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
             var cwd = workingDirectory ?? Path.GetTempPath();
@@ -365,7 +389,7 @@ public class AgentTaskOverdueDeadlineTests
                 WorkingDirectory = cwd,
                 AgentId = agentId,
                 AgentSessionId = _sessionId,
-                Status = AgentTaskStatus.Working,
+                Status = status,
                 ReplyTo = replyToSession is null ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session,
                 ParentSessionId = replyToSession,
                 CreatedAt = dispatched,
@@ -398,6 +422,22 @@ public class AgentTaskOverdueDeadlineTests
                 });
             }
 
+            await db.SaveChangesAsync();
+        }
+
+        public async Task SeedPendingBriefAsync(Guid taskId)
+        {
+            await using var db = CreateContext();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = _sessionId,
+                Body = DelegationReportFormatter.TaskMarker(taskId) + "\n\nRun forever.",
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Delegation,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+            });
             await db.SaveChangesAsync();
         }
 

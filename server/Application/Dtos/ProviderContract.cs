@@ -50,7 +50,8 @@ public sealed record ProviderContract(
     BlockingStartupModalContract BlockingStartupModal,
     SubscriptionUsagePollContract SubscriptionUsagePoll,
     TerminalOverlayContract TerminalOverlay,
-    LocalCommandContract LocalCommands);
+    LocalCommandContract LocalCommands,
+    RefocusCompactContract RefocusCompact);
 
 /// <summary>
 /// Structured-transcript axis. <see cref="Format"/> is a <c>TranscriptFormats</c> value when
@@ -145,3 +146,15 @@ public sealed record LocalCommandContract(
 /// <param name="WritesUserPrompt">Does submitting it produce a UserPrompt transcript row carrying
 /// the typed text? This is the ONLY thing that decides whether CARD-0055's confirm can be used.</param>
 public sealed record LocalCommandFact(bool OpensOverlay, bool WritesUserPrompt, string Evidence);
+
+/// <summary>
+/// Whether this kind implements a typed reuse <c>/compact</c> as housekeeping rather than as a
+/// work turn (CARD-0117). <see cref="Command"/> is the ONLY body this feature may type for this
+/// kind, and is null unless <see cref="State"/> is <see cref="AgentTuiCapabilityState.Supported"/>.
+/// Nothing defaults to Supported; Unknown behaves as Unsupported for enabling machinery.
+/// </summary>
+public sealed record RefocusCompactContract(
+    AgentTuiCapabilityState State,
+    string Reason,
+    /// <summary>The ONLY body this feature may type for this kind. Null unless State is Supported.</summary>
+    string? Command);

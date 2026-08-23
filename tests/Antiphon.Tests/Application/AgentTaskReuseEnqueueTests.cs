@@ -28,8 +28,10 @@ public class AgentTaskReuseEnqueueTests
     [Test]
     public async Task a_refocus_failure_still_enqueues_the_brief()
     {
+        // CARD-0117 S3: pinned to ClaudeCode — Codex no longer enqueues a compact, so this
+        // isolation pair would be silently vacuous without an explicit kind.
         var (dispatcher, queue, logs) = CreateHarness();
-        var task = await SeedReuseDispatchAsync();
+        var task = await SeedReuseDispatchAsync(AgentKind.ClaudeCode);
         var attempted = new List<string>();
         dispatcher.ReuseEnqueueOverride = async (session, body, ct) =>
         {
@@ -71,7 +73,7 @@ public class AgentTaskReuseEnqueueTests
     public async Task a_brief_failure_does_not_undo_a_queued_refocus()
     {
         var (dispatcher, queue, logs) = CreateHarness();
-        var task = await SeedReuseDispatchAsync();
+        var task = await SeedReuseDispatchAsync(AgentKind.ClaudeCode);
         dispatcher.ReuseEnqueueOverride = async (session, body, ct) =>
         {
             if (body.StartsWith("/compact", StringComparison.Ordinal))
@@ -110,7 +112,7 @@ public class AgentTaskReuseEnqueueTests
         // filter let it escape, and TickAsync's identically filtered catch logged a warning that
         // named no task.
         var (dispatcher, queue, _) = CreateHarness();
-        var task = await SeedReuseDispatchAsync();
+        var task = await SeedReuseDispatchAsync(AgentKind.ClaudeCode);
         dispatcher.ReuseEnqueueOverride = async (session, body, ct) =>
         {
             if (body.StartsWith("/compact", StringComparison.Ordinal))
@@ -138,7 +140,7 @@ public class AgentTaskReuseEnqueueTests
     public async Task a_genuine_cancellation_still_propagates_and_skips_the_brief()
     {
         var (dispatcher, _, _) = CreateHarness();
-        var task = await SeedReuseDispatchAsync();
+        var task = await SeedReuseDispatchAsync(AgentKind.ClaudeCode);
         var attempted = new List<string>();
         using var cts = new CancellationTokenSource();
         dispatcher.ReuseEnqueueOverride = (_, body, _) =>
@@ -165,7 +167,7 @@ public class AgentTaskReuseEnqueueTests
     public async Task both_reuse_messages_enqueue_when_nothing_throws()
     {
         var (dispatcher, _, _) = CreateHarness();
-        var task = await SeedReuseDispatchAsync();
+        var task = await SeedReuseDispatchAsync(AgentKind.ClaudeCode);
 
         await dispatcher.DeliverReuseMessagesAsync(task, CancellationToken.None);
 
@@ -177,6 +179,34 @@ public class AgentTaskReuseEnqueueTests
         messages.Count.ShouldBe(2);
         messages[0].Body.ShouldStartWith("/compact");
         messages[1].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+    }
+
+    [Test]
+    public async Task a_codex_reuse_enqueue_throw_still_raises_its_own_incident()
+    {
+        // CARD-0117 S3: Codex types no compact, so the single brief enqueue is the whole path.
+        // A throw there must still raise DeliveryTransportFailed — the fault-isolation pair is
+        // not Claude-only.
+        var (dispatcher, _, logs) = CreateHarness();
+        var task = await SeedReuseDispatchAsync(AgentKind.Codex);
+        dispatcher.ReuseEnqueueOverride = (_, _, _) =>
+            throw new InvalidOperationException("brief enqueue blew up");
+
+        await dispatcher.DeliverReuseMessagesAsync(task, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var rows = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == task.AgentSessionId)
+            .ToListAsync();
+        rows.ShouldBeEmpty("the only enqueue threw before persist");
+        rows.ShouldNotContain(m => m.Body.StartsWith("/compact"));
+
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == task.AgentSessionId
+                && i.Kind == AgentIncidentKind.DeliveryTransportFailed);
+        incident.Message.ShouldContain("brief");
+        incident.Message.ShouldContain("was not queued");
+        logs.ShouldContain(l => l.Contains("reuse brief was not queued"));
     }
 
     private static (AgentTaskDispatcher Dispatcher, SessionMessageQueueService Queue, List<string> Logs)
@@ -218,7 +248,7 @@ public class AgentTaskReuseEnqueueTests
             logs);
     }
 
-    private static async Task<AgentTask> SeedReuseDispatchAsync()
+    private static async Task<AgentTask> SeedReuseDispatchAsync(AgentKind kind = AgentKind.ClaudeCode)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -231,7 +261,7 @@ public class AgentTaskReuseEnqueueTests
         {
             Id = sessionId,
             DefinitionName = "fake",
-            AgentKind = AgentKind.ClaudeCode,
+            AgentKind = kind,
             Status = SessionStatus.Running,
             Cwd = Path.GetTempPath(),
             Cols = 120,
@@ -248,6 +278,7 @@ public class AgentTaskReuseEnqueueTests
             WorkingDirectory = Path.GetTempPath(),
             Details = "CARD-0077 reuse enqueue test.",
             Status = AgentStatus.Running,
+            Kind = kind,
             ModelLevel = AgentModelLevel.Medium,
             IsPoolDelegate = true,
             PersistentSessionId = sessionId.ToString("D"),

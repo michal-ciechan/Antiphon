@@ -76,6 +76,15 @@ public enum AttentionKind
     /// keeps the more explanatory row; a working one falls through to this.</para>
     /// </summary>
     Overdue = 10,
+
+    /// <summary>
+    /// Dispatched, past the delivery grace, the brief's own queue row is still <c>Pending</c>, and
+    /// the session is mid-turn (CARD-0117 S5). The delivery watchdog declined to fail-and-kill on
+    /// that evidence (CARD-0055) and handed the bound to <c>TaskDeadlinePolicy</c>. Computed from
+    /// live state — no new incident kind. Ordered below <see cref="NeverStarted"/> and above
+    /// <see cref="UncorrelatedReport"/>.
+    /// </summary>
+    BriefUndelivered = 11,
 }
 
 /// <summary>

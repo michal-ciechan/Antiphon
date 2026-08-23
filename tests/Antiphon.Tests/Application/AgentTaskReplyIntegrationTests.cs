@@ -171,6 +171,48 @@ public class AgentTaskReplyIntegrationTests
             .ShouldBe(1);
     }
 
+    [Test]
+    public async Task two_tasks_on_one_session_each_get_their_own_uncorrelated_incident()
+    {
+        // CARD-0117 S1: the recorder's once-per-session dedup used to swallow a later task's
+        // finding. One incident per task; a different, later task gets its own row.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (first, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.AgentId = agentId);
+        var service = CreateService();
+
+        await SeedTurnAsync(sessionId, "headless brief", "First report.");
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == first.Id);
+            row.Status = AgentTaskStatus.Failed;
+            row.CompletedAt = DateTime.UtcNow;
+            // Stamp the first incident in the past so the later task's DispatchedAt is strictly
+            // after it — equal timestamps would let S1's `>= DispatchedAt` window pick it up.
+            var incident = await db.AgentIncidents.SingleAsync(
+                i => i.SessionId == sessionId
+                    && i.Kind == AgentIncidentKind.DelegateReportUncorrelated);
+            incident.CreatedAt = DateTime.UtcNow.AddMinutes(-5);
+            await db.SaveChangesAsync();
+        }
+
+        var second = await SeedFollowUpTaskAsync(workspace.Path, sessionId, agentId);
+        await SeedTurnAsync(sessionId, "headless brief two", "Second report.");
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var incidents = await verify.AgentIncidents
+            .Where(i => i.SessionId == sessionId
+                && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)
+            .ToListAsync();
+        incidents.Count.ShouldBe(2, "each task gets its own incident row");
+        incidents.ShouldContain(i => i.Message.Contains(DelegationReportFormatter.Short(first.Id)));
+        incidents.ShouldContain(i => i.Message.Contains(DelegationReportFormatter.Short(second.Id)));
+    }
+
     /// <summary>
     /// The measured shape of the 2026-08-11 loss: everything before the last whole 1024-byte chunk
     /// is dropped, cutting at byte 1024n-2. Nudged off a UTF-8 continuation byte so the surviving

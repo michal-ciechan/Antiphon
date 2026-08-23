@@ -83,6 +83,26 @@ describe('AttentionPanel', () => {
     expect(screen.queryByTestId('attention-row-PastExpectedIdle')).not.toBeInTheDocument()
   })
 
+  it('draws a BriefUndelivered row with the waiting-brief badge', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'BriefUndelivered',
+          severity: 'Warning',
+          title: 'Reuse onto a warm Codex',
+          taskId: 't1',
+          headline: 'Brief still queued Pending after 12m; the session is working.',
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('Reuse onto a warm Codex')).toBeInTheDocument()
+    expect(screen.getByText('Brief waiting')).toBeInTheDocument()
+    expect(screen.getByText(/Brief still queued Pending/)).toBeInTheDocument()
+  })
+
   it('shows the evidence, the age and the spend on the row', async () => {
     serve({
       items: [

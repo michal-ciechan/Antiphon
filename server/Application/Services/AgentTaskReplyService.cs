@@ -154,11 +154,13 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// Put an uncorrelated report on the agent's incident timeline, ONCE per session. A log line is
+    /// Put an uncorrelated report on the agent's incident timeline, once per task. A log line is
     /// the diagnostic; an incident is what the board and the alert pipeline can actually see, and
-    /// this failure's whole character is that every surface said the task was fine. Once per
-    /// session because a stranded delegate keeps ending turns, and the same finding repeated on
-    /// every one of them is noise that buries the first.
+    /// this failure's whole character is that every surface said the task was fine. Once per task
+    /// because a stranded delegate keeps ending turns, and the same finding repeated on every one
+    /// of them is noise that buries the first. Scoped through
+    /// <see cref="UncorrelatedReportEvidence"/> so a later task on the same session still gets its
+    /// own row (CARD-0117 — the once-per-session dedup poisoned every later task on 2026-08-21).
     /// </summary>
     private async Task RecordUncorrelatedReportAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
@@ -168,9 +170,12 @@ public sealed class AgentTaskReplyService
 
         try
         {
-            var already = await db.AgentIncidents.AnyAsync(
-                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated, ct);
-            if (already)
+            var existing = await db.AgentIncidents
+                .Where(i => i.SessionId == sessionId
+                    && i.Kind == AgentIncidentKind.DelegateReportUncorrelated)
+                .Select(i => new { i.SessionId, i.CreatedAt })
+                .ToListAsync(ct);
+            if (existing.Any(i => UncorrelatedReportEvidence.IsEvidenceFor(task, i.SessionId, i.CreatedAt)))
                 return;
 
             var message =

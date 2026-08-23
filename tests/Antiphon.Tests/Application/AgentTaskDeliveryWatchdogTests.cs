@@ -233,7 +233,11 @@ public class AgentTaskDeliveryWatchdogTests
         var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
         var sessionId = task.AgentSessionId!.Value;
         await SeedTranscriptEntryAsync(sessionId);
-        await SeedUncorrelatedIncidentAsync(sessionId);
+        // CARD-0117 D9: a UserPrompt without a TurnEnd reads working, and the kill is withheld.
+        // Arm 2 is not being deleted — the kill still fires on an idle session. The incident is
+        // stamped AFTER DispatchedAt so S1's scope predicate still matches.
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow.AddSeconds(-30));
+        await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 5);
 
         await harness.FailNeverStartedAsync(CancellationToken.None);
 
@@ -246,6 +250,201 @@ public class AgentTaskDeliveryWatchdogTests
         failed.FailureReason.ShouldContain(
             sessionId.ToString(), customMessage: "the work may be real — say where to find it");
         stopper.Killed.ShouldContain(sessionId);
+    }
+
+    /// <summary>
+    /// CARD-0117 S1: the live miss. A stale uncorrelated incident from a settled earlier task
+    /// must not take arm 2; with the brief still Pending the watchdog fails with arm 1's wording.
+    /// Idle so S4's defer does not swallow it.
+    /// </summary>
+    [Test]
+    public async Task a_stale_uncorrelated_incident_does_not_take_arm_2()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        await SeedIdleTurnSinceAsync(sessionId, dispatched);
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Pending);
+        await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 20);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("still queued Pending");
+        failed.FailureReason.ShouldNotContain("could not be attributed");
+        failed.FailureReason.ShouldContain("none of them was this task's brief");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_stale_uncorrelated_incident_with_a_sent_brief_is_left_alone()
+    {
+        // S1 in isolation: started, brief Sent, incident before DispatchedAt → arm 2 does not
+        // fire, and arm 1 is not taken either. The task stays Dispatched.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedIdleTurnSinceAsync(sessionId, task.DispatchedAt!.Value);
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Sent);
+        await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 20);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched);
+        stopper.Killed.ShouldNotContain(sessionId);
+    }
+
+    /// <summary>
+    /// CARD-0117 S2: prompts exist since dispatch AND the brief is Pending → arm 1, and the
+    /// reason says those prompts were not this task's brief.
+    /// </summary>
+    [Test]
+    public async Task prompts_since_dispatch_with_a_pending_brief_take_arm_1()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedIdleTurnSinceAsync(sessionId, task.DispatchedAt!.Value);
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Pending);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("none of them was this task's brief");
+        failed.FailureReason.ShouldContain("still queued Pending");
+        failed.FailureReason.ShouldNotContain("could not be attributed");
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_pending_brief_with_zero_attempts_reads_never_attempted()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending, deliveryAttempts: 0);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var reason = (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).FailureReason;
+        reason.ShouldContain("never attempted");
+        reason.ShouldNotContain("every delivery attempt failed");
+    }
+
+    [Test]
+    public async Task a_pending_brief_with_failed_attempts_names_the_count()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending, deliveryAttempts: 2);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .FailureReason.ShouldContain("2 delivery attempt(s) failed");
+    }
+
+    [Test]
+    public async Task a_pending_brief_parked_at_the_cap_says_so()
+    {
+        var (harness, _) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending, deliveryAttempts: 3);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .FailureReason.ShouldContain("parked at MaxDeliveryAttempts");
+    }
+
+    /// <summary>
+    /// CARD-0117 S4 / D8: a working session with a Pending brief is neither failed nor killed.
+    /// The same task with the session idle is failed and killed.
+    /// </summary>
+    [Test]
+    public async Task a_working_session_with_a_pending_brief_is_neither_failed_nor_killed()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Pending);
+        await SeedWorkingSinceAsync(sessionId, task.DispatchedAt!.Value);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "the watchdog declined to judge");
+        stopper.Killed.ShouldNotContain(sessionId);
+    }
+
+    [Test]
+    public async Task the_same_pending_brief_on_an_idle_session_is_failed_and_killed()
+    {
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Pending);
+        await SeedIdleTurnSinceAsync(sessionId, task.DispatchedAt!.Value);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Failed);
+        stopper.Killed.ShouldContain(sessionId);
+    }
+
+    [Test]
+    public async Task a_sent_brief_on_a_working_session_is_not_deferred()
+    {
+        // The defer is gated on the queue row, not on working alone. A Sent brief with no turn
+        // prompt (started = false) and a working tail (inherited ToolCall) takes arm 1 and Fails;
+        // D9 withholds the kill.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        var dispatched = task.DispatchedAt!.Value;
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Sent);
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(-5));
+        await SeedEntryAsync(sessionId, TranscriptKinds.ToolCall, null, dispatched.AddMinutes(2));
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, "Sent is not the defer gate");
+        failed.FailureReason.ShouldContain("never delivered");
+        stopper.Killed.ShouldNotContain(sessionId, "D9: do not kill a working session");
+    }
+
+    [Test]
+    public async Task arm_2_on_a_working_session_fails_the_task_but_does_not_kill()
+    {
+        // CARD-0117 D9 on arm 2: a turn ended and could not be attributed, but the session is
+        // mid-turn again. Fail the task; leave the process.
+        var (harness, stopper) = CreateHarness();
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11);
+        var sessionId = task.AgentSessionId!.Value;
+        await SeedWorkingSinceAsync(sessionId, task.DispatchedAt!.Value);
+        await SeedBriefAsync(sessionId, task.Id, QueuedMessageStatus.Sent);
+        await SeedUncorrelatedIncidentAsync(sessionId, minutesAgo: 5);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("could not be attributed");
+        stopper.Killed.ShouldNotContain(sessionId);
     }
 
     [Test]
@@ -752,7 +951,8 @@ public class AgentTaskDeliveryWatchdogTests
         return task;
     }
 
-    private static async Task SeedBriefAsync(Guid sessionId, Guid taskId, QueuedMessageStatus status)
+    private static async Task SeedBriefAsync(
+        Guid sessionId, Guid taskId, QueuedMessageStatus status, int deliveryAttempts = 0)
     {
         await using var db = CreateContext();
         db.SessionQueuedMessages.Add(new SessionQueuedMessage
@@ -763,9 +963,34 @@ public class AgentTaskDeliveryWatchdogTests
             Status = status,
             Sequence = 1,
             Origin = QueuedMessageOrigin.Delegation,
+            DeliveryAttempts = deliveryAttempts,
             CreatedAt = DateTime.UtcNow,
         });
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// A real (non-housekeeping) UserPrompt after dispatch, no TurnEnd — <c>started</c> and
+    /// <c>IsWorkingAsync</c> both true. The live miss's Codex compact-as-work shape.
+    /// </summary>
+    private static async Task SeedWorkingSinceAsync(Guid sessionId, DateTime dispatchedAt)
+    {
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[delegated task] Do the thing.", dispatchedAt.AddMinutes(2));
+    }
+
+    /// <summary>
+    /// A real UserPrompt after dispatch that has already ended — <c>started</c> true,
+    /// <c>IsWorkingAsync</c> false. S4's defer does not apply.
+    /// </summary>
+    private static async Task SeedIdleTurnSinceAsync(Guid sessionId, DateTime dispatchedAt)
+    {
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            "[delegated task] Do the thing.", dispatchedAt.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.TurnEnd, null, dispatchedAt.AddMinutes(4));
     }
 
     private static async Task SeedTranscriptEntryAsync(Guid sessionId)
@@ -884,7 +1109,7 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     /// <summary>The mark the reply path leaves when a finished turn fails the marker gate.</summary>
-    private static async Task SeedUncorrelatedIncidentAsync(Guid sessionId)
+    private static async Task SeedUncorrelatedIncidentAsync(Guid sessionId, int minutesAgo = 5)
     {
         var name = $"wd-{Guid.NewGuid():N}"[..16];
         await using var db = CreateContext();
@@ -910,7 +1135,7 @@ public class AgentTaskDeliveryWatchdogTests
             Kind = AgentIncidentKind.DelegateReportUncorrelated,
             Severity = AlertSeverity.Warning,
             Message = "Report could not be correlated to the task.",
-            CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+            CreatedAt = DateTime.UtcNow.AddMinutes(-minutesAgo),
         });
         await db.SaveChangesAsync();
     }

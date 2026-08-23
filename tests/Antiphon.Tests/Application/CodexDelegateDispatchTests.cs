@@ -276,6 +276,45 @@ public class CodexDelegateDispatchTests
     }
 
     [Test]
+    public async Task a_codex_pool_reuse_of_unrelated_work_types_no_compact()
+    {
+        // CARD-0117 S3: the Codex reuse shape end to end. One queued message, marked, carrying
+        // the refocus line; the rollout must never see a slash command.
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatchHarness();
+        var (agentId, sessionId) = await SeedWarmCodexAsync(workspace.Path);
+        await SeedSettledOnAsync(agentId, sessionId, workspace.Path);
+        var task = await SeedQueuedTaskAsync(workspace.Path, AgentKind.Codex);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.AgentSessionId.ShouldBe(sessionId);
+
+        var messages = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync();
+        messages.Count.ShouldBe(1);
+        messages[0].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        messages.ShouldNotContain(m => m.Body.StartsWith("/"));
+        if (messages[0].Body.Contains("YOUR BRIEF IS NOT IN THIS MESSAGE", StringComparison.Ordinal))
+        {
+            var spill = Path.Combine(
+                workspace.Path, ".antiphon",
+                $"task-{DelegationReportFormatter.Short(task.Id)}-brief.md");
+            File.Exists(spill).ShouldBeTrue();
+            File.ReadAllText(spill).ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        }
+        else
+        {
+            messages[0].Body.ShouldContain(DelegationReportFormatter.UnrelatedWorkRefocusLine);
+        }
+    }
+
+    [Test]
     public async Task the_dispatch_event_names_the_codex_model_the_task_actually_runs()
     {
         // The event is what the operator and the check interpreter read. Before ModelLevelAliases
@@ -403,6 +442,70 @@ public class CodexDelegateDispatchTests
         db.AgentTasks.Add(task);
         await db.SaveChangesAsync();
         return task;
+    }
+
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmCodexAsync(string directory)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "codex",
+            AgentKind = AgentKind.Codex,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now.AddHours(-1),
+            StartedAt = now.AddHours(-1),
+            LastSeenAt = now,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = $"task-{agentId:N}"[..13],
+            Slug = $"task-{agentId:N}"[..13],
+            WorkingDirectory = directory,
+            Details = "Warm Codex pool delegate.",
+            Status = AgentStatus.Idle,
+            Kind = AgentKind.Codex,
+            ModelLevel = AgentModelLevel.Medium,
+            IsPoolDelegate = true,
+            PoolIdleSince = now.AddMinutes(-3),
+            PersistentSessionId = sessionId.ToString("D"),
+            CreatedAt = now.AddHours(-1),
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
+    private static async Task SeedSettledOnAsync(Guid agentId, Guid sessionId, string directory)
+    {
+        var id = Guid.NewGuid();
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "the previous work",
+            Goal = "the previous work",
+            Role = AgentTaskRole.Docs,
+            AgentKind = AgentKind.Codex,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            AgentId = agentId,
+            AgentSessionId = sessionId,
+            Status = AgentTaskStatus.Succeeded,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-20),
+            DispatchedAt = DateTime.UtcNow.AddMinutes(-19),
+            CompletedAt = DateTime.UtcNow.AddMinutes(-10),
+        });
+        await db.SaveChangesAsync();
     }
 
     private static async Task<Guid> SeedPinnedAgentAsync(

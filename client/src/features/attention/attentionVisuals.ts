@@ -56,6 +56,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbPlayerPlayFilled,
     hint: 'Dispatched, but the session has never written a single transcript entry.',
   },
+  BriefUndelivered: {
+    label: 'Brief waiting',
+    color: 'warning',
+    icon: TbHourglassHigh,
+    hint: 'The brief is still queued while the session works on other work. The watchdog will not kill it.',
+  },
   UncorrelatedReport: {
     label: 'Report lost',
     color: 'danger',

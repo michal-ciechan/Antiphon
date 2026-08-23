@@ -166,6 +166,71 @@ public class AttentionServiceTests
         item.Headline.ShouldContain("written nothing");
     }
 
+    // ---- 5. BriefUndelivered (CARD-0117 S5) -----------------------------------------------------
+
+    [Test]
+    public async Task a_deferred_pending_brief_on_a_working_session_is_listed()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 12);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "keep going", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+        await scenario.AddDelegationBriefAsync(session, task, QueuedMessageStatus.Pending);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.BriefUndelivered);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Headline.ShouldContain("Pending");
+        item.Actions[0].ShouldBe(AttentionAction.OpenDrawer);
+    }
+
+    [Test]
+    public async Task a_pending_brief_on_an_idle_session_is_not_brief_undelivered()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 12);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "the brief", null),
+            (TranscriptKinds.TurnEnd, null, null));
+        await scenario.AddDelegationBriefAsync(session, task, QueuedMessageStatus.Pending);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.TaskId == task && i.Kind == AttentionKind.BriefUndelivered);
+    }
+
+    [Test]
+    public async Task a_sent_brief_on_a_working_session_is_not_brief_undelivered()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 12);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "keep going", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+        await scenario.AddDelegationBriefAsync(session, task, QueuedMessageStatus.Sent);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(
+            i => i.TaskId == task && i.Kind == AttentionKind.BriefUndelivered);
+    }
+
+    [Test]
+    public async Task a_pending_brief_inside_the_delivery_window_is_not_brief_undelivered()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched, dispatchedMinutesAgo: 5);
+        await scenario.AddTranscriptAsync(session,
+            (TranscriptKinds.UserPrompt, "keep going", null),
+            (TranscriptKinds.ToolCall, null, "Bash"));
+        await scenario.AddDelegationBriefAsync(session, task, QueuedMessageStatus.Pending);
+
+        (await ItemsForAsync(scenario)).ShouldNotContain(i => i.TaskId == task);
+    }
+
     [Test]
     public async Task a_dispatched_task_still_inside_the_start_grace_is_not_listed()
     {
@@ -839,6 +904,22 @@ public class AttentionServiceTests
                     CreatedAt = at.AddSeconds(seq),
                 });
             }
+            await db.SaveChangesAsync();
+        }
+
+        public async Task AddDelegationBriefAsync(Guid sessionId, Guid taskId, QueuedMessageStatus status)
+        {
+            await using var db = CreateContext();
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = sessionId,
+                Body = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                Status = status,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Delegation,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+            });
             await db.SaveChangesAsync();
         }
 

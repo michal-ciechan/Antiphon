@@ -52,6 +52,7 @@ public sealed class ProviderContractCatalogTests
             Axis(c.SubscriptionUsagePoll.State, c.SubscriptionUsagePoll.Reason, $"{kind}.SubscriptionUsagePoll");
             Axis(c.TerminalOverlay.State, c.TerminalOverlay.Reason, $"{kind}.TerminalOverlay");
             Axis(c.LocalCommands.State, c.LocalCommands.Reason, $"{kind}.LocalCommands");
+            Axis(c.RefocusCompact.State, c.RefocusCompact.Reason, $"{kind}.RefocusCompact");
         }
     }
 
@@ -106,6 +107,50 @@ public sealed class ProviderContractCatalogTests
                 overlay.DismissKey.ShouldBeNull($"{kind}.TerminalOverlay.DismissKey stays null unless Supported");
             }
         }
+    }
+
+    [Test]
+    public void Codex_refocus_compact_is_Unsupported_with_the_measured_reason()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.Codex).RefocusCompact;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+        axis.Command.ShouldBeNull();
+        axis.Reason.ShouldContain("51ee57fc");
+        axis.Reason.ShouldContain("work turn");
+    }
+
+    [Test]
+    public void a_non_Supported_refocus_compact_has_a_null_Command()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var axis = ProviderContractCatalog.For(kind).RefocusCompact;
+            if (axis.State == AgentTuiCapabilityState.Supported)
+            {
+                axis.Command.ShouldNotBeNullOrWhiteSpace($"{kind}.RefocusCompact.Command");
+            }
+            else
+            {
+                axis.Command.ShouldBeNull($"{kind}.RefocusCompact.Command stays null unless Supported");
+            }
+        }
+    }
+
+    [Test]
+    public void Claude_refocus_compact_is_Supported_with_slash_compact()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.ClaudeCode).RefocusCompact;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        axis.Command.ShouldBe("/compact");
+    }
+
+    [Test]
+    public void Grok_refocus_compact_is_Unknown()
+    {
+        var axis = ProviderContractCatalog.For(AgentKind.Grok).RefocusCompact;
+        axis.State.ShouldBe(AgentTuiCapabilityState.Unknown);
+        axis.Command.ShouldBeNull();
+        axis.Reason.ShouldContain("Never probed");
     }
 
     [Test]
