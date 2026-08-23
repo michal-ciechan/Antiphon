@@ -11,8 +11,9 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// Routes an agent's turn output back onto the review thread that asked for it — the review-loop
 /// sibling of <see cref="ChannelReplyDispatcher"/>, sharing its shape: track a pending correlation
-/// when the thread prompt is enqueued; on turn end, match the turn's UserPrompt back to the pending
-/// envelope, extract the assistant text for that turn, and append it as the thread's agent comment.
+/// when the thread prompt is enqueued; on turn end, match the turn's prompt (typed
+/// <c>UserPrompt</c> or <c>QueuedUserPrompt</c>) back to the pending envelope, extract the assistant
+/// text for that turn, and append it as the thread's agent comment.
 /// Prompt-matching (the unique <c>[Review #id]</c> tag) means several threads can be in flight and
 /// each answer lands on its own thread; a turn a human triggered matches nothing and is skipped.
 /// Singleton: owns the in-memory correlation map.
@@ -74,9 +75,12 @@ public sealed class ReviewReplyDispatcher
         if (turnEndSeq is not long endSeq)
             return;
 
+        // CARD-0154: same kind set as ChannelReplyDispatcher — a review prompt queued into a busy
+        // composer is QueuedUserPrompt, ranked by Sequence, never by record-to-record Timestamp.
         var userPrompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
                 && t.Sequence < endSeq)
             .OrderByDescending(t => t.Sequence)
             .FirstOrDefaultAsync(ct);
@@ -168,7 +172,8 @@ public sealed class ReviewReplyDispatcher
     {
         var nextPromptSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
                 && t.Sequence > promptSeq)
             .MinAsync(t => (long?)t.Sequence, ct);
 

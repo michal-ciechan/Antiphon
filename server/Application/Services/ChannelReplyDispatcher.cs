@@ -15,7 +15,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// Routes an agent's turn output back down the external channel that asked for it. When a session
 /// completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
-/// this dispatcher matches the turn's <c>UserPrompt</c> back to the channel message that started it,
+/// this dispatcher matches the turn's prompt (<c>UserPrompt</c> or <c>QueuedUserPrompt</c>) back to
+/// the channel message that started it.
 /// extracts the assistant's text for that turn, classifies it (final answer vs question — see
 /// <see cref="ChannelReplyKind"/>; Progress is reserved for future mid-turn notes), and produces a
 /// <see cref="ChannelReply"/> to the outbound topic.
@@ -169,8 +170,11 @@ public sealed class ChannelReplyDispatcher
         if (open.Count == 0)
             return;
 
-        // The turn that just finished: latest TurnEnd, its preceding UserPrompt, and the assistant
-        // text in between.
+        // The turn that just finished: latest TurnEnd, its preceding prompt (typed or queued), and
+        // the assistant text in between. CARD-0154: a channel message typed into a busy composer
+        // lands as QueuedUserPrompt with no accompanying UserPrompt; ranking is Sequence (drain
+        // order), never record-to-record Timestamp, so CARD-0132 S2.4's enqueue-clock trap does not
+        // apply — same reasoning as CARD-0135's TranscriptPromptSpan widen.
         var turnEndSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
             .MaxAsync(t => (long?)t.Sequence, ct);
@@ -187,7 +191,8 @@ public sealed class ChannelReplyDispatcher
 
         var userPrompt = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
                 && t.Sequence < endSeq)
             .OrderByDescending(t => t.Sequence)
             .FirstOrDefaultAsync(ct);
@@ -195,7 +200,7 @@ public sealed class ChannelReplyDispatcher
         {
             _logger.LogDebug(
                 "Session {SessionId} owes {Count} channel reply/replies but the turn ending at seq {EndSeq} "
-                + "has no preceding UserPrompt to match",
+                + "has no preceding UserPrompt or QueuedUserPrompt to match",
                 sessionId, open.Count, endSeq);
             return;
         }
@@ -709,15 +714,19 @@ public sealed class ChannelReplyDispatcher
 
     /// <summary>
     /// Assistant text belonging to <paramref name="promptSeq"/>'s turn: after
-    /// <paramref name="afterSeq"/>, before the next UserPrompt (uncapped if none). Main-path
-    /// extraction uses <c>afterSeq == promptSeq</c>; follow-up uses the already-sent watermark.
+    /// <paramref name="afterSeq"/>, before the next UserPrompt or QueuedUserPrompt (uncapped if
+    /// none). Main-path extraction uses <c>afterSeq == promptSeq</c>; follow-up uses the
+    /// already-sent watermark. The cap kind set must match the reply-match query (CARD-0154 /
+    /// CARD-0068): a queued prompt that opens a turn it cannot close would leak the next turn's
+    /// text into this one.
     /// </summary>
     private static async Task<(long? NextPromptSeq, IReadOnlyList<TurnWindowRow> Entries)> QueryTurnWindowAsync(
         AppDbContext db, Guid sessionId, long promptSeq, long afterSeq, CancellationToken ct)
     {
         var nextPromptSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
                 && t.Sequence > promptSeq)
             .MinAsync(t => (long?)t.Sequence, ct);
 

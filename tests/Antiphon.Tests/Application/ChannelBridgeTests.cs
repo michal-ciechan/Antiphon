@@ -87,6 +87,32 @@ public class ChannelBridgeTests
         (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-0154: a channel message typed into a busy composer lands as QueuedUserPrompt with no
+    // accompanying UserPrompt. Before the kind-set widen the reply-match query missed it, the
+    // correlation aged out, and CARD-0067's ChannelReplyLost incident fired with a human waiting.
+    [Test]
+    public async Task A_queued_channel_prompt_still_routes_the_reply()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "What's for dinner?", title: "Family");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+        var deliveredPrompt = h.Adapter.Inputs[0];
+
+        await h.InsertEntryAsync(TranscriptKinds.QueuedUserPrompt, deliveredPrompt);
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "Pasta tonight — Ola already started the sauce.");
+        await h.InsertEntryAsync(TranscriptKinds.TurnEnd, null, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Channel.ShouldBe("telegram");
+        reply.ConversationId.ShouldBe(h.ChatId);
+        reply.Kind.ShouldBe(ChannelReplyKind.Answer);
+        reply.Text.ShouldBe("Pasta tonight — Ola already started the sauce.");
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(0);
+    }
+
     // Live failure 2026-07-24 (Antiphon-Family, Ola's Apple Music question): Claude wrote the
     // turn as UserPrompt, TurnEnd, AssistantText, TurnEnd — the stop marker BEFORE the text. The
     // dispatch on the first (text-less) TurnEnd consumed the correlations, so when the text
@@ -174,6 +200,29 @@ public class ChannelBridgeTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
 
         h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next prompt must not be sent as a follow-up");
+    }
+
+    // CARD-0154 / CARD-0068: the turn-window cap kind set must match the reply-match kind set. A
+    // queued prompt that opens a turn it cannot close would leak the next turn's text into a
+    // follow-up on the settled channel reply.
+    [Test]
+    public async Task Follow_up_stops_once_the_next_queued_prompt_starts()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        var msg = TelegramText(h.ChatId, "first question", title: "AZ Care");
+        await h.Bridge.HandleInboundAsync(msg, CancellationToken.None);
+
+        await h.InsertTurnAsync(h.Adapter.Inputs[0], "Answered.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+
+        await h.InsertEntryAsync(TranscriptKinds.QueuedUserPrompt, "a completion note that queued while busy");
+        await h.InsertEntryAsync(TranscriptKinds.AssistantText, "All green.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Messaging.SentReplies.Count.ShouldBe(1, "text after the next queued prompt must not be sent as a follow-up");
     }
 
     // CARD-0068 / live miss 2026-08-17: PersistTranscriptAsync (catch-up / reconnect) commits

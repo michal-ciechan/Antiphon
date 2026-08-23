@@ -110,6 +110,54 @@ public class ReviewReplyDispatcherTests
         h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
     }
 
+    // CARD-0154: a review prompt queued into a busy composer is QueuedUserPrompt. Without the
+    // kind-set widen the reply-match query misses it and the in-memory correlation ages out.
+    [Test]
+    public async Task A_queued_review_prompt_still_routes_the_reply()
+    {
+        await using var h = await Harness.CreateAsync();
+        var prompt = h.TrackThread();
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "Checked — the number is correct.");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var thread = await h.ReloadThreadAsync();
+        thread.Status.ShouldBe(ReviewThreadStatus.AwaitingHuman);
+        thread.Comments.Count.ShouldBe(2);
+        thread.Comments[^1].Author.ShouldBe(ReviewCommentAuthor.Agent);
+        thread.Comments[^1].Body.ShouldBe("Checked — the number is correct.");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+    }
+
+    // CARD-0154 / CARD-0068: a queued prompt after the TurnEnd must cap the extraction window.
+    // Without the cap kind matching the reply-match kind, the next turn's assistant text would
+    // join into this reply.
+    [Test]
+    public async Task A_queued_prompt_caps_the_turn_window()
+    {
+        await using var h = await Harness.CreateAsync();
+        var prompt = h.TrackThread();
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.QueuedUserPrompt, prompt);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "Checked — the number is correct.");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.QueuedUserPrompt, "a completion note that queued while the composer was busy");
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.AssistantText, "This belongs to the next turn and must not be posted.");
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        var thread = await h.ReloadThreadAsync();
+        thread.Status.ShouldBe(ReviewThreadStatus.AwaitingHuman);
+        thread.Comments.Count.ShouldBe(2);
+        thread.Comments[^1].Author.ShouldBe(ReviewCommentAuthor.Agent);
+        thread.Comments[^1].Body.ShouldBe("Checked — the number is correct.");
+        h.Dispatcher.PendingCount(h.SessionId).ShouldBe(0);
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         public required ServiceProvider Provider { get; init; }
