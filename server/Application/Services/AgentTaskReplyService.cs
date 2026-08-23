@@ -1188,6 +1188,9 @@ public sealed class AgentTaskReplyService
         var turnEnd = end.Sequence;
 
         var span = await LoadPromptsInSpanAsync(db, sessionId, task.DispatchedAt, ct);
+        // CARD-0135: the walk-back (and the nextPrompt cap below) may land on a QueuedUserPrompt.
+        // A drained queued_command has no accompanying user record, so this is the only prompt
+        // row a queued brief's turn has — and the only reason that report can settle at all.
         var prompt = span.TurnPrompts.LastOrDefault(p => p.Sequence < turnEnd);
         if (prompt?.Text is not string promptText)
             return TurnOutcome.Nothing;
@@ -1397,7 +1400,8 @@ public sealed class AgentTaskReplyService
     /// <summary>
     /// The prompts a turn of THIS task could have answered. Owned by
     /// <see cref="TranscriptPromptSpan"/> so settlement and the delivery watchdog cannot disagree
-    /// on the four-way housekeeping filter (CARD-0077).
+    /// on the four-way housekeeping filter (CARD-0077) or on whether a drained
+    /// <c>queued_command</c> counts (CARD-0135).
     /// </summary>
     private static Task<TranscriptPromptSpan.Result> LoadPromptsInSpanAsync(
         AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct) =>

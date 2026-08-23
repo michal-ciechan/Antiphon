@@ -1129,6 +1129,127 @@ public class AgentTaskReplyIntegrationTests
             .ShouldBeTrue();
     }
 
+    // ---- CARD-0135: a queued brief is a turn prompt, for settlement too ----------------------
+
+    [Test]
+    public async Task a_turn_opened_by_a_queued_brief_settles_the_task()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string report = "Added Fizz(int) in Numbers.cs (+11 lines). 142 passed, 0 failed.";
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            dispatched.AddMinutes(1));
+        await SeedResponseAsync(sessionId, report, dispatched.AddMinutes(2));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+    }
+
+    [Test]
+    public async Task a_queued_prompt_after_the_brief_caps_the_report_window()
+    {
+        // CARD-0068 discipline across both kinds: the nextPrompt cap is computed over the same
+        // span the walk-back reads. Without QueuedUserPrompt in that span the later assistant
+        // text (same batch, after the queued row) would be attributed to the brief.
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        const string report = "The report that belongs to this brief.";
+        const string later = "Later-turn text that must not be attributed to the brief.";
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            dispatched.AddMinutes(1));
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, report, dispatched.AddMinutes(2));
+        await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, dispatched.AddMinutes(2));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            "a completion note that queued while the brief's turn was ending",
+            dispatched.AddMinutes(3));
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, later, dispatched.AddMinutes(3));
+
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(report);
+        settled.Result.ShouldNotContain(later);
+    }
+
+    [Test]
+    public async Task a_queued_prompt_without_the_marker_is_an_uncorrelated_report_not_a_settle_on_the_brief()
+    {
+        // Verdict §4 / D8's second direction: today the walk-back skips the queued row and
+        // settles the task on a turn that answered something else (a completion note, a human
+        // message). Widening lands on the queued row, the marker gate fails, and the turn is
+        // an honest UncorrelatedReport.
+        using var workspace = new TempWorkspace();
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => { t.AgentId = agentId; t.DispatchedAt = dispatched; });
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            dispatched.AddMinutes(1));
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt,
+            "a completion note from a child, no task marker",
+            dispatched.AddMinutes(2));
+        await SeedResponseAsync(sessionId, "Someone else's answer.", dispatched.AddMinutes(3));
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+            .Status.ShouldBe(AgentTaskStatus.Dispatched, "must not settle on a turn that answered the note");
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task a_task_notification_is_still_a_notification_not_a_queued_turn_prompt()
+    {
+        // Guards CARD-0046 slice 4: a <task-notification> is a typed USER record, never a
+        // queued_command attachment, and span.Notifications must keep seeing it after the
+        // QueuedUserPrompt widening.
+        using var workspace = new TempWorkspace();
+        var dispatched = DateTime.UtcNow.AddMinutes(-10);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, configure: t => t.DispatchedAt = dispatched);
+        var at = dispatched.AddMinutes(1);
+
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.", at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.UserPrompt,
+            $"{TranscriptKinds.TaskNotificationPrefix}\n<summary>done</summary>\n</task-notification>",
+            at);
+        await SeedEntryAsync(
+            sessionId, TranscriptKinds.QueuedUserPrompt, "a queued completion note", at);
+
+        await using var db = CreateContext();
+        var span = await TranscriptPromptSpan.LoadAsync(db, sessionId, dispatched, CancellationToken.None);
+        span.Notifications.ShouldHaveSingleItem().Text.ShouldContain("<task-notification>");
+        span.TurnPrompts.Count.ShouldBe(2);
+        span.TurnPrompts.ShouldNotContain(p => p.Text != null && p.Text.Contains("<task-notification>"));
+        span.TurnPrompts.ShouldContain(p => p.Kind == TranscriptKinds.QueuedUserPrompt);
+        span.TurnPrompts.ShouldContain(p => p.Kind == TranscriptKinds.UserPrompt);
+    }
+
     // ---- a turn that launched background subagents is not finished (CARD-0046 slice 4) ----------
 
     /// <summary>
