@@ -1,8 +1,10 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Terminal } from '@xterm/xterm'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SessionTerminal } from './SessionTerminal'
+import { createMirrorTerminal } from './terminalMirror'
 import { createTerminalCopyKeyHandler } from './terminalCopy'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 
@@ -20,6 +22,8 @@ const xtermMock = vi.hoisted(() => ({
   }>,
   fit: vi.fn(),
 }))
+
+const createMirrorTerminalMock = vi.hoisted(() => vi.fn())
 
 const runningSession: AgentSessionSummaryDto = {
   id: 'session-1',
@@ -105,6 +109,10 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }))
 
+vi.mock('./terminalMirror', () => ({
+  createMirrorTerminal: createMirrorTerminalMock,
+}))
+
 vi.mock('@microsoft/signalr', () => ({
   HubConnectionState: {
     Connected: 'Connected',
@@ -125,6 +133,10 @@ describe('SessionTerminal', () => {
   beforeEach(() => {
     xtermMock.instances.length = 0
     xtermMock.fit.mockClear()
+    createMirrorTerminalMock.mockReset()
+    createMirrorTerminalMock.mockImplementation(
+      (options?: { disableStdin?: boolean }) => new Terminal(options),
+    )
     signalrMock.connection.state = 'Disconnected'
     signalrMock.connection.handlers.clear()
     signalrMock.connection.reconnected = undefined
@@ -159,6 +171,7 @@ describe('SessionTerminal', () => {
       expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1')
       expect(xtermMock.instances[0].write).toHaveBeenCalledWith('BACKLOG')
     })
+    expect(createMirrorTerminal).toHaveBeenCalled()
     expect(xtermMock.instances[0].customKeyHandler).toBeTypeOf('function')
 
     signalrMock.connection.handlers.get('AgentTextDelta')?.({
