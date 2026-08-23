@@ -166,7 +166,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.SaveChangesAsync(ct);
 
             adapter = _adapterFactory.Create(request.AgentKind);
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, worktree.Path, resumeMode: null);
+            var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, worktree.Path, resumeMode: null, ct);
+            EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
 
             RunAttemptStateMachine.Transition(attempt, RunPhase.InitializingSession, UtcNow());
@@ -358,7 +359,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         try
         {
             adapter = _adapterFactory.Create(session.AgentKind);
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, session.Cwd, resumeMode);
+            var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
+            EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
 
             await WaitForReadyOrThrowAsync(adapter, ct);
@@ -879,7 +881,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         try
         {
             adapter = _adapterFactory.Create(session.AgentKind);
-            var spec = BuildRuntimeLaunchSpec(launchSpec, session, cwd, resumeMode);
+            var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, cwd, resumeMode, ct);
+            EnsureHerdrLaunchAllowed(session, spec);
             await adapter.StartAsync(spec, ct);
             await WaitForReadyOrThrowAsync(adapter, ct);
 
@@ -1055,15 +1058,30 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         return session;
     }
 
-    private AgentLaunchSpec BuildRuntimeLaunchSpec(
+    private async Task<AgentLaunchSpec> BuildRuntimeLaunchSpecAsync(
         AgentLaunchSpec launchSpec,
         AgentSession session,
         string cwd,
-        AgentSessionResumeMode? resumeMode)
+        AgentSessionResumeMode? resumeMode,
+        CancellationToken ct)
     {
         var args = UsesSessionIdentityArgs(session.AgentKind)
             ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
+
+        // CARD-0160: read the SESSION snapshot, never the agent's live value — resume-after-PATCH
+        // must keep launching the way THIS session was stamped.
+        var backend = session.SessionBackend;
+        HerdrLaunchOptions? herdr = null;
+        if (backend == SessionBackend.Herdr)
+        {
+            var agent = await ResolveOwningAgentAsync(session, ct);
+            var paneTitle = string.IsNullOrWhiteSpace(session.DefinitionName)
+                ? (agent?.Name ?? "agent")
+                : session.DefinitionName;
+            herdr = await new HerdrLaunchContextResolver(_db)
+                .ResolveAsync(session, agent, paneTitle, ct);
+        }
 
         var spec = launchSpec with
         {
@@ -1072,7 +1090,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             Cols = session.Cols,
             Rows = session.Rows,
             MemoryLimitMb = _settings.MemoryLimitMb,
-            SessionId = session.Id
+            SessionId = session.Id,
+            Backend = backend,
+            Herdr = herdr,
         };
 
         // THE API KEY TRIPWIRE (CARD-0106 S2). Every launch from every path — interactive, card,
@@ -1088,6 +1108,68 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         // reasons, and --append-system-prompt text additionally lands in transcripts.
         ApiKeyPlaceholder.EnsureResolved(spec, session.Id);
         return spec;
+    }
+
+    /// <summary>
+    /// CARD-0160 launch-time backstop: Herdr AND (AlwaysOn / channel-bound / Kind != ClaudeCode)
+    /// → ConflictException. Defense in depth for drift between PATCH and launch.
+    /// </summary>
+    private void EnsureHerdrLaunchAllowed(AgentSession session, AgentLaunchSpec spec)
+    {
+        if (spec.Backend != SessionBackend.Herdr)
+            return;
+
+        // Resolve owning agent synchronously from already-tracked state where possible; the check
+        // re-reads via the same DbContext for AlwaysOn / channel / Kind.
+        var agentId = session.Card?.AssignedAgentId;
+        // Card may not be loaded; fall through to a best-effort query below via Kind alone if needed.
+        Agent? agent = null;
+        if (agentId is Guid id)
+            agent = _db.Agents.AsNoTracking().FirstOrDefault(a => a.Id == id);
+
+        // Also try PersistentSessionId reverse lookup for interactive sessions.
+        agent ??= _db.Agents.AsNoTracking()
+            .FirstOrDefault(a => a.PersistentSessionId == session.Id.ToString("D"));
+
+        var alwaysOn = agent?.AlwaysOn ?? false;
+        var kind = agent?.Kind ?? session.AgentKind;
+        var channelBound = agent is not null
+            && _db.ChatChannels.AsNoTracking().Any(c => c.AgentId == agent.Id);
+
+        try
+        {
+            AgentService.ValidateSessionBackendPairing(
+                SessionBackend.Herdr, alwaysOn, kind, channelBound);
+        }
+        catch (ConflictException)
+        {
+            session.Status = SessionStatus.Failed;
+            session.FailureReason = "Herdr launch refused: AlwaysOn, channel-bound, or non-Claude agent.";
+            session.EndedAt = UtcNow();
+            throw;
+        }
+
+        if (spec.Herdr is null)
+            throw new ConflictException(
+                "Herdr launch requires HerdrLaunchOptions (server failed to resolve workspace context).",
+                "herdr_refused");
+    }
+
+    private async Task<Agent?> ResolveOwningAgentAsync(AgentSession session, CancellationToken ct)
+    {
+        if (session.CardId is Guid cardId)
+        {
+            var assignedId = await _db.Cards.AsNoTracking()
+                .Where(c => c.Id == cardId)
+                .Select(c => c.AssignedAgentId)
+                .FirstOrDefaultAsync(ct);
+            if (assignedId is Guid id)
+                return await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
+        }
+
+        var sessionKey = session.Id.ToString("D");
+        return await _db.Agents.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.PersistentSessionId == sessionKey, ct);
     }
 
     /// <summary>

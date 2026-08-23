@@ -50,6 +50,16 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         if (await GetTranscriptCapabilityMismatchAsync(spec.Kind, ct) is { } mismatch)
             throw new RunnerCapabilityMismatchException(mismatch.Message);
 
+        // CARD-0160: refuse a herdr launch before POSTing unless the runner advertises "herdr".
+        // An old runner would ignore the unknown Backend field and silently launch a pty-host —
+        // never silently remap (CARD-0111 §6). Null capabilities = no evidence = refuse.
+        var backendWire = BackendWire(spec.Backend);
+        if (backendWire == SessionBackends.Herdr
+            && await GetSessionBackendCapabilityMismatchAsync(ct) is { } herdrMismatch)
+        {
+            throw new RunnerCapabilityMismatchException(herdrMismatch);
+        }
+
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -65,11 +75,65 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             // it honours no session-id flag (CARD-0099 S1). OpenCode/Raw have no structured
             // transcript, so their sessions stay screen-only.
             TranscriptEnabled: TranscriptEnabledFor(spec.Kind),
-            TranscriptFormat: TranscriptFormatFor(spec.Kind));
+            TranscriptFormat: TranscriptFormatFor(spec.Kind),
+            Backend: backendWire,
+            Herdr: spec.Herdr);
         var response = await _httpClient.PostAsJsonAsync("sessions", request, JsonOptions, ct);
         response.EnsureSuccessStatusCode();
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty start response."));
+    }
+
+    /// <summary>
+    /// Null for PtyHost on purpose — it is the pre-herdr default, so a new server in front of an
+    /// old runner asks for exactly what that runner already does.
+    /// </summary>
+    public static string? BackendWire(SessionBackend backend) =>
+        backend == SessionBackend.Herdr ? SessionBackends.Herdr : null;
+
+    /// <summary>
+    /// Returns an error message when the runner cannot host herdr. Null capabilities or a list
+    /// lacking "herdr" both refuse — never fall back to pty-host.
+    /// </summary>
+    public async Task<string?> GetSessionBackendCapabilityMismatchAsync(CancellationToken ct)
+    {
+        await EnsureCapabilitiesProbedAsync(ct);
+        RunnerCapabilitiesDto? cached;
+        lock (_capabilityGate)
+            cached = _cachedCapabilities;
+
+        if (cached?.SessionBackends is { } backends
+            && backends.Contains(SessionBackends.Herdr, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        var supported = cached?.SessionBackends is { Count: > 0 } listed
+            ? string.Join(", ", listed)
+            : "none (older runner or probe failed)";
+        var build = DescribeBuild(cached?.Build);
+        return $"The session runner at :17204 cannot host a herdr session — it reports SessionBackends={supported}{build}. "
+            + "Launching anyway would silently open a pty-host (CARD-0160 / CARD-0112). Rebuild and restart it: "
+            + "pwsh -File scripts/restart-session-runner.ps1.";
+    }
+
+    private async Task EnsureCapabilitiesProbedAsync(CancellationToken ct)
+    {
+        Task? probe;
+        RunnerCapabilitiesDto? cached;
+        lock (_capabilityGate)
+        {
+            var stale = DateTimeOffset.UtcNow - _capabilitiesProbedAt >= CapabilityProbeTtl;
+            if (stale && (_capabilityProbe is null || _capabilityProbe.IsCompleted))
+            {
+                _capabilitiesProbedAt = DateTimeOffset.UtcNow;
+                _capabilityProbe = ProbeCapabilitiesAsync();
+            }
+
+            probe = _capabilityProbe;
+            cached = _cachedCapabilities;
+        }
+
+        if (cached is null && probe is not null)
+            await probe.WaitAsync(ct);
     }
 
     /// <summary>Which agent kinds get a runner-side transcript tailer (see StartAsync's mapping).</summary>

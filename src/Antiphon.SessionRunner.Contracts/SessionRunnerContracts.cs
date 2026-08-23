@@ -14,7 +14,35 @@ public sealed record RunnerLaunchRequest(
     bool TranscriptEnabled = false,
     // Which transcript the runner should tail (see TranscriptFormats). Null means Claude — the
     // only format that existed before this field, so an old server's requests keep their meaning.
-    string? TranscriptFormat = null);
+    string? TranscriptFormat = null,
+    // CARD-0160: which lane hosts the child. Null means pty-host — the only lane that existed
+    // before this field, so an old server's requests keep their meaning. See SessionBackends.
+    string? Backend = null,
+    // Herdr-lane placement context, resolved by the server (the runner has no DB access).
+    // Required when Backend == SessionBackends.Herdr; ignored otherwise.
+    HerdrLaunchOptions? Herdr = null);
+
+/// <summary>Values for <see cref="RunnerLaunchRequest.Backend"/> (CARD-0160).</summary>
+public static class SessionBackends
+{
+    public const string PtyHost = "pty-host";
+    public const string Herdr = "herdr";
+}
+
+/// <summary>
+/// Herdr-lane placement context on <see cref="RunnerLaunchRequest"/> (CARD-0160). The server
+/// resolves project/workspace identity; the runner treats <see cref="WorkspaceKey"/> as opaque.
+/// </summary>
+public sealed record HerdrLaunchOptions(
+    // Stable grouping key for workspace-per-project: "project:<guid>", or "none" when the
+    // session resolves to no project. The runner treats it as an opaque key.
+    string WorkspaceKey,
+    // workspace.create label — project name (or "Antiphon" for the catch-all).
+    string WorkspaceLabel,
+    // workspace.create cwd — project.LocalRepositoryPath; null for the catch-all workspace.
+    string? WorkspaceCwd,
+    // pane.rename label — the agent/definition name the operator should see on the pane.
+    string PaneTitle);
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
 public static class TranscriptFormats
@@ -516,7 +544,10 @@ public sealed record RunnerCapabilitiesDto(
     // older runner cannot say; callers must treat that as no evidence, not as an omission.
     IReadOnlyList<string>? TranscriptFormats = null,
     // CARD-0112: additive so old/new server and runner binaries stay wire-compatible.
-    RunnerBuildDto? Build = null);
+    RunnerBuildDto? Build = null,
+    // CARD-0160: session backends this runner can host. Null = older runner = no evidence
+    // (same contract as TranscriptFormats). A herdr launch is refused unless this contains "herdr".
+    IReadOnlyList<string>? SessionBackends = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

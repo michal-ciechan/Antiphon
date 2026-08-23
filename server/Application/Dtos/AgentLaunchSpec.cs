@@ -47,4 +47,8 @@ public sealed record AgentLaunchSpec(
     int Cols,
     int Rows,
     int MemoryLimitMb = 0,
-    Guid? SessionId = null);
+    Guid? SessionId = null,
+    // CARD-0160: which lane hosts the child. PtyHost is the default — herdr stays opt-in.
+    SessionBackend Backend = SessionBackend.PtyHost,
+    // Required when Backend == Herdr; ignored otherwise. Resolved server-side (runner has no DB).
+    global::Antiphon.SessionRunner.Contracts.HerdrLaunchOptions? Herdr = null);

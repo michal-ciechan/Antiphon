@@ -121,12 +121,19 @@ app.MapHealthChecks("/health");
 // environment: runner and server are separate processes with separate config, so a server that
 // assumed they matched would size bodies for a pty that cannot carry them. Resolved live rather
 // than captured at startup so a runner restarted with a different flag reports the truth.
-app.MapGet("/capabilities", () =>
+app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
 {
     var decision = PtyBackendPolicy.Resolve();
+    // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
+    // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
+    // runner must not claim herdr or the server's capability gate would green-light a launch
+    // that HerdrClient then refuses.
+    IReadOnlyList<string> sessionBackends = herdrSettings.Value.Enabled
+        ? [SessionBackends.PtyHost, SessionBackends.Herdr]
+        : [SessionBackends.PtyHost];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
-        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild));
+        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));
