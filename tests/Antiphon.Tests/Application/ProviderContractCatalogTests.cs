@@ -50,6 +50,8 @@ public sealed class ProviderContractCatalogTests
             Axis(c.Compaction.State, c.Compaction.Reason, $"{kind}.Compaction");
             Axis(c.BlockingStartupModal.State, c.BlockingStartupModal.Reason, $"{kind}.BlockingStartupModal");
             Axis(c.SubscriptionUsagePoll.State, c.SubscriptionUsagePoll.Reason, $"{kind}.SubscriptionUsagePoll");
+            Axis(c.TerminalOverlay.State, c.TerminalOverlay.Reason, $"{kind}.TerminalOverlay");
+            Axis(c.LocalCommands.State, c.LocalCommands.Reason, $"{kind}.LocalCommands");
         }
     }
 
@@ -69,6 +71,10 @@ public sealed class ProviderContractCatalogTests
                 c.SessionResume.Reason.ShouldNotBeNullOrWhiteSpace();
             if (c.SubscriptionUsagePoll.State == AgentTuiCapabilityState.Supported)
                 c.SubscriptionUsagePoll.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.TerminalOverlay.State == AgentTuiCapabilityState.Supported)
+                c.TerminalOverlay.Reason.ShouldNotBeNullOrWhiteSpace();
+            if (c.LocalCommands.State == AgentTuiCapabilityState.Supported)
+                c.LocalCommands.Reason.ShouldNotBeNullOrWhiteSpace();
         }
     }
 
@@ -78,9 +84,59 @@ public sealed class ProviderContractCatalogTests
         var poll = ProviderContractCatalog.For(AgentKind.Codex).SubscriptionUsagePoll;
         poll.State.ShouldBe(AgentTuiCapabilityState.Supported);
         poll.Command.ShouldBe("/status");
-        poll.Forbidden.ContainsKey("/usage").ShouldBeTrue();
-        poll.Forbidden["/usage"].ShouldNotBeNullOrWhiteSpace();
-        poll.Forbidden["/usage"].ShouldContain("reset", Case.Insensitive);
+
+        var forbidden = ProviderContractCatalog.For(AgentKind.Codex).LocalCommands.Forbidden;
+        forbidden.ContainsKey("/usage").ShouldBeTrue();
+        forbidden["/usage"].ShouldNotBeNullOrWhiteSpace();
+        forbidden["/usage"].ShouldContain("reset", Case.Insensitive);
+    }
+
+    [Test]
+    public void A_Supported_TerminalOverlay_implies_a_non_null_DismissKey()
+    {
+        foreach (var kind in AllKinds)
+        {
+            var overlay = ProviderContractCatalog.For(kind).TerminalOverlay;
+            if (overlay.State == AgentTuiCapabilityState.Supported)
+            {
+                overlay.DismissKey.ShouldNotBeNullOrEmpty($"{kind}.TerminalOverlay.DismissKey");
+            }
+            else
+            {
+                overlay.DismissKey.ShouldBeNull($"{kind}.TerminalOverlay.DismissKey stays null unless Supported");
+            }
+        }
+    }
+
+    [Test]
+    public void Claude_compact_is_declared_WritesUserPrompt_true()
+    {
+        var commands = ProviderContractCatalog.For(AgentKind.ClaudeCode).LocalCommands.Commands;
+        commands.ContainsKey("/compact").ShouldBeTrue();
+        commands["/compact"].WritesUserPrompt.ShouldBeTrue();
+        commands["/compact"].OpensOverlay.ShouldBeFalse();
+        commands["/compact"].Evidence.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
+    public void Grok_usage_is_declared_overlay_opening_and_not_forbidden()
+    {
+        var grok = ProviderContractCatalog.For(AgentKind.Grok);
+        grok.TerminalOverlay.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        grok.TerminalOverlay.DismissKey.ShouldBe("\u001b");
+        grok.LocalCommands.Commands.ContainsKey("/usage").ShouldBeTrue();
+        grok.LocalCommands.Commands["/usage"].OpensOverlay.ShouldBeTrue();
+        grok.LocalCommands.Commands["/usage"].WritesUserPrompt.ShouldBeFalse();
+        grok.LocalCommands.Forbidden.ContainsKey("/usage").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Codex_status_is_declared_and_does_not_write_a_UserPrompt()
+    {
+        var commands = ProviderContractCatalog.For(AgentKind.Codex).LocalCommands.Commands;
+        commands.ContainsKey("/status").ShouldBeTrue();
+        commands["/status"].OpensOverlay.ShouldBeFalse();
+        commands["/status"].WritesUserPrompt.ShouldBeFalse();
     }
 
     [Test]

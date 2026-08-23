@@ -15,6 +15,9 @@ public static class ProviderContractCatalog
     private static readonly IReadOnlyDictionary<string, string> EmptyForbidden =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly IReadOnlyDictionary<string, LocalCommandFact> EmptyCommands =
+        new Dictionary<string, LocalCommandFact>(StringComparer.OrdinalIgnoreCase);
+
     public static ProviderContract For(AgentKind kind) => kind switch
     {
         AgentKind.ClaudeCode => Claude,
@@ -66,7 +69,22 @@ public static class ProviderContractCatalog
             "No established TUI command that renders Claude's subscription-usage panel. Skip; do not guess.",
             Command: null,
             Navigation: [],
-            OpensOverlay: false,
+            OpensOverlay: false),
+        TerminalOverlay: new TerminalOverlayContract(
+            AgentTuiCapabilityState.Unknown,
+            "Esc-on-idle and overlay-dismiss have not been measured (CARD-0137 S1).",
+            DismissKey: null,
+            DetectFragments: []),
+        LocalCommands: new LocalCommandContract(
+            AgentTuiCapabilityState.Supported,
+            "Declared commands are those measured to write (or not write) a UserPrompt row. /compact writes one (CARD-0041); absence of a declaration is not a claim of absence.",
+            Commands: new Dictionary<string, LocalCommandFact>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["/compact"] = new LocalCommandFact(
+                    OpensOverlay: false,
+                    WritesUserPrompt: true,
+                    Evidence: "CARD-0041: Claude writes the raw typed /compact text as a plain UserPrompt record in addition to the <command-name> wrapper; CARD-0082 auto-compact depends on that row."),
+            },
             Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Grok = new(
@@ -110,7 +128,22 @@ public static class ProviderContractCatalog
             "Command `/usage` is measured (CARD-0136) but tab navigation to the `Usage limit` tab and the progress-bar percentage polarity are unmeasured. Weaker guarantee: the sweep holds Grok behind IncludeDegradedProviders until S5 settles both. Overlay-opening (CARD-0137).",
             Command: "/usage",
             Navigation: [],
-            OpensOverlay: true,
+            OpensOverlay: true),
+        TerminalOverlay: new TerminalOverlayContract(
+            AgentTuiCapabilityState.Supported,
+            "Esc dismisses the /usage overlay and is a no-op on an idle empty composer (CARD-0137 investigation §3.1, measured twice).",
+            DismissKey: "\u001b",
+            DetectFragments: []),
+        LocalCommands: new LocalCommandContract(
+            AgentTuiCapabilityState.Supported,
+            "/usage is measured to open an overlay and write no UserPrompt row (CARD-0136, CARD-0137). Absence of a declaration is not a claim of absence.",
+            Commands: new Dictionary<string, LocalCommandFact>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["/usage"] = new LocalCommandFact(
+                    OpensOverlay: true,
+                    WritesUserPrompt: false,
+                    Evidence: "CARD-0136 + CARD-0137 §3.2: /usage opens a focus-stealing overlay and writes no UserPrompt row."),
+            },
             Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Codex = new(
@@ -154,7 +187,22 @@ public static class ProviderContractCatalog
             "Codex `/status` renders the weekly-limit panel directly into scrollback with no overlay (CARD-0141). `/usage` is forbidden: it opens a picker whose highlighted option redeems the account's one usage-limit reset.",
             Command: "/status",
             Navigation: [],
-            OpensOverlay: false,
+            OpensOverlay: false),
+        TerminalOverlay: new TerminalOverlayContract(
+            AgentTuiCapabilityState.Unknown,
+            "Esc-on-idle and overlay-dismiss have not been measured (CARD-0137 S1).",
+            DismissKey: null,
+            DetectFragments: []),
+        LocalCommands: new LocalCommandContract(
+            AgentTuiCapabilityState.Supported,
+            "/status is the usage-poll command (CARD-0141); /usage is forbidden because it opens a picker that can redeem the account's one usage-limit reset.",
+            Commands: new Dictionary<string, LocalCommandFact>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["/status"] = new LocalCommandFact(
+                    OpensOverlay: false,
+                    WritesUserPrompt: false,
+                    Evidence: "CARD-0141: /status renders the weekly-limit panel into scrollback with no overlay and no UserPrompt row."),
+            },
             Forbidden: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["/usage"] =
@@ -202,7 +250,16 @@ public static class ProviderContractCatalog
             "No established TUI command that renders OpenCode's subscription-usage panel. Skip; do not guess.",
             Command: null,
             Navigation: [],
-            OpensOverlay: false,
+            OpensOverlay: false),
+        TerminalOverlay: new TerminalOverlayContract(
+            AgentTuiCapabilityState.Unsupported,
+            "No overlay-handling contract; OpenCode sessions are screen-only.",
+            DismissKey: null,
+            DetectFragments: []),
+        LocalCommands: new LocalCommandContract(
+            AgentTuiCapabilityState.Unknown,
+            "Local TUI commands have not been probed. Absence of a declaration is not a claim of absence.",
+            Commands: EmptyCommands,
             Forbidden: EmptyForbidden));
 
     private static readonly ProviderContract Raw = new(
@@ -246,6 +303,15 @@ public static class ProviderContractCatalog
             "Raw commands have no provider subscription-usage panel to poll.",
             Command: null,
             Navigation: [],
-            OpensOverlay: false,
+            OpensOverlay: false),
+        TerminalOverlay: new TerminalOverlayContract(
+            AgentTuiCapabilityState.Unsupported,
+            "Raw commands have no overlay-handling contract.",
+            DismissKey: null,
+            DetectFragments: []),
+        LocalCommands: new LocalCommandContract(
+            AgentTuiCapabilityState.Unsupported,
+            "Raw commands have no TUI-local command contract.",
+            Commands: EmptyCommands,
             Forbidden: EmptyForbidden));
 }

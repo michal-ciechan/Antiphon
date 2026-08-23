@@ -1228,4 +1228,144 @@ public class SessionMessageQueueDeliveryVerificationTests
             .DeliveryAttempts.ShouldBe(0);
         h.Adapter.Killed.ShouldBeFalse();
     }
+
+    // ---- CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed --------------------
+    //
+    // The catalog named Codex `/usage` as forbidden ("opens a picker whose highlighted option
+    // redeems the account's one usage-limit reset") but the normal EnqueueAsync/DeliverAsync path
+    // never read that map. Sending `{"Body":"/usage"}` to a Codex session would type it, pass
+    // composer evidence, press Enter (firing the picker), then CARD-0055's confirm loop would
+    // re-press Enter into that picker. These tests pin that the hole is closed at BOTH call sites.
+
+    [Test]
+    public async Task Codex_slash_usage_is_refused_at_enqueue_with_zero_bytes_typed()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            h.Queue.EnqueueAsync(h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None));
+
+        ex.Errors.ContainsKey("body").ShouldBeTrue();
+        ex.Errors["body"].ShouldContain(s => s.Contains("reset", StringComparison.OrdinalIgnoreCase));
+        h.Adapter.Inputs.ShouldBeEmpty("nothing may be typed — not the body, not Enter, not Esc");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse();
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId))
+            .ShouldBe(0, "EnqueueAsync refuses before persist");
+        (await db.AgentIncidents.CountAsync(i => i.SessionId == h.SessionId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Codex_slash_usage_Now_is_refused_with_zero_bytes_typed()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            h.Queue.EnqueueAsync(h.SessionId, "/usage", MessageSendMode.Now, CancellationToken.None));
+
+        ex.Errors["body"].ShouldContain(s => s.Contains("reset", StringComparison.OrdinalIgnoreCase));
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Codex_slash_usage_with_arguments_is_refused_too()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+
+        await Should.ThrowAsync<ValidationException>(() =>
+            h.Queue.EnqueueAsync(
+                h.SessionId, "/usage --json", MessageSendMode.WhenIdle, CancellationToken.None));
+
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task A_queued_Codex_slash_usage_is_refused_at_deliver_parks_and_does_not_kill()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        await h.SeedPendingMessageAsync("/usage");
+
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty("DeliverAsync refuses before SendInputAsync");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse("refusing a Forbidden body is never a wedge");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(3, "parked immediately — retrying a body we refuse to type is pointless");
+        message.SentAt.ShouldBeNull();
+
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ForbiddenTerminalBody);
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+        incident.Message.ShouldContain("reset", Case.Insensitive);
+        incident.Message.ShouldContain("PARKED");
+        incident.Message.ShouldContain("not restarted");
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeFalse("a refused body is not a wedge");
+    }
+
+    [Test]
+    public async Task The_poll_path_still_throws_on_Codex_slash_usage_after_Forbidden_moved()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var poll = new LocalCommandPoll(
+            AgentKind.Codex, "/usage", [], OpensOverlay: false,
+            OverlaySettleMs: 0, PanelTimeoutSeconds: 2);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => h.Queue.TryPollLocalCommandAsync(h.SessionId, poll, CancellationToken.None));
+        ex.Message.ShouldContain("/usage");
+        ex.Message.ShouldContain("reset", Case.Insensitive);
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Claude_auto_compact_still_enqueues_and_delivers_through_the_normal_path()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+
+        var dto = await h.Queue.EnqueueAsync(
+            h.SessionId, ContextCompactionService.CompactTriggerBody,
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        dto.Messages.ShouldBeEmpty("idle Claude: /compact delivers straight away");
+        h.Adapter.SubmittedBodies.ShouldBe([ContextCompactionService.CompactTriggerBody]);
+        h.Adapter.Inputs.ShouldContain("\r");
+        h.Adapter.Killed.ShouldBeFalse();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Grok_slash_usage_is_not_forbidden_and_still_types()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldNotBeEmpty("Grok /usage is a declared command, not a Forbidden one");
+        h.Adapter.Inputs.ShouldContain("/usage");
+    }
+
+    private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
+    {
+        await using var db = CreateContext();
+        await db.AgentSessions.Where(s => s.Id == sessionId)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, kind));
+    }
 }

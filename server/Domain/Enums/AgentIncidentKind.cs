@@ -287,4 +287,14 @@ public enum AgentIncidentKind
     /// visible without writing 48 identical rows a day.
     /// </summary>
     SubscriptionUsagePollDegraded = 30,
+
+    /// <summary>
+    /// A queued or Mode.Now body was refused because its first token is in this kind's
+    /// <c>LocalCommandContract.Forbidden</c> map — nothing was typed. Codex <c>/usage</c> is the
+    /// founding case: it opens a picker whose highlighted option redeems the account's one
+    /// usage-limit reset (CARD-0141 / CARD-0137 S3). Error, never Critical, never a kill:
+    /// refusing the body is the whole remedy, and retrying it is pointless. The message parks
+    /// immediately. No migration: stored as an int on the existing column.
+    /// </summary>
+    ForbiddenTerminalBody = 31,
 }

@@ -142,7 +142,9 @@ public sealed class SessionMessageQueueService
         if (trimmed.Length == 0)
             throw new ValidationException(nameof(body), "Message must not be empty.");
 
-        await EnsureSessionExistsAsync(sessionId, ct);
+        var kind = await RequireSessionKindAsync(sessionId, ct);
+        if (TryGetForbiddenReason(kind, trimmed, out var forbiddenReason))
+            throw new ValidationException(nameof(body), forbiddenReason);
 
         if (mode == MessageSendMode.Now)
         {
@@ -161,6 +163,13 @@ public sealed class SessionMessageQueueService
                     : null,
                 db: null, ct);
             var outcome = await DeliverAsync(sessionId, nowBody, ct);
+            if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+            {
+                await HandleForbiddenBodyAsync(sessionId, null, nowBody, outcome.RecordText, ct);
+                throw new ValidationException(
+                    nameof(body),
+                    outcome.RecordText ?? "This body is forbidden for this agent kind.");
+            }
             if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
                 await HandleTruncationAsync(sessionId, null, nowBody, outcome.RecordText, ct);
@@ -436,6 +445,13 @@ public sealed class SessionMessageQueueService
             message.LastDeliveryBaselineSequence = baseline.Observable ? baseline.MaxSequence : null;
             await db.SaveChangesAsync(ct);
             var outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline);
+            if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+            {
+                await HandleForbiddenBodyAsync(sessionId, [message.Id], sendNowBody, outcome.RecordText, ct);
+                throw new ValidationException(
+                    "body",
+                    outcome.RecordText ?? "This body is forbidden for this agent kind.");
+            }
             if (outcome.Verdict == DeliveryVerdict.Truncated)
             {
                 await HandleTruncationAsync(sessionId, [message.Id], sendNowBody, outcome.RecordText, ct);
@@ -927,6 +943,11 @@ public sealed class SessionMessageQueueService
             return FlushResult.Delivered;
 
         var ids = run.Select(m => m.Id).ToList();
+        if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+        {
+            await HandleForbiddenBodyAsync(sessionId, ids, body, outcome.RecordText, ct);
+            return FlushResult.Failed;
+        }
         if (outcome.Verdict == DeliveryVerdict.Truncated)
         {
             await HandleTruncationAsync(sessionId, ids, body, outcome.RecordText, ct);
@@ -1089,7 +1110,7 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord, Truncated }
+    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord, Truncated, ForbiddenBody }
 
     private readonly record struct DeliveryOutcome(DeliveryVerdict Verdict, string? RecordText = null)
     {
@@ -1122,6 +1143,7 @@ public sealed class SessionMessageQueueService
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
         DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
+        DeliveryVerdict.ForbiddenBody => "the body is forbidden for this agent kind",
         _ => "delivered",
     };
 
@@ -1190,6 +1212,27 @@ public sealed class SessionMessageQueueService
         // fragment exactly like the 2026-07-29 live miss. Shared with every other typing path via
         // PtyInputEncoding (SendLineAsync callers were the 2026-08-08 miss).
         var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
+
+        // CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed. Codex `/usage` is the
+        // founding case — typing it opens a picker whose highlighted option redeems the account's
+        // one usage-limit reset, and CARD-0055's confirm loop would re-press Enter into that picker.
+        // Matching is the first whitespace-delimited token so `/usage --json` is refused too.
+        // Belt-and-braces for rows already in the queue when the EnqueueAsync pre-check lands, and
+        // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
+        // CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed. Codex `/usage` is the
+        // founding case — typing it opens a picker whose highlighted option redeems the account's
+        // one usage-limit reset, and CARD-0055's confirm loop would re-press Enter into that picker.
+        // Matching is the first whitespace-delimited token so `/usage --json` is refused too.
+        // Belt-and-braces for rows already in the queue when the EnqueueAsync pre-check lands, and
+        // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
+        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        if (kind is { } refusedKind && TryGetForbiddenReason(refusedKind, trimmed, out var forbiddenReason))
+        {
+            _logger.LogError(
+                "Refusing forbidden body '{Token}' for {Kind} session {SessionId}: {Reason}",
+                FirstCommandToken(trimmed), refusedKind, sessionId, forbiddenReason);
+            return DeliveryOutcome.Of(DeliveryVerdict.ForbiddenBody, forbiddenReason);
+        }
 
         // Size gate. Above the measured-safe ceiling the pty drops whole 1024-byte chunks of the
         // body and reports success — and because a surviving head or tail is enough for it, the
@@ -1636,6 +1679,99 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    /// <summary>
+    /// CARD-0137 S3 / L0: a body whose first token is in this kind's
+    /// <see cref="LocalCommandContract.Forbidden"/> map. Nothing was typed — retrying is
+    /// pointless — so park immediately, raise <see cref="AgentIncidentKind.ForbiddenTerminalBody"/>
+    /// at Error (never Critical), and never kill.
+    /// </summary>
+    private async Task HandleForbiddenBodyAsync(
+        Guid sessionId,
+        IReadOnlyList<Guid>? messageIds,
+        string body,
+        string? reason,
+        CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agent = await db.Agents.FirstOrDefaultAsync(
+                a => a.PersistentSessionId == sessionId.ToString("D"), ct);
+
+            if (messageIds is { Count: > 0 })
+            {
+                var messages = await db.SessionQueuedMessages
+                    .Where(m => messageIds.Contains(m.Id) && m.AgentSessionId == sessionId)
+                    .ToListAsync(ct);
+                foreach (var message in messages)
+                {
+                    if (message.Status == QueuedMessageStatus.Sent)
+                    {
+                        message.Status = QueuedMessageStatus.Pending;
+                        message.SentAt = null;
+                    }
+
+                    message.DeliveryAttempts = Math.Max(message.DeliveryAttempts, MaxAttempts);
+                }
+            }
+
+            var token = FirstCommandToken(body);
+            var detailReason = string.IsNullOrWhiteSpace(reason)
+                ? "this body is forbidden for this agent kind"
+                : reason;
+
+            if (agent is not null)
+            {
+                var keys = messageIds is { Count: > 0 }
+                    ? messageIds.Select(id => id.ToString("D")).ToList()
+                    : [$"now:{sessionId:D}"];
+                var failureReason = string.Join(",", keys.OrderBy(k => k, StringComparer.Ordinal));
+                var already = await db.AgentIncidents
+                    .Where(i => i.AgentId == agent.Id
+                        && i.Kind == AgentIncidentKind.ForbiddenTerminalBody
+                        && i.FailureReason != null)
+                    .Select(i => i.FailureReason!)
+                    .ToListAsync(ct);
+                var covered = keys.All(key =>
+                    already.Any(existing => existing.Contains(key, StringComparison.Ordinal)));
+
+                if (!covered)
+                {
+                    var parked = messageIds is { Count: > 0 };
+                    var detail =
+                        $"Refused to type '{token}' into this terminal: {detailReason}. "
+                        + "Nothing was written. The session was not restarted."
+                        + (parked
+                            ? " The message is PARKED; retrying a body we refuse to type is pointless."
+                            : string.Empty);
+
+                    var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+                    await supervisor.RecordIncidentAsync(
+                        agent.Id, sessionId, AgentIncidentKind.ForbiddenTerminalBody, AlertSeverity.Error,
+                        detail, failureReason: failureReason, ct: ct);
+                }
+            }
+
+            await db.SaveChangesAsync(ct);
+
+            if (agent is not null)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
+
+            await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+
+            _logger.LogWarning(
+                "Delivery to session {SessionId} refused forbidden body '{Token}'; agent={AgentName}, "
+                + "parked={Parked}, killed=false, reason={Reason}",
+                sessionId, token, agent?.Name ?? "<none>",
+                messageIds is { Count: > 0 }, detailReason);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to handle forbidden body for session {SessionId}", sessionId);
+        }
+    }
+
     // Verification failed: return the message to the queue (never silently lose it), record an
     // incident against the owning agent (which also raises an alert), and for always-on agents kill
     // the wedged session — the supervisor's ladder restarts it (resuming the SAME session row, so
@@ -2013,12 +2149,48 @@ public sealed class SessionMessageQueueService
         return new SessionQueueDto(sessionId, messages, working);
     }
 
-    private async Task EnsureSessionExistsAsync(Guid sessionId, CancellationToken ct)
+    private async Task<AgentKind> RequireSessionKindAsync(Guid sessionId, CancellationToken ct)
+    {
+        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        if (kind is null)
+            throw new NotFoundException(nameof(AgentSession), sessionId);
+        return kind.Value;
+    }
+
+    private async Task<AgentKind?> TryGetSessionKindAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (!await db.AgentSessions.AnyAsync(s => s.Id == sessionId, ct))
-            throw new NotFoundException(nameof(AgentSession), sessionId);
+        return await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (AgentKind?)s.AgentKind)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// First whitespace-delimited token of <paramref name="body"/>, used to match
+    /// <see cref="LocalCommandContract.Forbidden"/> and <see cref="LocalCommandContract.Commands"/>.
+    /// <c>/usage --json</c> matches <c>/usage</c>; <c>/compact Focus the summary…</c> matches
+    /// <c>/compact</c>.
+    /// </summary>
+    private static string FirstCommandToken(string body)
+    {
+        var trimmed = body.AsSpan().Trim();
+        if (trimmed.IsEmpty)
+            return "";
+        var end = 0;
+        while (end < trimmed.Length && !char.IsWhiteSpace(trimmed[end]))
+            end++;
+        return trimmed[..end].ToString();
+    }
+
+    private static bool TryGetForbiddenReason(AgentKind kind, string body, out string reason)
+    {
+        reason = "";
+        var token = FirstCommandToken(body);
+        if (token.Length == 0)
+            return false;
+        return ProviderContractCatalog.For(kind).LocalCommands.Forbidden.TryGetValue(token, out reason!);
     }
 
     private async Task PublishQueueChangedAsync(SessionQueueDto dto, CancellationToken ct)
@@ -2108,7 +2280,7 @@ public sealed class SessionMessageQueueService
                 return new LocalCommandPollResult.Skipped("pending messages");
             }
 
-            var forbidden = ProviderContractCatalog.For(poll.Kind).SubscriptionUsagePoll.Forbidden;
+            var forbidden = ProviderContractCatalog.For(poll.Kind).LocalCommands.Forbidden;
             foreach (var (body, reason) in forbidden)
             {
                 if (string.Equals(body, poll.Command, StringComparison.OrdinalIgnoreCase))

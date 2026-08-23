@@ -48,7 +48,9 @@ public sealed record ProviderContract(
     UsageLimitSignalContract UsageLimitSignal,
     CompactionContract Compaction,
     BlockingStartupModalContract BlockingStartupModal,
-    SubscriptionUsagePollContract SubscriptionUsagePoll);
+    SubscriptionUsagePollContract SubscriptionUsagePoll,
+    TerminalOverlayContract TerminalOverlay,
+    LocalCommandContract LocalCommands);
 
 /// <summary>
 /// Structured-transcript axis. <see cref="Format"/> is a <c>TranscriptFormats</c> value when
@@ -99,8 +101,8 @@ public sealed record BlockingStartupModalContract(
 /// <summary>
 /// Kind-static poll of a TUI subscription-usage panel (CARD-0143).
 /// <see cref="Command"/> is the ONLY body this feature may type for this kind, and is null
-/// unless <see cref="State"/> is Supported or Degraded. <see cref="Forbidden"/> is enforced
-/// both by test and at runtime so a Codex session can never be sent <c>/usage</c>.
+/// unless <see cref="State"/> is Supported or Degraded. Bodies that must never be typed live
+/// on <see cref="LocalCommandContract.Forbidden"/> so every typing path reads one list.
 /// </summary>
 public sealed record SubscriptionUsagePollContract(
     AgentTuiCapabilityState State,
@@ -110,6 +112,36 @@ public sealed record SubscriptionUsagePollContract(
     /// <summary>Keys to press after the command to reach the quota view, in order. Empty = renders directly.</summary>
     IReadOnlyList<string> Navigation,
     /// <summary>Whether the command opens a focus-stealing overlay (CARD-0137) that must be Esc'd closed.</summary>
-    bool OpensOverlay,
-    /// <summary>Bodies that must NEVER be typed for this kind, with the reason. Enforced by test AND at runtime.</summary>
+    bool OpensOverlay);
+
+/// <summary>
+/// Mid-life overlay handling (CARD-0137). NOT the launch-time modal contract
+/// (<see cref="BlockingStartupModalContract"/>) — this is about a modal a live, idle session is sitting behind.
+/// </summary>
+public sealed record TerminalOverlayContract(
+    AgentTuiCapabilityState State,
+    string Reason,
+    /// <summary>Key sequence measured to dismiss an overlay AND to be a no-op on an idle empty
+    /// composer. Null unless State is Supported. Sent at most ONCE per delivery.</summary>
+    string? DismissKey,
+    /// <summary>Screen fragments that positively identify a MEASURED overlay for this kind,
+    /// matched by ComposerDeliveryEvidence.FragmentIsVisible. Empty = no proactive detector.</summary>
+    IReadOnlyList<string> DetectFragments);
+
+/// <summary>
+/// Exact TUI-local command bodies for this kind, and what each is measured to do. The key is the
+/// first whitespace-delimited token of the body, lowercased. Absence is not a claim of absence —
+/// an undeclared /-prefixed body keeps the ordinary prompt-delivery path unchanged.
+/// </summary>
+public sealed record LocalCommandContract(
+    AgentTuiCapabilityState State,
+    string Reason,
+    IReadOnlyDictionary<string, LocalCommandFact> Commands,
+    /// <summary>Bodies nothing may ever type for this kind, with the reason. Moved here from
+    /// SubscriptionUsagePollContract so there is ONE list and it governs every typing path.
+    /// Enforced by test AND at runtime.</summary>
     IReadOnlyDictionary<string, string> Forbidden);
+
+/// <param name="WritesUserPrompt">Does submitting it produce a UserPrompt transcript row carrying
+/// the typed text? This is the ONLY thing that decides whether CARD-0055's confirm can be used.</param>
+public sealed record LocalCommandFact(bool OpensOverlay, bool WritesUserPrompt, string Evidence);
