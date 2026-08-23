@@ -55,6 +55,9 @@ public sealed class AgentTaskDispatcher
     // CARD-0153 S2. Optional so S1 harnesses keep constructing this; absent, the transcript arm
     // stands alone.
     private readonly AgentFilesService? _files;
+    // CARD-0136. EvaluateAsync only — never EnforceAsync. A refusal here would silently
+    // fail a task with no caller present.
+    private readonly SubscriptionQuotaGate? _quotaGate;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -95,7 +98,8 @@ public sealed class AgentTaskDispatcher
         IServiceScopeFactory? scopeFactory = null,
         AgentTuiLaunchResolver? launchResolver = null,
         IOptions<SupervisionSettings>? supervision = null,
-        AgentFilesService? files = null)
+        AgentFilesService? files = null,
+        SubscriptionQuotaGate? quotaGate = null)
     {
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
@@ -120,6 +124,7 @@ public sealed class AgentTaskDispatcher
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _logger = logger;
+        _quotaGate = quotaGate;
     }
 
     /// <summary>
@@ -1516,6 +1521,26 @@ public sealed class AgentTaskDispatcher
         // must not be able to fail them. The outer tick catches the throw and fails the task with
         // the configuration gap named.
         var program = await ResolveDelegateProgramAsync(claimed, ct);
+
+        if (_quotaGate is not null)
+        {
+            Agent? owner = null;
+            if (claimed.AgentId is Guid oid)
+                owner = await _db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == oid, ct);
+            var quota = await _quotaGate.EvaluateAsync(
+                program.Kind, SubscriptionUsageKey.For(owner, program.Kind), ct);
+            if (quota is not null)
+            {
+                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(),
+                    AgentTaskId = claimed.Id,
+                    Type = AgentTaskEventType.Warning,
+                    Detail = SubscriptionQuotaPolicy.FormatDispatchWarning(quota),
+                    At = now,
+                });
+            }
+        }
 
         // Isolation is real, not declarative: a Worktree task gets its own `git worktree add`
         // BEFORE the session exists, and the delegate runs inside it. Branching from the merge

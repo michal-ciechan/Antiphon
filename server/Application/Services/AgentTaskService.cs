@@ -26,6 +26,8 @@ public sealed class AgentTaskService
     private readonly IDelegateSessionStopper _sessions;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AgentTaskService> _logger;
+    // CARD-0136. Optional so every harness that predates this card keeps constructing this.
+    private readonly SubscriptionQuotaGate? _quotaGate;
 
     public AgentTaskService(
         AppDbContext db,
@@ -34,7 +36,8 @@ public sealed class AgentTaskService
         IEventBus eventBus,
         IDelegateSessionStopper sessions,
         TimeProvider timeProvider,
-        ILogger<AgentTaskService> logger)
+        ILogger<AgentTaskService> logger,
+        SubscriptionQuotaGate? quotaGate = null)
     {
         _db = db;
         _workspace = workspace;
@@ -43,6 +46,7 @@ public sealed class AgentTaskService
         _sessions = sessions;
         _timeProvider = timeProvider;
         _logger = logger;
+        _quotaGate = quotaGate;
     }
 
     /// <summary>
@@ -107,6 +111,8 @@ public sealed class AgentTaskService
                 + "It is a hint that schedules the first check-in, not a deadline.");
         }
 
+        Agent? subscriptionOwner = null;
+
         // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
         // task inherits that agent's directory (that is where the context lives) and its TIER —
         // the model is already running; a role policy cannot change it mid-session.
@@ -122,6 +128,7 @@ public sealed class AgentTaskService
                 ?? throw new ConflictException(
                     $"The agent that ran task {DelegationReportFormatter.Short(priorId)} has been retired "
                     + "from the pool — delegate normally instead; the report is still on the task.");
+            subscriptionOwner = followAgent;
 
             // The agent is already running, as whatever program it was launched as. A follow-up
             // keeps that context, so the kind is not a choice any more: unset inherits the prior
@@ -153,6 +160,7 @@ public sealed class AgentTaskService
         {
             var pinned = await _db.Agents.AsNoTracking()
                 .FirstOrDefaultAsync(a => a.Id == pinId, ct);
+            subscriptionOwner = pinned;
             if (pinned is { IsPoolDelegate: false })
             {
                 if (request.AgentKind is { } wantedKind && wantedKind != pinned.Kind)
@@ -223,6 +231,22 @@ public sealed class AgentTaskService
         var id = Guid.NewGuid();
         var level = ResolveLevel(request.Kind, request.Role, request.ModelLevel);
         var agentKind = ResolveAgentKind(request.Kind, request.Role, request.AgentKind);
+        if (_quotaGate is not null)
+        {
+            var quotaKey = SubscriptionUsageKey.For(subscriptionOwner, agentKind);
+            var quotaOverride = await _quotaGate.EnforceAsync(
+                agentKind,
+                quotaKey,
+                request.IgnoreSubscriptionQuota,
+                $"task '{BuildTitle(request)}'",
+                ct);
+            if (quotaOverride is not null)
+            {
+                var quotaWarning = SubscriptionQuotaPolicy.FormatOverride(quotaOverride);
+                warning = warning is null ? quotaWarning : warning + " " + quotaWarning;
+            }
+        }
+
         // A task token always carries the parent task's identity, including null. The work may run
         // in another checkout, but its commissioning project — not its filesystem path — decides
         // the eventual API-key scope (CARD-0115 S1).

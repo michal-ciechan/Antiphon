@@ -1,7 +1,15 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -166,6 +174,29 @@ public sealed class SubscriptionQuotaGateTests
             .Succeeded.ShouldBeTrue();
     }
 
+    [Test]
+    [Category("Integration")]
+    [NotInParallel]
+    public async Task Dispatch_records_an_informational_warning_and_never_refuses_on_a_low_reading()
+    {
+        using var workspace = new TempWorkspace();
+        var task = await SeedQueuedCodexTaskAsync(workspace.Path);
+        await SeedUsageSampleAsync(AgentKind.Codex, "Codex", remaining: 3, hoursToReset: 36);
+
+        var dispatcher = CreateDispatchHarness();
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.FailureReason.ShouldBeNull();
+        var warning = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning);
+        warning.Detail.ShouldContain("dispatched on Codex");
+        warning.Detail.ShouldContain("3% remaining");
+        warning.Detail.ShouldContain("quota gate was passed/overridden at create");
+    }
+
     private static SubscriptionUsageSnapshot Snap(double remaining, DateTime? resetsAt, TimeSpan age) =>
         new(
             AgentKind.Codex,
@@ -175,4 +206,112 @@ public sealed class SubscriptionQuotaGateTests
             resetsAt,
             ObservedAt: Now - age,
             Age: age);
+
+    private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static async Task<AgentTask> SeedQueuedCodexTaskAsync(string directory)
+    {
+        var id = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "quota-dispatch test",
+            Goal = $"quota dispatch {id:N}",
+            Role = AgentTaskRole.Docs,
+            AgentKind = AgentKind.Codex,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = directory,
+            Status = AgentTaskStatus.Queued,
+            ReplyTo = AgentTaskReplyTo.None,
+            ExpectedDurationMinutes = 10,
+            CreatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
+
+    private static async Task SeedUsageSampleAsync(
+        AgentKind provider, string key, double remaining, int hoursToReset)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+        {
+            Id = Guid.NewGuid(),
+            Provider = provider,
+            SubscriptionKey = key,
+            PlanLabel = "SuperPlan",
+            RemainingPercent = remaining,
+            ResetsAt = now.AddHours(hoursToReset),
+            ObservedAt = now,
+            AgentSessionId = Guid.NewGuid(),
+            SourceCommand = "/status",
+            ParseStatus = SubscriptionUsageParseStatus.Parsed,
+            RawExcerpt = "seeded",
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static AgentTaskDispatcher CreateDispatchHarness()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddSingleton<IEventBus, MockEventBus>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddSingleton(Options.Create(new DelegationSettings
+        {
+            MaxConcurrentTasks = 512,
+            PoolIdleRetireMinutes = 525_600,
+            PoolMaxIdlePerDirectory = int.MaxValue,
+            RolePolicy = new(StringComparer.OrdinalIgnoreCase),
+            FinalMessageGraceSeconds = 0,
+            SubagentGraceMinutes = 0,
+        }));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+            s.Definitions["codex"] = new AgentDefinition { Kind = "Codex", Exe = "codex" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper>(new RecordingSessionStopper());
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton(Options.Create(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-quota-wt"),
+        }));
+        services.AddSingleton<IWorktreeManager, Antiphon.Server.Infrastructure.Git.WorktreeManager>();
+        services.AddSingleton<IGitService, Antiphon.Server.Infrastructure.Git.GitService>();
+        services.AddScoped<DelegationWorktreeService>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<SubscriptionUsageReader>();
+        services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+        services.AddScoped<SubscriptionQuotaGate>();
+        services.AddScoped<AgentTaskDispatcher>();
+
+        var provider = services.BuildServiceProvider();
+        return provider.CreateScope().ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+    }
+
+    private sealed class TempWorkspace : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-quota-dispatch").FullName;
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); }
+            catch (IOException) { }
+        }
+    }
 }

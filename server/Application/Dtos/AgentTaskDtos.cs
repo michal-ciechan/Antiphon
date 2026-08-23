@@ -49,7 +49,13 @@ public sealed record CreateAgentTaskRequest(
     /// it is a hint, never a deadline, and no code path fails or escalates a task for running past
     /// it (CARD-0047).
     /// </summary>
-    int? ExpectedMinutes = null);
+    int? ExpectedMinutes = null,
+    /// <summary>
+    /// Bypass the CARD-0136 subscription-quota launch gate. Default false: a fresh low
+    /// reading refuses create with 409 <c>subscription_quota_low</c>. Re-send the same
+    /// request with this true to queue anyway; the warning is recorded on the task.
+    /// </summary>
+    bool IgnoreSubscriptionQuota = false);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,

@@ -463,6 +463,75 @@ public class AgentTaskAgentKindTests
             "Delegate normally", customMessage: "refusals must say what to do instead");
     }
 
+    [Test]
+    public async Task Create_returns_409_subscription_quota_low_for_a_pinned_agent_whose_profile_key_is_low()
+    {
+        using var workspace = new TempWorkspace();
+        var (agentId, profileId) = await SeedStandingCodexWithProfileAsync(workspace.Path);
+        await SeedUsageSampleAsync(AgentKind.Codex, profileId.ToString("D"), remaining: 3, hoursToReset: 36);
+
+        await using var db = CreateContext();
+        var ex = await Should.ThrowAsync<SubscriptionQuotaLowException>(
+            () => CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
+                new CreateAgentTaskRequest(Goal: "run this on my Codex agent") { AgentId = agentId },
+                ManualCaller(workspace.Path),
+                CancellationToken.None));
+
+        ex.Code.ShouldBe("subscription_quota_low");
+        var quota = ex.Extensions.ShouldNotBeNull()["quota"].ShouldBeOfType<SubscriptionQuotaProblemDto>();
+        quota.RemainingPercent.ShouldBe(3);
+        quota.SubscriptionKey.ShouldBe(profileId.ToString("D"));
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.CountAsync(t => t.AgentId == agentId && t.Goal == "run this on my Codex agent"))
+            .ShouldBe(0, "a refused create must not leave a queued row");
+    }
+
+    [Test]
+    public async Task Create_with_IgnoreSubscriptionQuota_queues_the_task_and_carries_the_warning()
+    {
+        using var workspace = new TempWorkspace();
+        var (agentId, profileId) = await SeedStandingCodexWithProfileAsync(workspace.Path);
+        await SeedUsageSampleAsync(AgentKind.Codex, profileId.ToString("D"), remaining: 3, hoursToReset: 36);
+
+        await using var db = CreateContext();
+        var created = await CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: "run anyway on Codex",
+                IgnoreSubscriptionQuota: true) { AgentId = agentId },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.Warning.ShouldNotBeNull();
+        created.Warning.ShouldContain("3%");
+        created.Warning.ShouldContain("ignoreSubscriptionQuota");
+        created.AgentKind.ShouldBe(AgentKind.Codex);
+
+        await using var verify = CreateContext();
+        var events = await verify.AgentTaskEvents.Where(e => e.AgentTaskId == created.Id).ToListAsync();
+        events.ShouldContain(e => e.Type == AgentTaskEventType.Warning && e.Detail.Contains("3%"));
+        (await verify.AgentTasks.SingleAsync(t => t.Id == created.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    [Test]
+    public async Task Create_of_an_unpinned_Codex_task_does_not_borrow_a_profiles_reading()
+    {
+        using var workspace = new TempWorkspace();
+        var (_, profileId) = await SeedStandingCodexWithProfileAsync(workspace.Path);
+        await SeedUsageSampleAsync(AgentKind.Codex, profileId.ToString("D"), remaining: 3, hoursToReset: 36);
+        // Newest kind-name sample is healthy so a leftover low "Codex" row cannot flake this.
+        await SeedUsageSampleAsync(AgentKind.Codex, "Codex", remaining: 50, hoursToReset: 36);
+
+        await using var db = CreateContext();
+        var created = await CreateService(db, quotaGate: CreateGate(db)).CreateAsync(
+            new CreateAgentTaskRequest(Goal: $"unpinned Codex {Guid.NewGuid():N}") { AgentKind = AgentKind.Codex },
+            ManualCaller(workspace.Path),
+            CancellationToken.None);
+
+        created.AgentKind.ShouldBe(AgentKind.Codex);
+        created.Warning.ShouldBeNull();
+    }
+
     // ---- helpers ------------------------------------------------------------------------------------
 
     private static AgentTaskService.Caller ManualCaller(string directory) => new(null, null, directory);
@@ -524,7 +593,9 @@ public class AgentTaskAgentKindTests
     }
 
     private static AgentTaskService CreateService(
-        AppDbContext db, Action<DelegationSettings>? configure = null)
+        AppDbContext db,
+        Action<DelegationSettings>? configure = null,
+        SubscriptionQuotaGate? quotaGate = null)
     {
         var settings = new DelegationSettings
         {
@@ -541,7 +612,73 @@ public class AgentTaskAgentKindTests
             new MockEventBus(),
             new RecordingSessionStopper(),
             TimeProvider.System,
-            NullLogger<AgentTaskService>.Instance);
+            NullLogger<AgentTaskService>.Instance,
+            quotaGate);
+    }
+
+    private static SubscriptionQuotaGate CreateGate(AppDbContext db) =>
+        new(
+            new SubscriptionUsageReader(db, TimeProvider.System),
+            Options.Create(new SubscriptionQuotaGateSettings()),
+            TimeProvider.System,
+            NullLogger<SubscriptionQuotaGate>.Instance);
+
+    private static async Task<(Guid AgentId, Guid ProfileId)> SeedStandingCodexWithProfileAsync(string directory)
+    {
+        var now = DateTime.UtcNow;
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = $"codex-quota-{Guid.NewGuid():N}"[..24],
+            Kind = AgentKind.Codex,
+            IsEnabled = true,
+            Source = AgentTuiProfileSource.Operator,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Codex standing",
+            Slug = $"pin-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = directory,
+            Details = "Standing Codex for CARD-0136 T13.",
+            Status = AgentStatus.Idle,
+            ModelLevel = AgentModelLevel.High,
+            Kind = AgentKind.Codex,
+            TuiProfileId = profile.Id,
+            AlwaysOn = false,
+            IsPoolDelegate = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await using var db = CreateContext();
+        db.AgentTuiProfiles.Add(profile);
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+        return (agent.Id, profile.Id);
+    }
+
+    private static async Task SeedUsageSampleAsync(
+        AgentKind provider, string key, double remaining, int hoursToReset)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+        {
+            Id = Guid.NewGuid(),
+            Provider = provider,
+            SubscriptionKey = key,
+            PlanLabel = "SuperPlan",
+            RemainingPercent = remaining,
+            ResetsAt = now.AddHours(hoursToReset),
+            ObservedAt = now,
+            AgentSessionId = Guid.NewGuid(),
+            SourceCommand = "/status",
+            ParseStatus = SubscriptionUsageParseStatus.Parsed,
+            RawExcerpt = "seeded",
+        });
+        await db.SaveChangesAsync();
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
