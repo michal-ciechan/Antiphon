@@ -55,16 +55,17 @@ The contract and the host ship as NuGet packages, version lock-step at
 `Antiphon.Messaging.Gateway` depends on `Antiphon.Messaging`; reference
 Gateway and the contracts come with it.
 
-**NuGet.org publishing is pending** (CARD-0150 S6 — needs the operator's
-NuGet.org API key in Bitwarden). Until that lands, the live feed is **GitHub
-Packages**:
+The third-party feed is **nuget.org** (no PAT). GitHub Packages is the
+first-party / internal mirror of the same bits, plus Slack/Telegram which
+are not published publicly:
 
 ```
-https://nuget.pkg.github.com/michal-ciechan/index.json
+dotnet add package Antiphon.Messaging.Gateway --version 1.0.0
 ```
 
-GitHub Packages requires a GitHub PAT with `read:packages` even for this
-public repo. A `nuget.config` in the consuming project:
+First-party consumers that still restore from GitHub Packages
+(`https://nuget.pkg.github.com/michal-ciechan/index.json`) need a GitHub
+PAT with `read:packages` and a `nuget.config`:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -80,12 +81,6 @@ public repo. A `nuget.config` in the consuming project:
     </github-antiphon>
   </packageSourceCredentials>
 </configuration>
-```
-
-Then:
-
-```
-dotnet add package Antiphon.Messaging.Gateway --version 1.0.0
 ```
 
 Inside this repo, `samples/EchoGateway` `ProjectReference`s the local

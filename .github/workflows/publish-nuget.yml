@@ -1,8 +1,14 @@
 name: publish-nuget
 
-# Packs the Antiphon.Messaging* packages and pushes them to GitHub Packages.
-# --skip-duplicate makes re-runs of an already-published version a no-op, so this
-# is safe to run on every master push; bump src/Messaging.Pack.props to release.
+# Dual-publishes Antiphon.Messaging* packages:
+#   - GitHub Packages: all packed IDs (first-party / internal mirror)
+#   - nuget.org: the 4 contract-surface packages only (Messaging, Client,
+#     Client.Testing, Gateway) — the third-party-facing feed
+# Slack/Telegram stay GH-only. FakeGateway is not packed.
+# prove-nuget-org then restores samples/EchoGateway from nuget.org alone
+# (isolated nuget.config + empty cache) and runs --self-test.
+# --skip-duplicate makes re-runs of an already-published version a no-op.
+# Bump src/Messaging.Pack.props to release.
 
 on:
   push:
@@ -11,11 +17,11 @@ on:
       - "src/Antiphon.Messaging/**"
       - "src/Antiphon.Messaging.Client/**"
       - "src/Antiphon.Messaging.Client.Testing/**"
-      - "src/Antiphon.Messaging.FakeGateway/**"
       - "src/Antiphon.Messaging.Slack/**"
       - "src/Antiphon.Messaging.Telegram/**"
       - "src/Antiphon.Messaging.Gateway/**"
       - "src/Messaging.Pack.props"
+      - "samples/EchoGateway/**"
       - ".github/workflows/publish-nuget.yml"
   workflow_dispatch:
 
@@ -30,15 +36,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
       - name: Test Messaging packages
         run: dotnet run --project tests/Antiphon.Messaging.Tests
       - name: Pack
         run: |
+          set -euo pipefail
           dotnet pack src/Antiphon.Messaging/Antiphon.Messaging.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Client/Antiphon.Messaging.Client.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Client.Testing/Antiphon.Messaging.Client.Testing.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Slack/Antiphon.Messaging.Slack.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Telegram/Antiphon.Messaging.Telegram.csproj -c Release -o out
           dotnet pack src/Antiphon.Messaging.Gateway/Antiphon.Messaging.Gateway.csproj -c Release -o out
@@ -48,3 +54,65 @@ jobs:
           --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           --api-key "${{ secrets.GITHUB_TOKEN }}"
           --skip-duplicate
+      - name: Require NuGet.org API key
+        if: ${{ secrets.NUGET_API_KEY == '' }}
+        run: |
+          echo "::error::NUGET_API_KEY repo secret is not set. Set it from the Bitwarden item 'NuGet.org - Antiphon publish key' (card CARD-0150 secret-handling note), then re-run."
+          exit 1
+      - name: Push to NuGet.org
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Messaging.Pack.props)
+          for id in Antiphon.Messaging Antiphon.Messaging.Client Antiphon.Messaging.Client.Testing Antiphon.Messaging.Gateway; do
+            dotnet nuget push "out/$id.$VERSION.nupkg" \
+              --source "https://api.nuget.org/v3/index.json" \
+              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --skip-duplicate
+          done
+
+  prove-nuget-org:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      NUGET_PACKAGES: ${{ runner.temp }}/nuget-proof/packages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restore EchoGateway from nuget.org and self-test
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nuget-proof"
+          cat > "$RUNNER_TEMP/nuget-proof/nuget.config" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          EOF
+          VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Messaging.Pack.props)
+          for i in $(seq 1 20); do
+            if dotnet restore samples/EchoGateway \
+                -p:UsePublishedPackages=true \
+                -p:AntiphonMessagingVersion="$VERSION" \
+                --configfile "$RUNNER_TEMP/nuget-proof/nuget.config"; then
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "::error::Antiphon packages not restorable from nuget.org after ~60 min. Check https://www.nuget.org/packages/Antiphon.Messaging — first-publish validation may have failed or indexing may be unusually slow. Packages ARE pushed (the publish job succeeded); once they show as listed, re-run this workflow via workflow_dispatch."
+              exit 1
+            fi
+            echo "attempt $i/20 — not yet restorable from nuget.org (fresh IDs index in <15 min, worst case ~1 hr); retrying in 180s"
+            sleep 180
+          done
+          PROOF_OUT="$RUNNER_TEMP/nuget-proof/out"
+          dotnet build samples/EchoGateway -c Release \
+            -p:UsePublishedPackages=true \
+            -p:AntiphonMessagingVersion="$VERSION" \
+            --no-restore \
+            -o "$PROOF_OUT"
+          dotnet "$PROOF_OUT/EchoGateway.dll" --self-test

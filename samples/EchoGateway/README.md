@@ -22,5 +22,5 @@ dotnet run --project samples/EchoGateway
 
 In-repo the project `ProjectReference`s `Antiphon.Messaging` and
 `Antiphon.Messaging.Gateway`. A third-party copy uses a `PackageReference`
-instead — see the getting-started doc for the GitHub Packages feed (NuGet.org
-publishing is pending).
+from nuget.org instead — see the getting-started doc. GitHub Packages is
+the first-party / internal mirror.

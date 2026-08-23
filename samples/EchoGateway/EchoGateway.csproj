@@ -7,8 +7,8 @@
 
       dotnet build samples/EchoGateway -p:UsePublishedPackages=true
 
-    NuGet.org publishing is pending (CARD-0150 S6). Until then the live feed is GitHub
-    Packages: https://nuget.pkg.github.com/michal-ciechan/index.json (PAT with read:packages).
+    Third-party restore is nuget.org (no PAT). GitHub Packages is the first-party
+    mirror. Pass -p:AntiphonMessagingVersion=<ver> to pin a version (defaults to 1.0.0).
     See docs/messaging/build-your-own-gateway.md.
   -->
 
@@ -22,6 +22,7 @@
     <IsPackable>false</IsPackable>
     <Description>Minimal third-party Antiphon messaging gateway: stdin is channel "echo", replies print to stdout.</Description>
     <UsePublishedPackages Condition="'$(UsePublishedPackages)' == ''">false</UsePublishedPackages>
+    <AntiphonMessagingVersion Condition="'$(AntiphonMessagingVersion)' == ''">1.0.0</AntiphonMessagingVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(UsePublishedPackages)' == 'true'">
-    <PackageReference Include="Antiphon.Messaging.Gateway" Version="1.0.0" />
+    <PackageReference Include="Antiphon.Messaging.Gateway" Version="$(AntiphonMessagingVersion)" />
   </ItemGroup>
 
   <ItemGroup>
