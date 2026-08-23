@@ -224,8 +224,13 @@ public class SessionMessageQueueDeliveryVerificationTests
     }
 
     [Test]
-    public async Task Queued_user_prompt_is_not_a_turn_prompt_for_settlement_or_the_delivery_watchdog()
+    public async Task Queued_user_prompt_is_a_turn_prompt_for_settlement_and_the_delivery_watchdog()
     {
+        // CARD-0132 S2.4 kept QueuedUserPrompt inert here (this test used to assert TurnPrompts
+        // empty / HasTurnPromptSinceAsync false). CARD-0135 reverses that: the timestamp-ranking
+        // trap that justified inertness does not transfer to TranscriptPromptSpan (sequence
+        // orders; Timestamp only meets DispatchedAt). Working/idle stays inert — see
+        // Queued_user_prompt_is_inert_for_the_server_working_rule, which must stay green unedited.
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         var dispatchedAt = DateTime.UtcNow.AddMinutes(-1);
         await h.InsertTranscriptEntryAsync(
@@ -235,9 +240,10 @@ public class SessionMessageQueueDeliveryVerificationTests
 
         await using var db = CreateContext();
         var span = await TranscriptPromptSpan.LoadAsync(db, h.SessionId, dispatchedAt, CancellationToken.None);
-        span.TurnPrompts.ShouldBeEmpty();
+        var queued = span.TurnPrompts.ShouldHaveSingleItem();
+        queued.Kind.ShouldBe(TranscriptKinds.QueuedUserPrompt);
         (await TranscriptPromptSpan.HasTurnPromptSinceAsync(db, h.SessionId, dispatchedAt, CancellationToken.None))
-            .ShouldBeFalse();
+            .ShouldBeTrue();
     }
 
     // ---- CARD-0041: a compacted session read "working" for two days --------------------------
