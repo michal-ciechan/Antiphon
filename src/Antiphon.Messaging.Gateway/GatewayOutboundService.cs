@@ -21,11 +21,17 @@ public sealed class GatewayOutboundService(
 
     private async Task ConsumeLoopAsync(CancellationToken ct)
     {
+        if (!Enum.TryParse<AutoOffsetReset>(_options.AutoOffsetReset, ignoreCase: true, out var offsetReset))
+        {
+            throw new InvalidOperationException(
+                $"AntiphonGateway:AutoOffsetReset '{_options.AutoOffsetReset}' is not a valid {nameof(AutoOffsetReset)} value.");
+        }
+
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
             GroupId = $"{_options.ConsumerGroup}-outbound",
-            AutoOffsetReset = AutoOffsetReset.Earliest,
+            AutoOffsetReset = offsetReset,
             EnableAutoCommit = true,
             // Attachment-bearing replies can be up to the bus cap (20 MB); the per-partition
             // fetch default (1 MB) would stall on them.

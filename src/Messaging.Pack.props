@@ -1,14 +1,16 @@
 <!-- Shared NuGet pack metadata for the Antiphon.Messaging* packages.
-     Bump <Version> here when publishing a new release of any of the three;
-     they version together (the client and testing packages depend on the contracts). -->
+     Bump <Version> here when publishing a new release of any of them;
+     they version together (the client, gateway, and testing packages depend on the contracts). -->
 <Project>
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
     <Authors>Mike Ciechan</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/michal-ciechan/Antiphon</RepositoryUrl>
     <PackageProjectUrl>https://github.com/michal-ciechan/Antiphon</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageTags>antiphon;messaging;kafka;gateway</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- Public API baseline: a new public member fails the build until PublicAPI.Shipped.txt is updated. -->
     <EnablePublicApiAnalyzers Condition="'$(EnablePublicApiAnalyzers)' == ''">true</EnablePublicApiAnalyzers>
     <WarningsAsErrors Condition="'$(EnablePublicApiAnalyzers)' == 'true'">$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
@@ -21,5 +23,9 @@
     </PackageReference>
     <AdditionalFiles Include="PublicAPI.Shipped.txt" />
     <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('README.md')">
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

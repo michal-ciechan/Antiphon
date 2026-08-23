@@ -6,6 +6,10 @@ shuttles messages **to/from Kafka** — inbound messages land on `channels.inbou
 Postgres inbox), replies are consumed from `channels.outbound` and delivered back to the
 channel. It also exposes a small REST API (`/api/channels/...`) for listing/replying.
 
+The Kafka ingress and outbound loops come from **`Antiphon.Messaging.Gateway`**
+(`AddAntiphonGateway(config, "Kafka")` — the section name is kept so deployed `Kafka__*`
+env vars keep working). The inbox and REST API stay in this service.
+
 > **Telegram specifics** — outbound **Markdown → Telegram HTML formatting** (the full mapping,
 > parse modes, fallback behaviour), inbound normalization, and every `Telegram__*` setting are
 > documented in **[docs/telegram.md](../../docs/telegram.md)**.

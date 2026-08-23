@@ -55,8 +55,8 @@ the projects because the Dockerfile's build context is `build/src` itself:
 ```bash
 # from the repo root — exclude bin/obj or the image build picks up host artifacts
 cd src && tar czf /tmp/msgsrc.tgz --exclude=obj --exclude=bin --exclude='bin-*' \
-  Messaging.Pack.props Antiphon.Messaging Antiphon.Messaging.Telegram \
-  Antiphon.Messaging.Slack Antiphon.Messaging.Service
+  Messaging.Pack.props Antiphon.Messaging Antiphon.Messaging.Gateway \
+  Antiphon.Messaging.Telegram Antiphon.Messaging.Slack Antiphon.Messaging.Service
 scp /tmp/msgsrc.tgz mc@server2:/tmp/
 
 # on server2 — replace the tree rather than overlaying it, so files DELETED or RENAMED upstream

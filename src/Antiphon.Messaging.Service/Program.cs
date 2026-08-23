@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Messaging;
+using Antiphon.Messaging.Gateway;
 using Antiphon.Messaging.Service;
 using Antiphon.Messaging.Slack;
 using Antiphon.Messaging.Telegram;
@@ -9,7 +10,6 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.Configure<KafkaSettings>(builder.Configuration.GetSection(KafkaSettings.SectionName));
 builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection(TelegramSettings.SectionName));
 builder.Services.Configure<SlackSettings>(builder.Configuration.GetSection(SlackSettings.SectionName));
 
@@ -49,20 +49,10 @@ if (!string.IsNullOrWhiteSpace(builder.Configuration["Slack:BotToken"]))
     });
 }
 
-builder.Services.AddSingleton<IProducer<string, string>>(sp =>
-{
-    var kafka = sp.GetRequiredService<IOptions<KafkaSettings>>().Value;
-    return new ProducerBuilder<string, string>(new ProducerConfig
-    {
-        BootstrapServers = kafka.BootstrapServers,
-        // Bus-wide 20 MB cap so attachment payloads fit; topics carry the same max.message.bytes.
-        MessageMaxBytes = kafka.MaxMessageBytes,
-    }).Build();
-});
-
-builder.Services.AddHostedService<ChannelIngressService>();
+// Ingress + outbound loops live in Antiphon.Messaging.Gateway. Section name "Kafka" keeps the
+// deployed env vars (Kafka__BootstrapServers, Kafka__ConsumerGroup, …) working.
+builder.Services.AddAntiphonGateway(builder.Configuration, "Kafka");
 builder.Services.AddHostedService<InboxConsumerService>();
-builder.Services.AddHostedService<OutboundConsumerService>();
 
 var app = builder.Build();
 
@@ -131,7 +121,7 @@ app.MapGet("/api/channels/messages/{id:guid}", async (
 // Reply to a message: enqueue on the outbound topic and mark answered.
 app.MapPost("/api/channels/messages/{id:guid}/reply", async (
     Guid id, ReplyRequest body, MessagingDbContext db, IProducer<string, string> producer,
-    IOptions<KafkaSettings> kafka, JsonSerializerOptions json, CancellationToken ct) =>
+    IOptions<AntiphonGatewayOptions> kafka, JsonSerializerOptions json, CancellationToken ct) =>
 {
     var item = await db.Inbox.FirstOrDefaultAsync(x => x.Id == id, ct);
     if (item is null)
@@ -148,7 +138,7 @@ app.MapPost("/api/channels/messages/{id:guid}/reply", async (
     };
 
     await producer.ProduceAsync(
-        kafka.Value.OutboundTopic,
+        kafka.Value.ResolveOutboundTopic(),
         new Message<string, string> { Key = item.ConversationId, Value = JsonSerializer.Serialize(reply, json) },
         ct);
 

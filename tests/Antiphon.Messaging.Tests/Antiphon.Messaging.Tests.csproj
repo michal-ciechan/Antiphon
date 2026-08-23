@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.FakeGateway\Antiphon.Messaging.FakeGateway.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.Messaging.SchemaGen\Antiphon.Messaging.SchemaGen.csproj" />
   </ItemGroup>
 

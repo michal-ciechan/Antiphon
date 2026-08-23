@@ -106,6 +106,7 @@ public sealed class GatewayTests
         opts.MaxMessageBytes.ShouldBe(20 * 1024 * 1024);
         opts.TopicLayout.ShouldBe(TopicLayout.Shared);
         opts.Security.SecurityProtocol.ShouldBe("Plaintext");
+        opts.AutoOffsetReset.ShouldBe("Earliest");
     }
 
     [Test]

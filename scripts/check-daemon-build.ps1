@@ -27,7 +27,7 @@ $daemons = @(
     @{
         Name = 'fake-gateway'
         Port = 17208
-        Paths = @('src/Antiphon.Messaging.FakeGateway', 'src/Antiphon.Messaging')
+        Paths = @('src/Antiphon.Messaging.FakeGateway', 'src/Antiphon.Messaging.Gateway', 'src/Antiphon.Messaging')
         Fix = 'restart the fake-gateway daemon through its AppHost supervisor'
     }
 )

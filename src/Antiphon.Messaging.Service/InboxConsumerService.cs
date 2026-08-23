@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Antiphon.Messaging;
+using Antiphon.Messaging.Gateway;
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -8,11 +10,11 @@ namespace Antiphon.Messaging.Service;
 /// <summary>Consumes the inbound topic and persists each message to the Postgres inbox (idempotent).</summary>
 public sealed class InboxConsumerService(
     IServiceScopeFactory scopeFactory,
-    IOptions<KafkaSettings> kafka,
+    IOptions<AntiphonGatewayOptions> options,
     JsonSerializerOptions json,
     ILogger<InboxConsumerService> logger) : BackgroundService
 {
-    private readonly KafkaSettings _kafka = kafka.Value;
+    private readonly AntiphonGatewayOptions _options = options.Value;
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
         Task.Run(() => ConsumeLoopAsync(stoppingToken), stoppingToken);
@@ -21,18 +23,18 @@ public sealed class InboxConsumerService(
     {
         var config = new ConsumerConfig
         {
-            BootstrapServers = _kafka.BootstrapServers,
-            GroupId = $"{_kafka.ConsumerGroup}-inbox",
+            BootstrapServers = _options.BootstrapServers,
+            GroupId = $"{_options.ConsumerGroup}-inbox",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = true,
             // Match the bus cap (20 MB) — inbound messages may carry attachment payloads too.
-            MaxPartitionFetchBytes = _kafka.MaxMessageBytes,
-            FetchMaxBytes = Math.Max(_kafka.MaxMessageBytes, 50 * 1024 * 1024),
+            MaxPartitionFetchBytes = _options.MaxMessageBytes,
+            FetchMaxBytes = Math.Max(_options.MaxMessageBytes, 50 * 1024 * 1024),
         };
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
-        consumer.Subscribe(_kafka.InboundTopic);
-        logger.LogInformation("[inbox] consuming {Topic}", _kafka.InboundTopic);
+        consumer.Subscribe(_options.ResolveInboundTopic());
+        logger.LogInformation("[inbox] consuming {Topic}", _options.ResolveInboundTopic());
 
         try
         {

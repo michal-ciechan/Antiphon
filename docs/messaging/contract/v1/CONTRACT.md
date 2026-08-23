@@ -1,6 +1,6 @@
 # Antiphon messaging contract v1
 
-This is the document a gateway author — including a non-.NET one — reads instead of the
+Package version **1.0.0**. This is the document a gateway author — including a non-.NET one — reads instead of the
 package source. The JSON Schema files next to it (`channel-message.schema.json`,
 `channel-reply.schema.json`) are generated from the same `ChannelMessage` / `ChannelReply`
 types the NuGet packages ship, via `dotnet run --project tools/Antiphon.Messaging.SchemaGen`.

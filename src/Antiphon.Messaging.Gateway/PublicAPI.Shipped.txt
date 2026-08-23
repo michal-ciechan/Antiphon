@@ -1,6 +1,8 @@
 #nullable enable
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AntiphonGatewayOptions() -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AutoOffsetReset.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AutoOffsetReset.set -> void
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.BootstrapServers.get -> string!
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.BootstrapServers.set -> void
 Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ConsumerGroup.get -> string!

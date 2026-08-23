@@ -3,6 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY Messaging.Pack.props ./
 COPY Antiphon.Messaging/ ./Antiphon.Messaging/
+COPY Antiphon.Messaging.Gateway/ ./Antiphon.Messaging.Gateway/
 COPY Antiphon.Messaging.Telegram/ ./Antiphon.Messaging.Telegram/
 COPY Antiphon.Messaging.Slack/ ./Antiphon.Messaging.Slack/
 COPY Antiphon.Messaging.Service/ ./Antiphon.Messaging.Service/

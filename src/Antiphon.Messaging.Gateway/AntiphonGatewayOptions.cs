@@ -27,6 +27,13 @@ public sealed class AntiphonGatewayOptions
 
     public TimeSpan IngressRestartBackoff { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Outbound consumer auto-offset-reset. Production gateways keep <c>Earliest</c> so a
+    /// new group does not skip pending replies. The fake gateway uses <c>Latest</c> so a
+    /// restart does not replay the outbound topic into <c>/deliveries</c>.
+    /// </summary>
+    public string AutoOffsetReset { get; set; } = "Earliest";
+
     public string ResolveInboundTopic() => Resolve(InboundTopic);
 
     public string ResolveOutboundTopic() => Resolve(OutboundTopic);

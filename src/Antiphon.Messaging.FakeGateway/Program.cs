@@ -1,16 +1,18 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.FakeGateway;
-using Confluent.Kafka;
+using Antiphon.Messaging.Gateway;
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Antiphon FAKE messaging gateway (spec: 2026-07-20-always-on-agents-and-alerting.md, Q9).
 // Real Kafka in, no real Telegram out: records every would-be delivery for assertions, injects
 // synthetic inbound messages, and simulates outages. Local dev + integration tests ONLY —
 // deployed environments run the real Antiphon.Messaging.Service.
+//
+// Ingress and outbound Kafka loops come from Antiphon.Messaging.Gateway. This process is a
+// thin host around FakeChannelAdapter (telegram + slack) plus the HTTP assertion/inject API.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 // appsettings.json here exists ONLY to turn Microsoft.AspNetCore down to Warning (CARD-0043).
@@ -26,19 +28,32 @@ var outboundTopic = builder.Configuration["AntiphonMessaging:OutboundTopic"] ?? 
 var jsonlPath = builder.Configuration["FakeGateway:DeliveryLog"]
     ?? Path.Combine("logs", "fake-gateway", "outbound.jsonl");
 
-// Same wire shape the real client/gateway use: camelCase + string enums.
-var wireJson = MessagingJson.Options;
-
 builder.Services.AddSingleton(new DeliveryStore(jsonlPath));
 builder.Services.AddSingleton<PauseState>();
-builder.Services.AddSingleton(wireJson);
-builder.Services.AddHostedService(sp => new OutboundRecorderService(
-    sp.GetRequiredService<DeliveryStore>(),
-    sp.GetRequiredService<PauseState>(),
-    wireJson,
-    bootstrap,
-    outboundTopic,
-    sp.GetRequiredService<ILogger<OutboundRecorderService>>()));
+builder.Services.AddSingleton(sp =>
+{
+    var store = sp.GetRequiredService<DeliveryStore>();
+    var pause = sp.GetRequiredService<PauseState>();
+    var logger = sp.GetRequiredService<ILogger<FakeChannelAdapter>>();
+    return new FakeChannelHub(
+        new FakeChannelAdapter("telegram", store, pause, logger),
+        new FakeChannelAdapter("slack", store, pause, logger));
+});
+builder.Services.AddSingleton<IChannelAdapter>(sp =>
+    sp.GetRequiredService<FakeChannelHub>().Adapters.Single(a => a.Channel == "telegram"));
+builder.Services.AddSingleton<IChannelAdapter>(sp =>
+    sp.GetRequiredService<FakeChannelHub>().Adapters.Single(a => a.Channel == "slack"));
+
+builder.Services.AddAntiphonGateway(o =>
+{
+    o.BootstrapServers = bootstrap;
+    o.InboundTopic = inboundTopic;
+    o.OutboundTopic = outboundTopic;
+    o.ConsumerGroup = "antiphon-fake-gateway";
+    // Latest: a restart must not replay the outbound topic into /deliveries. Production
+    // gateways keep the library default (Earliest) so a new group does not skip replies.
+    o.AutoOffsetReset = "Latest";
+});
 
 var app = builder.Build();
 
@@ -75,12 +90,16 @@ app.MapPost("/resume", (PauseState pause) =>
 });
 
 // ── Inbound injection: drive the whole bridge path without any external service ─────────────
-app.MapPost("/inbound", async (InjectInboundRequest request, ILogger<Program> logger) =>
+app.MapPost("/inbound", async (InjectInboundRequest request, FakeChannelHub hub, ILogger<Program> logger, CancellationToken ct) =>
 {
+    var channel = request.Channel ?? "telegram";
+    if (!hub.TryGet(channel, out var adapter))
+        return Results.BadRequest(new { error = $"no fake adapter for channel '{channel}'", known = hub.Channels });
+
     var message = new ChannelMessage
     {
         Id = Guid.NewGuid().ToString("n"),
-        Channel = request.Channel ?? "telegram",
+        Channel = channel,
         ChannelMessageId = DateTime.UtcNow.Ticks.ToString(),
         Conversation = new Conversation
         {
@@ -97,16 +116,17 @@ app.MapPost("/inbound", async (InjectInboundRequest request, ILogger<Program> lo
         Timestamp = DateTimeOffset.UtcNow,
         Text = request.Text,
         ReplyHandle = request.ChatId,
-        Raw = JsonDocument.Parse("{}").RootElement.Clone(),
+        Raw = System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    var config = new ProducerConfig { BootstrapServers = bootstrap, MessageMaxBytes = 20 * 1024 * 1024 };
-    using var producer = new ProducerBuilder<string, string>(config).Build();
-    await producer.ProduceAsync(inboundTopic, new Message<string, string>
+    try
     {
-        Key = request.ChatId,
-        Value = JsonSerializer.Serialize(message, wireJson),
-    });
+        await adapter.InjectAsync(message, ct);
+    }
+    catch (TimeoutException)
+    {
+        return Results.Json(new { error = "ingress did not accept the message in time" }, statusCode: 503);
+    }
 
     logger.LogInformation("Injected inbound {Channel} message into {Topic} for chat {ChatId}",
         message.Channel, inboundTopic, request.ChatId);
@@ -123,85 +143,3 @@ internal sealed record InjectInboundRequest(
     string? Username = null,
     string? AuthorId = null,
     string? Title = null);
-
-/// <summary>Consumes channels.outbound and records every reply (honoring the pause switch).</summary>
-internal sealed class OutboundRecorderService(
-    DeliveryStore store,
-    PauseState pause,
-    JsonSerializerOptions wireJson,
-    string bootstrap,
-    string outboundTopic,
-    ILogger<OutboundRecorderService> logger) : BackgroundService
-{
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.Run(() => ConsumeLoop(stoppingToken), stoppingToken);
-
-    private void ConsumeLoop(CancellationToken ct)
-    {
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = bootstrap,
-            GroupId = "antiphon-fake-gateway",
-            AutoOffsetReset = AutoOffsetReset.Latest,
-            EnableAutoCommit = true,
-            // Match the bus-wide 20 MB cap so attachment-bearing replies are fetchable.
-            MaxPartitionFetchBytes = 20 * 1024 * 1024,
-            FetchMaxBytes = 50 * 1024 * 1024,
-        };
-
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                using var consumer = new ConsumerBuilder<string, string>(config).Build();
-                consumer.Subscribe(outboundTopic);
-                logger.LogInformation("Fake gateway consuming {Topic} at {Bootstrap}", outboundTopic, bootstrap);
-
-                while (!ct.IsCancellationRequested)
-                {
-                    if (pause.Paused)
-                    {
-                        // Simulated outage: stop polling entirely, like a dead gateway process.
-                        Thread.Sleep(250);
-                        continue;
-                    }
-
-                    var result = consumer.Consume(TimeSpan.FromMilliseconds(500));
-                    if (result?.Message?.Value is null)
-                        continue;
-
-                    try
-                    {
-                        var reply = JsonSerializer.Deserialize<ChannelReply>(result.Message.Value, wireJson);
-                        if (reply is not null)
-                        {
-                            var recorded = store.Record(reply, DateTime.UtcNow);
-                            logger.LogInformation(
-                                "Recorded delivery #{Seq}: [{Channel}/{Conversation}] {Text}",
-                                recorded.Seq, recorded.Channel, recorded.ConversationId,
-                                Truncate(recorded.Text, 120));
-                        }
-                    }
-                    catch (JsonException ex)
-                    {
-                        logger.LogWarning(ex, "Unparseable outbound message skipped");
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                // Broker down: keep retrying quietly — the fake must be as forgiving as dev needs.
-                logger.LogWarning(ex, "Fake gateway consume loop failed; retrying in 5s");
-                for (var i = 0; i < 10 && !ct.IsCancellationRequested; i++)
-                    Thread.Sleep(500);
-            }
-        }
-    }
-
-    private static string? Truncate(string? text, int max) =>
-        text is null || text.Length <= max ? text : text[..max] + "…";
-}

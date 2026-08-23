@@ -39,7 +39,9 @@ providers at once, as `am-service` now does.
 no real Telegram. The AppHost runs it on **http://localhost:17208** in the dev stack; deployed
 environments run only the real gateway.
 
-- Consumes `channels.outbound` (group `antiphon-fake-gateway`) and records every would-be
+- Hosts `FakeChannelAdapter` (telegram + slack) on `Antiphon.Messaging.Gateway`. Ingress
+  produces `channels.inbound`; outbound consumes `channels.outbound` (group
+  `antiphon-fake-gateway-outbound`, auto-offset `Latest`) and records every would-be
   delivery to `logs/fake-gateway/outbound.jsonl` and memory.
 - `GET /deliveries?since=<seq>&channel=&conversationId=` — assert deliveries in tests;
   `DELETE /deliveries` resets between tests.
