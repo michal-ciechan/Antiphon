@@ -67,7 +67,7 @@ jobs:
       - name: Push to NuGet.org
         run: |
           set -euo pipefail
-          VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Messaging.Pack.props)
+          VERSION=$(grep -oPm1 '(?<=<Version>)[0-9][^<]*' src/Messaging.Pack.props)
           for id in Antiphon.Messaging Antiphon.Messaging.Client Antiphon.Messaging.Client.Testing Antiphon.Messaging.Gateway; do
             dotnet nuget push "out/$id.$VERSION.nupkg" \
               --source "https://api.nuget.org/v3/index.json" \
@@ -98,7 +98,7 @@ jobs:
             </packageSources>
           </configuration>
           EOF
-          VERSION=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Messaging.Pack.props)
+          VERSION=$(grep -oPm1 '(?<=<Version>)[0-9][^<]*' src/Messaging.Pack.props)
           for i in $(seq 1 20); do
             if dotnet restore samples/EchoGateway \
                 -p:UsePublishedPackages=true \
