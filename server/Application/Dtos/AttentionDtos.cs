@@ -85,6 +85,15 @@ public enum AttentionKind
     /// <see cref="UncorrelatedReport"/>.
     /// </summary>
     BriefUndelivered = 11,
+
+    /// <summary>
+    /// A working session whose transcript rows keep landing and none of them is new (CARD-0153,
+    /// <c>TaskProgressPolicy</c>). Computed live from the same verdict the stall sweep raises on
+    /// — the row exists because the condition holds now, not because it held once. Ordered after
+    /// <see cref="PastExpectedIdle"/> (which declines the mid-turn case) and before
+    /// <see cref="Overdue"/>. Detection only: Reply, Cancel, OpenDrawer; never a kill.
+    /// </summary>
+    ProgressStalled = 12,
 }
 
 /// <summary>

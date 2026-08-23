@@ -315,6 +315,58 @@ public class AttentionServiceTests
             "a working session with a fresh transcript is never listed, however far past its estimate");
     }
 
+    // ---- 7b. ProgressStalled (CARD-0153 S3) -----------------------------------------------------
+
+    [Test]
+    public async Task a_working_stalled_task_is_listed_as_progress_stalled()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 50, expectedMinutes: 10);
+        await scenario.AddStallLoopAsync(session);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+
+        item.Kind.ShouldBe(AttentionKind.ProgressStalled);
+        item.Headline.ShouldContain("no novel progress");
+        item.Actions.ShouldBe(
+            [AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.OpenDrawer]);
+    }
+
+    [Test]
+    public async Task ProgressStalled_beats_Overdue_and_loses_to_PastExpectedIdle_when_idle()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 210, expectedMinutes: 10);
+        await scenario.AddStallLoopAsync(session);
+
+        var working = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        working.Kind.ShouldBe(AttentionKind.ProgressStalled, "the stall names the loop; Overdue only names a clock");
+
+        await scenario.AddTranscriptAsync(session, (TranscriptKinds.TurnEnd, null, null));
+        var idle = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        idle.Kind.ShouldBe(AttentionKind.PastExpectedIdle);
+    }
+
+    [Test]
+    public async Task a_pending_refinement_is_named_on_the_stall_headline()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 50);
+        await scenario.AddStallLoopAsync(session);
+        await scenario.AddQueuedMessageAsync(
+            session, "continue", attempts: 1, origin: QueuedMessageOrigin.Delegation);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.TaskId == task);
+        item.Kind.ShouldBe(AttentionKind.ProgressStalled);
+        item.Headline.ShouldContain("1 refinement waiting");
+    }
+
     // ---- 7. Overdue (CARD-0020 S2/S3) -----------------------------------------------------------
 
     [Test]
@@ -881,12 +933,45 @@ public class AttentionServiceTests
             await db.SaveChangesAsync();
         }
 
+        public async Task AddStallLoopAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            var seq = ((await db.TranscriptEntries
+                .Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (long?)e.Sequence)) ?? 0);
+            for (var i = 0; i < 14; i++)
+            {
+                var ago = 42 - i;
+                var at = DateTime.UtcNow.AddMinutes(-ago);
+                var kind = i % 3 == 0 ? TranscriptKinds.ToolCall
+                    : i % 3 == 1 ? TranscriptKinds.ToolResult
+                    : TranscriptKinds.Thinking;
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = ++seq,
+                    Kind = kind,
+                    Uuid = $"attn-stall-{Guid.NewGuid():N}",
+                    ToolName = kind == TranscriptKinds.ToolCall ? "Read" : null,
+                    ToolInput = kind == TranscriptKinds.ToolCall ? "{\"path\":\"src/loop.cs\"}" : null,
+                    Text = kind == TranscriptKinds.ToolResult ? "file contents of loop.cs"
+                        : kind == TranscriptKinds.Thinking ? $"thinking {i}" : null,
+                    Timestamp = at,
+                    CreatedAt = at,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
         public async Task AddTranscriptAsync(
             Guid sessionId, params (string Kind, string? Text, string? Tool)[] entries)
         {
             var at = DateTime.UtcNow.AddMinutes(-5);
-            var seq = 0L;
             await using var db = CreateContext();
+            var seq = (await db.TranscriptEntries
+                .Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (long?)e.Sequence)) ?? 0;
             foreach (var (kind, text, tool) in entries)
             {
                 seq++;
@@ -923,7 +1008,8 @@ public class AttentionServiceTests
             await db.SaveChangesAsync();
         }
 
-        public async Task<Guid> AddQueuedMessageAsync(Guid sessionId, string body, int attempts)
+        public async Task<Guid> AddQueuedMessageAsync(
+            Guid sessionId, string body, int attempts, QueuedMessageOrigin origin = QueuedMessageOrigin.Channel)
         {
             var id = Guid.NewGuid();
             await using var db = CreateContext();
@@ -934,7 +1020,7 @@ public class AttentionServiceTests
                 Body = body,
                 Status = QueuedMessageStatus.Pending,
                 Sequence = 1,
-                Origin = QueuedMessageOrigin.Channel,
+                Origin = origin,
                 DeliveryAttempts = attempts,
                 LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-4),
                 CreatedAt = DateTime.UtcNow.AddMinutes(-15),

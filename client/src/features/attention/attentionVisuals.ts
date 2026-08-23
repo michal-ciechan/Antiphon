@@ -9,6 +9,7 @@ import {
   TbMailExclamation,
   TbPlayerPlayFilled,
   TbPlugConnectedX,
+  TbRepeat,
   TbSkull,
   TbX,
 } from 'react-icons/tb'
@@ -103,6 +104,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'warning',
     icon: TbHourglassHigh,
     hint: 'Closing on the deadline that will fail it - the role ceiling, or its current phase.',
+  },
+  ProgressStalled: {
+    label: 'Stalled',
+    color: 'warning',
+    icon: TbRepeat,
+    hint: 'Working, but nothing novel has landed for a while. Detection only — nothing is killed.',
   },
 }
 

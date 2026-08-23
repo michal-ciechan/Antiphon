@@ -88,6 +88,7 @@ public sealed class AttentionService
     private readonly DelegationSettings _delegation;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AttentionService> _logger;
+    private readonly AgentFilesService? _files;
 
     public AttentionService(
         AppDbContext db,
@@ -98,7 +99,8 @@ public sealed class AttentionService
         // view and the sweep that fails the task can never disagree about when a task is overdue.
         IOptions<DelegationSettings> delegation,
         TimeProvider timeProvider,
-        ILogger<AttentionService> logger)
+        ILogger<AttentionService> logger,
+        AgentFilesService? files = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -106,6 +108,7 @@ public sealed class AttentionService
         _delegation = delegation.Value;
         _timeProvider = timeProvider;
         _logger = logger;
+        _files = files;
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct)
@@ -422,7 +425,37 @@ public sealed class AttentionService
                 }
             }
 
-            // 8. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
+            // 8. ProgressStalled (CARD-0153) — working, rows still landing, none of them novel.
+            // After PastExpectedIdle (which declines the mid-turn case) and before Overdue, so a
+            // working session with a stall verdict gets the more explanatory row.
+            TaskProgressPolicy.WorkspaceArm? workspace = null;
+            if (_files is not null && task.DispatchedAt is DateTime dispatchedAt)
+            {
+                workspace = await _files.ProbeProgressAsync(
+                    task.WorkingDirectory, dispatchedAt,
+                    task.Workspace == WorkspaceMode.Shared, ct);
+            }
+            var stall = await TaskProgressPolicy.EvaluateAsync(
+                _db, task, now, _delegation, ct, workspace);
+            if (stall is not null)
+            {
+                items.Add(new AttentionItemDto(
+                    AttentionKind.ProgressStalled,
+                    AlertSeverity.Warning,
+                    task.Id,
+                    task.AgentSessionId,
+                    task.AgentId,
+                    null,
+                    task.Title,
+                    stall.Summary,
+                    Evidence(stall.FailureReason, digest),
+                    stall.LastProgressAt,
+                    cost,
+                    [AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.OpenDrawer]));
+                continue;
+            }
+
+            // 9. Overdue — closing on a deadline that will FAIL this task (CARD-0020 S2/S3). It is
             // asked AFTER PastExpectedIdle because that condition owns the idle case and declines
             // the mid-turn one; the deadline that matters for a working session is the phase clock,
             // and the ceiling covers both. Same shared policy the dispatcher's sweep acts on, so a
@@ -458,7 +491,7 @@ public sealed class AttentionService
                 continue;
             }
 
-            // 8. ChecksSpent — checks ran, the budget is gone, the task is still open.
+            // 10. ChecksSpent — checks ran, the budget is gone, the task is still open.
             if (task.CheckCount > 0 && task.NextCheckAt is null)
             {
                 items.Add(new AttentionItemDto(

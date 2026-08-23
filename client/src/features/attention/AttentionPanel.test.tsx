@@ -83,6 +83,26 @@ describe('AttentionPanel', () => {
     expect(screen.queryByTestId('attention-row-PastExpectedIdle')).not.toBeInTheDocument()
   })
 
+  it('draws a ProgressStalled row with the stalled badge', async () => {
+    serve({
+      items: [
+        item({
+          kind: 'ProgressStalled',
+          severity: 'Warning',
+          title: 'CARD-0153 remaining slices',
+          taskId: 't1',
+          headline: 'Working with no novel progress for 38m. 14 rows in the last 45m, 2 distinct.',
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('CARD-0153 remaining slices')).toBeInTheDocument()
+    expect(screen.getByText('Stalled')).toBeInTheDocument()
+    expect(screen.getByText(/no novel progress/)).toBeInTheDocument()
+  })
+
   it('draws a BriefUndelivered row with the waiting-brief badge', async () => {
     serve({
       items: [

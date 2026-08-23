@@ -46,6 +46,11 @@ export type AttentionKind =
    * Listed from 80% of the limit, so a reply, a check or a cancel are all still open.
    */
   | 'Overdue'
+  /**
+   * Working, rows still landing, none of them novel (CARD-0153). Detection only — steer it,
+   * cancel it, or open the session; nothing automatic kills it.
+   */
+  | 'ProgressStalled'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =
