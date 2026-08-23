@@ -148,10 +148,13 @@ function Test-LaunchInFlight {
     foreach ($pair in @(
         @{ Path = $restartLockFile; Label = 'restart lock' },
         @{ Path = $lockFile;        Label = 'launch lock'  })) {
+        $lock = Get-AppHostLock -Path $pair.Path
         $held = Test-AppHostLockActive -Path $pair.Path -MaxAgeMinutes $LockMaxAgeMinutes -Label $pair.Label
         if ($held) { return $held }
-        if (Test-Path -LiteralPath $pair.Path) {
-            Write-Log 'INFO' ("stale {0} - ignoring ({1})" -f $pair.Label, $pair.Path)
+        if ($lock.Exists) {
+            Write-Log 'INFO' ("stale {0} - ignoring (stamp {1}, {2}; holder PID {3} alive={4}; {5})" -f `
+                $pair.Label, (Format-AppHostLockStamp $lock), (Format-AppHostLockAge $lock), `
+                $lock.ProcessId, $lock.HolderAlive, $pair.Path)
         }
     }
     return $null
