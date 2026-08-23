@@ -237,7 +237,7 @@ decision point.
 **Out of scope, named:** `POST /api/sessions` (`SessionEndpoints.cs:39`, raw definition launch with
 no agent and no profile — a dev tool) and `POST /api/cards/{id}/spawn` direct (`CardService.SpawnAsync`,
 `CardService.cs:532`, when invoked from the board rather than through `StartAsync`). Both are
-launches; neither is how delegate.ps1 or the agent Start button launch. Listed in §8.
+launches; neither is how delegate.ps1 or the agent Start button launch. Listed in §6.
 
 ### D2 — the threshold rule and its settings
 
