@@ -352,7 +352,9 @@ public sealed class ChannelBridgeService : BackgroundService
                     startAttempted = true;
                     startedFresh = true;
                     var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
-                    await control.StartAsync(agentId, new StartAgentRequest(), ct);
+                    // IgnoreSubscriptionQuota: a channel inbound cannot pick another provider.
+                    await control.StartAsync(
+                        agentId, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct);
                     _logger.LogInformation("Started agent {AgentId} to receive a channel message", agentId);
                 }
             }

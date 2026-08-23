@@ -123,7 +123,9 @@ public sealed class CheckInterpreterProvisioner
         {
             try
             {
-                await _control.StartAsync(agent.Id, new StartAgentRequest(), ct);
+                // IgnoreSubscriptionQuota: deployment warm-up is not a human choosing a provider.
+                await _control.StartAsync(
+                    agent.Id, new StartAgentRequest(IgnoreSubscriptionQuota: true), ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

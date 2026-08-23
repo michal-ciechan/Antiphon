@@ -38,6 +38,9 @@ public sealed class AgentControlService
     // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
     // unresolved and the launch tripwire refuses them by name. Production always registers it.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    // CARD-0136. Optional so the existing integration harness keeps constructing this
+    // unchanged; tests that want the gate wire it explicitly. Production always registers it.
+    private readonly SubscriptionQuotaGate? _quotaGate;
 
     public AgentControlService(
         AppDbContext db,
@@ -54,7 +57,8 @@ public sealed class AgentControlService
         // Optional for the same reason as everywhere else here: a harness that wires no provisioner
         // still starts agents, it just starts them without the CLAUDE.md floor.
         AgentWorkspaceProvisioner? workspace = null,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        SubscriptionQuotaGate? quotaGate = null)
     {
         _db = db;
         _agentService = agentService;
@@ -69,6 +73,7 @@ public sealed class AgentControlService
         _logger = logger;
         _workspace = workspace;
         _apiKeyEnvResolver = apiKeyEnvResolver;
+        _quotaGate = quotaGate;
     }
 
     /// <summary>
@@ -90,6 +95,19 @@ public sealed class AgentControlService
         // Already running — leave the existing process (and its remote-control state) untouched.
         if (await HasLiveSessionAsync(agent, ct))
             return await _agentService.GetByIdAsync(agent.Id, ct);
+
+        var kind = await PeekProfileKindAsync(agent, ct);
+        if (kind is AgentKind k && _quotaGate is not null)
+        {
+            var overridden = await _quotaGate.EnforceAsync(
+                k,
+                SubscriptionUsageKey.For(agent, k),
+                request.IgnoreSubscriptionQuota,
+                $"start of agent '{agent.Name}'",
+                ct);
+            if (overridden is not null)
+                RecordQuotaOverrideIncident(agent, overridden);
+        }
 
         // A launch is the reconcile point for the CLAUDE.md floor (CARD-0059): Claude reads the file
         // from cwd at every process start, so writing it here means a floor improved in a PR reaches
@@ -468,6 +486,19 @@ public sealed class AgentControlService
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
         return await _agentService.GetByIdAsync(agent.Id, ct);
+    }
+
+    private void RecordQuotaOverrideIncident(Agent agent, SubscriptionQuotaVerdict verdict)
+    {
+        _db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = agent.Id,
+            Kind = AgentIncidentKind.SubscriptionQuotaOverridden,
+            Severity = AlertSeverity.Warning,
+            Message = SubscriptionQuotaPolicy.FormatSentence(verdict),
+            CreatedAt = UtcNow(),
+        });
     }
 
     private async Task ClearSupervisionLatchAsync(Agent agent, CancellationToken ct)

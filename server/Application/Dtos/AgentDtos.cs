@@ -257,7 +257,15 @@ public sealed record UpdateAgentRequest(
 // agent's previous Claude session so the terminal picks up where it left off.
 // RemoteControl: null = use the agent's persisted RemoteControlEnabled setting (the normal case);
 // true/false override for this start only.
-public sealed record StartAgentRequest(bool? RemoteControl = null, bool Fresh = false);
+public sealed record StartAgentRequest(
+    bool? RemoteControl = null,
+    bool Fresh = false,
+    /// <summary>
+    /// Bypass the CARD-0136 subscription-quota launch gate. Default false: a fresh low
+    /// reading refuses the start with 409 <c>subscription_quota_low</c>. Internal
+    /// callers that cannot choose a provider pass true.
+    /// </summary>
+    bool IgnoreSubscriptionQuota = false);
 
 public sealed record AssignAgentCardRequest(Guid CardId);
 

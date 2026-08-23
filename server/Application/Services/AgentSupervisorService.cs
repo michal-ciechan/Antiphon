@@ -197,7 +197,10 @@ public sealed class AgentSupervisorService
             _logger.LogInformation(
                 "Agent {AgentName}: supervised restart attempt {Attempt} ({Mode})",
                 agent.Name, attemptNumber, fresh ? "fresh conversation" : "resume");
-            await _control.StartAsync(agent.Id, new StartAgentRequest(Fresh: fresh), ct);
+            // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
+            // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
+            await _control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: fresh, IgnoreSubscriptionQuota: true), ct);
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
             // (StartAsync clears supervision state itself for manual semantics; re-load ours.)

@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -916,6 +917,119 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Start_returns_409_subscription_quota_low_on_a_fresh_low_Codex_reading()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "quota-codex-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            var provisioner = new AgentWorkspaceProvisioner(NullLogger<AgentWorkspaceProvisioner>.Instance);
+            await using var harness = BuildHarness(
+                tempRoot, [adapter], defaultKind: "Codex", includeQuotaGate: true, workspace: provisioner);
+
+            var agent = await SeedAgentAsync(db, "Quota Codex", workspace, AgentKind.Codex, profileId: null);
+            await SeedLowCodexSampleAsync(SubscriptionUsageKey.For(agent, AgentKind.Codex), remaining: 3, hoursToReset: 36);
+
+            var ex = await Should.ThrowAsync<SubscriptionQuotaLowException>(
+                () => harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None));
+
+            ex.Code.ShouldBe("subscription_quota_low");
+            ex.StatusCode.ShouldBe(409);
+            var quota = ex.Extensions.ShouldNotBeNull()["quota"].ShouldBeOfType<SubscriptionQuotaProblemDto>();
+            quota.RemainingPercent.ShouldBe(3);
+            quota.Provider.ShouldBe("Codex");
+            quota.Rule.ShouldBe("low-with-a-day-left");
+
+            adapter.Started.ShouldBeFalse();
+            File.Exists(Path.Combine(workspace, AgentWorkspaceProvisioner.FileName))
+                .ShouldBeFalse("a refused launch must not Provision");
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace)).ShouldBe(0);
+            (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).Status.ShouldBe(AgentStatus.Idle);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_with_IgnoreSubscriptionQuota_launches_and_writes_SubscriptionQuotaOverridden()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "quota-override-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [adapter], defaultKind: "Codex", includeQuotaGate: true);
+
+            var agent = await SeedAgentAsync(db, "Quota Override Codex", workspace, AgentKind.Codex, profileId: null);
+            await SeedLowCodexSampleAsync(SubscriptionUsageKey.For(agent, AgentKind.Codex), remaining: 3, hoursToReset: 36);
+
+            var detail = await harness.Control.StartAsync(
+                agent.Id,
+                new StartAgentRequest(IgnoreSubscriptionQuota: true),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.PersistentSessionId.ShouldNotBeNull();
+            adapter.Started.ShouldBeTrue();
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.SubscriptionQuotaOverridden);
+            incident.Severity.ShouldBe(AlertSeverity.Warning);
+            incident.Message.ShouldContain("3%");
+            incident.Message.ShouldContain("low-with-a-day-left");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_of_a_Claude_agent_passes_with_no_sample()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "quota-claude-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot, [adapter], defaultKind: "ClaudeCode", includeQuotaGate: true);
+
+            var agent = await SeedAgentAsync(db, "Quota Claude", workspace, AgentKind.ClaudeCode, profileId: null);
+
+            var detail = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.PersistentSessionId.ShouldNotBeNull();
+            adapter.Started.ShouldBeTrue();
+            await using var verify = CreateContext();
+            (await verify.AgentIncidents.CountAsync(
+                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.SubscriptionQuotaOverridden))
+                .ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
     {
         await using var db = CreateContext();
@@ -933,7 +1047,9 @@ public class AgentControlServiceIntegrationTests
         IReadOnlyList<IAgentProtocolAdapter> adapters,
         string defaultKind = "Raw",
         bool includeLaunchResolver = false,
-        string? connectionString = null)
+        string? connectionString = null,
+        bool includeQuotaGate = false,
+        AgentWorkspaceProvisioner? workspace = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -987,6 +1103,14 @@ public class AgentControlServiceIntegrationTests
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();
         services.AddScoped<AgentControlService>();
+        if (workspace is not null)
+            services.AddSingleton(workspace);
+        if (includeQuotaGate)
+        {
+            services.AddScoped<SubscriptionUsageReader>();
+            services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+            services.AddScoped<SubscriptionQuotaGate>();
+        }
         services.AddSingleton<Antiphon.Server.Application.Interfaces.IDirectoryWriter>(
             new Antiphon.Server.Infrastructure.FileSystem.FileSystemDirectoryWriter(new System.IO.Abstractions.FileSystem()));
         services.AddScoped<BoardService>();
@@ -1008,6 +1132,49 @@ public class AgentControlServiceIntegrationTests
             scope.ServiceProvider.GetRequiredService<AgentControlService>(),
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
             eventBus);
+    }
+
+    private static async Task<Agent> SeedAgentAsync(
+        AppDbContext db, string name, string workspace, AgentKind kind, Guid? profileId)
+    {
+        var now = DateTime.UtcNow;
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Slug = $"quota-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = workspace,
+            Details = string.Empty,
+            Status = AgentStatus.Idle,
+            Kind = kind,
+            TuiProfileId = profileId,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+        return agent;
+    }
+
+    private static async Task SeedLowCodexSampleAsync(string key, double remaining, int hoursToReset)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = CreateContext();
+        db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+        {
+            Id = Guid.NewGuid(),
+            Provider = AgentKind.Codex,
+            SubscriptionKey = key,
+            PlanLabel = "SuperPlan",
+            RemainingPercent = remaining,
+            ResetsAt = now.AddHours(hoursToReset),
+            ObservedAt = now,
+            AgentSessionId = Guid.NewGuid(),
+            SourceCommand = "/status",
+            ParseStatus = SubscriptionUsageParseStatus.Parsed,
+            RawExcerpt = "seeded",
+        });
+        await db.SaveChangesAsync();
     }
 
     private static Project NewProject(string tempRoot)

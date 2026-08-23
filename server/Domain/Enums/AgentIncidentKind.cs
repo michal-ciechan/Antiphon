@@ -320,4 +320,11 @@ public enum AgentIncidentKind
     /// column.</para>
     /// </summary>
     TaskProgressStalled = 32,
+
+    /// <summary>
+    /// An operator (or script) launched anyway after the CARD-0136 quota gate tripped,
+    /// via <c>ignoreSubscriptionQuota</c>. Warning, never Critical: they chose this.
+    /// Not deduped — every override is a separate decision. One row per overridden start.
+    /// </summary>
+    SubscriptionQuotaOverridden = 33,
 }
