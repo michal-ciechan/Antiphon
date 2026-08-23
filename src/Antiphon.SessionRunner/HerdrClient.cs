@@ -107,6 +107,229 @@ public sealed class HerdrClient
         }
     }
 
+    // --- typed wrappers (CARD-0160 B2 / plan §8). agent.prompt is deliberately not wrapped. ---
+
+    public async Task<IReadOnlyList<HerdrWorkspaceInfo>> WorkspaceListAsync(CancellationToken cancellationToken)
+    {
+        var result = await SendRequestAsync("workspace.list", new { }, cancellationToken);
+        return DeserializeRequired<HerdrWorkspaceListEnvelope>(result, "workspace.list").Workspaces;
+    }
+
+    public async Task<HerdrWorkspaceInfo> WorkspaceCreateAsync(
+        string? cwd,
+        string? label,
+        CancellationToken cancellationToken)
+    {
+        var result = await SendRequestAsync(
+            "workspace.create",
+            new HerdrWorkspaceCreateParams(Cwd: cwd, Label: label),
+            cancellationToken);
+        return DeserializeRequired<HerdrWorkspaceCreateEnvelope>(result, "workspace.create").Workspace;
+    }
+
+    public async Task WorkspaceReportMetadataAsync(
+        string workspaceId,
+        IReadOnlyDictionary<string, string?> tokens,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        ArgumentNullException.ThrowIfNull(tokens);
+        await SendRequestAsync(
+            "workspace.report_metadata",
+            new HerdrWorkspaceReportMetadataParams(workspaceId, HerdrSources.Antiphon, tokens),
+            cancellationToken);
+    }
+
+    public async Task<HerdrTabCreateResult> TabCreateAsync(
+        string workspaceId,
+        string? cwd,
+        IReadOnlyDictionary<string, string>? env,
+        string? label,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        var result = await SendRequestAsync(
+            "tab.create",
+            new HerdrTabCreateParams(WorkspaceId: workspaceId, Cwd: cwd, Env: env, Label: label),
+            cancellationToken);
+        var envelope = DeserializeRequired<HerdrTabCreateEnvelope>(result, "tab.create");
+        return new HerdrTabCreateResult(envelope.Tab, envelope.RootPane);
+    }
+
+    public async Task<HerdrPaneInfo> PaneSplitAsync(
+        string targetPaneId,
+        string direction,
+        double? ratio,
+        string? cwd,
+        IReadOnlyDictionary<string, string>? env,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetPaneId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(direction);
+        var result = await SendRequestAsync(
+            "pane.split",
+            new HerdrPaneSplitParams(
+                Direction: direction,
+                TargetPaneId: targetPaneId,
+                Ratio: ratio,
+                Cwd: cwd,
+                Env: env),
+            cancellationToken);
+        return DeserializeRequired<HerdrPaneEnvelope>(result, "pane.split").Pane;
+    }
+
+    public async Task PaneRenameAsync(string paneId, string? label, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        await SendRequestAsync(
+            "pane.rename",
+            new HerdrPaneRenameParams(paneId, label),
+            cancellationToken);
+    }
+
+    public async Task PaneReportMetadataAsync(
+        string paneId,
+        IReadOnlyDictionary<string, string?>? tokens,
+        string? title,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        await SendRequestAsync(
+            "pane.report_metadata",
+            new HerdrPaneReportMetadataParams(paneId, HerdrSources.Antiphon, tokens, title),
+            cancellationToken);
+    }
+
+    public async Task PaneReportAgentSessionAsync(
+        string paneId,
+        string agent,
+        string? agentSessionId,
+        string? agentSessionPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agent);
+        await SendRequestAsync(
+            "pane.report_agent_session",
+            new HerdrPaneReportAgentSessionParams(
+                paneId, HerdrSources.Antiphon, agent, agentSessionId, agentSessionPath),
+            cancellationToken);
+    }
+
+    public async Task<HerdrAgentInfo> AgentStartAsync(
+        string name,
+        string kind,
+        string paneId,
+        IReadOnlyList<string>? args,
+        long? timeoutMs,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        var result = await SendRequestAsync(
+            "agent.start",
+            new HerdrAgentStartParams(name, kind, paneId, args, timeoutMs),
+            cancellationToken);
+        return DeserializeRequired<HerdrAgentStartedEnvelope>(result, "agent.start").Agent;
+    }
+
+    public async Task<HerdrPaneInfo> PaneGetAsync(string paneId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        var result = await SendRequestAsync("pane.get", new HerdrPaneTargetParams(paneId), cancellationToken);
+        return DeserializeRequired<HerdrPaneEnvelope>(result, "pane.get").Pane;
+    }
+
+    public async Task<IReadOnlyList<HerdrPaneInfo>> PaneListAsync(
+        string? workspaceId,
+        CancellationToken cancellationToken)
+    {
+        var result = await SendRequestAsync(
+            "pane.list",
+            new HerdrPaneListParams(workspaceId),
+            cancellationToken);
+        return DeserializeRequired<HerdrPaneListEnvelope>(result, "pane.list").Panes;
+    }
+
+    public async Task<HerdrPaneProcessInfo> PaneProcessInfoAsync(
+        string paneId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        var result = await SendRequestAsync(
+            "pane.process_info",
+            new HerdrPaneProcessInfoParams(paneId),
+            cancellationToken);
+        return DeserializeRequired<HerdrPaneProcessInfoEnvelope>(result, "pane.process_info").ProcessInfo;
+    }
+
+    public async Task<HerdrPaneReadResult> PaneReadAsync(
+        string paneId,
+        string source,
+        bool stripAnsi,
+        int? lines,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        var result = await SendRequestAsync(
+            "pane.read",
+            new HerdrPaneReadParams(paneId, source, stripAnsi, lines),
+            cancellationToken);
+        return DeserializeRequired<HerdrPaneReadEnvelope>(result, "pane.read").Read;
+    }
+
+    public async Task PaneSendTextAsync(string paneId, string text, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        ArgumentNullException.ThrowIfNull(text);
+        await SendRequestAsync(
+            "pane.send_text",
+            new HerdrPaneSendTextParams(paneId, text),
+            cancellationToken);
+    }
+
+    public async Task PaneSendKeysAsync(
+        string paneId,
+        IReadOnlyList<string> keys,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        ArgumentNullException.ThrowIfNull(keys);
+        await SendRequestAsync(
+            "pane.send_keys",
+            new HerdrPaneSendKeysParams(paneId, keys),
+            cancellationToken);
+    }
+
+    public async Task PaneCloseAsync(string paneId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(paneId);
+        await SendRequestAsync("pane.close", new HerdrPaneTargetParams(paneId), cancellationToken);
+    }
+
+    public async Task TabCloseAsync(string tabId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tabId);
+        await SendRequestAsync("tab.close", new HerdrTabTargetParams(tabId), cancellationToken);
+    }
+
+    private T DeserializeRequired<T>(JsonElement result, string method)
+    {
+        try
+        {
+            var value = result.Deserialize<T>(_jsonOptions);
+            if (value is null)
+                throw new HerdrProtocolException($"Herdr returned a null '{method}' result.");
+            return value;
+        }
+        catch (JsonException ex)
+        {
+            throw new HerdrProtocolException($"Herdr returned a malformed '{method}' result.", ex);
+        }
+    }
+
     /// <summary>
     /// Opens Herdr's long-lived <c>events.subscribe</c> stream. The initial acknowledgement is
     /// consumed internally; each subsequent event envelope is yielded intact.

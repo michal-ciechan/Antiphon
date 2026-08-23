@@ -117,6 +117,143 @@ public class HerdrClientTests
         await server;
     }
 
+    [Test]
+    public async Task Typed_wrappers_round_trip_workspace_tab_pane_and_agent_against_fake_state()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        var client = ClientFor(fake.Session);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var empty = await client.WorkspaceListAsync(cts.Token);
+        empty.ShouldBeEmpty();
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var created = await client.WorkspaceCreateAsync(@"C:\src\Antiphon", "probe-ws", cts.Token);
+        // P1: workspace.create returns workspace.workspace_id
+        created.WorkspaceId.ShouldBe("w1");
+        created.Label.ShouldBe("probe-ws");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.WorkspaceReportMetadataAsync(
+            created.WorkspaceId,
+            new Dictionary<string, string?> { ["antiphon-ws"] = "project:test" },
+            cts.Token);
+        // P5: omit ttl — fake accepts tokens without ttl_ms
+        fake.Workspaces[0].Tokens["antiphon-ws"].ShouldBe("project:test");
+        var reportReq = fake.Requests.Last(r => r.GetProperty("method").GetString() == "workspace.report_metadata");
+        reportReq.GetProperty("params").GetProperty("source").GetString().ShouldBe(HerdrSources.Antiphon);
+        reportReq.GetProperty("params").TryGetProperty("ttl_ms", out _).ShouldBeFalse();
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var listed = await client.WorkspaceListAsync(cts.Token);
+        listed.Count.ShouldBe(1);
+        listed[0].WorkspaceId.ShouldBe("w1");
+        listed[0].Tokens!["antiphon-ws"].ShouldBe("project:test");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var tab = await client.TabCreateAsync(
+            created.WorkspaceId,
+            @"C:\src\worktree",
+            new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "tok-1" },
+            "Agent-A",
+            cts.Token);
+        // P2: tab.create returns root_pane.pane_id as initial pane
+        tab.InitialPaneId.ShouldBe("w1:p2"); // p1 was workspace root; p2 is tab root
+        tab.TabId.ShouldNotBeNullOrWhiteSpace();
+        tab.RootPane.Cwd.ShouldBe(@"C:\src\worktree");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneRenameAsync(tab.InitialPaneId, "Agent-A", cts.Token);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneReportMetadataAsync(
+            tab.InitialPaneId,
+            new Dictionary<string, string?> { ["antiphon-session"] = Guid.NewGuid().ToString("N") },
+            "Agent-A",
+            cts.Token);
+        var paneMeta = fake.Requests.Last(r => r.GetProperty("method").GetString() == "pane.report_metadata");
+        paneMeta.GetProperty("params").GetProperty("source").GetString().ShouldBe(HerdrSources.Antiphon);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var split = await client.PaneSplitAsync(
+            tab.InitialPaneId, "right", 0.5, @"C:\src\worktree-2",
+            new Dictionary<string, string> { ["ANTIPHON_TASK_TOKEN"] = "tok-2" },
+            cts.Token);
+        split.PaneId.ShouldNotBe(tab.InitialPaneId);
+        split.TabId.ShouldBe(tab.TabId);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var panes = await client.PaneListAsync(created.WorkspaceId, cts.Token);
+        panes.Count.ShouldBeGreaterThanOrEqualTo(2);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var got = await client.PaneGetAsync(tab.InitialPaneId, cts.Token);
+        got.PaneId.ShouldBe(tab.InitialPaneId);
+        got.Label.ShouldBe("Agent-A");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var agent = await client.AgentStartAsync(
+            "Agent-A", HerdrAgentKinds.Claude, tab.InitialPaneId,
+            ["--dangerously-skip-permissions"], 30_000, cts.Token);
+        // P4: kind = "claude"; P6: env on tab.create inherits to pane (surfaced via fake screen text)
+        agent.PaneId.ShouldBe(tab.InitialPaneId);
+        agent.Agent.ShouldBe(HerdrAgentKinds.Claude);
+        var startReq = fake.Requests.Last(r => r.GetProperty("method").GetString() == "agent.start");
+        startReq.GetProperty("params").GetProperty("kind").GetString().ShouldBe("claude");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var read = await client.PaneReadAsync(tab.InitialPaneId, "visible", stripAnsi: true, lines: 50, cts.Token);
+        read.Text.ShouldContain("ANTIPHON_TASK_TOKEN=tok-1");
+        read.Truncated.ShouldBeFalse();
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var proc = await client.PaneProcessInfoAsync(tab.InitialPaneId, cts.Token);
+        proc.ShellPid.ShouldBe(4242);
+        proc.ForegroundProcesses.ShouldNotBeNull();
+        proc.ForegroundProcesses![0].Name.ShouldBe("claude.exe");
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneReportAgentSessionAsync(
+            tab.InitialPaneId, HerdrAgentKinds.Claude, "sess-1", null, cts.Token);
+        var sessReq = fake.Requests.Last(r => r.GetProperty("method").GetString() == "pane.report_agent_session");
+        sessReq.GetProperty("params").GetProperty("source").GetString().ShouldBe(HerdrSources.Antiphon);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneSendTextAsync(tab.InitialPaneId, "hello", cts.Token);
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneSendKeysAsync(tab.InitialPaneId, ["enter"], cts.Token);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.PaneCloseAsync(split.PaneId, cts.Token);
+
+        // P3: closing the last pane of a tab auto-removes the tab — TabCloseAsync is then a no-op path
+        // for callers; here close the initial pane and assert the tab is gone from state.
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var tabIdBefore = tab.TabId;
+        await client.PaneCloseAsync(tab.InitialPaneId, cts.Token);
+        fake.Workspaces[0].Tabs.Any(t => t.TabId == tabIdBefore).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Report_methods_stamp_source_antiphon_and_tab_close_acks()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        var client = ClientFor(fake.Session);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var ws = await client.WorkspaceCreateAsync(null, "close-probe", cts.Token);
+        await fake.WaitUntilListeningAsync(cts.Token);
+        var tab = await client.TabCreateAsync(ws.WorkspaceId, null, null, "t", cts.Token);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        await client.TabCloseAsync(tab.TabId, cts.Token);
+        fake.Workspaces[0].Tabs.Any(t => t.TabId == tab.TabId).ShouldBeFalse();
+    }
+
     private static HerdrClient ClientFor(string pipeName) => new(new HerdrSettings
     {
         Enabled = true,
