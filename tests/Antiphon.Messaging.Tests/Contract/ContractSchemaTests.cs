@@ -11,10 +11,10 @@ public sealed class ContractSchemaTests
     public void Committed_schema_matches_generated()
     {
         var dir = ContractDirectory();
-        File.ReadAllText(Path.Combine(dir, ContractSchema.ChannelMessageFileName))
-            .ShouldBe(ContractSchema.ChannelMessageJson);
-        File.ReadAllText(Path.Combine(dir, ContractSchema.ChannelReplyFileName))
-            .ShouldBe(ContractSchema.ChannelReplyJson);
+        Normalize(File.ReadAllText(Path.Combine(dir, ContractSchema.ChannelMessageFileName)))
+            .ShouldBe(Normalize(ContractSchema.ChannelMessageJson));
+        Normalize(File.ReadAllText(Path.Combine(dir, ContractSchema.ChannelReplyFileName)))
+            .ShouldBe(Normalize(ContractSchema.ChannelReplyJson));
     }
 
     [Test]
@@ -23,6 +23,8 @@ public sealed class ContractSchemaTests
         AssertHasBase64(ContractSchema.ChannelMessageJson);
         AssertHasBase64(ContractSchema.ChannelReplyJson);
     }
+
+    private static string Normalize(string text) => text.Replace("\r\n", "\n");
 
     private static void AssertHasBase64(string schemaJson)
     {
