@@ -966,6 +966,12 @@ public sealed class AgentTaskReplyService
                 db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Completed, outcome.Detail!, now));
                 return $"branch {task.WorktreeBranch} left for review";
 
+            case DelegationWorktreeService.MergeResult.AlreadyCleanedUp:
+                db.AgentTaskEvents.Add(NewEvent(
+                    task.Id, AgentTaskEventType.Merged,
+                    outcome.Detail ?? "worktree already cleaned up by the task", now));
+                return "worktree already cleaned up by the task";
+
             case DelegationWorktreeService.MergeResult.Conflicted:
                 // The report said "done", but done work that cannot land is not done — Blocked
                 // until the Merge delegate integrates it.

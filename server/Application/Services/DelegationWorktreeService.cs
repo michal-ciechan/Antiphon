@@ -57,6 +57,12 @@ public sealed class DelegationWorktreeService
 
         /// <summary>A git operation failed for a non-conflict reason; branch kept, nothing lost.</summary>
         Failed = 4,
+
+        /// <summary>
+        /// The delegate already merged and removed its worktree; there is nothing left for us to
+        /// commit or merge. Not a failure — the work landed before we ran.
+        /// </summary>
+        AlreadyCleanedUp = 5,
     }
 
     /// <summary>
@@ -199,8 +205,16 @@ public sealed class DelegationWorktreeService
             return new MergeOutcome(MergeResult.Failed, [], "The task has no worktree recorded.");
         }
 
-        if (!Directory.Exists(worktree))
-            return new MergeOutcome(MergeResult.Failed, [], $"Worktree directory is gone: {worktree}");
+        // Self-cleanup (`git worktree remove`) unregisters the path before we run. Status then
+        // exits 128 ("not a git repository") and used to be reported as "NOT merged". Skip that.
+        if (!await IsRegisteredWorktreeAsync(repo, worktree, ct))
+        {
+            _logger.LogInformation(
+                "Task {ShortId}: worktree already cleaned up by the task at {Path}",
+                DelegationReportFormatter.Short(task.Id), worktree);
+            return new MergeOutcome(
+                MergeResult.AlreadyCleanedUp, [], "worktree already cleaned up by the task");
+        }
 
         try
         {
@@ -275,6 +289,53 @@ public sealed class DelegationWorktreeService
             ? null
             : $"Could not fast-forward {target} (checked out at {checkout}): {merge.StdErr.Trim()}";
     }
+
+    /// <summary>
+    /// True when <paramref name="worktree"/> still exists as this repo's registered worktree and
+    /// git will actually run there. A missing directory, a missing .git, a prune leftover, or a
+    /// stale gitdir (the Windows "fatal: not a git repository" shape) are all "already cleaned up".
+    /// </summary>
+    private async Task<bool> IsRegisteredWorktreeAsync(string repo, string worktree, CancellationToken ct)
+    {
+        if (!Directory.Exists(worktree))
+            return false;
+
+        var gitMarker = Path.Combine(worktree, ".git");
+        if (!File.Exists(gitMarker) && !Directory.Exists(gitMarker))
+            return false;
+
+        if (!await IsListedAsWorktreeAsync(repo, worktree, ct))
+            return false;
+
+        var inside = await GitAsync(worktree, ct, "rev-parse", "--is-inside-work-tree");
+        return inside.Ok && inside.StdOut.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> IsListedAsWorktreeAsync(string repo, string worktree, CancellationToken ct)
+    {
+        var list = await GitAsync(repo, ct, "worktree", "list", "--porcelain");
+        if (!list.Ok)
+            return false;
+
+        var wanted = NormalizePath(worktree);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        foreach (var raw in list.StdOut.Split(['\r', '\n'], StringSplitOptions.None))
+        {
+            var line = raw.TrimEnd();
+            if (!line.StartsWith("worktree ", StringComparison.Ordinal))
+                continue;
+            if (NormalizePath(line["worktree ".Length..]).Equals(wanted, comparison))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizePath(string path) =>
+        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     /// <summary>Where <paramref name="branch"/> is currently checked out, if anywhere.</summary>
     private async Task<string?> FindCheckoutOfBranchAsync(string repo, string branch, CancellationToken ct)

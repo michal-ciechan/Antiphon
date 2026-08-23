@@ -173,6 +173,112 @@ public class DelegationWorktreeTests
         Directory.Exists(task.WorktreePath).ShouldBeFalse("an empty branch is only clutter");
     }
 
+    // ---- CARD-0149: self-cleaned worktree is not "NOT merged" ------------------------------
+
+    [Test]
+    public async Task a_self_removed_worktree_is_already_cleaned_up_not_a_merge_failure()
+    {
+        // The dispatched agent rebase/ff-merged itself, then `git worktree remove --force --force`
+        // and `git branch -D`. Merge-back used to run `git status --porcelain` in the now-gone
+        // path and report "NOT merged".
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "the work")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "merge", "--ff-only", task.WorktreeBranch!)).Ok.ShouldBeTrue();
+
+        var removed = await ScratchGitRepo.GitInAsync(
+            repo.Path, "worktree", "remove", "--force", "--force", task.WorktreePath!);
+        removed.Ok.ShouldBeTrue($"worktree remove must succeed: {removed.StdErr}");
+        await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", task.WorktreeBranch!);
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.AlreadyCleanedUp);
+        outcome.Detail.ShouldBe("worktree already cleaned up by the task");
+        Directory.Exists(task.WorktreePath).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task an_unregistered_leftover_directory_is_already_cleaned_up_not_a_merge_failure()
+    {
+        // Windows shape of the CARD-0149 false alarm: `git worktree remove` unregisters (gitdir
+        // gone) but leaves the directory, so Directory.Exists is true and `git status --porcelain`
+        // exits 128 "not a git repository".
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "dangling.md"), "left on disk\n");
+
+        await UnregisterWorktreeLeavingDirectoryAsync(repo.Path, task.WorktreePath!);
+        Directory.Exists(task.WorktreePath).ShouldBeTrue("the leftover directory is the whole point");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "status", "--porcelain"))
+            .Ok.ShouldBeFalse("git status in the leftover must fail the way production did");
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.AlreadyCleanedUp);
+        outcome.Detail.ShouldBe("worktree already cleaned up by the task");
+    }
+
+    [Test]
+    public async Task a_still_registered_dirty_worktree_is_still_swept_and_merged()
+    {
+        // Positive control: the worktree is still ours and still dirty. Skip would mask a real
+        // mid-cleanup break; the safety-net commit must still run.
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.Merged);
+        outcome.Detail.ShouldNotBe("worktree already cleaned up by the task");
+        (await repo.GitReadAsync("show", "feat/parent:feature.md")).ShouldBe("the work\n");
+    }
+
+    [Test]
+    public async Task a_commit_all_failure_on_a_live_worktree_still_fails()
+    {
+        // Positive control: a registered worktree whose safety-net commit cannot run is still a
+        // real merge failure, not "already cleaned up".
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
+
+        var gitDir = (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "rev-parse", "--git-dir")).StdOut.Trim();
+        if (!Path.IsPathRooted(gitDir))
+            gitDir = Path.GetFullPath(Path.Combine(task.WorktreePath!, gitDir));
+        await File.WriteAllTextAsync(Path.Combine(gitDir, "index.lock"), "held\n");
+
+        var outcome = await service.TryMergeBackAsync(task, CancellationToken.None);
+
+        outcome.Result.ShouldBe(DelegationWorktreeService.MergeResult.Failed);
+        outcome.Detail.ShouldNotBeNull();
+        outcome.Detail.ShouldContain("Committing the delegate's work failed");
+        Directory.Exists(task.WorktreePath).ShouldBeTrue("a failed merge-back must keep the worktree");
+    }
+
     // ---- the PreToolUse deny hook ----------------------------------------------------------
 
     [Test]
@@ -269,6 +375,42 @@ public class DelegationWorktreeTests
             new GitService(NullLogger<GitService>.Instance),
             NullLogger<DelegationWorktreeService>.Instance);
         return (service, manager);
+    }
+
+    /// <summary>
+    /// Drop the worktree's gitdir and prune, leaving the directory on disk — the Windows leftover
+    /// after <c>git worktree remove</c> unregisters but cannot delete files.
+    /// </summary>
+    private static async Task UnregisterWorktreeLeavingDirectoryAsync(string repoPath, string worktreePath)
+    {
+        var gitFile = Path.Combine(worktreePath, ".git");
+        File.Exists(gitFile).ShouldBeTrue("a linked worktree has a .git file, not a directory");
+
+        string? gitdir = null;
+        foreach (var raw in (await File.ReadAllTextAsync(gitFile)).Split(['\r', '\n'], StringSplitOptions.None))
+        {
+            var line = raw.Trim();
+            const string prefix = "gitdir:";
+            if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            gitdir = line[prefix.Length..].Trim();
+            if (!Path.IsPathRooted(gitdir))
+                gitdir = Path.GetFullPath(Path.Combine(worktreePath, gitdir));
+            break;
+        }
+
+        gitdir.ShouldNotBeNull("the .git file must point at a gitdir");
+        DeleteTree(gitdir);
+        (await ScratchGitRepo.GitInAsync(repoPath, "worktree", "prune")).Ok.ShouldBeTrue();
+    }
+
+    private static void DeleteTree(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(path, recursive: true);
     }
 
 }

@@ -39,7 +39,7 @@ public sealed class ScratchGitRepo : IDisposable
         return result.StdOut;
     }
 
-    public sealed record GitResult(bool Ok, string StdOut);
+    public sealed record GitResult(bool Ok, string StdOut, string StdErr = "");
 
     public static async Task<GitResult> GitInAsync(string dir, params string[] args)
     {
@@ -54,9 +54,10 @@ public sealed class ScratchGitRepo : IDisposable
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi)!;
-        var stdout = await p.StandardOutput.ReadToEndAsync();
+        var stdout = p.StandardOutput.ReadToEndAsync();
+        var stderr = p.StandardError.ReadToEndAsync();
         await p.WaitForExitAsync();
-        return new GitResult(p.ExitCode == 0, stdout);
+        return new GitResult(p.ExitCode == 0, await stdout, await stderr);
     }
 
     public void Dispose()
