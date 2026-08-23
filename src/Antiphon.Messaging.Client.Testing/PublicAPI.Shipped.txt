@@ -1,0 +1,9 @@
+#nullable enable
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.Complete() -> void
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.ConsumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.FakeAntiphonMessagingClient() -> void
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.InjectInbound(Antiphon.Messaging.ChannelMessage! message) -> void
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.InjectTelegramText(string! chatId, string! text, Antiphon.Messaging.ConversationKind kind = Antiphon.Messaging.ConversationKind.Group, string? username = null, string? authorId = null, string? conversationTitle = null) -> Antiphon.Messaging.ChannelMessage!
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Client.Testing.FakeAntiphonMessagingClient.SentReplies.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.ChannelReply!>!

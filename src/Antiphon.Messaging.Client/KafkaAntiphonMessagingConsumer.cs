@@ -72,7 +72,7 @@ public sealed class KafkaAntiphonMessagingConsumer : IAntiphonMessagingConsumer
     {
         try
         {
-            return JsonSerializer.Deserialize<ChannelMessage>(value, MessagingJson.Options);
+            return JsonSerializer.Deserialize<ChannelMessage>(value, global::Antiphon.Messaging.MessagingJson.Options);
         }
         catch (JsonException ex)
         {

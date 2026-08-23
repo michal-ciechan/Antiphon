@@ -39,6 +39,7 @@ public sealed record ChannelReply
 }
 
 /// <summary>See <see cref="ChannelReply.Kind"/>. Order matters for JSON back-compat: Answer is the default.</summary>
+[UnknownValue(nameof(Answer))]
 public enum ChannelReplyKind
 {
     /// <summary>The agent's final output for the message it was answering.</summary>

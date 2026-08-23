@@ -1,0 +1,31 @@
+#nullable enable
+Antiphon.Messaging.Client.AntiphonMessagingOptions
+Antiphon.Messaging.Client.AntiphonMessagingOptions.AntiphonMessagingOptions() -> void
+Antiphon.Messaging.Client.AntiphonMessagingOptions.BootstrapServers.get -> string!
+Antiphon.Messaging.Client.AntiphonMessagingOptions.BootstrapServers.set -> void
+Antiphon.Messaging.Client.AntiphonMessagingOptions.ConsumerGroup.get -> string!
+Antiphon.Messaging.Client.AntiphonMessagingOptions.ConsumerGroup.set -> void
+Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundTopic.get -> string!
+Antiphon.Messaging.Client.AntiphonMessagingOptions.InboundTopic.set -> void
+Antiphon.Messaging.Client.AntiphonMessagingOptions.MaxMessageBytes.get -> int
+Antiphon.Messaging.Client.AntiphonMessagingOptions.MaxMessageBytes.set -> void
+Antiphon.Messaging.Client.AntiphonMessagingOptions.OutboundTopic.get -> string!
+Antiphon.Messaging.Client.AntiphonMessagingOptions.OutboundTopic.set -> void
+Antiphon.Messaging.Client.IAntiphonMessagingConsumer
+Antiphon.Messaging.Client.IAntiphonMessagingConsumer.ConsumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.Client.IAntiphonMessagingProducer
+Antiphon.Messaging.Client.IAntiphonMessagingProducer.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer
+Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer.ConsumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer.KafkaAntiphonMessagingConsumer(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Client.AntiphonMessagingOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Client.KafkaAntiphonMessagingConsumer!>! logger) -> void
+Antiphon.Messaging.Client.KafkaAntiphonMessagingProducer
+Antiphon.Messaging.Client.KafkaAntiphonMessagingProducer.Dispose() -> void
+Antiphon.Messaging.Client.KafkaAntiphonMessagingProducer.KafkaAntiphonMessagingProducer(Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Client.AntiphonMessagingOptions!>! options) -> void
+Antiphon.Messaging.Client.KafkaAntiphonMessagingProducer.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Antiphon.Messaging.Client.MessagingJson
+Antiphon.Messaging.Client.ServiceCollectionExtensions
+const Antiphon.Messaging.Client.AntiphonMessagingOptions.MaxMessageBytesDefault = 20971520 -> int
+const Antiphon.Messaging.Client.AntiphonMessagingOptions.SectionName = "AntiphonMessaging" -> string!
+static Antiphon.Messaging.Client.MessagingJson.Options.get -> System.Text.Json.JsonSerializerOptions!
+static Antiphon.Messaging.Client.ServiceCollectionExtensions.AddAntiphonMessaging(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Microsoft.Extensions.Configuration.IConfiguration! configuration, string! sectionName = "AntiphonMessaging") -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Antiphon.Messaging.Client.ServiceCollectionExtensions.AddAntiphonMessaging(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Antiphon.Messaging.Client.AntiphonMessagingOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

@@ -1,0 +1,45 @@
+#nullable enable
+Antiphon.Messaging.Slack.SlackChannelAdapter
+Antiphon.Messaging.Slack.SlackChannelAdapter.BotUserId.get -> string?
+Antiphon.Messaging.Slack.SlackChannelAdapter.Capabilities.get -> Antiphon.Messaging.ChannelCapabilities!
+Antiphon.Messaging.Slack.SlackChannelAdapter.Channel.get -> string!
+Antiphon.Messaging.Slack.SlackChannelAdapter.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Antiphon.Messaging.Slack.SlackChannelAdapter.ReceiveAsync(System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.Slack.SlackChannelAdapter.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.SendResult!>!
+Antiphon.Messaging.Slack.SlackChannelAdapter.SlackChannelAdapter(System.Net.Http.HttpClient! http, Antiphon.Messaging.Slack.SlackSettings! settings, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Slack.SlackChannelAdapter!>! logger) -> void
+Antiphon.Messaging.Slack.SlackMrkdwnRenderer
+Antiphon.Messaging.Slack.SlackSettings
+Antiphon.Messaging.Slack.SlackSettings.AllowedConversationIds.get -> string![]!
+Antiphon.Messaging.Slack.SlackSettings.AllowedConversationIds.set -> void
+Antiphon.Messaging.Slack.SlackSettings.ApiBaseUrl.get -> string!
+Antiphon.Messaging.Slack.SlackSettings.ApiBaseUrl.set -> void
+Antiphon.Messaging.Slack.SlackSettings.AppToken.get -> string!
+Antiphon.Messaging.Slack.SlackSettings.AppToken.set -> void
+Antiphon.Messaging.Slack.SlackSettings.BotToken.get -> string!
+Antiphon.Messaging.Slack.SlackSettings.BotToken.set -> void
+Antiphon.Messaging.Slack.SlackSettings.BotUserId.get -> string?
+Antiphon.Messaging.Slack.SlackSettings.BotUserId.set -> void
+Antiphon.Messaging.Slack.SlackSettings.ErrorBackoffSeconds.get -> int
+Antiphon.Messaging.Slack.SlackSettings.ErrorBackoffSeconds.set -> void
+Antiphon.Messaging.Slack.SlackSettings.Formatting.get -> string!
+Antiphon.Messaging.Slack.SlackSettings.Formatting.set -> void
+Antiphon.Messaging.Slack.SlackSettings.KeepAliveSeconds.get -> int
+Antiphon.Messaging.Slack.SlackSettings.KeepAliveSeconds.set -> void
+Antiphon.Messaging.Slack.SlackSettings.KeepAliveTimeoutSeconds.get -> int
+Antiphon.Messaging.Slack.SlackSettings.KeepAliveTimeoutSeconds.set -> void
+Antiphon.Messaging.Slack.SlackSettings.MaxInlineAttachmentBytes.get -> long
+Antiphon.Messaging.Slack.SlackSettings.MaxInlineAttachmentBytes.set -> void
+Antiphon.Messaging.Slack.SlackSettings.MaxRetryAfterSeconds.get -> int
+Antiphon.Messaging.Slack.SlackSettings.MaxRetryAfterSeconds.set -> void
+Antiphon.Messaging.Slack.SlackSettings.SendRetryAttempts.get -> int
+Antiphon.Messaging.Slack.SlackSettings.SendRetryAttempts.set -> void
+Antiphon.Messaging.Slack.SlackSettings.SlackSettings() -> void
+Antiphon.Messaging.Slack.SlackTextNormalizer
+Antiphon.Messaging.Slack.SlackTransientException
+Antiphon.Messaging.Slack.SlackTransientException.SlackTransientException(string! message) -> void
+const Antiphon.Messaging.Slack.SlackSettings.SectionName = "Slack" -> string!
+static Antiphon.Messaging.Slack.SlackMrkdwnRenderer.Escape(string! s) -> string!
+static Antiphon.Messaging.Slack.SlackMrkdwnRenderer.ToMrkdwn(string! markdown) -> string!
+static Antiphon.Messaging.Slack.SlackTextNormalizer.MentionedUserIds(string? raw) -> System.Collections.Generic.IReadOnlyList<string!>!
+static Antiphon.Messaging.Slack.SlackTextNormalizer.Normalize(string? raw, System.Func<string!, string?>? resolveUserName = null, string? botUserId = null) -> (string? Text, System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Mention!>! Mentions)
+static Antiphon.Messaging.Slack.SlackTextNormalizer.Unescape(string! s) -> string!

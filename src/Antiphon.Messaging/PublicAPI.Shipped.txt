@@ -1,0 +1,163 @@
+#nullable enable
+Antiphon.Messaging.Attachment
+Antiphon.Messaging.Attachment.ChannelRef.get -> string!
+Antiphon.Messaging.Attachment.ChannelRef.init -> void
+Antiphon.Messaging.Attachment.Content.get -> byte[]?
+Antiphon.Messaging.Attachment.Content.init -> void
+Antiphon.Messaging.Attachment.Kind.get -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.Attachment.Kind.init -> void
+Antiphon.Messaging.Attachment.Mime.get -> string?
+Antiphon.Messaging.Attachment.Mime.init -> void
+Antiphon.Messaging.Attachment.Name.get -> string?
+Antiphon.Messaging.Attachment.Name.init -> void
+Antiphon.Messaging.Attachment.Size.get -> long?
+Antiphon.Messaging.Attachment.Size.init -> void
+Antiphon.Messaging.Attachment.Url.get -> string?
+Antiphon.Messaging.Attachment.Url.init -> void
+Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Audio = 2 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Contact = 7 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.File = 4 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Image = 0 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Location = 6 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Other = 8 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Sticker = 5 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Video = 1 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.AttachmentKind.Voice = 3 -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.ChannelCapabilities
+Antiphon.Messaging.ChannelCapabilities.AttachmentKinds.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.AttachmentKind>!
+Antiphon.Messaging.ChannelCapabilities.AttachmentKinds.init -> void
+Antiphon.Messaging.ChannelCapabilities.Attachments.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Attachments.init -> void
+Antiphon.Messaging.ChannelCapabilities.Channel.get -> string!
+Antiphon.Messaging.ChannelCapabilities.Channel.init -> void
+Antiphon.Messaging.ChannelCapabilities.Delete.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Delete.init -> void
+Antiphon.Messaging.ChannelCapabilities.Edit.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Edit.init -> void
+Antiphon.Messaging.ChannelCapabilities.MarkdownFlavor.get -> string?
+Antiphon.Messaging.ChannelCapabilities.MarkdownFlavor.init -> void
+Antiphon.Messaging.ChannelCapabilities.MaxTextLength.get -> int
+Antiphon.Messaging.ChannelCapabilities.MaxTextLength.init -> void
+Antiphon.Messaging.ChannelCapabilities.Mentions.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Mentions.init -> void
+Antiphon.Messaging.ChannelCapabilities.Reactions.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Reactions.init -> void
+Antiphon.Messaging.ChannelCapabilities.Threads.get -> bool
+Antiphon.Messaging.ChannelCapabilities.Threads.init -> void
+Antiphon.Messaging.ChannelCapabilities.TypingIndicator.get -> bool
+Antiphon.Messaging.ChannelCapabilities.TypingIndicator.init -> void
+Antiphon.Messaging.ChannelMessage
+Antiphon.Messaging.ChannelMessage.Attachments.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Attachment!>!
+Antiphon.Messaging.ChannelMessage.Attachments.init -> void
+Antiphon.Messaging.ChannelMessage.Author.get -> Antiphon.Messaging.Participant!
+Antiphon.Messaging.ChannelMessage.Author.init -> void
+Antiphon.Messaging.ChannelMessage.Channel.get -> string!
+Antiphon.Messaging.ChannelMessage.Channel.init -> void
+Antiphon.Messaging.ChannelMessage.ChannelMessageId.get -> string!
+Antiphon.Messaging.ChannelMessage.ChannelMessageId.init -> void
+Antiphon.Messaging.ChannelMessage.Conversation.get -> Antiphon.Messaging.Conversation!
+Antiphon.Messaging.ChannelMessage.Conversation.init -> void
+Antiphon.Messaging.ChannelMessage.Id.get -> string!
+Antiphon.Messaging.ChannelMessage.Id.init -> void
+Antiphon.Messaging.ChannelMessage.Mentions.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.Mention!>!
+Antiphon.Messaging.ChannelMessage.Mentions.init -> void
+Antiphon.Messaging.ChannelMessage.Raw.get -> System.Text.Json.JsonElement
+Antiphon.Messaging.ChannelMessage.Raw.init -> void
+Antiphon.Messaging.ChannelMessage.ReplyHandle.get -> string!
+Antiphon.Messaging.ChannelMessage.ReplyHandle.init -> void
+Antiphon.Messaging.ChannelMessage.ReplyTo.get -> Antiphon.Messaging.ReplyReference?
+Antiphon.Messaging.ChannelMessage.ReplyTo.init -> void
+Antiphon.Messaging.ChannelMessage.Text.get -> string?
+Antiphon.Messaging.ChannelMessage.Text.init -> void
+Antiphon.Messaging.ChannelMessage.Timestamp.get -> System.DateTimeOffset
+Antiphon.Messaging.ChannelMessage.Timestamp.init -> void
+Antiphon.Messaging.ChannelReply
+Antiphon.Messaging.ChannelReply.Attachments.get -> System.Collections.Generic.IReadOnlyList<Antiphon.Messaging.OutboundAttachment!>!
+Antiphon.Messaging.ChannelReply.Attachments.init -> void
+Antiphon.Messaging.ChannelReply.Channel.get -> string!
+Antiphon.Messaging.ChannelReply.Channel.init -> void
+Antiphon.Messaging.ChannelReply.ConversationId.get -> string?
+Antiphon.Messaging.ChannelReply.ConversationId.init -> void
+Antiphon.Messaging.ChannelReply.Kind.get -> Antiphon.Messaging.ChannelReplyKind
+Antiphon.Messaging.ChannelReply.Kind.init -> void
+Antiphon.Messaging.ChannelReply.RawOverrides.get -> System.Text.Json.JsonElement?
+Antiphon.Messaging.ChannelReply.RawOverrides.init -> void
+Antiphon.Messaging.ChannelReply.ReplyHandle.get -> string?
+Antiphon.Messaging.ChannelReply.ReplyHandle.init -> void
+Antiphon.Messaging.ChannelReply.ReplyToMessageId.get -> string?
+Antiphon.Messaging.ChannelReply.ReplyToMessageId.init -> void
+Antiphon.Messaging.ChannelReply.Text.get -> string?
+Antiphon.Messaging.ChannelReply.Text.init -> void
+Antiphon.Messaging.ChannelReplyKind
+Antiphon.Messaging.ChannelReplyKind.Answer = 0 -> Antiphon.Messaging.ChannelReplyKind
+Antiphon.Messaging.ChannelReplyKind.Progress = 1 -> Antiphon.Messaging.ChannelReplyKind
+Antiphon.Messaging.ChannelReplyKind.Question = 2 -> Antiphon.Messaging.ChannelReplyKind
+Antiphon.Messaging.Conversation
+Antiphon.Messaging.Conversation.Id.get -> string!
+Antiphon.Messaging.Conversation.Id.init -> void
+Antiphon.Messaging.Conversation.Kind.get -> Antiphon.Messaging.ConversationKind
+Antiphon.Messaging.Conversation.Kind.init -> void
+Antiphon.Messaging.Conversation.Title.get -> string?
+Antiphon.Messaging.Conversation.Title.init -> void
+Antiphon.Messaging.ConversationKind
+Antiphon.Messaging.ConversationKind.Channel = 2 -> Antiphon.Messaging.ConversationKind
+Antiphon.Messaging.ConversationKind.Direct = 0 -> Antiphon.Messaging.ConversationKind
+Antiphon.Messaging.ConversationKind.Group = 1 -> Antiphon.Messaging.ConversationKind
+Antiphon.Messaging.IChannelAdapter
+Antiphon.Messaging.IChannelAdapter.Capabilities.get -> Antiphon.Messaging.ChannelCapabilities!
+Antiphon.Messaging.IChannelAdapter.Channel.get -> string!
+Antiphon.Messaging.IChannelAdapter.ReceiveAsync(System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.IChannelAdapter.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.SendResult!>!
+Antiphon.Messaging.Mention
+Antiphon.Messaging.Mention.DisplayName.get -> string?
+Antiphon.Messaging.Mention.DisplayName.init -> void
+Antiphon.Messaging.Mention.Id.get -> string!
+Antiphon.Messaging.Mention.Id.init -> void
+Antiphon.Messaging.Mention.IsMe.get -> bool
+Antiphon.Messaging.Mention.IsMe.init -> void
+Antiphon.Messaging.MessagingJson
+Antiphon.Messaging.OutboundAttachment
+Antiphon.Messaging.OutboundAttachment.Caption.get -> string?
+Antiphon.Messaging.OutboundAttachment.Caption.init -> void
+Antiphon.Messaging.OutboundAttachment.Content.get -> byte[]?
+Antiphon.Messaging.OutboundAttachment.Content.init -> void
+Antiphon.Messaging.OutboundAttachment.Kind.get -> Antiphon.Messaging.AttachmentKind
+Antiphon.Messaging.OutboundAttachment.Kind.init -> void
+Antiphon.Messaging.OutboundAttachment.Mime.get -> string?
+Antiphon.Messaging.OutboundAttachment.Mime.init -> void
+Antiphon.Messaging.OutboundAttachment.Name.get -> string?
+Antiphon.Messaging.OutboundAttachment.Name.init -> void
+Antiphon.Messaging.OutboundAttachment.Source.get -> string?
+Antiphon.Messaging.OutboundAttachment.Source.init -> void
+Antiphon.Messaging.Participant
+Antiphon.Messaging.Participant.DisplayName.get -> string?
+Antiphon.Messaging.Participant.DisplayName.init -> void
+Antiphon.Messaging.Participant.Id.get -> string!
+Antiphon.Messaging.Participant.Id.init -> void
+Antiphon.Messaging.Participant.IsSelf.get -> bool
+Antiphon.Messaging.Participant.IsSelf.init -> void
+Antiphon.Messaging.Participant.Username.get -> string?
+Antiphon.Messaging.Participant.Username.init -> void
+Antiphon.Messaging.ReplyReference
+Antiphon.Messaging.ReplyReference.ChannelMessageId.get -> string!
+Antiphon.Messaging.ReplyReference.ChannelMessageId.init -> void
+Antiphon.Messaging.ReplyReference.Excerpt.get -> string?
+Antiphon.Messaging.ReplyReference.Excerpt.init -> void
+Antiphon.Messaging.SendResult
+Antiphon.Messaging.SendResult.ChannelMessageId.get -> string?
+Antiphon.Messaging.SendResult.ChannelMessageId.init -> void
+Antiphon.Messaging.SendResult.Error.get -> string?
+Antiphon.Messaging.SendResult.Error.init -> void
+Antiphon.Messaging.SendResult.Ok.get -> bool
+Antiphon.Messaging.SendResult.Ok.init -> void
+Antiphon.Messaging.TolerantStringEnumConverterFactory
+Antiphon.Messaging.TolerantStringEnumConverterFactory.TolerantStringEnumConverterFactory() -> void
+Antiphon.Messaging.UnknownValueAttribute
+Antiphon.Messaging.UnknownValueAttribute.MemberName.get -> string!
+Antiphon.Messaging.UnknownValueAttribute.UnknownValueAttribute(string! memberName) -> void
+override Antiphon.Messaging.TolerantStringEnumConverterFactory.CanConvert(System.Type! typeToConvert) -> bool
+override Antiphon.Messaging.TolerantStringEnumConverterFactory.CreateConverter(System.Type! typeToConvert, System.Text.Json.JsonSerializerOptions! options) -> System.Text.Json.Serialization.JsonConverter!
+static Antiphon.Messaging.SendResult.Failed(string! error) -> Antiphon.Messaging.SendResult!
+static Antiphon.Messaging.SendResult.Sent(string? channelMessageId = null) -> Antiphon.Messaging.SendResult!
+static readonly Antiphon.Messaging.MessagingJson.Options -> System.Text.Json.JsonSerializerOptions!

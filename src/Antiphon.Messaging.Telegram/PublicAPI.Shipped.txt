@@ -1,0 +1,32 @@
+#nullable enable
+Antiphon.Messaging.Telegram.TelegramChannelAdapter
+Antiphon.Messaging.Telegram.TelegramChannelAdapter.Capabilities.get -> Antiphon.Messaging.ChannelCapabilities!
+Antiphon.Messaging.Telegram.TelegramChannelAdapter.Channel.get -> string!
+Antiphon.Messaging.Telegram.TelegramChannelAdapter.ReceiveAsync(System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelMessage!>!
+Antiphon.Messaging.Telegram.TelegramChannelAdapter.SendAsync(Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Antiphon.Messaging.SendResult!>!
+Antiphon.Messaging.Telegram.TelegramChannelAdapter.TelegramChannelAdapter(System.Net.Http.HttpClient! http, Antiphon.Messaging.Telegram.TelegramSettings! settings, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Telegram.TelegramChannelAdapter!>! logger) -> void
+Antiphon.Messaging.Telegram.TelegramMarkdownRenderer
+Antiphon.Messaging.Telegram.TelegramSettings
+Antiphon.Messaging.Telegram.TelegramSettings.AllowedChatIds.get -> long[]!
+Antiphon.Messaging.Telegram.TelegramSettings.AllowedChatIds.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.ApiBaseUrl.get -> string!
+Antiphon.Messaging.Telegram.TelegramSettings.ApiBaseUrl.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.BotToken.get -> string!
+Antiphon.Messaging.Telegram.TelegramSettings.BotToken.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.BotUsername.get -> string?
+Antiphon.Messaging.Telegram.TelegramSettings.BotUsername.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.ErrorBackoffSeconds.get -> int
+Antiphon.Messaging.Telegram.TelegramSettings.ErrorBackoffSeconds.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.Formatting.get -> string!
+Antiphon.Messaging.Telegram.TelegramSettings.Formatting.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.LongPollTimeoutSeconds.get -> int
+Antiphon.Messaging.Telegram.TelegramSettings.LongPollTimeoutSeconds.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.MaxInlineAttachmentBytes.get -> long
+Antiphon.Messaging.Telegram.TelegramSettings.MaxInlineAttachmentBytes.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.MaxRetryAfterSeconds.get -> int
+Antiphon.Messaging.Telegram.TelegramSettings.MaxRetryAfterSeconds.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.SendRetryAttempts.get -> int
+Antiphon.Messaging.Telegram.TelegramSettings.SendRetryAttempts.set -> void
+Antiphon.Messaging.Telegram.TelegramSettings.TelegramSettings() -> void
+const Antiphon.Messaging.Telegram.TelegramSettings.SectionName = "Telegram" -> string!
+static Antiphon.Messaging.Telegram.TelegramMarkdownRenderer.ToHtml(string! markdown) -> string!

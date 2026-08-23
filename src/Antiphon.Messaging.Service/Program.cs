@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Service;
 using Antiphon.Messaging.Slack;
@@ -18,12 +17,12 @@ builder.Services.AddDbContext<MessagingDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Messaging")));
 
 // Shared JSON options: camelCase + string enums. Used for both Kafka payloads and the HTTP API.
-var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+builder.Services.AddSingleton(MessagingJson.Options);
+builder.Services.ConfigureHttpJsonOptions(o =>
 {
-    Converters = { new JsonStringEnumConverter() },
-};
-builder.Services.AddSingleton(jsonOptions);
-builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    o.SerializerOptions.Converters.Add(new TolerantStringEnumConverterFactory());
+    o.SerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never;
+});
 
 builder.Services.AddHttpClient();
 

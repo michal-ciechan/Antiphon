@@ -10,6 +10,7 @@
     <AssemblyName>Antiphon.Messaging.FakeGateway</AssemblyName>
     <Description>Kafka-connected FAKE messaging gateway for local dev and integration tests: records would-be channel deliveries (JSONL + HTTP assertions), injects synthetic inbound messages, and simulates outages. Real Kafka semantics, no real Telegram. Never deploy to production.</Description>
     <!-- Ships as a dotnet tool alongside the other messaging packages (spec Q9). -->
+    <EnablePublicApiAnalyzers>false</EnablePublicApiAnalyzers>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>antiphon-fake-gateway</ToolCommandName>
     <PackageId>Antiphon.Messaging.FakeGateway</PackageId>

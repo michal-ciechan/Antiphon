@@ -9,5 +9,17 @@
     <RepositoryUrl>https://github.com/michal-ciechan/Antiphon</RepositoryUrl>
     <PackageProjectUrl>https://github.com/michal-ciechan/Antiphon</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <!-- Public API baseline: a new public member fails the build until PublicAPI.Shipped.txt is updated. -->
+    <EnablePublicApiAnalyzers Condition="'$(EnablePublicApiAnalyzers)' == ''">true</EnablePublicApiAnalyzers>
+    <WarningsAsErrors Condition="'$(EnablePublicApiAnalyzers)' == 'true'">$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(EnablePublicApiAnalyzers)' == 'true'">
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.3.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
 </Project>

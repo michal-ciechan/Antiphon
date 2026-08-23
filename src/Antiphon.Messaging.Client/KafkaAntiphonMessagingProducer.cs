@@ -25,7 +25,7 @@ public sealed class KafkaAntiphonMessagingProducer : IAntiphonMessagingProducer,
 
     public async Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)
     {
-        var value = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        var value = JsonSerializer.Serialize(reply, global::Antiphon.Messaging.MessagingJson.Options);
         var key = reply.ConversationId ?? reply.ReplyHandle ?? string.Empty;
         await _producer.ProduceAsync(
             _options.OutboundTopic,

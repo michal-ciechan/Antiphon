@@ -48,6 +48,7 @@ public sealed record Conversation
     public string? Title { get; init; }
 }
 
+[UnknownValue(nameof(Group))]
 public enum ConversationKind
 {
     Direct,
@@ -96,6 +97,7 @@ public sealed record Attachment
     public byte[]? Content { get; init; }
 }
 
+[UnknownValue(nameof(Other))]
 public enum AttachmentKind
 {
     Image,

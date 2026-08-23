@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Antiphon.Messaging;
 using Antiphon.Messaging.FakeGateway;
 using Confluent.Kafka;
@@ -28,10 +27,7 @@ var jsonlPath = builder.Configuration["FakeGateway:DeliveryLog"]
     ?? Path.Combine("logs", "fake-gateway", "outbound.jsonl");
 
 // Same wire shape the real client/gateway use: camelCase + string enums.
-var wireJson = new JsonSerializerOptions(JsonSerializerDefaults.Web)
-{
-    Converters = { new JsonStringEnumConverter() },
-};
+var wireJson = MessagingJson.Options;
 
 builder.Services.AddSingleton(new DeliveryStore(jsonlPath));
 builder.Services.AddSingleton<PauseState>();

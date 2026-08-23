@@ -1,11 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Messaging.Pack.props" />
+
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Antiphon.Messaging.Telegram</RootNamespace>
     <AssemblyName>Antiphon.Messaging.Telegram</AssemblyName>
+    <Description>Telegram Bot API channel adapter for the Antiphon messaging bridge.</Description>
   </PropertyGroup>
 
   <ItemGroup>

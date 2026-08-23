@@ -60,14 +60,14 @@ public sealed class AntiphonMessagingClientTests
             Raw = JsonDocument.Parse("{}").RootElement.Clone(),
         };
 
-        var json = JsonSerializer.Serialize(msg, MessagingJson.Options);
+        var json = JsonSerializer.Serialize(msg, global::Antiphon.Messaging.MessagingJson.Options);
 
         json.ShouldContain("\"channelMessageId\":");   // camelCase property names
         json.ShouldContain("\"conversation\":");
         json.ShouldContain("\"kind\":\"Group\"");        // enum serialized as its name
         json.ShouldNotContain("\"ChannelMessageId\"", Case.Sensitive);   // never PascalCase
 
-        var back = JsonSerializer.Deserialize<ChannelMessage>(json, MessagingJson.Options)!;
+        var back = JsonSerializer.Deserialize<ChannelMessage>(json, global::Antiphon.Messaging.MessagingJson.Options)!;
         back.Conversation.Kind.ShouldBe(ConversationKind.Group);
         back.ChannelMessageId.ShouldBe("42");
     }
@@ -77,7 +77,7 @@ public sealed class AntiphonMessagingClientTests
     {
         var reply = new ChannelReply { Channel = "telegram", ConversationId = "777", Text = "hi", ReplyToMessageId = "42" };
 
-        var json = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        var json = JsonSerializer.Serialize(reply, global::Antiphon.Messaging.MessagingJson.Options);
 
         json.ShouldContain("\"channel\":\"telegram\"");
         json.ShouldContain("\"conversationId\":\"777\"");
@@ -102,10 +102,10 @@ public sealed class AntiphonMessagingClientTests
             ],
         };
 
-        var json = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        var json = JsonSerializer.Serialize(reply, global::Antiphon.Messaging.MessagingJson.Options);
         json.ShouldContain("\"content\":\"" + Convert.ToBase64String(bytes) + "\"", Case.Sensitive);
 
-        var back = JsonSerializer.Deserialize<ChannelReply>(json, MessagingJson.Options)!;
+        var back = JsonSerializer.Deserialize<ChannelReply>(json, global::Antiphon.Messaging.MessagingJson.Options)!;
         var att = back.Attachments.ShouldHaveSingleItem();
         att.Content.ShouldBe(bytes);
         att.Kind.ShouldBe(AttachmentKind.File);
@@ -119,7 +119,7 @@ public sealed class AntiphonMessagingClientTests
         // A pre-attachment ChannelReply as older producers wrote it — the new fields must default.
         const string json = """{"channel":"telegram","conversationId":"777","text":"hi"}""";
 
-        var back = JsonSerializer.Deserialize<ChannelReply>(json, MessagingJson.Options)!;
+        var back = JsonSerializer.Deserialize<ChannelReply>(json, global::Antiphon.Messaging.MessagingJson.Options)!;
         back.Attachments.ShouldBeEmpty();
         back.Text.ShouldBe("hi");
     }
@@ -140,7 +140,7 @@ public sealed class AntiphonMessagingClientTests
             ],
         };
 
-        var json = JsonSerializer.Serialize(reply, MessagingJson.Options);
+        var json = JsonSerializer.Serialize(reply, global::Antiphon.Messaging.MessagingJson.Options);
         json.Length.ShouldBeLessThan(AntiphonMessagingOptions.MaxMessageBytesDefault,
             "a max-size attachment must serialize under the 20 MB Kafka message cap");
     }
