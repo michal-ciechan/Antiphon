@@ -147,6 +147,10 @@ try
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<SubscriptionUsageMonitoringSettings>(
         builder.Configuration.GetSection("SubscriptionUsageMonitoring"));
+    builder.Services.AddSingleton<IValidateOptions<SubscriptionQuotaGateSettings>, SubscriptionQuotaGateSettingsValidator>();
+    builder.Services.AddOptions<SubscriptionQuotaGateSettings>()
+        .Bind(builder.Configuration.GetSection("SubscriptionQuotaGate"))
+        .ValidateOnStart();
     builder.Services.Configure<TranscriptBindingSettings>(builder.Configuration.GetSection("TranscriptBinding"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
     builder.Services.AddSingleton<IValidateOptions<ContextCompactionSettings>, ContextCompactionSettingsValidator>();
@@ -360,6 +364,7 @@ try
     builder.Services.AddSingleton<ContextCompactionService>();
     builder.Services.AddSingleton<SubscriptionUsageMonitorService>();
     builder.Services.AddScoped<SubscriptionUsageReader>();
+    builder.Services.AddScoped<SubscriptionQuotaGate>();
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();

@@ -64,6 +64,12 @@ public class ExceptionMiddleware
         if (exception is HttpException { Code: not null } codedException)
             problemDetails["code"] = codedException.Code;
 
+        if (exception is HttpException { Extensions: { Count: > 0 } extensions })
+        {
+            foreach (var (key, value) in extensions)
+                problemDetails[key] = value;
+        }
+
         // Add structured validation errors for ValidationException
         if (exception is ValidationException validationEx)
         {

@@ -342,7 +342,7 @@ public sealed class SubscriptionUsageMonitorService
     }
 
     internal static string KeyFor(Agent? owner, AgentKind kind) =>
-        owner?.TuiProfileId is Guid id ? id.ToString("D") : kind.ToString();
+        SubscriptionUsageKey.For(owner, kind);
 
     private DateTime UtcNow() => _time.GetUtcNow().UtcDateTime;
 }
