@@ -247,6 +247,33 @@ public class ContextCompactionSweepTests
     }
 
     [Test]
+    public async Task A_grok_session_at_huge_raw_tokens_and_idle_is_not_compacted()
+    {
+        await using var h = await CreateHarnessAsync();
+        var grokId = await SeedRunningSessionAsync(h, AgentKind.Grok);
+        await SeedUsageAsync(grokId, TranscriptKinds.AssistantText, tokens: 18_700_000, hoursAgo: 9);
+        await SeedUsageAsync(grokId, TranscriptKinds.TurnEnd, tokens: null, hoursAgo: 9, stopReason: "end_turn");
+        h.Runtime.Register(grokId, new FakeAgentProtocolAdapter());
+
+        (await EligibleSessionIdsAsync()).ShouldContain(grokId);
+
+        await SweepAsync(h, new ContextCompactionSettings
+        {
+            Enabled = true,
+            IdleMinutes = 480,
+            ContextPercent = 50,
+            CooldownHours = 24,
+            BoundaryTimeoutMinutes = 10,
+        });
+
+        (await SupervisionMessagesAsync(grokId)).ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.AgentIncidents.CountAsync(
+            i => i.SessionId == grokId && i.Kind == AgentIncidentKind.AutoCompactFailed))
+            .ShouldBe(0);
+    }
+
+    [Test]
     public async Task A_grok_session_passes_eligibility_but_does_not_enqueue_when_fullness_is_unknown()
     {
         await using var h = await CreateHarnessAsync();

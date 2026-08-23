@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -55,7 +56,8 @@ public static class SessionContextUsage
         IReadOnlyList<TranscriptContextRow> rows,
         string? fallbackModelId,
         ContextWindowSettings settings,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        ContextWindowUsageContract? contract = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -73,6 +75,16 @@ public static class SessionContextUsage
         var tokens = TokensOf(usage);
         var modelId = FirstNonEmpty(usage.Model, fallbackModelId);
         var ceiling = settings.ResolveCeiling(modelId);
+
+        if (contract is { State: AgentTuiCapabilityState.Degraded,
+            CeilingSource: ContextWindowCeilingSource.SelfReported })
+        {
+            logger?.LogDebug(
+                "Context fullness suppressed for a {State}/{Ceiling} contract: {Reason}",
+                contract.State, contract.CeilingSource, contract.Reason);
+            return new SessionContextUsageResult(null, ToInt(tokens), ceiling, modelId);
+        }
+
         var fullness = ceiling > 0 ? tokens / (double)ceiling : (double?)null;
 
         if (fullness is > 1.0)
@@ -103,7 +115,7 @@ public static class SessionContextUsage
     /// </summary>
     public static async Task<IReadOnlyDictionary<Guid, double?>> LoadFullnessAsync(
         AppDbContext db,
-        IReadOnlyCollection<(Guid SessionId, string? EffectiveModelId)> sessions,
+        IReadOnlyCollection<(Guid SessionId, string? EffectiveModelId, AgentKind Kind)> sessions,
         ContextWindowSettings settings,
         ILogger? logger,
         CancellationToken ct)
@@ -117,7 +129,7 @@ public static class SessionContextUsage
         var ids = sessions.Select(s => s.SessionId).Distinct().ToList();
         var fallbacks = sessions
             .GroupBy(s => s.SessionId)
-            .ToDictionary(g => g.Key, g => g.First().EffectiveModelId);
+            .ToDictionary(g => g.Key, g => g.First());
 
         var rows = await db.TranscriptEntries
             .AsNoTracking()
@@ -152,8 +164,12 @@ public static class SessionContextUsage
                     r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens,
                     r.Model, r.IsApiError))
                 .ToList();
+            var meta = fallbacks.GetValueOrDefault(id);
+            var contract = meta == default
+                ? null
+                : ProviderContractCatalog.For(meta.Kind).ContextWindowUsage;
             result[id] = Compute(
-                sessionRows, fallbacks.GetValueOrDefault(id), settings, logger).Fullness;
+                sessionRows, meta.EffectiveModelId, settings, logger, contract).Fullness;
         }
 
         return result;
@@ -171,7 +187,7 @@ public static class SessionContextUsage
 
         var fullness = await LoadFullnessAsync(
             db,
-            sessions.Select(s => (s.Id, s.EffectiveModelId)).ToList(),
+            sessions.Select(s => (s.Id, s.EffectiveModelId, s.AgentKind)).ToList(),
             settings,
             logger,
             ct);
@@ -205,7 +221,7 @@ public static class SessionContextUsage
 
         var fullness = await LoadFullnessAsync(
             db,
-            all.Select(s => (s.Id, s.EffectiveModelId)).Distinct().ToList(),
+            all.Select(s => (s.Id, s.EffectiveModelId, s.AgentKind)).Distinct().ToList(),
             settings,
             logger,
             ct);

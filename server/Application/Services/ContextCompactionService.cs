@@ -24,6 +24,12 @@ namespace Antiphon.Server.Application.Services;
 /// per-tick scope, or two ticks a few seconds apart would double-fire inside the delivery window.
 /// A server restart losing the stamp can at worst re-attempt a compact whose preconditions still
 /// hold — wasteful once, not harmful. The durable cooldown is transcript rows.
+///
+/// <para>This sweep is idle-time maintenance by design (CARD-0153). A working session is out of
+/// scope even at &gt;100% fullness: compacting a mid-turn session types into a working composer
+/// (the CARD-0041 auto-boundary rule exists because ending a turn mid-turn is wrong). A wedged
+/// working session is <c>TaskProgressStalled</c>'s business. The <c>IdleMinutes</c> and
+/// <c>working=false</c> gates do not move.</para>
 /// </summary>
 public sealed class ContextCompactionService
 {
@@ -112,15 +118,15 @@ public sealed class ContextCompactionService
     /// </summary>
     public async Task<int> SweepAsync(CancellationToken ct)
     {
-        List<(Guid Id, string? EffectiveModelId)> sessions = [];
+        List<(Guid Id, string? EffectiveModelId, AgentKind Kind)> sessions = [];
         Dictionary<Guid, Agent> owners = [];
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var rows = await WhereEligibleForContextWindow(db.AgentSessions.AsNoTracking())
-                .Select(s => new { s.Id, s.EffectiveModelId })
+                .Select(s => new { s.Id, s.EffectiveModelId, s.AgentKind })
                 .ToListAsync(ct);
-            sessions = rows.Select(s => (s.Id, s.EffectiveModelId)).ToList();
+            sessions = rows.Select(s => (s.Id, s.EffectiveModelId, s.AgentKind)).ToList();
             if (sessions.Count == 0)
                 return 0;
 
@@ -138,13 +144,13 @@ public sealed class ContextCompactionService
 
         var now = UtcNow();
         var fired = 0;
-        foreach (var (sessionId, effectiveModelId) in sessions)
+        foreach (var (sessionId, effectiveModelId, kind) in sessions)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
                 owners.TryGetValue(sessionId, out var owner);
-                if (await ProcessSessionAsync(sessionId, effectiveModelId, owner, now, ct))
+                if (await ProcessSessionAsync(sessionId, effectiveModelId, kind, owner, now, ct))
                     fired++;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -163,6 +169,7 @@ public sealed class ContextCompactionService
     private async Task<bool> ProcessSessionAsync(
         Guid sessionId,
         string? effectiveModelId,
+        AgentKind kind,
         Agent? owner,
         DateTime now,
         CancellationToken ct)
@@ -178,14 +185,14 @@ public sealed class ContextCompactionService
         if (!_runtime.ListLiveSessions().Contains(sessionId))
             return false;
 
-        if (!await IsEligibleFromStoreAsync(sessionId, effectiveModelId, resolved, now, pullFirst: false, ct))
+        if (!await IsEligibleFromStoreAsync(sessionId, effectiveModelId, kind, resolved, now, pullFirst: false, ct))
             return false;
 
         // Pull before acting: no destructive-ish action on "the transcript doesn't show activity"
         // without a pull. Recompute idle-for, fullness, and working from stored rows after.
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
 
-        if (!await IsEligibleFromStoreAsync(sessionId, effectiveModelId, resolved, UtcNow(), pullFirst: true, ct))
+        if (!await IsEligibleFromStoreAsync(sessionId, effectiveModelId, kind, resolved, UtcNow(), pullFirst: true, ct))
             return false;
 
         Stamp(sessionId, UtcNow());
@@ -206,6 +213,7 @@ public sealed class ContextCompactionService
     private async Task<bool> IsEligibleFromStoreAsync(
         Guid sessionId,
         string? effectiveModelId,
+        AgentKind kind,
         ResolvedContextCompaction resolved,
         DateTime now,
         bool pullFirst,
@@ -262,7 +270,9 @@ public sealed class ContextCompactionService
                 r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens,
                 r.Model, r.IsApiError))
             .ToList();
-        var usage = SessionContextUsage.Compute(contextRows, effectiveModelId, _window, _logger);
+        var usage = SessionContextUsage.Compute(
+            contextRows, effectiveModelId, _window, _logger,
+            ProviderContractCatalog.For(kind).ContextWindowUsage);
         if (usage.Fullness is not double fullness)
             return false;
         if (fullness * 100.0 < resolved.ContextPercent)

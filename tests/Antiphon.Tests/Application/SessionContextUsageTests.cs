@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
 using Shouldly;
@@ -259,6 +260,51 @@ public class SessionContextUsageTests
         SessionContextUsage.Compute(rows, null, Defaults, new ListLogger(sink));
 
         sink.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Grok_contract_suppresses_fullness_and_keeps_the_raw_sum()
+    {
+        var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        var grok = ProviderContractCatalog.For(AgentKind.Grok).ContextWindowUsage;
+
+        var result = SessionContextUsage.Compute(rows, "grok-code", Defaults, contract: grok);
+
+        result.Fullness.ShouldBeNull();
+        result.TokensUsed.ShouldBe(18_700_000);
+        result.CeilingTokens.ShouldBe(200_000);
+        grok.State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        grok.CeilingSource.ShouldBe(ContextWindowCeilingSource.SelfReported);
+    }
+
+    [Test]
+    public void Claude_contract_over_the_same_huge_rows_stays_unclamped()
+    {
+        var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        var claude = ProviderContractCatalog.For(AgentKind.ClaudeCode).ContextWindowUsage;
+
+        var result = SessionContextUsage.Compute(rows, "claude-opus-4", Defaults, contract: claude);
+
+        result.Fullness.ShouldNotBeNull();
+        result.Fullness!.Value.ShouldBeGreaterThan(1.0);
+        result.TokensUsed.ShouldBe(18_700_000);
+    }
+
+    [Test]
+    public void Fullness_suppression_is_kind_keyed_not_value_keyed()
+    {
+        var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        foreach (var kind in Enum.GetValues<AgentKind>())
+        {
+            var contract = ProviderContractCatalog.For(kind).ContextWindowUsage;
+            var result = SessionContextUsage.Compute(rows, "model", Defaults, contract: contract);
+            var suppressed = contract.State == AgentTuiCapabilityState.Degraded
+                && contract.CeilingSource == ContextWindowCeilingSource.SelfReported;
+            if (suppressed)
+                result.Fullness.ShouldBeNull($"{kind} is Degraded/SelfReported — no badge");
+            else
+                result.Fullness.ShouldNotBeNull($"{kind} must not inherit Grok's suppression");
+        }
     }
 
     [Test]

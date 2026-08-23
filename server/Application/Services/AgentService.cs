@@ -204,7 +204,7 @@ public sealed class AgentService
 
         var fullness = await SessionContextUsage.LoadFullnessAsync(
             _db,
-            sessions.Select(s => (s.Dto.Id, s.Dto.EffectiveModelId)).ToList(),
+            sessions.Select(s => (s.Dto.Id, s.Dto.EffectiveModelId, s.Dto.AgentKind)).ToList(),
             _contextWindow,
             _logger,
             ct);
