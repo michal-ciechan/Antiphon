@@ -8,6 +8,9 @@ name: publish-nuget
 # prove-nuget-org then restores samples/EchoGateway from nuget.org alone
 # (isolated nuget.config + empty cache) and runs --self-test.
 # --skip-duplicate makes re-runs of an already-published version a no-op.
+# nuget.org auth is Trusted Publishing (OIDC): no API key is stored anywhere.
+# The nuget.org policy 'antiphon-messaging-publish' pins owner/repo/workflow file,
+# so renaming this file or moving the repo breaks publishing until the policy is updated.
 # Bump src/Messaging.Pack.props to release.
 
 on:
@@ -28,6 +31,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write   # OIDC token for nuget.org Trusted Publishing
 
 jobs:
   publish:
@@ -54,13 +58,12 @@ jobs:
           --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           --api-key "${{ secrets.GITHUB_TOKEN }}"
           --skip-duplicate
-      - name: Require NuGet.org API key
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        if: ${{ env.NUGET_API_KEY == '' }}
-        run: |
-          echo "::error::NUGET_API_KEY repo secret is not set. Set it from the Bitwarden item 'NuGet.org - Antiphon publish key' (card CARD-0150 secret-handling note), then re-run."
-          exit 1
+      # Short-lived key (valid 1 hour) - request it immediately before the push.
+      - name: NuGet.org login (OIDC -> short-lived API key)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: MichalCiechan   # nuget.org profile name, not an email address
       - name: Push to NuGet.org
         run: |
           set -euo pipefail
@@ -68,7 +71,7 @@ jobs:
           for id in Antiphon.Messaging Antiphon.Messaging.Client Antiphon.Messaging.Client.Testing Antiphon.Messaging.Gateway; do
             dotnet nuget push "out/$id.$VERSION.nupkg" \
               --source "https://api.nuget.org/v3/index.json" \
-              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
               --skip-duplicate
           done
 
