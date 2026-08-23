@@ -1,7 +1,9 @@
 # Antiphon messaging contract v1
 
 Package version **1.0.0**. This is the document a gateway author — including a non-.NET one — reads instead of the
-package source. The JSON Schema files next to it (`channel-message.schema.json`,
+package source. Getting started (packages, `IChannelAdapter`, `AddAntiphonGateway`, the EchoGateway
+sample): [`docs/messaging/build-your-own-gateway.md`](../../build-your-own-gateway.md).
+The JSON Schema files next to it (`channel-message.schema.json`,
 `channel-reply.schema.json`) are generated from the same `ChannelMessage` / `ChannelReply`
 types the NuGet packages ship, via `dotnet run --project tools/Antiphon.Messaging.SchemaGen`.
 A test fails if the committed schema and a fresh generation diverge.

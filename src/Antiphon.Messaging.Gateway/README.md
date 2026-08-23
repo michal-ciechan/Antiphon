@@ -13,6 +13,9 @@ services.AddAntiphonGateway(configuration, "Kafka"); // or AntiphonGateway
 documented follow-up and throws `NotSupportedException`. Tests can use
 `Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus` in this same package.
 
+Worked example: [`samples/EchoGateway`](../../samples/EchoGateway). Getting
+started: [`docs/messaging/build-your-own-gateway.md`](../../docs/messaging/build-your-own-gateway.md).
+
 ## Versioning and compatibility
 
 Packages in the `Antiphon.Messaging*` family **version lock-step** (one `<Version>` in

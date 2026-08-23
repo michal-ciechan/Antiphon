@@ -42,6 +42,30 @@ public sealed class LibrarySufficiencyTests
     }
 
     [Test]
+    public void EchoGateway_sample_is_a_library_hosted_adapter_not_a_hand_rolled_loop()
+    {
+        var sampleDir = Path.Combine(RepoRoot, "samples", "EchoGateway");
+        Directory.Exists(sampleDir).ShouldBeTrue();
+
+        var program = File.ReadAllText(Path.Combine(sampleDir, "Program.cs"));
+        program.ShouldContain("AddAntiphonGateway");
+        program.ShouldContain("EchoChannelAdapter");
+        program.ShouldNotContain("ProducerBuilder");
+        program.ShouldNotContain("ConsumerBuilder");
+        program.ShouldNotContain("using Confluent.Kafka");
+
+        var adapter = File.ReadAllText(Path.Combine(sampleDir, "EchoChannelAdapter.cs"));
+        adapter.ShouldContain("IChannelAdapter");
+        adapter.ShouldContain("ChannelKey = \"echo\"");
+        adapter.ShouldContain("IsSelf = false");
+
+        var csproj = File.ReadAllText(Path.Combine(sampleDir, "EchoGateway.csproj"));
+        csproj.ShouldContain("Antiphon.Messaging.Gateway");
+        csproj.ShouldContain("UsePublishedPackages");
+        csproj.ShouldNotContain("Confluent.Kafka");
+    }
+
+    [Test]
     public async Task FakeChannelAdapter_inject_yields_on_ReceiveAsync_and_send_records()
     {
         var store = new DeliveryStore(jsonlPath: null);

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Worked example of a third-party gateway: implement IChannelAdapter, host it with
+    AddAntiphonGateway. In-repo it ProjectReferences the local packages so it always
+    compiles against this tree. To restore the published artefacts instead:
+
+      dotnet build samples/EchoGateway -p:UsePublishedPackages=true
+
+    NuGet.org publishing is pending (CARD-0150 S6). Until then the live feed is GitHub
+    Packages: https://nuget.pkg.github.com/michal-ciechan/index.json (PAT with read:packages).
+    See docs/messaging/build-your-own-gateway.md.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EchoGateway</RootNamespace>
+    <AssemblyName>EchoGateway</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Description>Minimal third-party Antiphon messaging gateway: stdin is channel "echo", replies print to stdout.</Description>
+    <UsePublishedPackages Condition="'$(UsePublishedPackages)' == ''">false</UsePublishedPackages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePublishedPackages)' != 'true'">
+    <ProjectReference Include="..\..\src\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UsePublishedPackages)' == 'true'">
+    <PackageReference Include="Antiphon.Messaging.Gateway" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

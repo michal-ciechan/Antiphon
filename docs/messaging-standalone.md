@@ -54,3 +54,8 @@ environments run only the real gateway.
 
 Downstream repos (e.g. school-revision) can `dotnet tool install antiphon-fake-gateway` from the
 GitHub Packages feed and get the identical test tool.
+
+Third-party / custom providers implement `IChannelAdapter` and host it with
+`AddAntiphonGateway` — copy [`samples/EchoGateway`](../samples/EchoGateway) and
+follow [`docs/messaging/build-your-own-gateway.md`](messaging/build-your-own-gateway.md).
+The wire contract is [`docs/messaging/contract/v1/CONTRACT.md`](messaging/contract/v1/CONTRACT.md).

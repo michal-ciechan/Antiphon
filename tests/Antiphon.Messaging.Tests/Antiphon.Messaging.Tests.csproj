@@ -33,6 +33,7 @@
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.FakeGateway\Antiphon.Messaging.FakeGateway.csproj" />
     <ProjectReference Include="..\..\tools\Antiphon.Messaging.SchemaGen\Antiphon.Messaging.SchemaGen.csproj" />
+    <ProjectReference Include="..\..\samples\EchoGateway\EchoGateway.csproj" />
   </ItemGroup>
 
   <ItemGroup>
