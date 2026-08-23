@@ -116,6 +116,8 @@ public class GrokTranscriptTailerTests
             end.OutputTokens.ShouldBe(70713);
             end.CacheReadTokens.ShouldBe(18482432);
             end.CacheCreationTokens.ShouldBe(0);
+            end.ModelCalls.ShouldBe(103);
+            end.Model.ShouldBe("grok-4.6-build");
 
             // The lockstep working rule reads this turn as proven idle.
             TranscriptWorkingState.IsProvenIdle(entries).ShouldBeTrue();
@@ -149,6 +151,8 @@ public class GrokTranscriptTailerTests
             var end = entries[1];
             end.StopReason.ShouldBe("cancelled", "an Esc interrupt is an EXPLICIT turn end for Grok");
             end.InputTokens.ShouldBeNull("a cancelled stop carries no usage block");
+            end.ModelCalls.ShouldBeNull();
+            end.Model.ShouldBeNull();
 
             // The trailing chunk is emitted rather than held for a flush that never comes, and its
             // own timestamp PRECEDES the TurnEnd's — which is what the server/client working rules'
@@ -256,6 +260,156 @@ public class GrokTranscriptTailerTests
             var entries = await PollForEntriesAsync(tailer, want: 2, TimeSpan.FromSeconds(10));
             entries.Select(e => e.Kind).ShouldBe(
                 [TranscriptKinds.UserPrompt, TranscriptKinds.AssistantText]);
+            entries.ShouldNotContain(e => e.Kind == TranscriptKinds.TurnEnd);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            BestEffortDelete(dir);
+        }
+    }
+
+    // Verbatim rows from session 1636e434-b4bc-4743-ae39-9381bd83a2cc (grok 1.0.5, CARD-0157).
+    private const string CompactSid = "1636e434-b4bc-4743-ae39-9381bd83a2cc";
+    private const string CompactionCheckpointRow =
+        """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"compaction_checkpoint","checkpoint_id":"8016d019-65b3-4023-9882-52aa2b88e92f","prompt_index_at_compaction":1,"checkpoint_file":"compaction_checkpoints/8016d019-65b3-4023-9882-52aa2b88e92f.json","schema_version":1,"created_at":"2026-08-19T19:24:20.583418700+00:00"},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1549","agentTimestampMs":1787167460583}}}""";
+    private const string AutoCompactCompletedRow =
+        """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
+    private const string AutoCompactCompletedNoTokensRow =
+        """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"1636e434-b4bc-4743-ae39-9381bd83a2cc","update":{"sessionUpdate":"auto_compact_completed","summary_preview":null},"_meta":{"eventId":"1636e434-b4bc-4743-ae39-9381bd83a2cc-1550","agentTimestampMs":1787167460583}}}""";
+    // Same pair fakegrok emits for a typed /compact (CARD-0157 S2).
+    private const string FakeGrokCheckpointRow =
+        """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"fakegrok-compact","update":{"sessionUpdate":"compaction_checkpoint","checkpoint_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","prompt_index_at_compaction":1,"checkpoint_file":"compaction_checkpoints/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json","schema_version":1,"created_at":"2026-08-19T19:24:20.0000000+00:00"},"_meta":{"eventId":"fakegrok-compact-1","agentTimestampMs":1787167460583}}}""";
+    private const string FakeGrokAutoCompactRow =
+        """{"timestamp":1787167460,"method":"_x.ai/session/update","params":{"sessionId":"fakegrok-compact","update":{"sessionUpdate":"auto_compact_completed","tokens_before":106112,"tokens_after":34833,"summary_preview":null},"_meta":{"eventId":"fakegrok-compact-2","agentTimestampMs":1787167460583}}}""";
+
+    [Test]
+    public async Task Real_auto_compact_completed_is_a_usage_bearing_auto_CompactBoundary()
+    {
+        var (dir, path) = TempUpdatesPath();
+        var tailer = new GrokTranscriptTailer(
+            Guid.NewGuid(), path, new SessionRunnerEventHub(), NullLogger.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(50));
+        tailer.Start();
+        try
+        {
+            await AppendRowsAsync(path, AutoCompactCompletedRow);
+            var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+            entries.ShouldHaveSingleItem();
+            var boundary = entries[0];
+            boundary.Kind.ShouldBe(TranscriptKinds.CompactBoundary);
+            var text = boundary.Text.ShouldNotBeNull();
+            text.ShouldContain("(auto)");
+            text.ShouldContain("106112 -> 34833");
+            text.ShouldNotContain("(manual)");
+            boundary.InputTokens.ShouldBe(34833);
+            boundary.OutputTokens.ShouldBeNull();
+            boundary.CacheReadTokens.ShouldBeNull();
+            boundary.CacheCreationTokens.ShouldBeNull();
+            boundary.Uuid.ShouldBe($"{CompactSid}-1550");
+            boundary.Timestamp.ShouldBe(DateTimeOffset.FromUnixTimeMilliseconds(1787167460583));
+            entries.ShouldNotContain(e => e.Kind == TranscriptKinds.TurnEnd);
+            TranscriptKinds.IsManualCompactBoundary(boundary.Kind, boundary.Text).ShouldBeFalse();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            BestEffortDelete(dir);
+        }
+    }
+
+    [Test]
+    public async Task Real_compaction_checkpoint_emits_zero_parts()
+    {
+        var (dir, path) = TempUpdatesPath();
+        var tailer = new GrokTranscriptTailer(
+            Guid.NewGuid(), path, new SessionRunnerEventHub(), NullLogger.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(50));
+        tailer.Start();
+        try
+        {
+            await AppendRowsAsync(path, CompactionCheckpointRow);
+            await Task.Delay(400);
+            tailer.Snapshot().Entries.ShouldBeEmpty();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            BestEffortDelete(dir);
+        }
+    }
+
+    [Test]
+    public async Task Tokens_less_auto_compact_completed_is_a_plain_boundary()
+    {
+        var (dir, path) = TempUpdatesPath();
+        var tailer = new GrokTranscriptTailer(
+            Guid.NewGuid(), path, new SessionRunnerEventHub(), NullLogger.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(50));
+        tailer.Start();
+        try
+        {
+            await AppendRowsAsync(path, AutoCompactCompletedNoTokensRow);
+            var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+            entries.ShouldHaveSingleItem();
+            entries[0].Kind.ShouldBe(TranscriptKinds.CompactBoundary);
+            entries[0].Text.ShouldBe("Context compacted (auto)");
+            entries[0].InputTokens.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            BestEffortDelete(dir);
+        }
+    }
+
+    [Test]
+    public async Task Auto_compact_boundary_after_a_completed_turn_is_housekeeping_not_activity()
+    {
+        var (dir, path) = TempUpdatesPath();
+        var tailer = new GrokTranscriptTailer(
+            Guid.NewGuid(), path, new SessionRunnerEventHub(), NullLogger.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(50));
+        tailer.Start();
+        try
+        {
+            await AppendRowsAsync(path, UserChunkRow, TurnCompletedRow, AutoCompactCompletedRow);
+            var entries = await PollForEntriesAsync(tailer, want: 3, TimeSpan.FromSeconds(10));
+            entries.Select(e => e.Kind).ShouldBe(
+            [
+                TranscriptKinds.UserPrompt,
+                TranscriptKinds.TurnEnd,
+                TranscriptKinds.CompactBoundary,
+            ]);
+            TranscriptWorkingState.IsProvenIdle(entries).ShouldBeTrue();
+            TranscriptKinds.IsManualCompactBoundary(entries[2].Kind, entries[2].Text).ShouldBeFalse();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            BestEffortDelete(dir);
+        }
+    }
+
+    [Test]
+    public async Task Fakegrok_compact_pair_normalizes_the_same_as_the_measured_shape()
+    {
+        var (dir, path) = TempUpdatesPath();
+        var tailer = new GrokTranscriptTailer(
+            Guid.NewGuid(), path, new SessionRunnerEventHub(), NullLogger.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(50));
+        tailer.Start();
+        try
+        {
+            await AppendRowsAsync(path, FakeGrokCheckpointRow, FakeGrokAutoCompactRow);
+            var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+            entries.ShouldHaveSingleItem();
+            entries[0].Kind.ShouldBe(TranscriptKinds.CompactBoundary);
+            var text = entries[0].Text.ShouldNotBeNull();
+            text.ShouldContain("(auto)");
+            text.ShouldContain("106112 -> 34833");
+            entries[0].InputTokens.ShouldBe(34833);
+            entries[0].Uuid.ShouldBe("fakegrok-compact-2");
             entries.ShouldNotContain(e => e.Kind == TranscriptKinds.TurnEnd);
         }
         finally

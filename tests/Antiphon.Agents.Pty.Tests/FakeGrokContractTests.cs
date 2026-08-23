@@ -273,6 +273,45 @@ public class FakeGrokContractTests
     }
 
     [Test]
+    public async Task Compact_command_writes_the_measured_pair_and_no_turn_completed()
+    {
+        SkipIfUnavailable();
+        var home = Path.Combine(Path.GetTempPath(), $"fakegrok-home-{Guid.NewGuid():N}");
+        var cwd = Path.Combine(Path.GetTempPath(), $"fakegrok-cwd-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cwd);
+        var sessionId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using var runner = await LaunchReadyFakeAsync(
+                env: new Dictionary<string, string> { ["GROK_HOME"] = home },
+                args: ["--cwd", cwd, "--session-id", sessionId]);
+
+            await runner.WriteAsync("/compact\r");
+            (await runner.WaitForOutputAsync(
+                s => s.Contains("SUBMITTED:/compact"), TimeSpan.FromSeconds(5)))
+                .ShouldBeTrue();
+
+            var sessionDir = Path.Combine(home, "sessions", Uri.EscapeDataString(Path.GetFullPath(cwd)), sessionId);
+            var updatesPath = Path.Combine(sessionDir, "updates.jsonl");
+            var text = await WaitForUpdatesAsync(
+                updatesPath,
+                "compaction_checkpoint",
+                "auto_compact_completed",
+                "\"tokens_before\":106112",
+                "\"tokens_after\":34833");
+            text.ShouldNotContain("turn_completed");
+            text.ShouldNotContain("user_message_chunk");
+
+            await runner.KillAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            try { Directory.Delete(home, true); } catch { /* best effort */ }
+            try { Directory.Delete(cwd, true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
     public async Task Resume_of_a_missing_session_exits_nonzero()
     {
         SkipIfUnavailable();

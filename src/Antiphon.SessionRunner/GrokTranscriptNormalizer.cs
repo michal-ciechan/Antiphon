@@ -29,12 +29,16 @@ namespace Antiphon.SessionRunner;
 /// (<c>end_turn</c>; <c>cancelled</c> for Esc — explicitly marked, so none of Claude's
 /// interrupt/compaction marker predicates are needed for Grok) and the usage block when present
 /// (a cancelled stop has none). <c>prompt_id</c> rides as ApiCallId.</item>
+/// <item><c>auto_compact_completed</c> → one usage-bearing <c>CompactBoundary</c> (CARD-0157):
+/// Text is <c>Context compacted (auto): tokens {before} -&gt; {after}</c> (never
+/// <c>(manual)</c> — housekeeping to every working rule; Grok writes no user chunk and no
+/// <c>turn_completed</c> so there is nothing to strand). <c>InputTokens = tokens_after</c>.
+/// A missing <c>tokens_after</c> degrades to a plain (non-usage-bearing) boundary.</item>
+/// <item><c>compaction_checkpoint</c> stays skipped — checkpoint bookkeeping, no token
+/// payload.</item>
 /// <item>Everything else is skipped, lossy by design like the Claude normalizer:
 /// <c>plan</c>, <c>task_backgrounded</c>/<c>task_completed</c>, <c>session_recap</c> (the
-/// /recap summary — NOT compaction; S1 corrected the plan on this), and the compaction pair
-/// <c>compaction_checkpoint</c>/<c>auto_compact_completed</c>, which needs no working-rule
-/// treatment because a Grok compaction writes no user chunk and no turn_completed — there is
-/// nothing to strand.</item>
+/// /recap summary — NOT compaction; S1 corrected the plan on this).</item>
 /// </list>
 ///
 /// Stateful because of the coalescing; one instance per tailed file, and a re-tail from offset 0
@@ -96,6 +100,7 @@ public sealed class GrokTranscriptNormalizer
                 "agent_thought_chunk" => AccumulateOrEmit(update, uuid, ts, promptId, thought: true),
                 "tool_call" => FromToolCall(update, uuid, ts),
                 "turn_completed" => FromTurnCompleted(update, uuid, ts),
+                "auto_compact_completed" => FromAutoCompactCompleted(update, uuid, ts),
                 _ => [],
             };
         }
@@ -202,13 +207,16 @@ public sealed class GrokTranscriptNormalizer
                 _completedPromptIds.Remove(_completedOrder.Dequeue());
         }
 
-        int? inTok = null, outTok = null, cacheRead = null, cacheCreate = null;
+        int? inTok = null, outTok = null, cacheRead = null, cacheCreate = null, modelCalls = null;
+        string? model = null;
         if (update.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
         {
             inTok = GetInt(usage, "inputTokens");
             outTok = GetInt(usage, "outputTokens");
             cacheRead = GetInt(usage, "cachedReadTokens");
             cacheCreate = GetInt(usage, "cacheCreationTokens");
+            modelCalls = GetInt(usage, "modelCalls");
+            model = FirstModelUsageKey(usage);
         }
 
         // stop_reason verbatim: "end_turn" normally, "cancelled" for an Esc interrupt (which
@@ -218,8 +226,31 @@ public sealed class GrokTranscriptNormalizer
             GetString(update, "stop_reason"),
             ApiCallId: promptId,
             InputTokens: inTok, OutputTokens: outTok,
-            CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate));
+            CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate,
+            Model: model, ModelCalls: modelCalls));
         return parts;
+    }
+
+    /// <summary>
+    /// Grok's own occupancy number (CARD-0157). The row is named <c>auto_compact_completed</c>
+    /// even when a typed <c>/compact</c> produced it, so the text always carries <c>(auto)</c>
+    /// and never <c>(manual)</c> — housekeeping, not a turn end.
+    /// </summary>
+    private static List<TranscriptPart> FromAutoCompactCompleted(
+        JsonElement update, string? uuid, DateTimeOffset? ts)
+    {
+        var before = GetInt(update, "tokens_before");
+        var after = GetInt(update, "tokens_after");
+        var text = before is int b && after is int a
+            ? $"Context compacted (auto): tokens {b} -> {a}"
+            : "Context compacted (auto)";
+        return
+        [
+            new TranscriptPart(
+                TranscriptKinds.CompactBoundary, uuid, null, ts, "assistant", text,
+                null, null, null, null, null,
+                InputTokens: after),
+        ];
     }
 
     private void EmitPending(List<TranscriptPart> parts, string key, PendingTurn turn)
@@ -283,6 +314,23 @@ public sealed class GrokTranscriptNormalizer
         el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
             ? i
             : null;
+
+    /// <summary>
+    /// The first <c>usage.modelUsage</c> property name (observed <c>grok-4.6-build</c>). That
+    /// id is what <c>ContextWindowSettings.ModelOverrides</c> substring-matches against.
+    /// </summary>
+    private static string? FirstModelUsageKey(JsonElement usage)
+    {
+        if (!usage.TryGetProperty("modelUsage", out var modelUsage)
+            || modelUsage.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var prop in modelUsage.EnumerateObject())
+            return prop.Name;
+        return null;
+    }
 
     private static string? Truncate(string? s, int max) =>
         s is { Length: > 0 } && s.Length > max ? s[..max] + TruncationMarker : s;

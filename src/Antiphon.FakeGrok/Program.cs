@@ -304,6 +304,17 @@ internal static class Program
         write("\r\n");
         var escaped = text.Replace("\n", "\\n");
         write($"SUBMITTED:{escaped}\r\n");
+
+        // Measured 1.0.5 (GrokCanaryTests): a typed /compact writes compaction_checkpoint +
+        // auto_compact_completed and NO turn_completed / user_message_chunk (CARD-0157).
+        if (IsCompactCommand(text))
+        {
+            write("Compaction completed\r\n");
+            write(IdleTitle);
+            AppendCompactFiles(sessionDir, sessionId);
+            return;
+        }
+
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
         // The real turn-end line, measured 1.0.5: decimal seconds ("Worked for 1.7s"), which the
@@ -312,6 +323,10 @@ internal static class Program
         write(IdleTitle);
         AppendSessionFiles(sessionDir, sessionId, text, $"FAKE response to: {echo}");
     }
+
+    private static bool IsCompactCommand(string text) =>
+        text.StartsWith("/compact", StringComparison.OrdinalIgnoreCase)
+        && (text.Length == 8 || char.IsWhiteSpace(text[8]));
 
     /// <summary>
     /// The measured per-turn updates.jsonl emission (grok 1.0.5): user_message_chunk and
@@ -373,14 +388,7 @@ internal static class Program
                         sessionUpdate = "turn_completed",
                         prompt_id = promptId,
                         stop_reason = "end_turn",
-                        usage = new
-                        {
-                            inputTokens = 1,
-                            outputTokens = 1,
-                            totalTokens = 2,
-                            modelCalls = 1,
-                            numTurns = 1
-                        }
+                        usage = BuildTurnUsage()
                     },
                     _meta = Meta()
                 }
@@ -394,6 +402,106 @@ internal static class Program
         {
             // Session files are test plumbing; a write failure must not kill the TUI contract.
         }
+    }
+
+    /// <summary>
+    /// CARD-0157: the measured /compact pair. Tokens from
+    /// <c>ANTIPHON_FAKE_COMPACT_TOKENS="before,after"</c> (default 106112,34833 — session
+    /// 1636e434's first compact). No user_message_chunk, no turn_completed.
+    /// </summary>
+    private static void AppendCompactFiles(string sessionDir, string sessionId)
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var updates = Path.Combine(sessionDir, "updates.jsonl");
+            var (before, after) = CompactTokens();
+            var checkpointId = Guid.NewGuid().ToString("D");
+            object Meta() => new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs };
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "compaction_checkpoint",
+                        checkpoint_id = checkpointId,
+                        prompt_index_at_compaction = 1,
+                        checkpoint_file = $"compaction_checkpoints/{checkpointId}.json",
+                        schema_version = 1,
+                        created_at = DateTimeOffset.UtcNow.ToString("o")
+                    },
+                    _meta = Meta()
+                }
+            }));
+            AppendShared(updates, JsonSerializer.Serialize(new
+            {
+                timestamp = now,
+                method = "_x.ai/session/update",
+                @params = new
+                {
+                    sessionId,
+                    update = new
+                    {
+                        sessionUpdate = "auto_compact_completed",
+                        tokens_before = before,
+                        tokens_after = after,
+                        summary_preview = (string?)null
+                    },
+                    _meta = Meta()
+                }
+            }));
+        }
+        catch
+        {
+            // Session files are test plumbing; a write failure must not kill the TUI contract.
+        }
+    }
+
+    private static object BuildTurnUsage()
+    {
+        var modelCalls = FakeModelCalls();
+        return new
+        {
+            inputTokens = 1,
+            outputTokens = 1,
+            totalTokens = 2,
+            modelCalls,
+            numTurns = modelCalls,
+            modelUsage = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["grok-4.6-build"] = new
+                {
+                    inputTokens = 1,
+                    outputTokens = 1,
+                    totalTokens = 2,
+                    modelCalls,
+                }
+            }
+        };
+    }
+
+    private static int FakeModelCalls() =>
+        int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_FAKE_MODELCALLS"), out var n) && n > 0
+            ? n
+            : 1;
+
+    private static (int Before, int After) CompactTokens()
+    {
+        var spec = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_COMPACT_TOKENS") ?? "106112,34833";
+        var parts = spec.Split(',');
+        if (parts.Length >= 2
+            && int.TryParse(parts[0], out var before)
+            && int.TryParse(parts[1], out var after))
+        {
+            return (before, after);
+        }
+
+        return (106112, 34833);
     }
 
     /// <summary>
