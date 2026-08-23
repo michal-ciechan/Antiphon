@@ -3,12 +3,12 @@ import { Box, Stack, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useEffect, useRef } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
-import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
 import { TerminalKeypad } from './TerminalKeypad'
 import { createTerminalCopyKeyHandler } from './terminalCopy'
+import { createMirrorTerminal } from './terminalMirror'
 
 interface SessionTerminalProps {
   session: AgentSessionSummaryDto
@@ -40,18 +40,8 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
     let lastAppliedSequence = 0
     const pendingDeltas: AgentTextDeltaPayload[] = []
     const groupName = `session-${sessionId}`
-    const terminal = new Terminal({
-      cursorBlink: true,
-      convertEol: true,
+    const terminal = createMirrorTerminal({
       disableStdin: !inputEnabled,
-      fontFamily: 'Cascadia Mono, Consolas, monospace',
-      fontSize: 13,
-      theme: {
-        background: '#111317',
-        foreground: '#d9e2ef',
-        cursor: '#4dabf7',
-        selectionBackground: '#2d72d266',
-      },
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
