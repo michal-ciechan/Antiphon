@@ -158,8 +158,10 @@ public sealed class AgentTaskDispatcher
         // neither which clock had died nor what had stopped as a result.
         var sweepFailures = 0;
 
-        // Before dispatching new work, deal with running work that has gone quiet — a stalled
-        // opus Debug task escalating to fable IS the tier ladder working, not an error path.
+        // Before dispatching new work, deal with running work that has gone quiet — IF any role
+        // still carries both EscalateTo and EscalateAfterMinutes. Shipped defaults disarm the
+        // auto-trigger (CARD-0158); the sweep short-circuits to zero queries when nothing is armed.
+        // Manual /escalate still uses EscalateTo alone via AgentTaskService.ResolveEscalationTarget.
         sweepFailures += await RunSweepAsync("auto-escalate stalled", AutoEscalateStalledAsync, ct);
 
         // And with work that never STARTED — no turn prompt after dispatch means the boot prompt
@@ -328,14 +330,22 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// The automatic rung of the ladder: a task whose role policy names an EscalateTo, still
-    /// running past EscalateAfterMinutes with NO transcript progress in that window, is stopped
-    /// and requeued one tier up. Progress resets the clock — a task that keeps producing output
-    /// is thinking, not stalled, however long it takes.
+    /// The automatic rung of the ladder: a task whose role policy names BOTH EscalateTo and
+    /// EscalateAfterMinutes, still running past that window with NO transcript progress, is
+    /// stopped and requeued one tier up. Progress resets the clock — a task that keeps producing
+    /// output is thinking, not stalled, however long it takes.
+    ///
+    /// <para><b>Ships disarmed (CARD-0158).</b> No role's default carries both knobs, so this
+    /// method returns 0 before its first query. Debug keeps <c>EscalateTo = Frontier</c> for the
+    /// manual ladder; an operator who wants the old 25-minute kill-and-requeue re-arms it with
+    /// one appsettings key. Do not re-arm lightly: the only two historical firings (2026-08-11)
+    /// were idle-after-done, now owned earlier by the delivery watchdog's uncorrelated arm, and
+    /// 25 minutes sits inside the measured healthy local-execution window.</para>
     /// </summary>
     internal async Task<int> AutoEscalateStalledAsync(CancellationToken ct)
     {
-        // Which roles can escalate at all is config; don't scan tasks that have nowhere to go.
+        // Which roles can auto-escalate at all is config; don't scan tasks that have nowhere to go.
+        // EscalateTo alone (Debug, Test) is the manual ladder — both knobs required to arm the clock.
         var escalatable = _settings.RolePolicy
             .Where(p => p.Value.EscalateTo is not null && p.Value.EscalateAfterMinutes is not null)
             .ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);

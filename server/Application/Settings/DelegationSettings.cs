@@ -258,7 +258,9 @@ public sealed class DelegationSettings
         ["Plan"] = new() { Level = AgentModelLevel.Frontier },
         ["Code"] = new() { Level = AgentModelLevel.Frontier },
         ["Review"] = new() { Level = AgentModelLevel.Frontier },
-        ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier, EscalateAfterMinutes = 25 },
+        // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
+        // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.
+        ["Debug"] = new() { Level = AgentModelLevel.High, EscalateTo = AgentModelLevel.Frontier },
         ["Coverage"] = new() { Level = AgentModelLevel.High },
         // High: this role is the conflict resolver CreateMergeTaskAsync spawns after
         // TryMergeBackAsync already failed. Clean fast-forwards never reach it
@@ -516,16 +518,31 @@ public sealed class DelegationSettings
         public AgentModelLevel Level { get; set; } = AgentModelLevel.High;
 
         /// <summary>
-        /// The tier <c>AgentTaskDispatcher.AutoEscalateStalledAsync</c> re-runs a stalled task at.
-        /// Set it together with <see cref="EscalateAfterMinutes"/> — the sweep drops any role
-        /// missing either, so a half-configured role is silently never scanned.
+        /// The tier a manual <c>EscalateAsync</c> (human <c>/escalate</c>, or an explicit caller)
+        /// resolves to for this role. <c>AgentTaskService.ResolveEscalationTarget</c> prefers this
+        /// over rung-counting when set — that is the primary job of this field.
+        ///
+        /// <para>It is ALSO the target <c>AgentTaskDispatcher.AutoEscalateStalledAsync</c> re-runs
+        /// a quiet task at, but ONLY when <see cref="EscalateAfterMinutes"/> is set too. The sweep
+        /// drops any role missing either, so a half-configured role is silently never scanned.
+        /// Shipped defaults arm <c>EscalateTo</c> alone on Debug (→ Frontier) and Test (→ Medium):
+        /// a ladder a human climbs, not a clock. Re-arm the automatic trigger by setting
+        /// <see cref="EscalateAfterMinutes"/> in appsettings.</para>
         ///
         /// <para><b>This ladder is a deliberate, narrow tier bump and NOT a health check</b>
-        /// (CARD-0020 S4). Only <c>Debug</c> ships with both fields, so it is the only role the
-        /// scan looks at; a second gate skips any task already at or above the target, and Frontier
-        /// is the top, so the most expensive work in the fleet is out of scope by construction.
-        /// Measured on the live database 2026-08-20: 13 of 299 tasks all-time were Debug, 11 of
-        /// those were below Frontier, and the scan has recorded <b>0</b> escalations ever.</para>
+        /// (CARD-0020 S4). A second gate skips any task already at or above the target, and Frontier
+        /// is the top, so the most expensive work in the fleet is out of scope by construction.</para>
+        ///
+        /// <para><b>CARD-0158 (2026-08-23): the automatic trigger is disarmed by default.</b>
+        /// Debug used to ship with <c>EscalateAfterMinutes = 25</c>. That clock fired exactly twice
+        /// ever (both 2026-08-11), both on idle-after-a-completed-turn — a shape now owned 15
+        /// minutes earlier by the delivery watchdog's uncorrelated-report arm (fail-with-pointer,
+        /// kill withheld when working). Both historical firings killed sessions holding finished,
+        /// already-pushed work and wasted Frontier retries. The remaining reachable territory for a
+        /// 25-minute quiet clock is a false-positive trap: 25 min sits inside the measured
+        /// 88.5-minute healthy local-execution window
+        /// (<see cref="DelegationSettings.LocalExecutionDeadlineMinutes"/> = 90). Re-arm only with
+        /// that history in mind.</para>
         ///
         /// <para><b>That narrowness is the design.</b> The usual cause of a stalled delegate is a
         /// LOST PROMPT, and escalating one launders an undelivered brief into a billed re-run on a
@@ -535,14 +552,17 @@ public sealed class DelegationSettings
         /// (the hard ceiling) and <see cref="DelegationSettings.ModelWaitDeadlineMinutes"/> /
         /// <see cref="DelegationSettings.LocalExecutionDeadlineMinutes"/> (the phase-aware
         /// deadline) — both run for EVERY role in <c>FailOverdueTasksAsync</c>, and both FAIL and
-        /// report rather than re-spending money.</para>
+        /// report rather than re-spending money. Loop detection is
+        /// <c>TaskProgressPolicy</c> / CARD-0153 (detection-only; no auto-escalate).</para>
         /// </summary>
         public AgentModelLevel? EscalateTo { get; set; }
 
         /// <summary>
-        /// Minutes with no transcript progress before <see cref="EscalateTo"/> applies. See that
-        /// property for why this ladder covers one role, and why widening it is the wrong fix for a
-        /// task that has gone quiet.
+        /// Minutes with no transcript progress before the automatic escalate sweep applies
+        /// <see cref="EscalateTo"/>. Null (the shipped default on every role, including Debug
+        /// after CARD-0158) disarms the sweep for that role — <see cref="EscalateTo"/> alone is
+        /// the manual ladder. See <see cref="EscalateTo"/> for why 25 was retired and why
+        /// re-arming inside the 88-minute healthy local-execution window is a false-positive trap.
         /// </summary>
         public int? EscalateAfterMinutes { get; set; }
 
