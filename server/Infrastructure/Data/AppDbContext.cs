@@ -774,6 +774,10 @@ public class AppDbContext : DbContext
             // HasDefaultValue would make EF omit every explicitly-chosen Normal from the INSERT.
             // The migration's column default backfills existing rows; the model never relies on it.
             entity.Property(a => a.ReplyStyle).IsRequired();
+            // CARD-0160: PtyHost IS 0, so HasDefaultValue would make EF omit every explicitly-chosen
+            // PtyHost from the INSERT. Migration column default backfills existing rows; model never
+            // relies on it (same shape as ReplyStyle / ModelLevel).
+            entity.Property(a => a.SessionBackend).IsRequired();
             // Unlike the two above, a default IS wanted here — ClaudeCode is 1, not 0, so the EF
             // sentinel (default(AgentKind) == Raw) can never collide with a legitimately chosen
             // value, and the column default is what states the FACT that every pre-CARD-0084 agent
@@ -1015,6 +1019,9 @@ public class AppDbContext : DbContext
             entity.Property(s => s.CardId).IsRequired(false);
             entity.Property(s => s.DefinitionName).IsRequired().HasMaxLength(100);
             entity.Property(s => s.AgentKind).IsRequired();
+            // CARD-0160: snapshot of Agent.SessionBackend at row creation. Same no-HasDefaultValue
+            // reasoning as Agents.SessionBackend (0 is a real value).
+            entity.Property(s => s.SessionBackend).IsRequired();
             entity.Property(s => s.Status).IsRequired();
             entity.Property(s => s.Cwd).IsRequired().HasMaxLength(1000);
             entity.Property(s => s.Cols).IsRequired();

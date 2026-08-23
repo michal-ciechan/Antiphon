@@ -226,6 +226,12 @@ public sealed class AgentService
         ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
 
+        // CARD-0160: refuse Herdr×AlwaysOn and Herdr×non-Claude before the row exists. Channel-bind
+        // cannot apply yet (no AgentId); Kind is ClaudeCode until a TuiProfile is applied below —
+        // ApplyTuiSelectionAsync may change it, so the Kind gate re-runs after that when needed.
+        var createBackend = request.SessionBackend ?? SessionBackend.PtyHost;
+        ValidateSessionBackendPairing(createBackend, request.AlwaysOn, AgentKind.ClaudeCode, channelBound: false);
+
         var workingDirectory = request.WorkingDirectory.Trim();
 
         // Create the working directory before persisting so a failed mkdir doesn't leave
@@ -261,6 +267,7 @@ public sealed class AgentService
                 Status = AgentStatus.Idle,
                 ModelLevel = request.ModelLevel ?? AgentModelLevel.High,
                 ReplyStyle = request.ReplyStyle,
+                SessionBackend = request.SessionBackend ?? SessionBackend.PtyHost,
                 AlwaysOn = request.AlwaysOn,
                 RemoteControlEnabled = request.RemoteControlEnabled,
                 AutoCompactEnabled = request.AutoCompactEnabled,
@@ -276,6 +283,8 @@ public sealed class AgentService
                 request.ModelId,
                 profileRequired: false,
                 ct);
+            // Re-check after the profile may have changed Kind (Herdr is ClaudeCode-only).
+            ValidateSessionBackendPairing(agent.SessionBackend, agent.AlwaysOn, agent.Kind, channelBound: false);
             _db.Agents.Add(agent);
 
             try
@@ -325,6 +334,16 @@ public sealed class AgentService
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
 
+        // CARD-0160: resolve the REQUEST's final AlwaysOn / SessionBackend / Kind BEFORE any field
+        // is applied, covering both directions (Herdr-on-AlwaysOn and AlwaysOn-on-Herdr) and the
+        // combined one-request state. Channel-bound and Kind gates run over the same final state.
+        var finalAlwaysOn = request.AlwaysOn ?? agent.AlwaysOn;
+        var finalBackend = request.SessionBackend ?? agent.SessionBackend;
+        var finalKind = await ResolveFinalKindAsync(agent, request, ct);
+        var channelBound = await _db.ChatChannels.AsNoTracking()
+            .AnyAsync(c => c.AgentId == agent.Id, ct);
+        ValidateSessionBackendPairing(finalBackend, finalAlwaysOn, finalKind, channelBound);
+
         agent.Name = request.Name.Trim();
         agent.Slug = await UniqueSlugAsync(Slugify(request.Name), agent.Id, ct);
         agent.WorkingDirectory = request.WorkingDirectory.Trim();
@@ -359,6 +378,8 @@ public sealed class AgentService
             agent.ModelLevel = modelLevel;
         if (request.ReplyStyle is { } replyStyle)
             agent.ReplyStyle = replyStyle;
+        if (request.SessionBackend is { } sessionBackend)
+            agent.SessionBackend = sessionBackend;
         // Applied even when null — null IS the "use the global default" state (CARD-0082 S2).
         agent.AutoCompactEnabled = request.AutoCompactEnabled;
         agent.AutoCompactIdleMinutes = request.AutoCompactIdleMinutes;
@@ -837,6 +858,7 @@ public sealed class AgentService
             configured,
             liveSelection,
             agent.ReplyStyle,
+            agent.SessionBackend,
             bundlesOutOfDate,
             agent.AutoCompactEnabled,
             agent.AutoCompactIdleMinutes,
@@ -898,6 +920,7 @@ public sealed class AgentService
             configured,
             liveSelection,
             agent.ReplyStyle,
+            agent.SessionBackend,
             // What the NEXT launch will carry, composed the same way AgentControlService composes it
             // — recomputed per request rather than stored, so the list can never drift from the repo.
             composed.Stamps,
@@ -1163,6 +1186,61 @@ public sealed class AgentService
     /// database actually said, because the two are not the same failure and used to be reported
     /// identically.
     /// </summary>
+    /// <summary>
+    /// CARD-0160: Herdr is mutually exclusive with AlwaysOn and with channel-binding, and only
+    /// spiked for ClaudeCode. Refusal, never silent remap. Runs over the request-resolved final
+    /// state so both directions (Herdr-on-AlwaysOn and AlwaysOn-on-Herdr) and combined one-request
+    /// state are covered before any field is applied.
+    /// </summary>
+    internal static void ValidateSessionBackendPairing(
+        SessionBackend backend, bool alwaysOn, AgentKind kind, bool channelBound)
+    {
+        if (backend != SessionBackend.Herdr)
+            return;
+
+        if (alwaysOn)
+        {
+            throw new ConflictException(
+                "Always-on agents stay on pty-hosts (herdr sessions do not survive a herdr restart).",
+                "herdr_refused");
+        }
+
+        if (channelBound)
+        {
+            throw new ConflictException(
+                "Channel-bound agents stay on pty-hosts (herdr sessions do not survive a herdr restart).",
+                "herdr_refused");
+        }
+
+        if (kind != AgentKind.ClaudeCode)
+        {
+            throw new ConflictException(
+                "Herdr sessions are only available for Claude Code agents (other kinds are un-spiked).",
+                "herdr_refused");
+        }
+    }
+
+    /// <summary>
+    /// Resolves the Kind the Update request would leave on the agent, without mutating it — used
+    /// by the CARD-0160 refusal gate so a Kind change in the same PATCH is checked against Herdr.
+    /// </summary>
+    private async Task<AgentKind> ResolveFinalKindAsync(
+        Agent agent, UpdateAgentRequest request, CancellationToken ct)
+    {
+        if (request.TuiProfileId is { } profileId)
+        {
+            var profile = await _db.AgentTuiProfiles.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == profileId, ct);
+            if (profile is not null)
+                return profile.Kind;
+        }
+
+        if (request.Kind is { } requestedKind)
+            return requestedKind;
+
+        return agent.Kind;
+    }
+
     private ConflictException ConflictFrom(string message, DbUpdateException ex)
     {
         if (ex is DbUpdateConcurrencyException)

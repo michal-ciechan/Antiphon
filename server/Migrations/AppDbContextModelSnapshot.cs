@@ -105,6 +105,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("ReplyStyle")
                         .HasColumnType("integer");
 
+                    b.Property<int>("SessionBackend")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -250,6 +253,9 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<Guid?>("CardId")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("SessionBackend")
+                        .HasColumnType("integer");
 
                     b.Property<int>("Cols")
                         .HasColumnType("integer");

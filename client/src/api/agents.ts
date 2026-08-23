@@ -21,6 +21,30 @@ export type AgentAssignmentPolicy = 'AutoPick' | 'ManualConfirm' | 'Paused'
  */
 export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Explanatory'
 
+/**
+ * Which lane hosts the interactive child (CARD-0160). `PtyHost` is the default — Herdr is opt-in
+ * and unavailable for always-on or channel-bound agents.
+ */
+export type SessionBackend = 'PtyHost' | 'Herdr'
+
+export const SESSION_BACKEND_OPTIONS: Array<{
+  value: SessionBackend
+  label: string
+  description: string
+}> = [
+  {
+    value: 'PtyHost',
+    label: 'Pty host',
+    description: 'Detached pty-host process — the existing default. Survives runner restarts.',
+  },
+  {
+    value: 'Herdr',
+    label: 'Herdr',
+    description:
+      "Session runs in a pane of the operator's herdr instance — visible and natively attachable, but it does not survive a herdr restart; not available for always-on or channel-bound agents.",
+  },
+]
+
 /** Picker options, least to most words. Normal is the default and is deliberately first. */
 export const AGENT_REPLY_STYLE_OPTIONS: Array<{
   value: AgentReplyStyle
@@ -140,6 +164,11 @@ export interface AgentSummaryDto {
   /** How the agent writes. Absent on an older server response — treat as 'Normal'. */
   replyStyle?: AgentReplyStyle
   /**
+   * Which lane hosts the interactive child (CARD-0160). Absent on an older server — treat as
+   * 'PtyHost'.
+   */
+  sessionBackend?: SessionBackend
+  /**
    * The live session was launched with instruction bundles the repo has since moved on from — an
    * edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
    * Informational only: the agent picks the new ones up at its next launch and nothing forces that.
@@ -256,6 +285,8 @@ export interface CreateAgentRequest {
   modelId?: string | null
   /** Omit = Normal. Create deliberately still cannot set systemPromptAppend. */
   replyStyle?: AgentReplyStyle
+  /** Omit = PtyHost (CARD-0160). */
+  sessionBackend?: SessionBackend
   /** Supervised from birth: auto-started at boot, auto-restarted on crash. */
   alwaysOn?: boolean
   remoteControlEnabled?: boolean
@@ -285,6 +316,8 @@ export interface UpdateAgentRequest {
   modelId?: string | null
   /** Omit/null = leave unchanged, so an older client cannot reset a chosen style to Normal. */
   replyStyle?: AgentReplyStyle | null
+  /** Omit/null = leave unchanged (CARD-0160), so an older client cannot reset a chosen backend. */
+  sessionBackend?: SessionBackend | null
   /**
    * The bundles this agent carries on top of what its role implies (CARD-0058). Omit/null = leave
    * unchanged, same reason as replyStyle — an older client must not silently detach everything. An

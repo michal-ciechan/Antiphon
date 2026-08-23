@@ -52,6 +52,15 @@ public sealed class ChatChannelService
         {
             var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct)
                 ?? throw new NotFoundException(nameof(Agent), agentId);
+            // CARD-0160: channel-bound agents stay on pty-hosts. Without this gate a bind after a
+            // Herdr PATCH would create the forbidden pair with neither write having been refused.
+            if (agent.SessionBackend == SessionBackend.Herdr)
+            {
+                throw new ConflictException(
+                    "Bind refused: this agent runs in herdr; channel-bound agents stay on pty-hosts.",
+                    "herdr_refused");
+            }
+
             channel.AgentId = agent.Id;
             channel.Agent = agent;
         }

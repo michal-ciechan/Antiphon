@@ -19,9 +19,15 @@ import {
 import { notifications } from '@mantine/notifications'
 import { useEffect, useMemo, useState } from 'react'
 import { TbAlertTriangle, TbTrash } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentReplyStyle, AgentSummaryDto } from '../../api/agents'
+import type {
+  AgentAssignmentPolicy,
+  AgentReplyStyle,
+  AgentSummaryDto,
+  SessionBackend,
+} from '../../api/agents'
 import {
   AGENT_REPLY_STYLE_OPTIONS,
+  SESSION_BACKEND_OPTIONS,
   fetchPreamblePreset,
   useAgent,
   useDeleteAgent,
@@ -67,6 +73,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [launchEnvText, setLaunchEnvText] = useState('')
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
+  const [sessionBackend, setSessionBackend] = useState<SessionBackend>('PtyHost')
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [seededBundlesFor, setSeededBundlesFor] = useState<string | null>(null)
   const [loadingPreset, setLoadingPreset] = useState(false)
@@ -113,6 +120,8 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setSystemPromptAppend(agent.systemPromptAppend ?? '')
     // An older server response omits the field entirely; Normal is what that means.
     setReplyStyle(agent.replyStyle ?? 'Normal')
+    // Older server omits the field — PtyHost is what that means.
+    setSessionBackend(agent.sessionBackend ?? 'PtyHost')
     setConfirmingDelete(false)
     setSeededBundlesFor(null)
   }, [agent, opened])
@@ -175,6 +184,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         tuiProfileId,
         modelId,
         replyStyle,
+        sessionBackend,
         // Always sent, so an emptied picker detaches: null on the request means "leave unchanged".
         bundleKeys,
       },
@@ -254,7 +264,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           label="Always on"
           description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."
           checked={alwaysOn}
-          onChange={(event) => setAlwaysOn(event.currentTarget.checked)}
+          onChange={(event) => {
+            const next = event.currentTarget.checked
+            setAlwaysOn(next)
+            // Herdr × AlwaysOn is mutually exclusive (CARD-0160); flipping AlwaysOn on forces the
+            // backend back to Pty host so the save cannot create the forbidden pair.
+            if (next && sessionBackend === 'Herdr') setSessionBackend('PtyHost')
+          }}
         />
         <Switch
           label="Remote control"
@@ -262,6 +278,24 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           checked={remoteControlEnabled}
           onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
         />
+
+        <Input.Wrapper
+          label="Session backend"
+          description={
+            alwaysOn
+              ? 'Herdr: session runs in a pane of the operator\'s herdr instance — visible and natively attachable, but it does not survive a herdr restart; not available for always-on or channel-bound agents.'
+              : (SESSION_BACKEND_OPTIONS.find((option) => option.value === sessionBackend)?.description ?? '')
+          }
+        >
+          <SegmentedControl
+            fullWidth
+            mt={4}
+            data={SESSION_BACKEND_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            value={sessionBackend}
+            onChange={(value) => setSessionBackend(value as SessionBackend)}
+            disabled={alwaysOn}
+          />
+        </Input.Wrapper>
 
         <Select
           label="Auto-compact"

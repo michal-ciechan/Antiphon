@@ -1020,6 +1020,19 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return preclaimed;
         }
 
+        // CARD-0160: stamp the assigned agent's SessionBackend when one exists; otherwise PtyHost
+        // (card spawn with no assigned agent has nowhere else to read it from).
+        var sessionBackend = SessionBackend.PtyHost;
+        if (card.AssignedAgentId is Guid assignedAgentId)
+        {
+            var assignedBackend = await _db.Agents.AsNoTracking()
+                .Where(a => a.Id == assignedAgentId)
+                .Select(a => (SessionBackend?)a.SessionBackend)
+                .FirstOrDefaultAsync(ct);
+            if (assignedBackend is { } backend)
+                sessionBackend = backend;
+        }
+
         var session = new AgentSession
         {
             Id = Guid.NewGuid(),
@@ -1027,6 +1040,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             WorktreeId = worktree.Id,
             DefinitionName = request.DefinitionName,
             AgentKind = request.AgentKind,
+            SessionBackend = sessionBackend,
             Status = SessionStatus.Starting,
             Cwd = worktree.Path,
             Cols = request.Cols,

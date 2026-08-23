@@ -1596,6 +1596,8 @@ public sealed class AgentTaskDispatcher
             // makes every downstream reader — the brief's spill gate, the launch args, delivery,
             // the tailer — agree about whose composer is on the other end (CARD-0084 S3).
             AgentKind = program.Kind,
+            // CARD-0160: snapshot from the resolved agent (pool delegate or standing).
+            SessionBackend = agent.SessionBackend,
             Status = SessionStatus.Starting,
             Cwd = cwd,
             Cols = _settings.DefaultCols,

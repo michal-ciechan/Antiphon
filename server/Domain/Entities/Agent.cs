@@ -50,6 +50,14 @@ public class Agent
     public AgentReplyStyle ReplyStyle { get; set; } = AgentReplyStyle.Normal;
 
     /// <summary>
+    /// Which lane hosts this agent's interactive child (CARD-0160 / herdr S2). Default
+    /// <see cref="SessionBackend.PtyHost"/> — herdr is opt-in and dark unless explicitly selected.
+    /// AlwaysOn and channel-bound agents are refused the herdr lane (herdr sessions do not survive
+    /// a herdr restart); only <see cref="AgentKind.ClaudeCode"/> is spiked.
+    /// </summary>
+    public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
+
+    /// <summary>
     /// Per-agent override of <c>ContextCompactionSettings.Enabled</c> (CARD-0082).
     /// Null = use the installation default. The first override an operator wants is "off for this one".
     /// </summary>

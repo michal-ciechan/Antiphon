@@ -354,6 +354,9 @@ public sealed class AgentControlService
             WorktreeId = null,
             DefinitionName = definitionName,
             AgentKind = spec.Kind,
+            // CARD-0160: snapshot the agent's backend at creation — a later PATCH must not rewrite
+            // how THIS session was launched.
+            SessionBackend = agent.SessionBackend,
             Status = SessionStatus.Starting,
             Cwd = cwd,
             Cols = 120,

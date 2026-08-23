@@ -48,6 +48,8 @@ public sealed record AgentSummaryDto(
     // How the agent writes (CARD-0060). Normal composes to nothing; the list renders a chip for
     // anything else.
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // Which lane hosts the interactive child (CARD-0160). PtyHost is the default; Herdr is opt-in.
+    SessionBackend SessionBackend = SessionBackend.PtyHost,
     // The live session was launched with instruction bundles the repo has since moved on from —
     // an edited bundle file, an attachment added or removed, a changed reply style (CARD-0058).
     // Informational ONLY: it restarts with the new ones at its next launch and nothing here forces
@@ -97,6 +99,8 @@ public sealed record AgentDetailDto(
     AgentTuiConfiguredSelectionDto? ConfiguredSelection = null,
     AgentTuiLiveSessionSelectionDto? LiveSessionSelection = null,
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // Which lane hosts the interactive child (CARD-0160). PtyHost is the default; Herdr is opt-in.
+    SessionBackend SessionBackend = SessionBackend.PtyHost,
     // The bundle stamps this agent's NEXT launch will carry — "style-caveman v1a2b3c4d". Read-only
     // and recomputed per request: there is no stored composition anywhere, which is the point.
     IReadOnlyList<string>? ComposedBundles = null,
@@ -189,6 +193,8 @@ public sealed record CreateAgentRequest(
     // CARD-0060. Create finally gains a composition-relevant field; SystemPromptAppend deliberately
     // still is NOT one of them (update-only, out of scope here).
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
+    // CARD-0160. Null = PtyHost (the only lane that existed before this field).
+    SessionBackend? SessionBackend = null,
     // CARD-0008: supervision is part of the agent's identity, not an afterthought — an agent
     // meant to be always-on must never exist unsupervised between a create and a PATCH.
     bool AlwaysOn = false,
@@ -228,6 +234,9 @@ public sealed record UpdateAgentRequest(
     string? ModelId = null,
     // Null = leave unchanged (CARD-0060), so an older caller cannot reset a chosen style to Normal.
     AgentReplyStyle? ReplyStyle = null,
+    // CARD-0160. Null = leave unchanged, so an older caller cannot silently reset a chosen backend
+    // to PtyHost. Applied only after the AlwaysOn / channel-bound / Kind refusal checks.
+    SessionBackend? SessionBackend = null,
     // The bundles this agent carries on top of what its role implies (CARD-0058 slice 6). Null =
     // leave unchanged, same reason as ReplyStyle: an older caller must not silently detach
     // everything. An EMPTY list is the explicit "detach all". Order is composition order; unknown or

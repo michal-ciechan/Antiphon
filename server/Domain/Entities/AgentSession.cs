@@ -14,6 +14,14 @@ public class AgentSession
     public string? EffectiveModelId { get; set; }
     public string DefinitionName { get; set; } = string.Empty;
     public AgentKind AgentKind { get; set; }
+
+    /// <summary>
+    /// Snapshot of the owning agent's <see cref="Agent.SessionBackend"/> at session-row creation
+    /// (CARD-0160). Reconciliation and relaunch must know how THIS session was launched even if the
+    /// agent setting changes later — same rationale as <see cref="AgentKind"/>.
+    /// </summary>
+    public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
+
     public SessionStatus Status { get; set; } = SessionStatus.Created;
     public string Cwd { get; set; } = string.Empty;
     public int Cols { get; set; } = 120;
