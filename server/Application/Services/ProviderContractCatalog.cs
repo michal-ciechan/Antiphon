@@ -71,9 +71,9 @@ public static class ProviderContractCatalog
             Navigation: [],
             OpensOverlay: false),
         TerminalOverlay: new TerminalOverlayContract(
-            AgentTuiCapabilityState.Unknown,
-            "Esc-on-idle and overlay-dismiss have not been measured (CARD-0137 S1).",
-            DismissKey: null,
+            AgentTuiCapabilityState.Supported,
+            "Esc is a no-op on an idle empty composer, and one Esc restores the composer after /model (CARD-0137 S1 ClaudeOverlayCanaryTests). DetectFragments stay empty until the /model chrome is captured — S6 off, S5 on.",
+            DismissKey: "\u001b",
             DetectFragments: []),
         LocalCommands: new LocalCommandContract(
             AgentTuiCapabilityState.Supported,
@@ -135,9 +135,9 @@ public static class ProviderContractCatalog
             OpensOverlay: true),
         TerminalOverlay: new TerminalOverlayContract(
             AgentTuiCapabilityState.Supported,
-            "Esc dismisses the /usage overlay and is a no-op on an idle empty composer (CARD-0137 investigation §3.1, measured twice).",
+            "Esc dismisses the /usage overlay and is a no-op on an idle empty composer (CARD-0137 investigation §3.1, measured twice; S1 canary GrokUsageOverlayCanaryTests).",
             DismissKey: "\u001b",
-            DetectFragments: []),
+            DetectFragments: ["c copy session ID"]),
         LocalCommands: new LocalCommandContract(
             AgentTuiCapabilityState.Supported,
             "/usage is measured to open an overlay and write no UserPrompt row (CARD-0136, CARD-0137). Absence of a declaration is not a claim of absence.",

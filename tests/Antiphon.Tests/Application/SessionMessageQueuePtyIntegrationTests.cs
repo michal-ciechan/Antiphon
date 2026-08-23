@@ -137,6 +137,104 @@ public class SessionMessageQueuePtyIntegrationTests
         }
     }
 
+    /// <summary>
+    /// CARD-0137: leftover overlay makes the next real body <c>NoComposerEvidence</c> without S5/S6.
+    /// fakeclaude's overlay discards typed bytes until Esc. Grok is the Supported kind.
+    /// </summary>
+    [Test]
+    public async Task A_body_typed_while_an_overlay_is_up_recovers_via_Esc_and_submits()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+
+        var sessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-fake-pty-{Guid.NewGuid():N}");
+        var client = new DirectSessionRunnerClient(sessionLogPath, ptyBackend: PinnedBackend);
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }));
+        var eventBus = new MockEventBus();
+        services.AddSingleton(eventBus);
+        services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
+        services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(new SupervisionSettings
+        {
+            DeliveryVerification = new DeliveryVerificationSettings
+            {
+                Enabled = true,
+                OverlayRecoveryEnabled = true,
+                OverlaySettleMs = 50,
+                EvidenceTimeoutSeconds = 8,
+                PollIntervalMs = 50,
+                PostSubmitAdvanceTimeoutSeconds = 5,
+            },
+        }));
+        services.AddSingleton<ISessionRunnerClient>(client);
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddLogging();
+        await using var provider = services.BuildServiceProvider();
+
+        var sessionId = Guid.NewGuid();
+        var cwd = Path.Combine(Path.GetTempPath(), $"antiphon-fake-cwd-{sessionId:N}");
+        Directory.CreateDirectory(cwd);
+
+        var spec = new AgentLaunchSpec(
+            DefinitionName: "fakeclaude",
+            Kind: AgentKind.Grok,
+            Exe: FakeClaudeExe,
+            Args: Array.Empty<string>(),
+            Env: new Dictionary<string, string> { ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage" },
+            Cwd: cwd,
+            Cols: 120,
+            Rows: 30);
+
+        try
+        {
+            await client.StartAsync(sessionId, spec, CancellationToken.None);
+            (await WaitForRawAsync(client, sessionId, s => s.Contains("Fake Claude ready"), TimeSpan.FromSeconds(15)))
+                .ShouldBeTrue();
+
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = DateTime.UtcNow;
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, CardId = null, DefinitionName = "fakeclaude",
+                    AgentKind = AgentKind.Grok, Status = SessionStatus.Running,
+                    Cwd = cwd, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            var queue = provider.GetRequiredService<SessionMessageQueueService>();
+            await queue.EnqueueAsync(sessionId, "/usage", MessageSendMode.Now, CancellationToken.None);
+            (await WaitForRawAsync(client, sessionId, s => s.Contains("OVERLAY:open"), TimeSpan.FromSeconds(8)))
+                .ShouldBeTrue("the first /usage must leave the overlay standing");
+
+            await queue.EnqueueAsync(sessionId, "hello after overlay", MessageSendMode.Now, CancellationToken.None);
+
+            var submitted = await WaitForRawAsync(
+                client, sessionId, s => s.Contains("SUBMITTED:hello after overlay"), TimeSpan.FromSeconds(15));
+            submitted.ShouldBeTrue("S5/S6 must Esc the leftover overlay and deliver the real body");
+        }
+        finally
+        {
+            try { await client.KillAsync(sessionId, CancellationToken.None); } catch { /* best effort */ }
+            await client.DisposeAsync();
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+                await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
+            try { Directory.Delete(cwd, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // PR 9 at the PTY tier: a batched multi-line body must pass composer delivery verification and
     // submit as ONE turn through the real runtime -> runner -> ConPTY path.
     [Test]

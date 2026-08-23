@@ -74,6 +74,11 @@ namespace Antiphon.FakeClaude;
 ///    buffered pastes when it woke, in order, minutes late). This is the state every output-side
 ///    readiness signal calls "ready": no output, no modal, a painted composer — and every byte
 ///    written into it looks lost until it isn't. Default OFF.
+///  * <b>Overlay</b> (OPT-IN, <c>ANTIPHON_FAKE_OVERLAY_ON_COMMAND=/usage</c>) — after this command
+///    is submitted, render a panel and DISCARD every typed byte until a bare Esc restores the
+///    composer. Default OFF. Deaf-start <em>buffers</em> input and processes it late; an overlay
+///    <em>consumes and discards</em> it (CARD-0137). The panel chrome includes the measured Grok
+///    fragment <c>c copy session ID</c> so S6's detector can match.
 ///  * <b>Split final response</b> (OPT-IN, <c>ANTIPHON_FAKE_SPLIT_FINAL</c>) — real Claude writes one
 ///    API response as SEVERAL records: a signature-only <c>thinking</c> record, then the <c>text</c>
 ///    record, both stamped with the response's <c>stop_reason</c> and sharing one <c>message.id</c>.
@@ -133,6 +138,8 @@ internal static class Program
         // OPT-IN (CARD-0103): go input-DEAF for N ms after painting. The banner is already out by
         // the time the reader starts, so every output-side ready signal reads this as a healthy,
         // settled session — which is exactly the lie the input probe exists to catch.
+        var overlayOnCommand = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_OVERLAY_ON_COMMAND");
+        if (string.IsNullOrWhiteSpace(overlayOnCommand)) overlayOnCommand = null;
         var deafStartMs = int.TryParse(
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEAF_START_MS"), out var ds) && ds > 0 ? ds : 0;
         TryEnableRawConsole();
@@ -157,6 +164,7 @@ internal static class Program
         if (clip is not null) Write(clip.Describe() + "\r\n");
         if (placeholder is not null) Write(placeholder.Describe() + "\r\n");
         if (swallow is not null) Write(swallow.Describe() + "\r\n");
+        if (overlayOnCommand is not null) Write($"OVERLAY:command={overlayOnCommand}\r\n");
         if (deafStartMs > 0) Write($"DEAFSTART:ms={deafStartMs}\r\n");
         if (debugInput)
         {
@@ -223,6 +231,7 @@ internal static class Program
         reader.Start();
 
         var composer = new StringBuilder();
+        var overlayActive = false;
         var turnCount = 0;
         // Inside a bracketed paste whose closing 201~ hasn't arrived yet (paste split across reads).
         var inPaste = false;
@@ -285,6 +294,20 @@ internal static class Program
             // Ctrl-C (ETX, 3) / Ctrl-D (EOT, 4) — exit cleanly, like a real CLI.
             if (Array.IndexOf(burst, (byte)3) >= 0 || Array.IndexOf(burst, (byte)4) >= 0)
                 return false;
+
+            // CARD-0137: an open overlay consumes and discards every typed byte. Bare Esc (a
+            // single 0x1b, not a CSI) restores the composer. Deaf-start BUFFERS; overlay DROPS.
+            if (overlayActive)
+            {
+                if (burst.Length == 1 && burst[0] == 0x1b)
+                {
+                    overlayActive = false;
+                    Write("OVERLAY:closed\r\n");
+                    return true;
+                }
+                Write("OVERLAY:drop\r\n");
+                return true;
+            }
 
             // Ctrl+U (NAK, 0x15) — kill line. Empties the composer AND erases the rendered row, which
             // is the half that matters to a caller: the verification everything here exists to serve
@@ -373,6 +396,16 @@ internal static class Program
                 }
 
                 composer.Clear();
+
+                if (overlayOnCommand is not null
+                    && text.StartsWith(overlayOnCommand, StringComparison.OrdinalIgnoreCase))
+                {
+                    overlayActive = true;
+                    Write("OVERLAY:open\r\n");
+                    Write("Weekly limit (SuperGrok)\r\n");
+                    Write("c copy session ID  |  Esc close\r\n");
+                    return true;
+                }
 
                 if (IsCompactCommand(text))
                 {

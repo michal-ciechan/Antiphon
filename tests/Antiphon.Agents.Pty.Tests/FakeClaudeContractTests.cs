@@ -1741,4 +1741,46 @@ public class FakeClaudeContractTests
         // yet on the last one. Nothing this test asserts about ends in a space.
         return rest.TrimEnd();
     }
+
+    // ---- CARD-0137: overlay discards typed bytes; one Esc restores the composer ---------------
+
+    [Test]
+    public async Task Overlay_discards_typed_bytes_until_one_Esc_restores_the_composer()
+    {
+        SkipIfUnavailable();
+        await using var runner = await LaunchReadyFakeAsync(
+            env: new Dictionary<string, string> { ["ANTIPHON_FAKE_OVERLAY_ON_COMMAND"] = "/usage" },
+            alsoAwaitBanner: "OVERLAY:");
+
+        await runner.WriteAsync("/usage");
+        await Task.Delay(80);
+        await runner.WriteAsync("\r");
+        (await runner.WaitForOutputAsync(s => s.Contains("OVERLAY:open"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("submitting the armed command must open the overlay. Screen:\n" + runner.SnapshotText());
+        (await runner.WaitForScreenAsync(
+            s => ComposerDeliveryEvidence.FragmentIsVisible(s, "c copy session ID"),
+            TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("the panel must render the measured Grok fragment S6 matches. Screen:\n"
+                + runner.SnapshotScreen());
+
+        runner.ClearLiveBuffer();
+        await runner.WriteAsync("this must vanish");
+        await Task.Delay(200);
+        runner.SnapshotText().ShouldContain("OVERLAY:drop");
+        ComposerDeliveryEvidence.FragmentIsVisible(runner.SnapshotScreen(), "this must vanish")
+            .ShouldBeFalse("typed bytes vanish while the overlay is up");
+
+        await runner.WriteAsync("\u001b");
+        (await runner.WaitForOutputAsync(s => s.Contains("OVERLAY:closed"), TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("one Esc restores the composer");
+
+        var token = "after-overlay-" + Guid.NewGuid().ToString("N")[..8];
+        await runner.WriteAsync(token);
+        (await runner.WaitForScreenAsync(
+            s => ComposerDeliveryEvidence.FragmentIsVisible(s, token),
+            TimeSpan.FromSeconds(5)))
+            .ShouldBeTrue("a body typed after Esc must render. Screen:\n" + runner.SnapshotScreen());
+
+        await runner.KillAsync(TimeSpan.FromSeconds(2));
+    }
 }

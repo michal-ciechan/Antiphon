@@ -249,6 +249,20 @@ public sealed class DeliveryVerificationSettings
     public int PreFirstTurnNoEvidenceGraceMinutes { get; set; } = 8;
 
     /// <summary>
+    /// CARD-0137 S5. One-shot Esc-and-retype on <c>NoComposerEvidence</c> when the kind's
+    /// <c>TerminalOverlay</c> is Supported, the session is idle after a fresh transcript pull,
+    /// and Enter has not been sent. Default on: the recovery is gated on those facts, not on
+    /// this flag. Off is the kill switch if a TUI upgrade makes Esc unsafe.
+    /// </summary>
+    public bool OverlayRecoveryEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Settle after an overlay dismiss key before re-snapshotting / re-typing. Shared with the
+    /// poll transport's default (400).
+    /// </summary>
+    public int OverlaySettleMs { get; set; } = 400;
+
+    /// <summary>
     /// Total attempts at a BOOT prompt — the launch-time writes (<c>/remote-control</c>,
     /// <c>/rename</c>, a card's work prompt) that run before the queue exists (CARD-0056).
     ///

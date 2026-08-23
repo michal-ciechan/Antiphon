@@ -173,6 +173,26 @@ public sealed class ProviderContractCatalogTests
         grok.LocalCommands.Commands["/usage"].OpensOverlay.ShouldBeTrue();
         grok.LocalCommands.Commands["/usage"].WritesUserPrompt.ShouldBeFalse();
         grok.LocalCommands.Forbidden.ContainsKey("/usage").ShouldBeFalse();
+        grok.TerminalOverlay.DetectFragments.ShouldContain("c copy session ID");
+        grok.TerminalOverlay.DetectFragments.ShouldNotContain("Weekly limit");
+    }
+
+    [Test]
+    public void Claude_overlay_is_Supported_with_empty_DetectFragments()
+    {
+        var overlay = ProviderContractCatalog.For(AgentKind.ClaudeCode).TerminalOverlay;
+        overlay.State.ShouldBe(AgentTuiCapabilityState.Supported);
+        overlay.DismissKey.ShouldBe("\u001b");
+        overlay.DetectFragments.ShouldBeEmpty("S6 stays off until /model fragments are captured");
+    }
+
+    [Test]
+    public void Codex_overlay_stays_Unknown_without_a_measured_dismiss()
+    {
+        var overlay = ProviderContractCatalog.For(AgentKind.Codex).TerminalOverlay;
+        overlay.State.ShouldBe(AgentTuiCapabilityState.Unknown);
+        overlay.DismissKey.ShouldBeNull();
+        overlay.DetectFragments.ShouldBeEmpty();
     }
 
     [Test]

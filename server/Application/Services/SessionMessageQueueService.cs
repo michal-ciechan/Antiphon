@@ -162,27 +162,40 @@ public sealed class SessionMessageQueueService
                     ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
                     : null,
                 db: null, ct);
-            var outcome = await DeliverAsync(sessionId, nowBody, ct);
-            if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+            // CARD-0137 S7: take the per-session lock the poll already holds, so a Mode.Now send
+            // cannot interleave with a poll (or another Now) in one composer. DeliverAsync itself
+            // must not take the lock — SendNowAsync and the turn-end flush already hold it.
+            var nowLock = GetLock(sessionId);
+            await nowLock.WaitAsync(ct);
+            DeliveryOutcome outcome;
+            try
             {
-                await HandleForbiddenBodyAsync(sessionId, null, nowBody, outcome.RecordText, ct);
-                throw new ValidationException(
-                    nameof(body),
-                    outcome.RecordText ?? "This body is forbidden for this agent kind.");
+                outcome = await DeliverAsync(sessionId, nowBody, ct);
+                if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
+                {
+                    await HandleForbiddenBodyAsync(sessionId, null, nowBody, outcome.RecordText, ct);
+                    throw new ValidationException(
+                        nameof(body),
+                        outcome.RecordText ?? "This body is forbidden for this agent kind.");
+                }
+                if (outcome.Verdict == DeliveryVerdict.Truncated)
+                {
+                    await HandleTruncationAsync(sessionId, null, nowBody, outcome.RecordText, ct);
+                    throw new ConflictException(
+                        "Message delivery reached the transcript truncated "
+                        + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+                }
+                if (outcome.Verdict != DeliveryVerdict.Delivered)
+                {
+                    await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct);
+                    throw new ConflictException(
+                        "Message delivery could not be verified — the terminal did not accept it "
+                        + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+                }
             }
-            if (outcome.Verdict == DeliveryVerdict.Truncated)
+            finally
             {
-                await HandleTruncationAsync(sessionId, null, nowBody, outcome.RecordText, ct);
-                throw new ConflictException(
-                    "Message delivery reached the transcript truncated "
-                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
-            }
-            if (outcome.Verdict != DeliveryVerdict.Delivered)
-            {
-                await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct);
-                throw new ConflictException(
-                    "Message delivery could not be verified — the terminal did not accept it "
-                    + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+                nowLock.Release();
             }
             return await GetQueueAsync(sessionId, ct);
         }
@@ -1110,7 +1123,30 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private enum DeliveryVerdict { Delivered, NoComposerEvidence, NoSubmitOutput, NoTranscriptRecord, Truncated, ForbiddenBody }
+    private enum DeliveryVerdict
+    {
+        Delivered,
+        NoComposerEvidence,
+        NoSubmitOutput,
+        NoTranscriptRecord,
+        Truncated,
+        ForbiddenBody,
+        LocalCommandNotAccepted,
+    }
+
+    /// <summary>
+    /// Result of <see cref="TypeLocalCommandAsync"/> — the shared core of the poll transport and
+    /// the local-command arm of <see cref="DeliverAsync"/>. Callers own Esc-before/after,
+    /// Navigation, buffer capture, incidents, and kill.
+    /// </summary>
+    private enum LocalCommandTypeResult
+    {
+        /// <summary>Composer never showed the command; Enter was withheld.</summary>
+        NotAccepted,
+        /// <summary>Enter went out but the output sequence did not advance.</summary>
+        NotAdvanced,
+        Sent,
+    }
 
     private readonly record struct DeliveryOutcome(DeliveryVerdict Verdict, string? RecordText = null)
     {
@@ -1144,6 +1180,7 @@ public sealed class SessionMessageQueueService
         DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
         DeliveryVerdict.ForbiddenBody => "the body is forbidden for this agent kind",
+        DeliveryVerdict.LocalCommandNotAccepted => "the local TUI command was not accepted by the composer",
         _ => "delivered",
     };
 
@@ -1219,12 +1256,6 @@ public sealed class SessionMessageQueueService
         // Matching is the first whitespace-delimited token so `/usage --json` is refused too.
         // Belt-and-braces for rows already in the queue when the EnqueueAsync pre-check lands, and
         // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
-        // CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed. Codex `/usage` is the
-        // founding case — typing it opens a picker whose highlighted option redeems the account's
-        // one usage-limit reset, and CARD-0055's confirm loop would re-press Enter into that picker.
-        // Matching is the first whitespace-delimited token so `/usage --json` is refused too.
-        // Belt-and-braces for rows already in the queue when the EnqueueAsync pre-check lands, and
-        // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         if (kind is { } refusedKind && TryGetForbiddenReason(refusedKind, trimmed, out var forbiddenReason))
         {
@@ -1270,6 +1301,20 @@ public sealed class SessionMessageQueueService
             await RecordOversizeAsync(sessionId, bodyBytes, ceilings, ct);
         }
 
+        // CARD-0137 S4 / L1: a declared local command that writes no UserPrompt must not enter
+        // CARD-0055's confirm loop (there is no row coming; the timeout would kill). ONE Enter —
+        // a re-press lands on a picker's highlighted option (CARD-0141). WritesUserPrompt:true
+        // (Claude /compact) and undeclared bodies keep today's path, byte for byte.
+        if (kind is { } localKind
+            && TryGetLocalCommandFact(localKind, trimmed, out var localFact)
+            && !localFact.WritesUserPrompt)
+        {
+            var typed = await TypeLocalCommandAsync(sessionId, trimmed, ct);
+            if (typed == LocalCommandTypeResult.Sent)
+                return DeliveryOutcome.Delivered;
+            return DeliveryOutcome.Of(DeliveryVerdict.LocalCommandNotAccepted);
+        }
+
         var verify = _verification.Enabled && await IsVerifiedDeliverySessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;
         if (verify && !_runtime.TryGetLiveSnapshot(sessionId, out before))
@@ -1301,16 +1346,58 @@ public sealed class SessionMessageQueueService
         // fragments the body at line breaks — live miss 2026-07-29, where a 2.4 KB calendar message
         // reached the agent as only its final fragment. The markers delimit the paste regardless of
         // read chunking; the submitting CR below stays a separate, unbracketed write.
+        // CARD-0137 S6: proactive detector. Match measured overlay fragments against the
+        // pre-send snapshot. A generic "looks like a modal" match is refused (CARD-0047).
+        // At most one Esc per delivery — if this arm fires, S5 must not send another.
+        var overlayDismissed = false;
+        if (verify && kind is { } overlayKind)
+        {
+            var overlay = ProviderContractCatalog.For(overlayKind).TerminalOverlay;
+            if (overlay.DetectFragments.Count > 0
+                && overlay.DetectFragments.Any(f =>
+                    ComposerDeliveryEvidence.FragmentIsVisible(before.RenderedScreen, f)))
+            {
+                overlayDismissed = await TryDismissOverlayAsync(sessionId, overlayKind, ct);
+                if (overlayDismissed && _runtime.TryGetLiveSnapshot(sessionId, out var afterDismiss))
+                    before = afterDismiss;
+            }
+        }
+
         var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
         await _runtime.SendInputAsync(sessionId, payload, ct);
 
         if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
         {
-            _logger.LogWarning(
-                "Delivery verification failed for session {SessionId}: body ({Length} chars) produced no "
-                + "composer evidence within {Timeout}s — submit Enter withheld",
-                sessionId, trimmed.Length, _verification.EvidenceTimeoutSeconds);
-            return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
+            // CARD-0137 S5: reactive overlay recovery. One-shot, idle-gated Esc-and-retype.
+            // The Esc is gated on working == false AFTER a fresh CatchUpTranscriptAsync pull —
+            // a session parked on a tool-permission modal is mid-turn, so working is true and
+            // no Esc is sent. Re-typing is legal here: Enter was withheld, so nothing submitted.
+            var recovered = false;
+            if (!overlayDismissed
+                && kind is { } recoverKind
+                && await TryDismissOverlayAsync(sessionId, recoverKind, ct))
+            {
+                if (_runtime.TryGetLiveSnapshot(sessionId, out var recoveredSnap))
+                    before = recoveredSnap;
+                await _runtime.SendInputAsync(sessionId, payload, ct);
+                recovered = await WaitForComposerEvidenceAsync(
+                    sessionId, before.RenderedScreen, trimmed, ct);
+                if (recovered)
+                {
+                    _logger.LogInformation(
+                        "Overlay recovery restored composer evidence for session {SessionId} after one Esc",
+                        sessionId);
+                }
+            }
+
+            if (!recovered)
+            {
+                _logger.LogWarning(
+                    "Delivery verification failed for session {SessionId}: body ({Length} chars) produced no "
+                    + "composer evidence within {Timeout}s — submit Enter withheld",
+                    sessionId, trimmed.Length, _verification.EvidenceTimeoutSeconds);
+                return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
+            }
         }
 
         long? sequenceBeforeSubmit = null;
@@ -1550,9 +1637,11 @@ public sealed class SessionMessageQueueService
         }
     }
 
-    private async Task<bool> WaitForSequenceAdvanceAsync(Guid sessionId, long baseline, CancellationToken ct)
+    private async Task<bool> WaitForSequenceAdvanceAsync(
+        Guid sessionId, long baseline, CancellationToken ct, int? timeoutSeconds = null)
     {
-        var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.PostSubmitAdvanceTimeoutSeconds);
+        var seconds = timeoutSeconds ?? _verification.PostSubmitAdvanceTimeoutSeconds;
+        var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, seconds));
         while (true)
         {
             if (_runtime.TryGetLiveMetadata(sessionId, out var meta) && meta.LastSequence > baseline)
@@ -1927,7 +2016,8 @@ public sealed class SessionMessageQueueService
             // a kill buys is worthless against a TUI that has not started reading, and killing and
             // relaunching straight back into the same race is CARD-0047's restart loop by another
             // route. The message stays Pending and the 60s stranded sweep retries it.
-            var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn;
+            var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn
+                && verdict is not (DeliveryVerdict.ForbiddenBody or DeliveryVerdict.LocalCommandNotAccepted);
 
             if (allSupervision && canceledSupervision > 0)
             {
@@ -2193,6 +2283,50 @@ public sealed class SessionMessageQueueService
         return ProviderContractCatalog.For(kind).LocalCommands.Forbidden.TryGetValue(token, out reason!);
     }
 
+    /// <summary>
+    /// CARD-0137: send the kind's measured dismiss key at most once, only when a fresh transcript
+    /// pull says the session is idle. Returns false (and types nothing) when the contract is not
+    /// Supported, recovery is disabled, or the session is working — the permission-dialog guard.
+    /// </summary>
+    private async Task<bool> TryDismissOverlayAsync(Guid sessionId, AgentKind kind, CancellationToken ct)
+    {
+        var overlay = ProviderContractCatalog.For(kind).TerminalOverlay;
+        if (!_verification.OverlayRecoveryEnabled
+            || overlay.State != AgentTuiCapabilityState.Supported
+            || string.IsNullOrEmpty(overlay.DismissKey))
+        {
+            return false;
+        }
+
+        await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await IsWorkingAsync(db, sessionId, ct))
+            {
+                _logger.LogInformation(
+                    "Overlay dismiss withheld for session {SessionId}: session is working after transcript pull",
+                    sessionId);
+                return false;
+            }
+        }
+
+        await _runtime.SendInputAsync(sessionId, overlay.DismissKey, ct, trackManualTurn: false);
+        var settle = TimeSpan.FromMilliseconds(Math.Max(0, _verification.OverlaySettleMs));
+        if (settle > TimeSpan.Zero)
+            await Task.Delay(settle, _timeProvider, ct);
+        return true;
+    }
+
+    private static bool TryGetLocalCommandFact(AgentKind kind, string body, out LocalCommandFact fact)
+    {
+        fact = null!;
+        var token = FirstCommandToken(body);
+        if (token.Length == 0)
+            return false;
+        return ProviderContractCatalog.For(kind).LocalCommands.Commands.TryGetValue(token, out fact!);
+    }
+
     private async Task PublishQueueChangedAsync(SessionQueueDto dto, CancellationToken ct)
     {
         try
@@ -2298,38 +2432,10 @@ public sealed class SessionMessageQueueService
                     await Task.Delay(settle, _timeProvider, ct);
             }
 
-            if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+            var typed = await TypeLocalCommandAsync(sessionId, poll.Command, ct, poll.PanelTimeoutSeconds);
+            if (typed == LocalCommandTypeResult.NotAccepted)
                 return new LocalCommandPollResult.NotAccepted();
-
-            await _runtime.SendInputAsync(sessionId, poll.Command, ct, trackManualTurn: false);
-
-            if (!await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, poll.Command, ct))
-                return new LocalCommandPollResult.NotAccepted();
-
-            long sequenceBefore = 0;
-            if (_runtime.TryGetLiveMetadata(sessionId, out var metaBefore))
-                sequenceBefore = metaBefore.LastSequence;
-
-            await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
-            await _runtime.SendInputAsync(sessionId, "\r", ct, trackManualTurn: false);
-
-            var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, poll.PanelTimeoutSeconds));
-            var advanced = false;
-            while (true)
-            {
-                if (_runtime.TryGetLiveMetadata(sessionId, out var meta) && meta.LastSequence > sequenceBefore)
-                {
-                    advanced = true;
-                    break;
-                }
-
-                if (UtcNow() >= deadline)
-                    break;
-
-                await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
-            }
-
-            if (!advanced)
+            if (typed != LocalCommandTypeResult.Sent)
             {
                 if (poll.OpensOverlay)
                     await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
@@ -2356,6 +2462,36 @@ public sealed class SessionMessageQueueService
         {
             sem.Release();
         }
+    }
+
+    /// <summary>
+    /// Type a local TUI command and prove the composer took it. No transcript confirm (a local
+    /// command may write no UserPrompt row), ONE Enter (CARD-0141: a re-press lands on a picker's
+    /// highlighted option), no incidents, no kill. Callers own Esc-before/after, Navigation,
+    /// buffer capture, and everything else.
+    /// </summary>
+    private async Task<LocalCommandTypeResult> TypeLocalCommandAsync(
+        Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null)
+    {
+        if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+            return LocalCommandTypeResult.NotAccepted;
+
+        await _runtime.SendInputAsync(sessionId, command, ct, trackManualTurn: false);
+
+        if (!await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, command, ct))
+            return LocalCommandTypeResult.NotAccepted;
+
+        long sequenceBefore = 0;
+        if (_runtime.TryGetLiveMetadata(sessionId, out var metaBefore))
+            sequenceBefore = metaBefore.LastSequence;
+
+        await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
+        await _runtime.SendInputAsync(sessionId, "\r", ct, trackManualTurn: false);
+
+        if (!await WaitForSequenceAdvanceAsync(sessionId, sequenceBefore, ct, sequenceTimeoutSeconds))
+            return LocalCommandTypeResult.NotAdvanced;
+
+        return LocalCommandTypeResult.Sent;
     }
 
     internal SemaphoreSlim GetLock(Guid sessionId) =>

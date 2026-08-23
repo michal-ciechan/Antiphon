@@ -35,6 +35,15 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     public string SubmitAck { get; set; } = "\n";
     private readonly StringBuilder _composer = new();
 
+    /// <summary>
+    /// CARD-0137: an open overlay discards typed bytes (the composer is deaf) until Esc
+    /// (<c>\u001b</c>) closes it. <see cref="SnapshotRenderedScreen"/> shows
+    /// <see cref="OverlayScreen"/> while open so S6's fragment detector can match.
+    /// </summary>
+    public bool OverlayOpen { get; set; }
+    public string OverlayScreen { get; set; } =
+        "Weekly limit (SuperGrok)\nc copy session ID  |  Esc close";
+
     // ---- CARD-0055: what happens to a submitted prompt AFTER the Enter --------------------------
     //
     // Real Claude writes the submitted prompt into its JSONL, the tailer ingests it and the server
@@ -183,6 +192,19 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     {
         SentInput += input;
         _inputs.Add(input);
+        if (input == "\u001b")
+        {
+            if (OverlayOpen)
+            {
+                OverlayOpen = false;
+                Emit("\n");
+            }
+            return;
+        }
+
+        if (OverlayOpen)
+            return;
+
         if (input == "\r")
         {
             // Ordered so the two can compose: StaleSubmitBody claims the FIRST Enter (the measured
@@ -256,6 +278,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     {
         if (ThrowOnRenderedSnapshot)
             throw new InvalidOperationException("Rendered snapshot is not available.");
+
+        if (OverlayOpen)
+            return OverlayScreen;
 
         var screen = RenderedScreenOverride ?? _rawOutput.ToString();
         return _composer.Length > 0 ? screen + "\n> " + _composer : screen;

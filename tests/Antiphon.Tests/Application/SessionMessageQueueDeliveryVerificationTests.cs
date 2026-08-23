@@ -62,9 +62,10 @@ public class SessionMessageQueueDeliveryVerificationTests
         var dto = await h.Queue.EnqueueAsync(
             h.SessionId, "into the void", MessageSendMode.WhenIdle, CancellationToken.None);
 
-        // The body was typed but the submitting Enter must be withheld — the message is not
-        // lost into a dead composer.
-        h.Adapter.Inputs.ShouldBe(["into the void"]);
+        // CARD-0137 S5: idle Supported kinds (Claude, after S1) get one Esc-and-retype. Enter is
+        // still withheld — the composer never showed the body.
+        h.Adapter.Inputs.ShouldBe(["into the void", "\u001b", "into the void"]);
+        h.Adapter.Inputs.ShouldNotContain("\r");
 
         dto.Messages.Count.ShouldBe(1);
         dto.Messages[0].Status.ShouldBe(nameof(QueuedMessageStatus.Pending));
@@ -128,7 +129,8 @@ public class SessionMessageQueueDeliveryVerificationTests
         await Should.ThrowAsync<ConflictException>(() =>
             h.Queue.EnqueueAsync(h.SessionId, "send now please", MessageSendMode.Now, CancellationToken.None));
 
-        h.Adapter.Inputs.ShouldBe(["send now please"], "Enter must be withheld on an unverified delivery");
+        h.Adapter.Inputs.ShouldBe(["send now please", "\u001b", "send now please"],
+            "S5 one-shot recovery, then Enter withheld on an unverified delivery");
     }
 
     [Test]
@@ -1082,7 +1084,8 @@ public class SessionMessageQueueDeliveryVerificationTests
         await h.Queue.EnqueueAsync(
             h.SessionId, "the delegate brief", MessageSendMode.WhenIdle, CancellationToken.None);
 
-        h.Adapter.Inputs.ShouldBe(["the delegate brief"], "the Enter is still withheld — that is unchanged");
+        h.Adapter.Inputs.ShouldBe(["the delegate brief", "\u001b", "the delegate brief"],
+            "S5 one-shot Esc-and-retype; Enter is still withheld — that is unchanged");
 
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
@@ -1132,9 +1135,11 @@ public class SessionMessageQueueDeliveryVerificationTests
         for (var sweep = 0; sweep < 4; sweep++)
             await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
 
-        h.Adapter.Inputs.Count.ShouldBe(5,
-            "the first delivery plus four sweeps — under the old accounting the message would have "
-            + "parked after three and the last two sweeps would have skipped it entirely");
+        h.Adapter.Inputs.Count(i => i == "the delegate brief").ShouldBe(10,
+            "the first delivery plus four sweeps, each with S5's retype — under the old accounting "
+            + "the message would have parked after three and the last two sweeps would have skipped it");
+        h.Adapter.Inputs.Count(i => i == "\u001b").ShouldBe(5, "one Esc per delivery, never two");
+        h.Adapter.Inputs.ShouldNotContain("\r");
 
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
@@ -1360,6 +1365,192 @@ public class SessionMessageQueueDeliveryVerificationTests
 
         h.Adapter.Inputs.ShouldNotBeEmpty("Grok /usage is a declared command, not a Forbidden one");
         h.Adapter.Inputs.ShouldContain("/usage");
+    }
+
+    // ---- CARD-0137 S4 / L1: local-command arm — one Enter, no confirm loop, no kill ----------
+
+    [Test]
+    public async Task A_WritesUserPrompt_false_command_sends_exactly_one_Enter_and_skips_confirm()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        // Real Grok /usage writes no UserPrompt. The harness's OnSubmitted would fake one and
+        // make the confirm loop look like the local-command arm (one Enter, Sent). Null it so a
+        // regression onto CARD-0055 re-presses Enter and this goes red.
+        h.Adapter.OnSubmitted = null;
+
+        await h.Queue.EnqueueAsync(h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(1, "one Enter; a re-press would land on a picker");
+        h.Adapter.Inputs.ShouldContain("/usage");
+        h.Adapter.Killed.ShouldBeFalse();
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task A_WritesUserPrompt_true_command_keeps_the_confirm_loop_and_represses_Enter()
+    {
+        await using var h = await ObservableHarnessAsync();
+        h.Adapter.SwallowSubmits = 1;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, ContextCompactionService.CompactTriggerBody,
+            MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(2,
+            "CARD-0082 auto-compact stays on today's path: a swallowed Enter is re-pressed");
+        h.Adapter.SubmittedBodies.ShouldBe([ContextCompactionService.CompactTriggerBody]);
+        h.Adapter.Killed.ShouldBeFalse();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+    }
+
+    // ---- CARD-0137 S5/S6: overlay recovery (reactive) and proactive detector -----------------
+
+    [Test]
+    public async Task NoComposerEvidence_on_a_working_session_sends_no_Esc()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        await h.MarkWorkingAsync();
+        // Default OverlayScreen contains Grok's DetectFragments, so S6 matches AND S5 would
+        // recover — both go through TryDismissOverlayAsync's working-gate.
+        h.Adapter.OverlayOpen = true;
+
+        await Should.ThrowAsync<ConflictException>(() =>
+            h.Queue.EnqueueAsync(
+                h.SessionId, "into a permission dialog", MessageSendMode.Now, CancellationToken.None));
+
+        h.Adapter.Inputs.ShouldBe(["into a permission dialog"]);
+        h.Adapter.Inputs.ShouldNotContain("\u001b",
+            "working (permission-dialog) sessions must never receive Esc, even when Supported");
+    }
+
+    [Test]
+    public async Task NoComposerEvidence_on_idle_Supported_kind_sends_one_Esc_retypes_and_succeeds()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OverlayOpen = true;
+        h.Adapter.OverlayScreen = "an unmeasured overlay that is not in DetectFragments";
+
+        await h.Queue.EnqueueAsync(h.SessionId, "hello after overlay", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["hello after overlay", "\u001b", "hello after overlay", "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe(["hello after overlay"]);
+        h.Adapter.Killed.ShouldBeFalse();
+        h.Adapter.OverlayOpen.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task NoComposerEvidence_on_idle_Unknown_kind_sends_no_Esc()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "codex is unknown", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["codex is unknown"]);
+        h.Adapter.Inputs.ShouldNotContain("\u001b");
+    }
+
+    [Test]
+    public async Task Overlay_recovery_is_one_shot_two_evidence_failures_produce_one_Esc()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OverlayOpen = true;
+        h.Adapter.OverlayScreen = "an unmeasured overlay";
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "still deaf after esc", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.Count(i => i == "\u001b").ShouldBe(1);
+        h.Adapter.Inputs.ShouldBe(["still deaf after esc", "\u001b", "still deaf after esc"]);
+        h.Adapter.Killed.ShouldBeTrue("idle always-on, evidence still missing after one Esc: today's kill");
+    }
+
+    [Test]
+    public async Task Proactive_detector_Escs_before_typing_when_a_measured_fragment_is_visible()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OverlayOpen = true;
+
+        await h.Queue.EnqueueAsync(h.SessionId, "after measured overlay", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs[0].ShouldBe("\u001b", "S6 Escs before the doomed type");
+        h.Adapter.Inputs.ShouldBe(["\u001b", "after measured overlay", "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe(["after measured overlay"]);
+    }
+
+    [Test]
+    public async Task Proactive_detector_does_not_Esc_an_unmeasured_modal()
+    {
+        await using var h = await ObservableHarnessAsync();
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.OverlayOpen = true;
+        h.Adapter.OverlayScreen = "Do you want to approve this tool?";
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "typed into an unmeasured modal", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs[0].ShouldNotBe("\u001b",
+            "S6 must not match an unmeasured modal; S5 may still Esc after evidence fails");
+        h.Adapter.Inputs[0].ShouldBe("typed into an unmeasured modal");
+    }
+
+    [Test]
+    public async Task Mode_Now_waits_for_the_per_session_lock()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        var sem = h.Queue.GetLock(h.SessionId);
+        await sem.WaitAsync();
+        Task<SessionQueueDto> send;
+        try
+        {
+            send = h.Queue.EnqueueAsync(
+                h.SessionId, "now-locked", MessageSendMode.Now, CancellationToken.None);
+            var finished = await Task.WhenAny(send, Task.Delay(400));
+            finished.ShouldNotBe(send, "Mode.Now must wait on GetLock — the poll's invariant");
+            h.Adapter.Inputs.ShouldBeEmpty("nothing may be typed while another path holds the lock");
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        var dto = await send;
+        dto.Messages.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBe(["now-locked"]);
+    }
+
+    [Test]
+    public async Task LocalCommandNotAccepted_never_kills_an_always_on_idle_agent()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Grok);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "/usage", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["/usage"], "Enter withheld when the composer did not take the command");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse("parking is fine; killing is not");
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.SentAt.ShouldBeNull();
     }
 
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
