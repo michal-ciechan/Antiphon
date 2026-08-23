@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Shouldly;
 using TUnit.Core;
@@ -41,6 +42,31 @@ public class GrokCanaryTests
     /// </summary>
     private static readonly Regex DecimalDonePattern = new(@" for \d+(\.\d+)?s", RegexOptions.Compiled);
     private static readonly Regex OscTitle = new(@"\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// CARD-0157 ceiling-drift tripwire: <c>~/.grok/models_cache.json</c>
+    /// <c>models.*.info.context_window</c> must stay 500 000, matching
+    /// <c>SelfReportedCeilingTokens</c> on Grok's catalog entry.
+    /// </summary>
+    [Test]
+    public void Models_cache_context_window_is_still_500000()
+    {
+        GkSession.SkipIfNotEligible();
+        var path = Path.Combine(GkSession.DefaultGrokHome, "models_cache.json");
+        File.Exists(path).ShouldBeTrue($"models_cache.json missing at {path}");
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var models = doc.RootElement.GetProperty("models");
+        var counted = 0;
+        foreach (var model in models.EnumerateObject())
+        {
+            var window = model.Value.GetProperty("info").GetProperty("context_window").GetInt32();
+            window.ShouldBe(500_000,
+                $"{model.Name} context_window drifted from the CARD-0157 catalog constant SelfReportedCeilingTokens=500_000");
+            counted++;
+        }
+
+        counted.ShouldBeGreaterThan(0, "models_cache.json declared no models");
+    }
 
     // ------------------------------------------------------------------ 1. composer submit contract
 
@@ -473,6 +499,16 @@ public class GrokCanaryTests
                 // in the 5754e02 session).
                 GkSession.ReadUpdates(updates).ShouldContain(r => r.Kind == "auto_compact_completed",
                     "/compact must land its explicit completion row");
+                var compactRow = GkSession.ReadUpdates(updates)
+                    .Last(r => r.Kind == "auto_compact_completed");
+                using (var compactDoc = JsonDocument.Parse(compactRow.Raw))
+                {
+                    var update = compactDoc.RootElement.GetProperty("params").GetProperty("update");
+                    update.GetProperty("tokens_before").ValueKind.ShouldBe(JsonValueKind.Number,
+                        "auto_compact_completed.tokens_before is the occupancy-before wire tripwire");
+                    update.GetProperty("tokens_after").ValueKind.ShouldBe(JsonValueKind.Number,
+                        "auto_compact_completed.tokens_after is the occupancy-after wire tripwire");
+                }
                 recapRow.ShouldNotBeNull("/recap must land a session_recap row");
                 recapRow!.Raw.ShouldContain("\"summary\"");
                 recapRow.Raw.ShouldContain("\"auto\":false");

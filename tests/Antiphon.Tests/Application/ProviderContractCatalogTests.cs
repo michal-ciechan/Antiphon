@@ -476,8 +476,10 @@ public sealed class ProviderContractCatalogTests
         claude.CeilingSource.ShouldBe(ContextWindowCeilingSource.Configured);
 
         var grok = ProviderContractCatalog.For(AgentKind.Grok).ContextWindowUsage;
-        grok.State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        grok.State.ShouldBe(AgentTuiCapabilityState.Supported);
         grok.CeilingSource.ShouldBe(ContextWindowCeilingSource.SelfReported);
+        grok.SelfReportedCeilingTokens.ShouldBe(500_000);
+        grok.UsageAccounting.ShouldBe(ProviderUsageAccounting.TurnSumInclusiveCache);
     }
 
     [Test]

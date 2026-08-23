@@ -110,8 +110,8 @@ public static class ProviderContractCatalog
             AgentTuiCapabilityState.Supported,
             "Sessions resume by conversation identity (--session-id); AgentSessionService allows resume."),
         ContextWindowUsage: new ContextWindowUsageContract(
-            AgentTuiCapabilityState.Degraded,
-            "ACP modelState self-reports context sizes (500k) but that initialize payload is not consumed; turn_completed usage is already stored. Weaker guarantee: fullness cannot be computed until the ceiling is wired (CARD-0083 S5 opened the eligibility gate; wiring the ceiling/modelState is separate, unscoped follow-up work).",
+            AgentTuiCapabilityState.Supported,
+            "Occupancy is Grok's own numbers (CARD-0157): auto_compact_completed.tokens_after as a usage-bearing (auto) CompactBoundary, plus single-call turn_completed.usage.inputTokens between compactions. Multi-call loop-sums do not update the badge. Ceiling is the measured 500 000 self-reported window (stdio initialize modelState.totalContextTokens and ~/.grok/models_cache.json context_window, both 500 000, measured 2026-08-23).",
             ContextWindowCeilingSource.SelfReported,
             UsageAccounting: ProviderUsageAccounting.TurnSumInclusiveCache,
             SelfReportedCeilingTokens: 500_000),
@@ -122,7 +122,7 @@ public static class ProviderContractCatalog
             StatesResetTime: null),
         Compaction: new CompactionContract(
             AgentTuiCapabilityState.Supported,
-            "Grok emits explicit compaction_checkpoint and auto_compact_completed rows (measured 1.0.5). session_recap is a recap/summary, not compaction (CARD-0080 S1). The tailer currently skips these rows because a Grok compaction writes no user chunk and no turn_completed — nothing to strand.",
+            "Grok emits explicit compaction_checkpoint and auto_compact_completed rows (measured 1.0.5). session_recap is a recap/summary, not compaction (CARD-0080 S1). auto_compact_completed is ingested as a usage-bearing (auto) CompactBoundary (CARD-0157); compaction_checkpoint stays skipped (no token payload).",
             CompactionMarking.Marked),
         BlockingStartupModal: new BlockingStartupModalContract(
             AgentTuiCapabilityState.Supported,

@@ -24,7 +24,9 @@ public enum TurnCompletionSignal
 
 /// <summary>
 /// Where a provider's context-window ceiling comes from. Payload on
-/// <c>ProviderContract.ContextWindowUsage</c>.
+/// <c>ProviderContract.ContextWindowUsage</c>. SelfReported means the ceiling is the
+/// provider's own figure, recorded in the catalog with evidence (CARD-0157) — not "a
+/// figure we saw on the wire but do not consume".
 /// </summary>
 public enum ContextWindowCeilingSource
 {

@@ -264,22 +264,21 @@ public class SessionContextUsageTests
     }
 
     [Test]
-    public void Grok_contract_suppresses_fullness_and_keeps_the_raw_sum()
+    public void Grok_catalog_computes_occupancy_from_a_single_call_row()
     {
-        // Occupancy-eligible single-call row so the kept CARD-0153 gate still has a usage
-        // row to keep TokensUsed from. Multi-call loop-sums are no longer occupancy-bearing.
         var rows = new[] { GrokTurn(1, input: 137_657, modelCalls: 1, cacheRead: 120_000) };
         var grok = ProviderContractCatalog.For(AgentKind.Grok).ContextWindowUsage;
 
         var result = SessionContextUsage.Compute(rows, "grok-code", Defaults, contract: grok);
 
-        result.Fullness.ShouldBeNull();
-        result.TokensUsed.ShouldBe(137_657, "kind-aware TokensOf: InputTokens alone");
-        result.CeilingTokens.ShouldBe(500_000);
-        grok.State.ShouldBe(AgentTuiCapabilityState.Degraded);
+        grok.State.ShouldBe(AgentTuiCapabilityState.Supported);
         grok.CeilingSource.ShouldBe(ContextWindowCeilingSource.SelfReported);
         grok.UsageAccounting.ShouldBe(ProviderUsageAccounting.TurnSumInclusiveCache);
         grok.SelfReportedCeilingTokens.ShouldBe(500_000);
+        result.TokensUsed.ShouldBe(137_657, "kind-aware TokensOf: InputTokens alone");
+        result.CeilingTokens.ShouldBe(500_000);
+        result.Fullness.ShouldNotBeNull();
+        result.Fullness!.Value.ShouldBe(137_657 / 500_000.0, 1e-12);
     }
 
     [Test]
@@ -296,19 +295,52 @@ public class SessionContextUsageTests
     }
 
     [Test]
-    public void Fullness_suppression_is_kind_keyed_not_value_keyed()
+    public void Fullness_suppression_is_contract_keyed()
     {
         var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        var suppressed = new ContextWindowUsageContract(
+            AgentTuiCapabilityState.Degraded,
+            "synthetic Degraded+SelfReported",
+            ContextWindowCeilingSource.SelfReported);
+        SessionContextUsage.Compute(rows, "model", Defaults, contract: suppressed)
+            .Fullness.ShouldBeNull("the kept CARD-0153 gate is contract-keyed");
+
+        var live = new ContextWindowUsageContract(
+            AgentTuiCapabilityState.Supported,
+            "synthetic Supported+SelfReported",
+            ContextWindowCeilingSource.SelfReported);
+        SessionContextUsage.Compute(rows, "model", Defaults, contract: live)
+            .Fullness.ShouldNotBeNull("Supported+SelfReported is not gags");
+    }
+
+    [Test]
+    public void Every_kind_computes_or_abstains_per_its_contract()
+    {
         foreach (var kind in Enum.GetValues<AgentKind>())
         {
             var contract = ProviderContractCatalog.For(kind).ContextWindowUsage;
-            var result = SessionContextUsage.Compute(rows, "model", Defaults, contract: contract);
-            var suppressed = contract.State == AgentTuiCapabilityState.Degraded
-                && contract.CeilingSource == ContextWindowCeilingSource.SelfReported;
-            if (suppressed)
-                result.Fullness.ShouldBeNull($"{kind} is Degraded/SelfReported — no badge");
-            else
-                result.Fullness.ShouldNotBeNull($"{kind} must not inherit Grok's suppression");
+            if (kind == AgentKind.ClaudeCode)
+            {
+                var rows = new[] { Usage(1, input: 10_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+                SessionContextUsage.Compute(rows, "claude-opus-4", Defaults, contract: contract)
+                    .Fullness.ShouldNotBeNull("Claude computes from an additive row");
+                continue;
+            }
+
+            if (kind == AgentKind.Grok)
+            {
+                var loopSum = new[] { GrokTurn(1, input: 18_747_424, modelCalls: 103) };
+                SessionContextUsage.Compute(loopSum, "grok-4.6-build", Defaults, contract: contract)
+                    .Fullness.ShouldBeNull("18.7M loop-sum is not occupancy by arithmetic, not a gag");
+                var single = new[] { GrokTurn(1, input: 137_657, modelCalls: 1) };
+                SessionContextUsage.Compute(single, "grok-4.6-build", Defaults, contract: contract)
+                    .Fullness.ShouldNotBeNull("Grok computes from a single-call row");
+                continue;
+            }
+
+            var generic = new[] { Usage(1, input: 10_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+            SessionContextUsage.Compute(generic, "model", Defaults, contract: contract)
+                .Fullness.ShouldNotBeNull($"{kind} must not inherit a fullness gag");
         }
     }
 

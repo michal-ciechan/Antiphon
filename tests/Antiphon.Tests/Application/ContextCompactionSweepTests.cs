@@ -274,6 +274,46 @@ public class ContextCompactionSweepTests
     }
 
     [Test]
+    public async Task A_grok_session_over_context_percent_is_not_compacted_because_refocus_is_not_supported()
+    {
+        ProviderContractCatalog.For(AgentKind.Grok).RefocusCompact.State
+            .ShouldNotBe(AgentTuiCapabilityState.Supported,
+                "the gate's predicate: Grok RefocusCompact is Unknown, which behaves as Unsupported");
+
+        await using var h = await CreateHarnessAsync();
+        var grokId = await SeedRunningSessionAsync(h, AgentKind.Grok);
+        // Occupancy-eligible: 300_000 / 500_000 = 60%, over ContextPercent default 50.
+        // Without the RefocusCompact gate this session WOULD be selected — that is the
+        // positive control, asserted via LoadFullnessAsync before the sweep.
+        await SeedUsageAsync(
+            grokId, TranscriptKinds.TurnEnd, tokens: 300_000, hoursAgo: 9,
+            stopReason: "end_turn", modelCalls: 1, model: "grok-4.6-build");
+        var grokAdapter = new FakeAgentProtocolAdapter();
+        h.Runtime.Register(grokId, grokAdapter);
+
+        (await EligibleSessionIdsAsync()).ShouldContain(grokId);
+
+        await using (var db = CreateContext())
+        {
+            var fullness = await SessionContextUsage.LoadFullnessAsync(
+                db,
+                [(grokId, "grok-4.6-build", AgentKind.Grok)],
+                new ContextWindowSettings(),
+                logger: null,
+                CancellationToken.None);
+            fullness[grokId].ShouldNotBeNull(
+                "positive control: fullness is real and over threshold — the gag is gone");
+            fullness[grokId]!.Value.ShouldBeGreaterThanOrEqualTo(0.50);
+        }
+
+        await SweepAsync(h, FastSettings());
+
+        (await SupervisionMessagesAsync(grokId)).ShouldBeEmpty(
+            "RefocusCompact gate must withhold CompactPrompt even when fullness crosses the threshold");
+        grokAdapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task A_grok_session_passes_eligibility_but_does_not_enqueue_when_fullness_is_unknown()
     {
         await using var h = await CreateHarnessAsync();
@@ -363,7 +403,14 @@ public class ContextCompactionSweepTests
     }
 
     private static async Task SeedUsageAsync(
-        Guid sessionId, string kind, int? tokens, int hoursAgo, string? text = null, string? stopReason = null)
+        Guid sessionId,
+        string kind,
+        int? tokens,
+        int hoursAgo,
+        string? text = null,
+        string? stopReason = null,
+        int? modelCalls = null,
+        string? model = null)
     {
         await using var db = CreateContext();
         var seq = ((await db.TranscriptEntries
@@ -382,6 +429,8 @@ public class ContextCompactionSweepTests
             OutputTokens = 0,
             CacheReadTokens = 0,
             CacheCreationTokens = 0,
+            ModelCalls = modelCalls,
+            Model = model,
             Timestamp = at,
             CreatedAt = at,
         });

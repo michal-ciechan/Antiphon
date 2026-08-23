@@ -279,6 +279,16 @@ public sealed class ContextCompactionService
         if (fullness * 100.0 < resolved.ContextPercent)
             return false;
 
+        // Detection (fullness, incidents, attention) stays kind-open. Only the typing
+        // intervention is gated: a Grok /compact writes no user chunk, so CARD-0055
+        // delivery verification would read NoTranscriptRecord and walk the kill path
+        // on a healthy always-on session (CARD-0157). Unknown behaves as Unsupported.
+        if (ProviderContractCatalog.For(kind).RefocusCompact.State
+            != AgentTuiCapabilityState.Supported)
+        {
+            return false;
+        }
+
         return true;
     }
 
