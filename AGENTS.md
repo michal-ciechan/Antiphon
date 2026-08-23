@@ -36,6 +36,11 @@ text. Its header comment is the full reference; this is the synopsis.
   CARD-0051 it always did, silently — that cost two dead sessions and a stray worktree from one
   bookkeeping PATCH. If you have muscle memory from before, assume nothing starts unless you ask.
   The tick will not pick that card up either (CARD-0087); `-Spawn` or `POST /spawn` starts it.
+- **A 409 `subscription_quota_low` is a launch refusal, not a warning on a launch that already
+  happened (CARD-0136).** Pick another provider/agent, or re-send with
+  `ignoreSubscriptionQuota` / `delegate.ps1 -IgnoreSubscriptionQuota`. The gate is inert
+  until `SubscriptionUsageMonitoring` is turned on and a fresh sample exists; no reading
+  never blocks. Internal AlwaysOn/channel/check-interpreter starts opt out in code.
 
 ## Running Locally
 
