@@ -1019,6 +1019,84 @@ public class AgentTaskDeliveryWatchdogTests
         }
     }
 
+    // ---- CARD-0158: historical idle-after-done is the watchdog's, not the escalate clock's --
+
+    /// <summary>
+    /// Fixture_2c40e79f replayed at dispatch + 10 min + ε: the settlement chain fails-with-a-pointer
+    /// fifteen minutes before the old 25-minute escalate clock would have fired. No Escalated event;
+    /// model level untouched. The arm itself is already pinned elsewhere — this pins it against the
+    /// real historical timeline CARD-0158 asked for.
+    /// </summary>
+    [Test]
+    public async Task The_2026_08_11_shape_fails_with_a_pointer_at_ten_minutes_not_an_escalation()
+    {
+        var (harness, stopper) = CreateHarness();
+        // Compress the historical timeline into the watchdog window: run ~5 min, quiet ~5.5 min
+        // after TurnEnd → dispatched ~10.5 min ago. Past DeliveryFailTimeoutMinutes (10), still
+        // well under the retired EscalateAfterMinutes (25).
+        var (task, sessionId) = await EscalateClockHistoricalFixture.Seed_2c40e79fAsync(
+            status: AgentTaskStatus.Dispatched,
+            quietAfterTurnEndMinutes: 5.5,
+            runMinutesBeforeTurnEnd: 5.0);
+
+        var ageAtFailure = DateTime.UtcNow - task.DispatchedAt!.Value;
+        ageAtFailure.ShouldBeGreaterThan(TimeSpan.FromMinutes(10));
+        ageAtFailure.ShouldBeLessThan(TimeSpan.FromMinutes(25),
+            "must fire inside the window the old escalate clock used to own exclusively");
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+        (await harness.AutoEscalateStalledAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed);
+        failed.FailureReason.ShouldContain("could not be attributed");
+        failed.FailureReason.ShouldContain(sessionId.ToString());
+        failed.ModelLevel.ShouldBe(AgentModelLevel.High);
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Escalated))
+            .ShouldBe(0);
+        // Idle after TurnEnd → kill is allowed (D9 withhold only when working).
+        stopper.Killed.ShouldContain(sessionId);
+        // FailNeverStartedAsync already Failed the row; nothing further to retire.
+    }
+
+    /// <summary>
+    /// CARD-0158 D2 watch item, pinned as intentional current behaviour: the watchdog's
+    /// uncorrelated arm queries Status == Dispatched only, so a Working-status task that strands
+    /// uncorrelated raises the Warning incident and nothing else — no fail, no escalate. Zero
+    /// occurrences in the data (both 2026-08-11 cases were Dispatched). Widening the arm is not
+    /// obviously safe (a Working task has already correlated once; an uncorrelated turn there is
+    /// more likely a stray human turn). See the plan's D2 residual gap.
+    /// </summary>
+    [Test]
+    public async Task An_uncorrelated_report_on_a_Working_task_raises_the_incident_and_nothing_else()
+    {
+        var (harness, stopper) = CreateHarness();
+        var (task, sessionId) = await EscalateClockHistoricalFixture.Seed_2c40e79fAsync(
+            status: AgentTaskStatus.Working,
+            quietAfterTurnEndMinutes: 5.5,
+            runMinutesBeforeTurnEnd: 5.0);
+
+        await harness.FailNeverStartedAsync(CancellationToken.None);
+        (await harness.AutoEscalateStalledAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using var verify = CreateContext();
+        var row = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        row.Status.ShouldBe(AgentTaskStatus.Working, "watchdog arm 2 is Dispatched-only by design");
+        row.ModelLevel.ShouldBe(AgentModelLevel.High);
+        row.FailureReason.ShouldBeNull();
+        (await verify.AgentIncidents.CountAsync(
+            i => i.SessionId == sessionId
+                 && i.Kind == AgentIncidentKind.DelegateReportUncorrelated))
+            .ShouldBe(1, "the incident OnTurnEndAsync wrote is the surviving surface");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Escalated))
+            .ShouldBe(0);
+        stopper.Killed.ShouldBeEmpty();
+        await EscalateClockHistoricalFixture.RetireAsync(task.Id);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(

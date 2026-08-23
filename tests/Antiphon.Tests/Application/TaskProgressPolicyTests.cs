@@ -175,6 +175,27 @@ public class TaskProgressPolicyTests
         stall.EscalateToErrorAfterMinutes.ShouldBe(90);
     }
 
+    /// <summary>
+    /// CARD-0158 V3 — the investigation's central negative finding as executable documentation.
+    /// Re-keying AutoEscalateStalledAsync onto TaskProgressPolicy would have made the only two
+    /// historical escalations (both idle-after-TurnEnd, working=false) impossible. Anyone
+    /// proposing that re-key trips over this comment first.
+    /// </summary>
+    [Test]
+    public async Task The_fingerprint_detector_declines_the_2026_08_11_shape_by_design()
+    {
+        var (task, _) = await EscalateClockHistoricalFixture.Seed_9775fe45Async(
+            status: AgentTaskStatus.Working);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        var verdict = await TaskProgressPolicy.EvaluateAsync(
+            db, task, DateTime.UtcNow, new DelegationSettings(), CancellationToken.None);
+
+        verdict.ShouldBeNull(
+            "working=false after TurnEnd: the fingerprint detector declines idle-after-done by design");
+        await EscalateClockHistoricalFixture.RetireAsync(task.Id);
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         private readonly Guid _sessionId = Guid.NewGuid();
