@@ -1,0 +1,43 @@
+#nullable enable
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.AntiphonGatewayOptions() -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.BootstrapServers.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.BootstrapServers.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ConsumerGroup.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ConsumerGroup.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundTopic.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.InboundTopic.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.IngressRestartBackoff.get -> System.TimeSpan
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.IngressRestartBackoff.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.MaxMessageBytes.get -> int
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.MaxMessageBytes.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.OutboundTopic.get -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.OutboundTopic.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ResolveInboundTopic() -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.ResolveOutboundTopic() -> string!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.Security.get -> Antiphon.Messaging.Gateway.KafkaSecurityOptions!
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.Security.set -> void
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.TopicLayout.get -> Antiphon.Messaging.Gateway.TopicLayout
+Antiphon.Messaging.Gateway.AntiphonGatewayOptions.TopicLayout.set -> void
+Antiphon.Messaging.Gateway.GatewayIngressService
+Antiphon.Messaging.Gateway.GatewayIngressService.GatewayIngressService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Confluent.Kafka.IProducer<string!, string!>! producer, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.GatewayIngressService!>! logger) -> void
+Antiphon.Messaging.Gateway.GatewayOutboundService
+Antiphon.Messaging.Gateway.GatewayOutboundService.GatewayOutboundService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.GatewayOutboundService!>! logger) -> void
+Antiphon.Messaging.Gateway.KafkaSecurityOptions
+Antiphon.Messaging.Gateway.KafkaSecurityOptions.KafkaSecurityOptions() -> void
+Antiphon.Messaging.Gateway.KafkaSecurityOptions.SecurityProtocol.get -> string!
+Antiphon.Messaging.Gateway.KafkaSecurityOptions.SecurityProtocol.set -> void
+Antiphon.Messaging.Gateway.ServiceCollectionExtensions
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.Complete() -> void
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.ConsumeRepliesAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Antiphon.Messaging.ChannelReply!>!
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.InMemoryGatewayBus() -> void
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.ProducedInbound.get -> System.Collections.Generic.IReadOnlyList<(string! Key, Antiphon.Messaging.ChannelMessage! Message)>!
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.ProduceInbound(Antiphon.Messaging.ChannelMessage! message) -> void
+Antiphon.Messaging.Gateway.Testing.InMemoryGatewayBus.PushReply(Antiphon.Messaging.ChannelReply! reply) -> void
+Antiphon.Messaging.Gateway.TopicLayout
+Antiphon.Messaging.Gateway.TopicLayout.PerProvider = 1 -> Antiphon.Messaging.Gateway.TopicLayout
+Antiphon.Messaging.Gateway.TopicLayout.Shared = 0 -> Antiphon.Messaging.Gateway.TopicLayout
+const Antiphon.Messaging.Gateway.AntiphonGatewayOptions.SectionName = "AntiphonGateway" -> string!
+static Antiphon.Messaging.Gateway.ServiceCollectionExtensions.AddAntiphonGateway(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, Microsoft.Extensions.Configuration.IConfiguration! configuration, string! sectionName = "AntiphonGateway") -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static Antiphon.Messaging.Gateway.ServiceCollectionExtensions.AddAntiphonGateway(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

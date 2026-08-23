@@ -14,6 +14,12 @@
     <PackageReference Include="TUnit" Version="1.44.0" />
     <PackageReference Include="Shouldly" Version="4.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.*" />
+    <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
     <!-- Self-host FakeTelegramServer / FakeSlackServer (Kestrel + minimal API + WebSockets). -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
@@ -24,6 +30,7 @@
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Slack\Antiphon.Messaging.Slack.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Gateway\Antiphon.Messaging.Gateway.csproj" />
   </ItemGroup>
 
   <ItemGroup>

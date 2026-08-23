@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\Messaging.Pack.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.Messaging.Gateway</RootNamespace>
+    <AssemblyName>Antiphon.Messaging.Gateway</AssemblyName>
+    <Description>Gateway-side Kafka host for Antiphon messaging: produce ChannelMessage, consume ChannelReply.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Antiphon.Messaging\Antiphon.Messaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" Version="[2.6.0,3.0.0)" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Messaging.Tests" />
+  </ItemGroup>
+
+</Project>
