@@ -76,6 +76,13 @@ public class TranscriptEntry
     /// </summary>
     public string? Model { get; set; }
 
+    /// <summary>
+    /// Grok <c>turn_completed.usage.modelCalls</c> (CARD-0157). Null on rows persisted before
+    /// the column existed (deliberately no backfill) and on every non-Grok kind. Occupancy
+    /// treats null as not a single-call window — the safe reading for legacy loop-sum rows.
+    /// </summary>
+    public int? ModelCalls { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public AgentSession AgentSession { get; set; } = null!;

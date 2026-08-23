@@ -425,7 +425,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.IsApiError,
             e.ApiErrorClass,
             e.ApiErrorStatus,
-            e.Model);
+            e.Model,
+            e.ModelCalls);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

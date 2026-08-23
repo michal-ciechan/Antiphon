@@ -38,7 +38,11 @@ public readonly record struct TranscriptPart(
     // message.model on assistant records (CARD-0082). Additive-optional so a lagging pty-host
     // stays compatible. "<synthetic>" (API-error stubs) is deliberately NOT carried — those
     // records are not a real model and must not win the context-window ceiling lookup.
-    string? Model = null);
+    string? Model = null,
+    // Grok turn_completed.usage.modelCalls (CARD-0157). Additive-optional: a lagging shadow-
+    // copied pty-host stays compatible. Null means pre-carriage or a non-Grok part; occupancy
+    // eligibility (SessionContextUsage) treats null as not a single-call window.
+    int? ModelCalls = null);
 
 /// <summary>
 /// Normalizes one line of a Claude Code session JSONL transcript into zero or more

@@ -21,7 +21,9 @@ public sealed record TranscriptContextRow(
     int? CacheReadTokens,
     int? CacheCreationTokens,
     string? Model,
-    bool? IsApiError = null);
+    bool? IsApiError = null,
+    int? ModelCalls = null,
+    DateTime? Timestamp = null);
 
 /// <summary>Result of <see cref="SessionContextUsage.Compute"/>.</summary>
 /// <param name="Fullness">
@@ -151,6 +153,8 @@ public static class SessionContextUsage
                 t.CacheCreationTokens,
                 t.Model,
                 t.IsApiError,
+                t.ModelCalls,
+                t.Timestamp,
             })
             .ToListAsync(ct);
 
@@ -162,7 +166,7 @@ public static class SessionContextUsage
                 .Select(r => new TranscriptContextRow(
                     r.Sequence, r.Kind, r.Text,
                     r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens,
-                    r.Model, r.IsApiError))
+                    r.Model, r.IsApiError, r.ModelCalls, r.Timestamp))
                 .ToList();
             var meta = fallbacks.GetValueOrDefault(id);
             var contract = meta == default

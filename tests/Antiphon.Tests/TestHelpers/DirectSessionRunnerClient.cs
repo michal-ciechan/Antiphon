@@ -220,7 +220,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             e.SessionId, e.Sequence, e.Kind, e.Uuid, e.ParentUuid, e.Timestamp,
             e.Role, e.Text, e.ToolName, e.ToolInput, e.ToolUseId, e.ToolIsError, e.StopReason,
             e.ApiCallId, e.InputTokens, e.OutputTokens, e.CacheReadTokens, e.CacheCreationTokens,
-            e.IsApiError, e.ApiErrorClass, e.ApiErrorStatus, e.Model);
+            e.IsApiError, e.ApiErrorClass, e.ApiErrorStatus, e.Model, e.ModelCalls);
 
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(

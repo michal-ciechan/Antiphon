@@ -272,7 +272,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                     _sessionId, ++_seq, p.Kind, p.Uuid, p.ParentUuid, p.Timestamp,
                     p.Role, p.Text, p.ToolName, p.ToolInput, p.ToolUseId, p.ToolIsError, p.StopReason,
                     p.ApiCallId, p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens,
-                    p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model);
+                    p.IsApiError, p.ApiErrorClass, p.ApiErrorStatus, p.Model, p.ModelCalls);
                 _entries.Add(evt);
             }
             _events.Publish(SessionRunnerEventNames.SessionTranscript, evt);

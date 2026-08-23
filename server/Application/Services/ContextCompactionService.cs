@@ -244,6 +244,7 @@ public sealed class ContextCompactionService
                 t.CacheCreationTokens,
                 t.Model,
                 t.IsApiError,
+                t.ModelCalls,
                 t.Timestamp,
                 t.CreatedAt,
             })
@@ -268,7 +269,7 @@ public sealed class ContextCompactionService
             .Select(r => new TranscriptContextRow(
                 r.Sequence, r.Kind, r.Text,
                 r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens,
-                r.Model, r.IsApiError))
+                r.Model, r.IsApiError, r.ModelCalls, r.Timestamp))
             .ToList();
         var usage = SessionContextUsage.Compute(
             contextRows, effectiveModelId, _window, _logger,
