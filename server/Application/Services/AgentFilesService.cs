@@ -43,6 +43,58 @@ public sealed class AgentFilesService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Workspace activity since <paramref name="since"/> for stall detection (CARD-0153 S2).
+    /// Read-only; a missing or non-git directory is not a failure — the transcript arm stands
+    /// alone. The arm can only ever withhold a stall (a colleague's edits on a shared checkout
+    /// make the detector quieter, never louder).
+    /// </summary>
+    internal async Task<TaskProgressPolicy.WorkspaceArm> ProbeProgressAsync(
+        string? workingDirectory, DateTime since, bool sharedCheckout, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory) || !Directory.Exists(workingDirectory))
+            return new TaskProgressPolicy.WorkspaceArm(false, null, null, sharedCheckout);
+
+        if (!await _git.IsRepositoryAsync(workingDirectory, ct))
+            return new TaskProgressPolicy.WorkspaceArm(false, null, null, sharedCheckout);
+
+        DateTime? lastFile = null;
+        try
+        {
+            foreach (var change in await _git.GetChangesAsync(workingDirectory, ct))
+            {
+                var abs = Path.IsPathRooted(change.Path)
+                    ? change.Path
+                    : Path.Combine(workingDirectory, change.Path);
+                if (!File.Exists(abs))
+                    continue;
+                var mtime = File.GetLastWriteTimeUtc(abs);
+                if (mtime >= since && (lastFile is null || mtime > lastFile))
+                    lastFile = mtime;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Workspace file probe failed in {Dir}", workingDirectory);
+        }
+
+        DateTime? lastCommit = null;
+        try
+        {
+            foreach (var commit in await _git.GetRecentCommitsAsync(workingDirectory, 50, ct))
+            {
+                if (commit.Date > since && (lastCommit is null || commit.Date > lastCommit))
+                    lastCommit = commit.Date;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Workspace commit probe failed in {Dir}", workingDirectory);
+        }
+
+        return new TaskProgressPolicy.WorkspaceArm(true, lastFile, lastCommit, sharedCheckout);
+    }
+
     /// <param name="At">Checkpoint timestamp, surfaced to the UI caption. Checkpoints only.</param>
     /// <param name="ActivitySince">
     /// The instant the agent-activity half of the listing is cut at. Separate from <paramref name="At"/>

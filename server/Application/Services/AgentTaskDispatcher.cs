@@ -52,6 +52,9 @@ public sealed class AgentTaskDispatcher
     // CARD-0117 D7: parked-at-MaxDeliveryAttempts wording. Optional so predating harnesses keep
     // the shipped default of 3.
     private readonly int _maxDeliveryAttempts;
+    // CARD-0153 S2. Optional so S1 harnesses keep constructing this; absent, the transcript arm
+    // stands alone.
+    private readonly AgentFilesService? _files;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -91,12 +94,14 @@ public sealed class AgentTaskDispatcher
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         IServiceScopeFactory? scopeFactory = null,
         AgentTuiLaunchResolver? launchResolver = null,
-        IOptions<SupervisionSettings>? supervision = null)
+        IOptions<SupervisionSettings>? supervision = null,
+        AgentFilesService? files = null)
     {
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
         _launchResolver = launchResolver;
         _maxDeliveryAttempts = Math.Max(1, supervision?.Value.DeliveryVerification.MaxDeliveryAttempts ?? 3);
+        _files = files;
         _runtime = runtime;
         _runnerClient = runnerClient;
         _deadSessions = deadSessions;
@@ -1067,13 +1072,17 @@ public sealed class AgentTaskDispatcher
 
     private async Task<bool> TryRaiseProgressStallAsync(AgentTask task, CancellationToken ct)
     {
-        var suspected = await TaskProgressPolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        var workspace = await ProbeWorkspaceAsync(task, ct);
+        var suspected = await TaskProgressPolicy.EvaluateAsync(
+            _db, task, UtcNow(), _settings, ct, workspace);
         if (suspected is null)
             return false;
 
         var sessionId = task.AgentSessionId!.Value;
         await CatchUpTranscriptAsync(sessionId, ct);
-        var verdict = await TaskProgressPolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        workspace = await ProbeWorkspaceAsync(task, ct);
+        var verdict = await TaskProgressPolicy.EvaluateAsync(
+            _db, task, UtcNow(), _settings, ct, workspace);
         if (verdict is null)
         {
             _logger.LogInformation(
@@ -1128,6 +1137,16 @@ public sealed class AgentTaskDispatcher
         if (!atError)
             return AlertSeverity.Warning;
         return channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
+    }
+
+    /// <summary>
+    private async Task<TaskProgressPolicy.WorkspaceArm?> ProbeWorkspaceAsync(
+        AgentTask task, CancellationToken ct)
+    {
+        if (_files is null || task.DispatchedAt is not DateTime dispatched)
+            return null;
+        return await _files.ProbeProgressAsync(
+            task.WorkingDirectory, dispatched, task.Workspace == WorkspaceMode.Shared, ct);
     }
 
     /// <summary>
