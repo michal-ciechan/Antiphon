@@ -34,6 +34,25 @@ public enum ContextWindowCeilingSource
 }
 
 /// <summary>
+/// How a provider's stored usage fields relate to live window occupancy.
+/// Payload on <c>ProviderContract.ContextWindowUsage</c>. One declared fact
+/// drives both TokensOf arithmetic and occupancy-row eligibility (CARD-0157).
+/// </summary>
+public enum ProviderUsageAccounting
+{
+    /// <summary>
+    /// Cache/output fields add on top of InputTokens (Claude; the legacy default).
+    /// </summary>
+    AdditiveCache = 0,
+
+    /// <summary>
+    /// InputTokens is a per-user-turn loop sum that already contains cache reads (Grok).
+    /// Occupancy is InputTokens of a single-call turn or a usage-bearing CompactBoundary.
+    /// </summary>
+    TurnSumInclusiveCache = 1
+}
+
+/// <summary>
 /// Shape of a provider's usage-limit / quota-wall signal. Payload on
 /// <c>ProviderContract.UsageLimitSignal</c>.
 /// </summary>

@@ -112,7 +112,9 @@ public static class ProviderContractCatalog
         ContextWindowUsage: new ContextWindowUsageContract(
             AgentTuiCapabilityState.Degraded,
             "ACP modelState self-reports context sizes (500k) but that initialize payload is not consumed; turn_completed usage is already stored. Weaker guarantee: fullness cannot be computed until the ceiling is wired (CARD-0083 S5 opened the eligibility gate; wiring the ceiling/modelState is separate, unscoped follow-up work).",
-            ContextWindowCeilingSource.SelfReported),
+            ContextWindowCeilingSource.SelfReported,
+            UsageAccounting: ProviderUsageAccounting.TurnSumInclusiveCache,
+            SelfReportedCeilingTokens: 500_000),
         UsageLimitSignal: new UsageLimitSignalContract(
             AgentTuiCapabilityState.Unknown,
             "pending CARD-0083 S1 survey",

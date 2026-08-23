@@ -25,8 +25,18 @@ public sealed class ContextWindowSettings
     public int ResolveCeiling(string? modelId)
     {
         var fallback = DefaultContextTokens > 0 ? DefaultContextTokens : 200_000;
+        return ResolveOverrideOrNull(modelId) ?? fallback;
+    }
+
+    /// <summary>
+    /// The matching <see cref="ModelOverrides"/> ceiling, or null when no key matches.
+    /// Extracted so CARD-0157 can insert a catalog self-reported constant between the
+    /// operator override and the 200K default: override beats catalog beats default.
+    /// </summary>
+    public int? ResolveOverrideOrNull(string? modelId)
+    {
         if (string.IsNullOrWhiteSpace(modelId) || ModelOverrides.Count == 0)
-            return fallback;
+            return null;
 
         string? bestKey = null;
         var bestTokens = 0;
@@ -45,6 +55,6 @@ public sealed class ContextWindowSettings
             }
         }
 
-        return bestKey is not null ? bestTokens : fallback;
+        return bestKey is not null ? bestTokens : null;
     }
 }

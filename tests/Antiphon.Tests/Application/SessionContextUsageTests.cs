@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -265,16 +266,20 @@ public class SessionContextUsageTests
     [Test]
     public void Grok_contract_suppresses_fullness_and_keeps_the_raw_sum()
     {
-        var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        // Occupancy-eligible single-call row so the kept CARD-0153 gate still has a usage
+        // row to keep TokensUsed from. Multi-call loop-sums are no longer occupancy-bearing.
+        var rows = new[] { GrokTurn(1, input: 137_657, modelCalls: 1, cacheRead: 120_000) };
         var grok = ProviderContractCatalog.For(AgentKind.Grok).ContextWindowUsage;
 
         var result = SessionContextUsage.Compute(rows, "grok-code", Defaults, contract: grok);
 
         result.Fullness.ShouldBeNull();
-        result.TokensUsed.ShouldBe(18_700_000);
-        result.CeilingTokens.ShouldBe(200_000);
+        result.TokensUsed.ShouldBe(137_657, "kind-aware TokensOf: InputTokens alone");
+        result.CeilingTokens.ShouldBe(500_000);
         grok.State.ShouldBe(AgentTuiCapabilityState.Degraded);
         grok.CeilingSource.ShouldBe(ContextWindowCeilingSource.SelfReported);
+        grok.UsageAccounting.ShouldBe(ProviderUsageAccounting.TurnSumInclusiveCache);
+        grok.SelfReportedCeilingTokens.ShouldBe(500_000);
     }
 
     [Test]
@@ -307,6 +312,145 @@ public class SessionContextUsageTests
         }
     }
 
+    // CARD-0157 S3: Grok occupancy against the Supported test contract (catalog stays Degraded
+    // until S4). Fixtures modelled on sessions 98c61e03 / 1636e434.
+    private static readonly ContextWindowUsageContract GrokLive = new(
+        AgentTuiCapabilityState.Supported,
+        "CARD-0157 S3 pin",
+        ContextWindowCeilingSource.SelfReported,
+        UsageAccounting: ProviderUsageAccounting.TurnSumInclusiveCache,
+        SelfReportedCeilingTokens: 500_000);
+
+    [Test]
+    public void Grok_multi_call_turn_is_not_occupancy_and_does_not_report_3740_percent()
+    {
+        var rows = new[] { GrokTurn(1, input: 18_747_424, modelCalls: 103, cacheRead: 18_482_432) };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.Fullness.ShouldBeNull();
+        result.TokensUsed.ShouldBeNull();
+        result.CeilingTokens.ShouldBe(500_000);
+    }
+
+    [Test]
+    public void Grok_single_call_turn_is_input_tokens_alone_against_500k()
+    {
+        var rows = new[] { GrokTurn(1, input: 137_657, modelCalls: 1, cacheRead: 120_000) };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.TokensUsed.ShouldBe(137_657);
+        result.CeilingTokens.ShouldBe(500_000);
+        result.Fullness.ShouldNotBeNull();
+        result.Fullness!.Value.ShouldBe(137_657 / 500_000.0, 1e-12);
+        result.ModelId.ShouldBe("grok-4.6-build");
+    }
+
+    [Test]
+    public void Grok_multi_call_after_single_call_leaves_the_single_call_anchor()
+    {
+        var t0 = new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new[]
+        {
+            GrokTurn(1, input: 137_657, modelCalls: 1, timestamp: t0),
+            GrokTurn(2, input: 3_200_000, modelCalls: 20, timestamp: t0.AddMinutes(5)),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.TokensUsed.ShouldBe(137_657);
+        result.Fullness!.Value.ShouldBe(137_657 / 500_000.0, 1e-12);
+    }
+
+    [Test]
+    public void Grok_usage_bearing_boundary_resets_occupancy_to_tokens_after()
+    {
+        var t0 = new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new[]
+        {
+            GrokTurn(1, input: 137_657, modelCalls: 1, timestamp: t0),
+            GrokTurn(2, input: 3_200_000, modelCalls: 20, timestamp: t0.AddMinutes(5)),
+            GrokBoundary(3, input: 34_833, timestamp: t0.AddMinutes(6)),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.TokensUsed.ShouldBe(34_833);
+        result.Fullness!.Value.ShouldBe(34_833 / 500_000.0, 1e-12);
+    }
+
+    [Test]
+    public void Grok_single_call_after_boundary_refreshes_occupancy()
+    {
+        var t0 = new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new[]
+        {
+            GrokTurn(1, input: 137_657, modelCalls: 1, timestamp: t0),
+            GrokBoundary(2, input: 34_833, timestamp: t0.AddMinutes(6)),
+            GrokTurn(3, input: 99_350, modelCalls: 1, timestamp: t0.AddMinutes(10)),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.TokensUsed.ShouldBe(99_350);
+        result.Fullness!.Value.ShouldBe(99_350 / 500_000.0, 1e-12);
+    }
+
+    [Test]
+    public void Grok_retail_older_boundary_with_higher_sequence_does_not_beat_a_newer_turn()
+    {
+        var t0 = new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new[]
+        {
+            GrokTurn(1, input: 137_657, modelCalls: 1, timestamp: t0.AddMinutes(10)),
+            GrokBoundary(2, input: 34_833, timestamp: t0),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.TokensUsed.ShouldBe(137_657, "timestamp-newest wins; sequence-only would pick the re-tailed boundary");
+        result.Fullness!.Value.ShouldBe(137_657 / 500_000.0, 1e-12);
+    }
+
+    [Test]
+    public void Grok_tokens_less_boundary_newest_invalidates_to_unknown()
+    {
+        var t0 = new DateTime(2026, 8, 19, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new[]
+        {
+            GrokTurn(1, input: 137_657, modelCalls: 1, timestamp: t0),
+            GrokBoundary(2, input: null, timestamp: t0.AddMinutes(1)),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive);
+
+        result.Fullness.ShouldBeNull();
+        result.TokensUsed.ShouldBe(137_657);
+    }
+
+    [Test]
+    public void Grok_ceiling_is_catalog_constant_unless_an_override_matches()
+    {
+        var rows = new[] { GrokTurn(1, input: 137_657, modelCalls: 1, model: "grok-4.6-build") };
+
+        SessionContextUsage.Compute(rows, "grok-4.6-build", Defaults, contract: GrokLive)
+            .CeilingTokens.ShouldBe(500_000);
+
+        var overridden = new ContextWindowSettings
+        {
+            DefaultContextTokens = 200_000,
+            ModelOverrides = { ["grok-4.6"] = 400_000 },
+        };
+        SessionContextUsage.Compute(rows, "grok-4.6-build", overridden, contract: GrokLive)
+            .CeilingTokens.ShouldBe(400_000);
+
+        var claudeRows = new[] { Usage(1, input: 10_000, cacheRead: 0, cacheCreate: 0, output: 0, model: "claude-opus-4") };
+        var claude = ProviderContractCatalog.For(AgentKind.ClaudeCode).ContextWindowUsage;
+        SessionContextUsage.Compute(claudeRows, "claude-opus-4", overridden, contract: claude)
+            .CeilingTokens.ShouldBe(200_000, "Claude is Configured; grok override must not leak");
+    }
+
     [Test]
     public void A_manual_compact_at_under_80_percent_does_not_fire_the_auto_headroom_warning()
     {
@@ -331,6 +475,27 @@ public class SessionContextUsageTests
     private static TranscriptContextRow Row(
         long sequence, string kind, string? text, bool? isApiError = null)
         => new(sequence, kind, text, null, null, null, null, null, isApiError);
+
+    private static TranscriptContextRow GrokTurn(
+        long sequence,
+        int input,
+        int modelCalls,
+        int cacheRead = 0,
+        DateTime? timestamp = null,
+        string? model = "grok-4.6-build")
+        => new(
+            sequence, TranscriptKinds.TurnEnd, "ok",
+            input, OutputTokens: 0, CacheReadTokens: cacheRead, CacheCreationTokens: 0, model,
+            ModelCalls: modelCalls, Timestamp: timestamp);
+
+    private static TranscriptContextRow GrokBoundary(long sequence, int? input, DateTime? timestamp = null)
+        => new(
+            sequence, TranscriptKinds.CompactBoundary,
+            input is int after
+                ? $"Context compacted (auto): tokens x -> {after}"
+                : "Context compacted (auto)",
+            input, null, null, null, null,
+            Timestamp: timestamp);
 
     private sealed class ListLogger(List<string> sink) : ILogger
     {

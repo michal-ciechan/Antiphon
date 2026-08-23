@@ -63,20 +63,26 @@ public static class SessionContextUsage
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var usage = rows
-            .Where(IsUsageBearing)
-            .OrderByDescending(r => r.Sequence)
-            .FirstOrDefault();
+        var accounting = contract?.UsageAccounting ?? ProviderUsageAccounting.AdditiveCache;
+        var occupancy = rows.Where(r => IsOccupancyBearing(r, accounting));
+        var usage = accounting == ProviderUsageAccounting.TurnSumInclusiveCache
+            ? occupancy
+                .OrderByDescending(r => r.Timestamp ?? DateTime.MinValue)
+                .ThenByDescending(r => r.Sequence)
+                .FirstOrDefault()
+            : occupancy
+                .OrderByDescending(r => r.Sequence)
+                .FirstOrDefault();
 
         if (usage is null)
         {
-            var emptyCeiling = settings.ResolveCeiling(fallbackModelId);
+            var emptyCeiling = ResolveCeiling(fallbackModelId, settings, contract);
             return new SessionContextUsageResult(null, null, emptyCeiling, fallbackModelId);
         }
 
-        var tokens = TokensOf(usage);
+        var tokens = TokensOf(usage, accounting);
         var modelId = FirstNonEmpty(usage.Model, fallbackModelId);
-        var ceiling = settings.ResolveCeiling(modelId);
+        var ceiling = ResolveCeiling(modelId, settings, contract);
 
         if (contract is { State: AgentTuiCapabilityState.Degraded,
             CeilingSource: ContextWindowCeilingSource.SelfReported })
@@ -96,10 +102,14 @@ public static class SessionContextUsage
                 fullness.Value, modelId ?? "(none)", ceiling);
         }
 
-        var later = rows.Where(r => r.Sequence > usage.Sequence).ToList();
+        var later = rows.Where(r => IsLaterThan(r, usage, accounting)).ToList();
         var laterAutoBoundary = later.FirstOrDefault(IsAutoCompactBoundary);
         if (laterAutoBoundary is not null && fullness is < AutoCompactHeadroomThreshold)
         {
+            // Claude semantics: an (auto) boundary after a usage row whose computed fullness is
+            // well under 80% means our configured ceiling is too big. A Grok usage-bearing
+            // boundary would have won occupancy selection, so this arm only fires on the
+            // defensive missing-tokens_after case — acceptable log noise.
             logger?.LogWarning(
                 "An (auto) CompactBoundary was recorded on a session computed at {Fullness:P1} fullness (model '{Model}', ceiling {Ceiling} tokens); the configured ceiling may be too high",
                 fullness.Value, modelId ?? "(none)", ceiling);
@@ -248,6 +258,44 @@ public static class SessionContextUsage
         row.InputTokens is not null
         && !TranscriptKinds.IsApiErrorStub(row.Kind, row.IsApiError);
 
+    private static bool IsOccupancyBearing(
+        TranscriptContextRow row, ProviderUsageAccounting accounting)
+    {
+        if (accounting != ProviderUsageAccounting.TurnSumInclusiveCache)
+            return IsUsageBearing(row);
+
+        if (row.Kind == TranscriptKinds.CompactBoundary && row.InputTokens is not null)
+            return true;
+
+        return row.InputTokens is not null
+            && row.ModelCalls == 1
+            && !TranscriptKinds.IsApiErrorStub(row.Kind, row.IsApiError);
+    }
+
+    private static bool IsLaterThan(
+        TranscriptContextRow row,
+        TranscriptContextRow usage,
+        ProviderUsageAccounting accounting)
+    {
+        if (accounting != ProviderUsageAccounting.TurnSumInclusiveCache)
+            return row.Sequence > usage.Sequence;
+
+        var rowTs = row.Timestamp ?? DateTime.MinValue;
+        var usageTs = usage.Timestamp ?? DateTime.MinValue;
+        if (rowTs != usageTs)
+            return rowTs > usageTs;
+        return row.Sequence > usage.Sequence;
+    }
+
+    private static int ResolveCeiling(
+        string? modelId, ContextWindowSettings settings, ContextWindowUsageContract? contract)
+    {
+        var fallback = settings.DefaultContextTokens > 0 ? settings.DefaultContextTokens : 200_000;
+        return settings.ResolveOverrideOrNull(modelId)
+            ?? contract?.SelfReportedCeilingTokens
+            ?? fallback;
+    }
+
     private static bool IsInvalidator(TranscriptContextRow row) =>
         row.Kind == TranscriptKinds.CompactBoundary
         || string.Equals(
@@ -260,11 +308,13 @@ public static class SessionContextUsage
         && row.Text is not null
         && row.Text.Contains("(auto)", StringComparison.Ordinal);
 
-    private static long TokensOf(TranscriptContextRow row) =>
-        (long)(row.InputTokens ?? 0)
-        + (row.CacheReadTokens ?? 0)
-        + (row.CacheCreationTokens ?? 0)
-        + (row.OutputTokens ?? 0);
+    private static long TokensOf(TranscriptContextRow row, ProviderUsageAccounting accounting) =>
+        accounting == ProviderUsageAccounting.TurnSumInclusiveCache
+            ? row.InputTokens ?? 0
+            : (long)(row.InputTokens ?? 0)
+                + (row.CacheReadTokens ?? 0)
+                + (row.CacheCreationTokens ?? 0)
+                + (row.OutputTokens ?? 0);
 
     private static int? ToInt(long tokens) =>
         tokens > int.MaxValue ? int.MaxValue : (int)tokens;

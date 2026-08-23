@@ -80,7 +80,9 @@ public sealed record SessionResumeContract(
 public sealed record ContextWindowUsageContract(
     AgentTuiCapabilityState State,
     string Reason,
-    ContextWindowCeilingSource CeilingSource);
+    ContextWindowCeilingSource CeilingSource,
+    ProviderUsageAccounting UsageAccounting = ProviderUsageAccounting.AdditiveCache,
+    int? SelfReportedCeilingTokens = null);
 
 public sealed record UsageLimitSignalContract(
     AgentTuiCapabilityState State,
