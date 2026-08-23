@@ -807,6 +807,58 @@ public class AgentTaskDeliveryWatchdogTests
     }
 
     [Test]
+    public async Task a_queued_command_attachment_is_jsonl_recovery_evidence()
+    {
+        // CARD-0135 S4: an unbound session whose on-disk JSONL carries the brief only as a
+        // queued_command attachment. CARD-0127's type=="user" gate used to miss it. The
+        // 753cdb4e / another-known-session / assistant-record / C3-refused regressions below
+        // stay red-if-widened-wrong — they are this slice's test 17.
+        var projectsRoot = Directory.CreateTempSubdirectory("card0135-queued-jsonl").FullName;
+        var cwd = Directory.CreateTempSubdirectory("card0135-queued-cwd").FullName;
+        string? jsonl = null;
+        try
+        {
+            var (harness, stopper) = CreateHarness(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            });
+            var task = await SeedRecoverableTaskAsync(
+                dispatchedMinutesAgo: 11,
+                workingDirectory: cwd,
+                sessionCwd: cwd);
+
+            var encoded = DelegateBindRefusalRecovery.EncodeClaudeProjectDir(cwd);
+            var projectDir = Path.Combine(projectsRoot, encoded);
+            Directory.CreateDirectory(projectDir);
+            jsonl = Path.Combine(projectDir, task.AgentSessionId!.Value.ToString("D") + ".jsonl");
+            var started = DateTime.UtcNow;
+            await File.WriteAllTextAsync(jsonl,
+                JsonlQueuedCommand(
+                    cwd,
+                    $"{DelegationReportFormatter.TaskMarker(task.Id)} the plan is written.",
+                    started)
+                + "\n"
+                + JsonlAssistant(cwd, "done.", started.AddMinutes(2))
+                + "\n");
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var recovered = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            recovered.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            recovered.Result.ShouldContain(jsonl);
+            (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == task.AgentSessionId))
+                .ShouldBe(0, "Arm B does not ingest. C4 stays refused.");
+            stopper.Killed.ShouldNotContain(task.AgentSessionId!.Value);
+        }
+        finally
+        {
+            TryDeleteTree(projectsRoot);
+            TryDeleteTree(cwd);
+        }
+    }
+
+    [Test]
     public async Task a_codex_task_never_recovers_from_a_matching_claude_jsonl_regression_753cdb4e()
     {
         // CARD-0127: task 753cdb4e was Codex but recovered from another delegate's Claude JSONL.

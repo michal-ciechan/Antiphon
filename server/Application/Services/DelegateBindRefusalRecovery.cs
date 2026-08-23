@@ -164,8 +164,9 @@ public sealed class DelegateBindRefusalRecovery
     }
 
     /// <summary>
-    /// C2 then C3 then a distinctive-needle search of user records. A C3 refusal stops the read
-    /// — using that file would undermine CARD-0006.
+    /// C2 then C3 then a distinctive-needle search of submitted-input records (a <c>user</c>
+    /// record, or an <c>attachment</c> whose <c>attachment.type</c> is <c>queued_command</c>).
+    /// A C3 refusal stops the read — using that file would undermine CARD-0006.
     /// </summary>
     private static bool TryMatchJsonl(
         string path, string sessionCwd, DateTime startedAt, IReadOnlyList<Needle> needles)
@@ -190,9 +191,14 @@ public sealed class DelegateBindRefusalRecovery
                 if (root.ValueKind != JsonValueKind.Object)
                     continue;
 
+                // CARD-0135 S4: a drained queued_command's attachment.prompt is verbatim
+                // submitted input — the same evidence class as a user record's content.
+                // CARD-0127's tightenings stay: C1 another-known-session, C2 cwd, C3 first
+                // timestamp, JsonlNeedles marker-or-bounded-short-id. An assistant record
+                // quoting a marker still does not count.
                 isUserRecord = root.TryGetProperty("type", out var typeEl)
                     && typeEl.ValueKind == JsonValueKind.String
-                    && string.Equals(typeEl.GetString(), "user", StringComparison.Ordinal);
+                    && IsSubmittedInputRecord(typeEl.GetString(), root);
 
                 if (cwd is null
                     && root.TryGetProperty("cwd", out var cwdEl)
@@ -224,6 +230,24 @@ public sealed class DelegateBindRefusalRecovery
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Verbatim submitted input: a typed <c>user</c> record, or a drained composer-queue
+    /// <c>queued_command</c> attachment whose <c>prompt</c> is the body that reached the model.
+    /// Assistant records quoting a marker stay out — that is the CARD-0127 exclusion.
+    /// </summary>
+    private static bool IsSubmittedInputRecord(string? type, JsonElement root)
+    {
+        if (string.Equals(type, "user", StringComparison.Ordinal))
+            return true;
+        if (!string.Equals(type, "attachment", StringComparison.Ordinal))
+            return false;
+        return root.TryGetProperty("attachment", out var attachment)
+            && attachment.ValueKind == JsonValueKind.Object
+            && attachment.TryGetProperty("type", out var attachmentType)
+            && attachmentType.ValueKind == JsonValueKind.String
+            && string.Equals(attachmentType.GetString(), "queued_command", StringComparison.Ordinal);
     }
 
     internal static IReadOnlyList<Needle> DistinctiveNeedles(AgentTask task)
