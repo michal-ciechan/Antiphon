@@ -301,9 +301,9 @@ public class ContextCompactionSweepTests
                 new ContextWindowSettings(),
                 logger: null,
                 CancellationToken.None);
-            fullness[grokId].ShouldNotBeNull(
+            fullness[grokId].Fullness.ShouldNotBeNull(
                 "positive control: fullness is real and over threshold — the gag is gone");
-            fullness[grokId]!.Value.ShouldBeGreaterThanOrEqualTo(0.50);
+            fullness[grokId].Fullness!.Value.ShouldBeGreaterThanOrEqualTo(0.50);
         }
 
         await SweepAsync(h, FastSettings());

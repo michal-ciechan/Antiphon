@@ -172,6 +172,32 @@ describe('HomePage', () => {
     expect(screen.getByRole('button', { name: 'Select agent axc' })).toBeInTheDocument()
   })
 
+  it('a ClaudeCode rail row with no usage yet says no turns yet, never Compacted', async () => {
+    seed({
+      agents: [
+        agent({
+          id: 'a1',
+          name: 'axc',
+          liveSession: {
+            id: 's1',
+            status: 'Running',
+            agentKind: 'ClaudeCode',
+            contextFullness: null,
+            contextFullnessState: 'NoUsageYet',
+          },
+        }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+
+    await waitFor(() => expect(screen.getByTestId('session-context-badge')).toBeInTheDocument())
+    const badge = screen.getByTestId('session-context-badge')
+    expect(badge).toHaveTextContent('no turns yet')
+    expect(badge).toHaveAttribute('data-state', 'NoUsageYet')
+    expect(badge).not.toHaveAccessibleName(/Compacted/)
+    expect(screen.queryByText(/Compacted/i)).not.toBeInTheDocument()
+  })
+
   it('selecting an agent in the rail redirects the files pane and the chat dock', async () => {
     seed({
       agents: [

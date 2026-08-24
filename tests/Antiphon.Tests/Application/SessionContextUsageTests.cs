@@ -210,6 +210,82 @@ public class SessionContextUsageTests
     }
 
     [Test]
+    public void State_is_NoUsageYet_with_no_usage_rows()
+    {
+        var rows = new[]
+        {
+            Row(1, TranscriptKinds.UserPrompt, "hello"),
+            Row(2, TranscriptKinds.AssistantText, "hi"),
+        };
+
+        var result = SessionContextUsage.Compute(rows, "claude-opus-4", Defaults);
+
+        result.Fullness.ShouldBeNull();
+        result.TokensUsed.ShouldBeNull();
+        result.State.ShouldBe(ContextFullnessState.NoUsageYet);
+        SessionContextUsage.Compute([], null, Defaults).State.ShouldBe(ContextFullnessState.NoUsageYet);
+    }
+
+    [Test]
+    public void State_is_Compacted_after_a_boundary()
+    {
+        var rows = new[]
+        {
+            Usage(1, input: 50_000, cacheRead: 0, cacheCreate: 0, output: 1_000),
+            Row(2, TranscriptKinds.CompactBoundary, "Context compacted (manual)"),
+        };
+
+        var result = SessionContextUsage.Compute(rows, null, Defaults);
+
+        result.Fullness.ShouldBeNull();
+        result.TokensUsed.ShouldBe(51_000);
+        result.State.ShouldBe(ContextFullnessState.Compacted);
+    }
+
+    [Test]
+    public void State_is_Cleared_after_a_clear_command()
+    {
+        var rows = new[]
+        {
+            Usage(1, input: 50_000, cacheRead: 0, cacheCreate: 0, output: 0),
+            Row(2, TranscriptKinds.UserPrompt,
+                "<command-name>/clear</command-name>\n<command-message>clear</command-message>"),
+        };
+
+        var result = SessionContextUsage.Compute(rows, null, Defaults);
+
+        result.Fullness.ShouldBeNull();
+        result.State.ShouldBe(ContextFullnessState.Cleared);
+    }
+
+    [Test]
+    public void State_is_Suppressed_for_a_degraded_self_reported_contract()
+    {
+        var rows = new[] { Usage(1, input: 18_700_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+        var suppressed = new ContextWindowUsageContract(
+            AgentTuiCapabilityState.Degraded,
+            "synthetic Degraded+SelfReported",
+            ContextWindowCeilingSource.SelfReported);
+
+        var result = SessionContextUsage.Compute(rows, "model", Defaults, contract: suppressed);
+
+        result.Fullness.ShouldBeNull();
+        result.State.ShouldBe(ContextFullnessState.Suppressed);
+    }
+
+    [Test]
+    public void State_is_Known_with_fullness()
+    {
+        var rows = new[] { Usage(1, input: 40_000, cacheRead: 0, cacheCreate: 0, output: 0) };
+
+        var result = SessionContextUsage.Compute(rows, null, Defaults);
+
+        result.Fullness.ShouldNotBeNull();
+        result.Fullness!.Value.ShouldBe(40_000 / 200_000.0, 1e-12);
+        result.State.ShouldBe(ContextFullnessState.Known);
+    }
+
+    [Test]
     public void Fullness_over_100_percent_logs_a_warning_naming_model_and_ceiling()
     {
         var sink = new List<string>();

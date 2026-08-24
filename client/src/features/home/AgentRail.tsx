@@ -76,7 +76,11 @@ export function AgentRail({
               {agent.name}
             </Text>
             {agent.liveSession?.agentKind === 'ClaudeCode' && (
-              <SessionContextBadge fullness={agent.liveSession.contextFullness} size="xs" />
+              <SessionContextBadge
+                fullness={agent.liveSession.contextFullness}
+                state={agent.liveSession.contextFullnessState}
+                size="xs"
+              />
             )}
             <ActivityBadge agent={agent} />
             {agent.queueLength > 0 && (

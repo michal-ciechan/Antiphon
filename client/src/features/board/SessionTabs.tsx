@@ -97,7 +97,10 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
               {selectedSession.status}
             </Badge>
             {selectedSession.agentKind === 'ClaudeCode' && (
-              <SessionContextBadge fullness={selectedSession.contextFullness} />
+              <SessionContextBadge
+                fullness={selectedSession.contextFullness}
+                state={selectedSession.contextFullnessState}
+              />
             )}
             <CopyButton value={selectedSession.id}>
               {({ copied, copy }) => (

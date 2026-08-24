@@ -27,17 +27,19 @@ public sealed record TranscriptContextRow(
 
 /// <summary>Result of <see cref="SessionContextUsage.Compute"/>.</summary>
 /// <param name="Fullness">
-/// Tokens used / ceiling. Null when unknown: no usage-bearing row, or a CompactBoundary / /clear
-/// landed after the newest usage-bearing row.
+/// Tokens used / ceiling. Null when <paramref name="State"/> is not
+/// <see cref="ContextFullnessState.Known"/> (or the ceiling is non-positive).
 /// </param>
 /// <param name="TokensUsed">Sum of the winning usage row, even when <paramref name="Fullness"/> is unknown.</param>
 /// <param name="CeilingTokens">Resolved ceiling (override or default).</param>
 /// <param name="ModelId">Model used for the ceiling (row, then fallback, then null).</param>
+/// <param name="State">Why fullness is a number or null (CARD-0178).</param>
 public sealed record SessionContextUsageResult(
     double? Fullness,
     int? TokensUsed,
     int CeilingTokens,
-    string? ModelId);
+    string? ModelId,
+    ContextFullnessState State);
 
 /// <summary>
 /// Live context fullness from the newest usage-bearing transcript row (CARD-0082). Pure
@@ -77,7 +79,8 @@ public static class SessionContextUsage
         if (usage is null)
         {
             var emptyCeiling = ResolveCeiling(fallbackModelId, settings, contract);
-            return new SessionContextUsageResult(null, null, emptyCeiling, fallbackModelId);
+            return new SessionContextUsageResult(
+                null, null, emptyCeiling, fallbackModelId, ContextFullnessState.NoUsageYet);
         }
 
         var tokens = TokensOf(usage, accounting);
@@ -90,7 +93,8 @@ public static class SessionContextUsage
             logger?.LogDebug(
                 "Context fullness suppressed for a {State}/{Ceiling} contract: {Reason}",
                 contract.State, contract.CeilingSource, contract.Reason);
-            return new SessionContextUsageResult(null, ToInt(tokens), ceiling, modelId);
+            return new SessionContextUsageResult(
+                null, ToInt(tokens), ceiling, modelId, ContextFullnessState.Suppressed);
         }
 
         var fullness = ceiling > 0 ? tokens / (double)ceiling : (double?)null;
@@ -115,17 +119,24 @@ public static class SessionContextUsage
                 fullness.Value, modelId ?? "(none)", ceiling);
         }
 
-        if (later.Any(IsInvalidator))
-            return new SessionContextUsageResult(null, ToInt(tokens), ceiling, modelId);
+        var newestInvalidator = NewestInvalidator(later, accounting);
+        if (newestInvalidator is not null)
+        {
+            var state = IsClearCommand(newestInvalidator)
+                ? ContextFullnessState.Cleared
+                : ContextFullnessState.Compacted;
+            return new SessionContextUsageResult(null, ToInt(tokens), ceiling, modelId, state);
+        }
 
-        return new SessionContextUsageResult(fullness, ToInt(tokens), ceiling, modelId);
+        return new SessionContextUsageResult(
+            fullness, ToInt(tokens), ceiling, modelId, ContextFullnessState.Known);
     }
 
     /// <summary>
     /// One indexed-friendly query per batch of sessions: usage-bearing rows plus the CompactBoundary
-    /// / local-command wrappers that can invalidate them. Returns session id → fullness (null = unknown).
+    /// / local-command wrappers that can invalidate them. Returns session id → (fullness, state).
     /// </summary>
-    public static async Task<IReadOnlyDictionary<Guid, double?>> LoadFullnessAsync(
+    public static async Task<IReadOnlyDictionary<Guid, (double? Fullness, ContextFullnessState State)>> LoadFullnessAsync(
         AppDbContext db,
         IReadOnlyCollection<(Guid SessionId, string? EffectiveModelId, AgentKind Kind)> sessions,
         ContextWindowSettings settings,
@@ -136,7 +147,7 @@ public static class SessionContextUsage
         ArgumentNullException.ThrowIfNull(settings);
 
         if (sessions.Count == 0)
-            return new Dictionary<Guid, double?>();
+            return new Dictionary<Guid, (double? Fullness, ContextFullnessState State)>();
 
         var ids = sessions.Select(s => s.SessionId).Distinct().ToList();
         var fallbacks = sessions
@@ -168,7 +179,7 @@ public static class SessionContextUsage
             })
             .ToListAsync(ct);
 
-        var result = new Dictionary<Guid, double?>(ids.Count);
+        var result = new Dictionary<Guid, (double? Fullness, ContextFullnessState State)>(ids.Count);
         foreach (var id in ids)
         {
             var sessionRows = rows
@@ -182,8 +193,9 @@ public static class SessionContextUsage
             var contract = meta == default
                 ? null
                 : ProviderContractCatalog.For(meta.Kind).ContextWindowUsage;
-            result[id] = Compute(
-                sessionRows, meta.EffectiveModelId, settings, logger, contract).Fullness;
+            var computed = Compute(
+                sessionRows, meta.EffectiveModelId, settings, logger, contract);
+            result[id] = (computed.Fullness, computed.State);
         }
 
         return result;
@@ -199,7 +211,7 @@ public static class SessionContextUsage
         if (sessions.Count == 0)
             return sessions;
 
-        var fullness = await LoadFullnessAsync(
+        var usage = await LoadFullnessAsync(
             db,
             sessions.Select(s => (s.Id, s.EffectiveModelId, s.AgentKind)).ToList(),
             settings,
@@ -207,7 +219,16 @@ public static class SessionContextUsage
             ct);
 
         return sessions
-            .Select(s => s with { ContextFullness = fullness.GetValueOrDefault(s.Id) })
+            .Select(s =>
+            {
+                if (!usage.TryGetValue(s.Id, out var snapshot))
+                    return s;
+                return s with
+                {
+                    ContextFullness = snapshot.Fullness,
+                    ContextFullnessState = snapshot.State,
+                };
+            })
             .ToList();
     }
 
@@ -233,7 +254,7 @@ public static class SessionContextUsage
         if (all.Count == 0)
             return board;
 
-        var fullness = await LoadFullnessAsync(
+        var usage = await LoadFullnessAsync(
             db,
             all.Select(s => (s.Id, s.EffectiveModelId, s.AgentKind)).Distinct().ToList(),
             settings,
@@ -247,7 +268,16 @@ public static class SessionContextUsage
                 Cards = col.Cards.Select(card => card with
                 {
                     Sessions = card.Sessions
-                        .Select(s => s with { ContextFullness = fullness.GetValueOrDefault(s.Id) })
+                        .Select(s =>
+                        {
+                            if (!usage.TryGetValue(s.Id, out var snapshot))
+                                return s;
+                            return s with
+                            {
+                                ContextFullness = snapshot.Fullness,
+                                ContextFullnessState = snapshot.State,
+                            };
+                        })
                         .ToList(),
                 }).ToList(),
             }).ToList(),
@@ -298,10 +328,27 @@ public static class SessionContextUsage
 
     private static bool IsInvalidator(TranscriptContextRow row) =>
         row.Kind == TranscriptKinds.CompactBoundary
-        || string.Equals(
+        || IsClearCommand(row);
+
+    private static bool IsClearCommand(TranscriptContextRow row) =>
+        string.Equals(
             TranscriptKinds.TryReadLocalCommandName(row.Kind, row.Text),
             ClearCommandName,
             StringComparison.Ordinal);
+
+    private static TranscriptContextRow? NewestInvalidator(
+        List<TranscriptContextRow> later, ProviderUsageAccounting accounting)
+    {
+        var invalidators = later.Where(IsInvalidator);
+        return accounting == ProviderUsageAccounting.TurnSumInclusiveCache
+            ? invalidators
+                .OrderByDescending(r => r.Timestamp ?? DateTime.MinValue)
+                .ThenByDescending(r => r.Sequence)
+                .FirstOrDefault()
+            : invalidators
+                .OrderByDescending(r => r.Sequence)
+                .FirstOrDefault();
+    }
 
     private static bool IsAutoCompactBoundary(TranscriptContextRow row) =>
         row.Kind == TranscriptKinds.CompactBoundary

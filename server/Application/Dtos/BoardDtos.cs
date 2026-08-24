@@ -93,7 +93,9 @@ public sealed record AgentSessionSummaryDto(
     // Newest-usage-row fullness (tokens / ceiling). Null = unknown: no usage yet, or a
     // CompactBoundary / /clear landed after the last usage-bearing row (CARD-0082). Computed
     // on read; never persisted.
-    double? ContextFullness = null);
+    double? ContextFullness = null,
+    // Why ContextFullness is a number or null (CARD-0178). Additive; older servers omit it.
+    ContextFullnessState? ContextFullnessState = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

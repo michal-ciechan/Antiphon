@@ -92,8 +92,8 @@ public class SessionContextUsagePersistenceTests
                 logger: null,
                 CancellationToken.None);
 
-            fullness[sessionId].ShouldNotBeNull();
-            fullness[sessionId]!.Value.ShouldBe(34_833 / 500_000.0, 1e-12);
+            fullness[sessionId].Fullness.ShouldNotBeNull();
+            fullness[sessionId].Fullness!.Value.ShouldBe(34_833 / 500_000.0, 1e-12);
         }
         finally
         {

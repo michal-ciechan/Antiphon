@@ -163,7 +163,19 @@ export interface AgentSessionSummaryDto {
    * yet, or a CompactBoundary / /clear landed after the last usage-bearing row (CARD-0082).
    */
   contextFullness?: number | null
+  /**
+   * Why contextFullness is a number or null (CARD-0178). Additive; an older server omits it
+   * and the badge falls back to "unknown".
+   */
+  contextFullnessState?: ContextFullnessState | null
 }
+
+export type ContextFullnessState =
+  | 'Known'
+  | 'NoUsageYet'
+  | 'Compacted'
+  | 'Cleared'
+  | 'Suppressed'
 
 export interface CreateBoardRequest {
   projectId: string

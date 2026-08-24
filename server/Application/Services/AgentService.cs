@@ -198,6 +198,7 @@ public sealed class AgentService
                     s.FailureReason,
                     s.TuiProfileRevisionId,
                     s.EffectiveModelId,
+                    null,
                     null),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
@@ -211,7 +212,19 @@ public sealed class AgentService
 
         return sessions.ToDictionary(
             s => s.Dto.Id,
-            s => s with { Dto = s.Dto with { ContextFullness = fullness.GetValueOrDefault(s.Dto.Id) } });
+            s =>
+            {
+                if (!fullness.TryGetValue(s.Dto.Id, out var snapshot))
+                    return s;
+                return s with
+                {
+                    Dto = s.Dto with
+                    {
+                        ContextFullness = snapshot.Fullness,
+                        ContextFullnessState = snapshot.State,
+                    },
+                };
+            });
     }
 
     private static LiveSession? ResolveLiveSession(

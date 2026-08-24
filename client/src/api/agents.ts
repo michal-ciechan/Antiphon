@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from './client'
 import { boardKeys, type AgentKind, type AgentSessionSummaryDto } from './boards'
 
+export type { ContextFullnessState } from './boards'
+
 export interface AgentRegistryDto {
   defaultDefinition: string
   definitions: AgentDefinitionDto[]

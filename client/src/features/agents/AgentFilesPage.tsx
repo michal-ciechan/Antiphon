@@ -61,7 +61,10 @@ export function AgentFilesPage() {
           {/* showIdle: this header has no terminal icon, so the badge is the only status here. */}
           {agent.data && <AgentActivityBadge agent={agent.data} showIdle />}
           {agent.data?.liveSession?.agentKind === 'ClaudeCode' && (
-            <SessionContextBadge fullness={agent.data.liveSession.contextFullness} />
+            <SessionContextBadge
+              fullness={agent.data.liveSession.contextFullness}
+              state={agent.data.liveSession.contextFullnessState}
+            />
           )}
           <Text size="xs" c="dimmed" truncate style={{ maxWidth: 420 }}>
             {agent.data?.workingDirectory}

@@ -1,4 +1,5 @@
 import { Badge, Tooltip } from '@mantine/core'
+import type { ContextFullnessState } from '../../api/boards'
 
 type ContextBadgeTone = 'awaiting' | 'normal' | 'warning' | 'danger'
 
@@ -16,8 +17,7 @@ const TONE_COLOR: Record<ContextBadgeTone, string> = {
   danger: 'red',
 }
 
-function contextBadgeTone(fullness: number | null | undefined): ContextBadgeTone {
-  if (fullness == null) return 'awaiting'
+function contextBadgeTone(fullness: number): ContextBadgeTone {
   if (fullness >= CONTEXT_DANGER_FULLNESS) return 'danger'
   if (fullness >= CONTEXT_WARNING_FULLNESS) return 'warning'
   return 'normal'
@@ -27,39 +27,84 @@ function formatPercent(fullness: number): string {
   return `${Math.round(fullness * 100)}%`
 }
 
+function percentCopy(fullness: number): { label: string; hint: string; tone: ContextBadgeTone } {
+  return {
+    label: formatPercent(fullness),
+    hint: `Context ${formatPercent(fullness)} full`,
+    tone: contextBadgeTone(fullness),
+  }
+}
+
+const UNKNOWN_COPY = {
+  label: 'unknown',
+  hint: 'Context unknown',
+  tone: 'awaiting' as const,
+}
+
 /**
  * Live context-window fullness for a Claude session. Same Badge / variant="light" / green-
  * orange-red-gray palette as SessionWorkingBadge and AgentActivityBadge.
  *
- * Null is the expected post-compaction state (and the pre-first-turn state) — not an error and
- * not 0%. The badge stays visible so a just-compacted session is not mistaken for empty.
+ * `state` names why fullness is a number or null (CARD-0178). Absent state (older server)
+ * with null fullness is "unknown", not compacted — four reasons used to share one copy.
  */
 export function SessionContextBadge({
   fullness,
+  state,
   size = 'sm',
 }: {
   fullness: number | null | undefined
+  state?: ContextFullnessState | null
   size?: 'xs' | 'sm' | 'md'
 }) {
-  const tone = contextBadgeTone(fullness)
-  const label = fullness == null ? 'awaiting next turn' : formatPercent(fullness)
-  const hint =
-    fullness == null
-      ? 'Compacted — awaiting next turn'
-      : `Context ${formatPercent(fullness)} full`
+  if (state === 'Suppressed') return null
+
+  const copy = resolveCopy(fullness, state)
+  const dataState = state ?? 'absent'
 
   return (
-    <Tooltip label={hint} withArrow>
+    <Tooltip label={copy.hint} withArrow>
       <Badge
         size={size}
-        color={TONE_COLOR[tone]}
+        color={TONE_COLOR[copy.tone]}
         variant="light"
         data-testid="session-context-badge"
-        data-tone={tone}
-        aria-label={hint}
+        data-tone={copy.tone}
+        data-state={dataState}
+        aria-label={copy.hint}
       >
-        {label}
+        {copy.label}
       </Badge>
     </Tooltip>
   )
+}
+
+function resolveCopy(
+  fullness: number | null | undefined,
+  state: ContextFullnessState | null | undefined,
+): { label: string; hint: string; tone: ContextBadgeTone } {
+  switch (state) {
+    case 'NoUsageYet':
+      return {
+        label: 'no turns yet',
+        hint: 'No turns yet — context unknown',
+        tone: 'awaiting',
+      }
+    case 'Compacted':
+      return {
+        label: 'awaiting next turn',
+        hint: 'Compacted — awaiting next turn',
+        tone: 'awaiting',
+      }
+    case 'Cleared':
+      return {
+        label: 'cleared',
+        hint: 'Conversation cleared — awaiting next turn',
+        tone: 'awaiting',
+      }
+    case 'Known':
+      return fullness == null ? UNKNOWN_COPY : percentCopy(fullness)
+    default:
+      return fullness == null ? UNKNOWN_COPY : percentCopy(fullness)
+  }
 }
