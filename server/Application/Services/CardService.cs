@@ -159,11 +159,6 @@ public sealed class CardService
     /// files its first card it gets CARD-0001 again, and a resolver that took the first row would
     /// silently address the wrong card.</para>
     ///
-    /// <para>A foreign tracker's key (<c>ANT-12</c>) also resolves through
-    /// <c>ExternalIssueRef.ExternalKey</c> since CARD-0175, because a linked card's own
-    /// <c>Identifier</c> is <c>CARD-nnnn</c> and no longer the tracker's. <c>#N</c> is deliberately
-    /// NOT routed that way — it is the canonical entry form of <c>CARD-000N</c>.</para>
-    ///
     /// <para>An input that is neither a guid nor identifier-SHAPED is a 422 rather than a 404: it
     /// is a caller mistake, not a missing card, and the message can say so. The shape is narrow on
     /// purpose (digits, or <c>PREFIX-digits</c>) — it is what makes a literal route segment that
@@ -199,28 +194,12 @@ public sealed class CardService
             .Take(2)
             .ToListAsync(ct);
 
-        // CARD-0175: an imported card's Identifier is CARD-nnnn now and the tracker's own key
-        // lives on ExternalIssueRef.ExternalKey, so `card.ps1 get ANT-12` has to resolve through
-        // the ref. Only the FOREIGN arm does this: `#5` is the canonical entry form of CARD-0005
-        // in cardIdentifier.ts, ResolveCardIdAsync and card.ps1, and routing it to a GitHub number
-        // instead is precisely the collision this card exists to remove.
-        if (canonical is null && matches.Count < 2)
-        {
-            var byExternalKey = await _db.ExternalIssueRefs
-                .AsNoTracking()
-                .Where(r => r.ExternalKey == raw || r.ExternalKey.ToLower() == lowered)
-                .Select(r => r.CardId)
-                .Take(2)
-                .ToListAsync(ct);
-            matches = matches.Concat(byExternalKey).Distinct().Take(2).ToList();
-        }
-
         return matches.Count switch
         {
             0 => throw new NotFoundException(nameof(Card), canonicalOrRaw),
             1 => matches[0],
             _ => throw new ConflictException(
-                $"Card identifier '{canonicalOrRaw}' matches more than one card "
+                $"Card identifier '{canonicalOrRaw}' matches cards on more than one board "
                 + "— use the card's guid."),
         };
     }
@@ -750,9 +729,6 @@ public sealed class CardService
             .AsNoTracking()
             .Include(c => c.AgentSessions)
             .Include(c => c.AssignedAgent)
-            // CARD-0175 S4: the tracker key/link is on the DTO, so the single-card read has to
-            // load the ref - nothing included it before and the field would be silently null.
-            .Include(c => c.ExternalIssueRef)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
@@ -766,7 +742,6 @@ public sealed class CardService
             .Include(c => c.BoardColumn)
             .Include(c => c.AgentSessions)
             .Include(c => c.AssignedAgent)
-            .Include(c => c.ExternalIssueRef)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
@@ -837,24 +812,46 @@ public sealed class CardService
     }
 
     /// <summary>
-    /// The next identifier for a board. Delegates to <see cref="CardIdentifierAllocator"/>, which
-    /// owns the parse, the archived-included rule and the forward-only guarantee (CARD-0005) - the
-    /// tracker sync allocates from the same place, so a batch of imports and a manual create
-    /// cannot disagree about what is already taken (CARD-0175).
+    /// The next identifier for a board: one past the HIGHEST suffix already handed out.
     /// </summary>
+    /// <remarks>
+    /// This used to be <c>count + 1</c>, which reused an identifier after a delete (CARD-0005):
+    /// remove CARD-0007 from a seven-card board and the next create hands out CARD-0007 again,
+    /// silently pointing every existing reference — commit messages, docs, other cards' terminal
+    /// reasons — at a different card. Identifiers are cited outside the database, so the sequence
+    /// has to move forward even when rows leave. Suffixes that do not parse (a board synced from a
+    /// foreign tracker) are ignored rather than blocking allocation.
+    ///
+    /// <para>A HARD delete of the current highest card still frees its number, because the only
+    /// record that it was ever taken is the row itself. That is now avoidable rather than
+    /// inevitable: <see cref="ArchiveAsync"/> is what "delete" means for a card, and an archived
+    /// row is still counted here — which is exactly why archived cards are filtered at the read
+    /// site and NOT by a global EF query filter.</para>
+    /// </remarks>
     private async Task<string> NextIdentifierAsync(Guid boardId, CancellationToken ct)
     {
-        var allocator = await CardIdentifierAllocator.ForBoardAsync(_db, boardId, ct);
-        return allocator.Next();
+        var identifiers = await _db.Cards
+            .Where(c => c.BoardId == boardId)
+            .Select(c => c.Identifier)
+            .ToListAsync(ct);
+
+        var highest = 0;
+        foreach (var identifier in identifiers)
+        {
+            if (string.IsNullOrEmpty(identifier))
+                continue;
+            var suffix = identifier.AsSpan(identifier.LastIndexOf('-') + 1);
+            if (int.TryParse(suffix, out var value) && value > highest)
+                highest = value;
+        }
+
+        return $"CARD-{highest + 1:0000}";
     }
 
     private static string BuildPrompt(Card card, BoardWorkflowDefinition? activeDefinition)
     {
-        // CARD-0175: the identifier is always CARD-nnnn now, so a linked card names its tracker
-        // issue alongside it - an agent that writes "Fixes #3" gets GitHub's autolink, one that
-        // writes CARD-0176 gets ours. Empty clause when the card is not linked.
         var prompt = $"""
-            Work on card {card.Identifier}{CardExternalReference.Clause(card.ExternalIssueRef)}: {card.Title}
+            Work on card {card.Identifier}: {card.Title}
 
             Description:
             {card.Description}

@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using YamlDotNet.Core;
@@ -150,46 +150,6 @@ public static class IssueTrackerConfigParser
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// CARD-0170: validates the tracker options that are not part of the derived kind, so a typo in
-    /// <c>import_column</c> is a 400 on workflow SAVE rather than a silent fall back to the default
-    /// on every sync thereafter. Same place, and same shape, as the <c>kind</c> validation.
-    /// </summary>
-    public static bool TryValidateTrackerOptions(string frontMatter, out string? error)
-    {
-        error = null;
-        try
-        {
-            var yamlStream = new YamlStream();
-            using var reader = new StringReader(frontMatter);
-            yamlStream.Load(reader);
-            if (yamlStream.Documents.Count == 0
-                || yamlStream.Documents[0].RootNode is not YamlMappingNode root)
-            {
-                return true;
-            }
-
-            var trackerNode = GetMapping(root, "tracker");
-            if (trackerNode is null)
-                return true;
-
-            var importColumn = GetScalar(trackerNode, TrackerLandingColumn.OptionKey);
-            if (!TrackerLandingColumn.TryParseMode(importColumn, out _))
-            {
-                error = $"Tracker import_column '{importColumn}' is not recognised; "
-                    + "use 'backlog' (default) or 'active'.";
-                return false;
-            }
-
-            return true;
-        }
-        catch (YamlException ex)
-        {
-            error = ex.Message;
-            return false;
-        }
     }
 
     /// <summary>

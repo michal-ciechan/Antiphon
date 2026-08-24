@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -261,13 +261,7 @@ public sealed class BoardService
             card.ArchivedAt,
             card.ArchivedReason,
             card.ArchivedBy,
-            card.AutoDispatchHeldAt,
-            card.ExternalIssueRef is null
-                ? null
-                : new ExternalIssueDto(
-                    card.ExternalIssueRef.TrackerKind,
-                    card.ExternalIssueRef.ExternalKey,
-                    card.ExternalIssueRef.Url));
+            card.AutoDispatchHeldAt);
     }
 
     internal static CardRevisionDto ToRevisionDto(CardRevision revision)
@@ -303,10 +297,6 @@ public sealed class BoardService
                 .ThenInclude(c => c.AssignedAgent)
             .Include(b => b.Cards)
                 .ThenInclude(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
-            // CARD-0175 S4: the board render shows a linked card's tracker key; nothing included
-            // the ref before, so the DTO field would be silently null on every card.
-            .Include(b => b.Cards)
-                .ThenInclude(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
     }

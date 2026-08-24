@@ -1,7 +1,6 @@
 import { Badge, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { TbTerminal2 } from 'react-icons/tb'
 import type { CardDto } from '../../api/boards'
-import { trackerAbbreviation } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 
 interface BoardCardProps {
@@ -34,14 +33,7 @@ export function BoardCard({ card, onOpen }: BoardCardProps) {
     >
       <Stack gap={6}>
         <Stack gap={2} style={{ minWidth: 0 }}>
-          <Text size="xs" c="dimmed">
-            {displayIdentifier(card.identifier)}
-            {card.externalIssue && (
-              <Text component="span" size="xs" c="dimmed" opacity={0.7} data-testid="card-external-key">
-                {` ${trackerAbbreviation(card.externalIssue.trackerKind)} ${card.externalIssue.key}`.replace('  ', ' ')}
-              </Text>
-            )}
-          </Text>
+          <Text size="xs" c="dimmed">{displayIdentifier(card.identifier)}</Text>
           <Text fw={600} size="sm" lineClamp={2}>{card.title}</Text>
         </Stack>
 

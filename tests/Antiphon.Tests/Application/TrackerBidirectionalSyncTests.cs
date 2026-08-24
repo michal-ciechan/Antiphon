@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -243,52 +243,8 @@ public class TrackerBidirectionalSyncTests
             var reopen = card.Revisions.Single(r => r.Kind == CardRevisionKind.Reopen);
             reopen.EditedBy.ShouldBe("external-tracker");
             reopen.Reason.ShouldContain("superseded local completion");
-            // CARD-0170 T9: a reopen lands in the BACKLOG column, not the first active one. It used
-            // to resolve "first IsActive && !IsTerminal" independently, which made a GitHub reopen
-            // an auto-dispatch and contradicted CARD-0054 ("a reopen never spawns").
-            card.BoardColumnId.ShouldBe(graph.BacklogColumn.Id);
-            card.Status.ShouldBe(CardStatus.Backlog);
-            card.StartedAt.ShouldBeNull();
             // Issue must NOT be re-closed
             fake.SetStateCalls.ShouldBeEmpty();
-        }
-        finally
-        {
-            await CleanupAsync(tempRoot);
-        }
-    }
-
-    // CARD-0170 T10: the opt-in survives on the reopen path too — a board that declares its tracker
-    // to BE its queue gets the pre-CARD-0170 destination, the first active column.
-    [Test]
-    public async Task Import_column_active_reopens_into_the_first_active_column()
-    {
-        await using var db = CreateContext();
-        var tempRoot = NewTempRoot();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
-        try
-        {
-            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, importColumnActive: true);
-            graph.Card.BoardColumnId = graph.DoneColumn.Id;
-            graph.Card.BoardColumn = graph.DoneColumn;
-            graph.Card.Status = CardStatus.Done;
-            graph.Card.CompletedAt = clock.GetUtcNow().UtcDateTime;
-            graph.Card.ExternalIssueRef!.LastKnownExternalState = "closed";
-            await db.SaveChangesAsync();
-
-            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
-            {
-                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])]
-            };
-
-            var run = (await NewSut(db, fake, clock).RunAsync(graph.Board.Id, CancellationToken.None))
-                .Boards.Single();
-
-            run.ExternalReopens.ShouldBe(1);
-            await using var verify = CreateContext();
-            var card = await verify.Cards.SingleAsync(c => c.Id == graph.Card.Id);
-            card.BoardColumnId.ShouldBe(graph.ActiveColumn.Id);
-            card.Status.ShouldBe(CardStatus.InProgress);
         }
         finally
         {
@@ -459,11 +415,9 @@ public class TrackerBidirectionalSyncTests
         AppDbContext db,
         string tempRoot,
         FakeTimeProvider clock,
-        ExternalIssueOrigin origin = ExternalIssueOrigin.ExternalImport,
-        bool importColumnActive = false)
+        ExternalIssueOrigin origin = ExternalIssueOrigin.ExternalImport)
     {
-        var graph = await SeedBoardAsync(
-            db, tempRoot, clock, syncOutCreate: false, importColumnActive: importColumnActive);
+        var graph = await SeedBoardAsync(db, tempRoot, clock, syncOutCreate: false);
         var card = NewCard(graph, clock.GetUtcNow().UtcDateTime);
         var issueRef = new ExternalIssueRef
         {
@@ -492,8 +446,7 @@ public class TrackerBidirectionalSyncTests
         string tempRoot,
         FakeTimeProvider clock,
         bool syncOutCreate,
-        DateTime? trackerActivatedAt = null,
-        bool importColumnActive = false)
+        DateTime? trackerActivatedAt = null)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         var project = new Project
@@ -535,7 +488,7 @@ public class TrackerBidirectionalSyncTests
             BoardId = board.Id,
             Version = 1,
             Name = "Tracked",
-            Content = WorkflowYaml(syncOutCreate, importColumnActive),
+            Content = WorkflowYaml(syncOutCreate),
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now,
@@ -584,7 +537,7 @@ public class TrackerBidirectionalSyncTests
             Board = board
         };
 
-    private static string WorkflowYaml(bool syncOutCreate, bool importColumnActive = false) =>
+    private static string WorkflowYaml(bool syncOutCreate) =>
         string.Join('\n',
             "---",
             "tracker:",
@@ -592,8 +545,6 @@ public class TrackerBidirectionalSyncTests
             "  repository: acme/app",
             "  active_states: [open]",
             $"  sync_out_create: {syncOutCreate.ToString().ToLowerInvariant()}",
-            // CARD-0170: explicit on both sides so these tests say which mode they are pinning.
-            importColumnActive ? "  import_column: active" : "  import_column: backlog",
             "---",
             "Work on {{ issue.identifier }}.");
 

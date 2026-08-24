@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { trackerAbbreviation, useCardDiscussion, useSpawnCard } from '../../api/boards'
+import { useCardDiscussion, useSpawnCard } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardDiscussionPanel } from './CardDiscussionPanel'
@@ -90,26 +90,6 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               <Badge color="gray" variant="outline" title={card.identifier}>
                 {displayIdentifier(card.identifier)}
               </Badge>
-              {/*
-                CARD-0175: the card's identifier is CARD-nnnn even when it came from GitHub, so the
-                tracker's own number lives here and nowhere else on screen. It is a LINK because the
-                issue is the other half of the record.
-              */}
-              {card.externalIssue && (
-                <Badge
-                  component="a"
-                  href={card.externalIssue.url || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  color="gray"
-                  variant="light"
-                  data-testid="card-external-issue"
-                  title={`${card.externalIssue.trackerKind} ${card.externalIssue.key}`}
-                  style={{ cursor: card.externalIssue.url ? 'pointer' : 'default' }}
-                >
-                  {`${trackerAbbreviation(card.externalIssue.trackerKind)} ${card.externalIssue.key}`.trim()}
-                </Badge>
-              )}
               <Title order={3} className="card-page__title">
                 {card.title}
               </Title>

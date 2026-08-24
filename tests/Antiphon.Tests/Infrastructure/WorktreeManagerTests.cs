@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Antiphon.Server.Application.Exceptions;
-using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,27 +16,10 @@ public class WorktreeManagerSafetyTests
     [Test]
     public void Sanitise_rejects_path_traversal_and_special_chars()
     {
-        // "#3" is the CARD-0175 regression lock: a GitHub-imported card used to be named "#3" and
-        // could therefore never start an agent. The fix was to give every card a CARD-nnnn
-        // identifier (CardIdentifierAllocator), NOT to widen this validator — '#' at a PowerShell
-        // token start, in a URL and in a branch name is a hazard the launch path should keep
-        // refusing. If this line ever goes green by deletion, the fix regressed.
-        foreach (var cardId in new[] { "../x", "x/../y", "x;y", "x y", "x\\y", "x/y", "x\0y", "#3", "#13" })
+        foreach (var cardId in new[] { "../x", "x/../y", "x;y", "x y", "x\\y", "x/y", "x\0y" })
         {
             Should.Throw<ValidationException>(() => WorktreeManager.ValidateCardId(cardId));
         }
-    }
-
-    [Test]
-    public void Sanitise_accepts_an_allocated_card_identifier()
-    {
-        // The cross-boundary contract CARD-0175 leans on: whatever CardIdentifierAllocator hands
-        // out must be something ValidateCardId accepts, or an imported card still cannot launch.
-        var identifier = CardIdentifierAllocator.ForIdentifiers(["CARD-0175"]).Next();
-
-        identifier.ShouldBe("CARD-0176");
-        WorktreeManager.ValidateCardId(identifier).ShouldBe("CARD-0176");
-        WorktreeManager.BuildBranchName(identifier).ShouldBe("feat/card-CARD-0176");
     }
 
     [Test]

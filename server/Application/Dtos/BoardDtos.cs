@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -68,18 +68,7 @@ public sealed record CardDto(
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
     string? ArchivedBy = null,
-    DateTime? AutoDispatchHeldAt = null,
-    // CARD-0175: the tracker's own key for this card. The card's Identifier is CARD-nnnn on every
-    // card now, so without this the GitHub number would be invisible in the UI - and `#12` on the
-    // board would be indistinguishable from GitHub's `#12`, which is the collision the card
-    // exists to remove. Null on a card that is not linked to a tracker issue.
-    ExternalIssueDto? ExternalIssue = null);
-
-/// <summary>A linked tracker issue as the board needs to render it: key, link, which tracker.</summary>
-public sealed record ExternalIssueDto(
-    TrackerKind TrackerKind,
-    string Key,
-    string Url);
+    DateTime? AutoDispatchHeldAt = null);
 
 public sealed record AgentSessionSummaryDto(
     Guid Id,

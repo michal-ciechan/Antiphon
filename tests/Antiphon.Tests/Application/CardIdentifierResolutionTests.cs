@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -6,7 +6,6 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
-using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -53,7 +52,6 @@ public class CardIdentifierResolutionTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var boardIds = await db.Boards.Where(b => b.ProjectId == _projectId).Select(b => b.Id).ToListAsync();
         var cardIds = await db.Cards.Where(c => boardIds.Contains(c.BoardId)).Select(c => c.Id).ToListAsync();
-        await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.CardRevisions.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.Cards.Where(c => cardIds.Contains(c.Id)).ExecuteDeleteAsync();
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync();
@@ -167,49 +165,6 @@ public class CardIdentifierResolutionTests
 
         ex.Message.ShouldContain(shared);
         ex.Message.ShouldContain("guid");
-    }
-
-    // CARD-0175 T3. Live on 2026-08-24 this was a 409: an imported card was literally named "#5"
-    // and `#5` is also the entry form of CARD-0005, so `card.ps1 get '#5'` was broken for every
-    // N <= 13 on that board and the set grew with every import. Imported cards now get their own
-    // CARD-nnnn and `#N` means CARD-000N and nothing else.
-    [Test]
-    public async Task Hash_N_resolves_to_the_card_not_the_import()
-    {
-        var (board, _, _) = await SeedAsync("Hash collision board");
-        var identifier = await NextUnusedIdentifierAsync();
-        var number = int.Parse(identifier["CARD-".Length..]);
-        var manualId = await SeedCardWithIdentifierAsync(board.Id, "The real card", identifier);
-        // An import of GitHub issue #<same number> onto the same board.
-        var importedId = await SeedCardWithIdentifierAsync(
-            board.Id, "GitHub import", await NextUnusedIdentifierAsync());
-        await LinkToTrackerAsync(importedId, $"acme/app#{number}", $"#{number}");
-
-        using var scope = _factory.Services.CreateScope();
-        var cards = scope.ServiceProvider.GetRequiredService<CardService>();
-
-        (await cards.ResolveCardIdAsync($"#{number}", CancellationToken.None)).ShouldBe(manualId);
-        (await cards.ResolveCardIdAsync(identifier, CancellationToken.None)).ShouldBe(manualId);
-        (await cards.ResolveCardIdAsync(number.ToString(), CancellationToken.None)).ShouldBe(manualId);
-    }
-
-    // CARD-0175 T4. A foreign tracker's key used to BE the card's identifier; now it lives on the
-    // external ref, so the resolver's PREFIX-digits arm has to reach through it or `card.ps1 get
-    // ANT-12` stops working on a Jira/Linear board.
-    [Test]
-    public async Task Foreign_key_resolves_through_the_external_ref()
-    {
-        var (board, _, _) = await SeedAsync("Foreign key board");
-        var cardId = await SeedCardWithIdentifierAsync(
-            board.Id, "Linear import", await NextUnusedIdentifierAsync());
-        var key = $"ANT-{Random.Shared.Next(100_000, 999_999)}";
-        await LinkToTrackerAsync(cardId, $"lin-{key}", key);
-
-        using var scope = _factory.Services.CreateScope();
-        var cards = scope.ServiceProvider.GetRequiredService<CardService>();
-
-        (await cards.ResolveCardIdAsync(key, CancellationToken.None)).ShouldBe(cardId);
-        (await cards.ResolveCardIdAsync(key.ToLowerInvariant(), CancellationToken.None)).ShouldBe(cardId);
     }
 
     // Not a 404: nothing was looked for. The message names the forms, and a literal route segment
@@ -356,27 +311,6 @@ public class CardIdentifierResolutionTests
         await db.Cards.Where(c => c.Id == created.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.Identifier, identifier));
         return created.Id;
-    }
-
-    /// <summary>Links a card to a tracker issue, the way an import leaves it (CARD-0175).</summary>
-    private async Task LinkToTrackerAsync(Guid cardId, string externalId, string externalKey)
-    {
-        using var scope = _factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        db.ExternalIssueRefs.Add(new ExternalIssueRef
-        {
-            Id = Guid.NewGuid(),
-            CardId = cardId,
-            TrackerKind = TrackerKind.GitHubIssues,
-            ExternalId = externalId,
-            ExternalKey = externalKey,
-            Url = $"https://github.test/{externalId.Replace('#', '/')}",
-            RawPayloadJson = "{}",
-            LastSyncedAt = DateTime.UtcNow,
-            Origin = ExternalIssueOrigin.ExternalImport,
-            LastKnownExternalState = "open"
-        });
-        await db.SaveChangesAsync();
     }
 
     /// <summary>A <c>CARD-nnnn</c> no row in the shared database holds. See the class remark.</summary>

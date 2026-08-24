@@ -78,11 +78,6 @@ Anywhere a card id appears in a route it is a **string**, resolved by `CardServi
 `CARD-0051`, `card-51`, `#51`, `51`, and the guid all address the same card. There is no separate
 lookup step.
 
-Every card carries a `CARD-nnnn` identifier — including cards a tracker sync imported (CARD-0175).
-A foreign tracker's own key (`ANT-12`) additionally resolves through the card's
-`ExternalIssueRef.ExternalKey`, and the key and its link are on `CardDto.externalIssue`. `#N` is
-**not** routed to a tracker number: it is the canonical entry form of `CARD-000N` and nothing else.
-
 ## 2. The surface
 
 Twenty-two endpoint files under `server/Api/Endpoints/`, mapped in `server/Program.cs`. Each row

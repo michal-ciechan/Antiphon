@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -92,7 +92,7 @@ public sealed class ExternalTrackerSyncService
             }
 
             var blockedIssueIds = await ResolveBlockedIssueIdsAsync(board.Id, tracker, config, cache, issues, ct);
-            if (await UpsertIssuesAsync(board, config, issues, blockedIssueIds, utcNow, ct))
+            if (await UpsertIssuesAsync(board, config.Kind, issues, blockedIssueIds, utcNow, ct))
                 changedBoardIds.Add(board.Id);
             if (await ReconcileStaleIssuesAsync(board, tracker, config, cache, issues, utcNow, ct))
                 changedBoardIds.Add(board.Id);
@@ -103,27 +103,7 @@ public sealed class ExternalTrackerSyncService
         if (changedBoardIds.Count == 0)
             return syncedIssues;
 
-        try
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex)
-        {
-            // CARD-0175: the sync allocates CARD-nnnn identifiers from a snapshot of the board, so
-            // a manual create landing in the same ~100 ms wins the unique index and this save
-            // throws. Report it with the DB's OWN constraint name (AGENTS.md) and return - the next
-            // tick re-reads and re-allocates. Deliberately no retry loop: at a 30-minute cadence the
-            // window is irrelevant, and a loop would hide a genuine duplicate.
-            _logger.LogWarning(
-                ex,
-                "Tracker sync save failed for boards {BoardIds}: {Constraint}. "
-                + "No issues were persisted this pass; the next tick re-reads and retries.",
-                string.Join(", ", changedBoardIds),
-                DescribeConstraint(ex));
-            _db.ChangeTracker.Clear();
-            return syncedIssues;
-        }
-
+        await _db.SaveChangesAsync(ct);
         foreach (var changedBoardId in changedBoardIds)
             await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = changedBoardId }, ct);
         foreach (var queueRemoval in _pendingQueueRemovals)
@@ -134,7 +114,7 @@ public sealed class ExternalTrackerSyncService
 
     private async Task<bool> UpsertIssuesAsync(
         Board board,
-        IssueTrackerConfig config,
+        TrackerKind trackerKind,
         IReadOnlyList<TrackedIssue> issues,
         IReadOnlySet<string> blockedIssueIds,
         DateTime utcNow,
@@ -143,21 +123,15 @@ public sealed class ExternalTrackerSyncService
         if (issues.Count == 0)
             return false;
 
-        var trackerKind = config.Kind;
-        // CARD-0170: where a tracker card lands, and whether the tracker owns the non-terminal
-        // column at all, is one per-board decision resolved in one place for all three push sites.
-        var mode = TrackerLandingColumn.ModeFor(config);
-        var trackerOwnsColumn = mode == TrackerImportColumn.Active;
-        var landingColumn = TrackerLandingColumn.Resolve(board, mode);
-        if (landingColumn is null)
+        var activeColumn = board.Columns
+            .OrderBy(c => c.ColumnOrder)
+            .FirstOrDefault(c => c.IsActive && !c.IsTerminal)
+            ?? board.Columns.OrderBy(c => c.ColumnOrder).FirstOrDefault();
+        if (activeColumn is null)
             return false;
-        // Blocked issues are a Linear-only signal and only meaningful when the tracker owns the
-        // column; in the default mode a human decides when blocked work moves.
-        var blockedColumn = trackerOwnsColumn
-            ? board.Columns
-                .OrderBy(c => c.ColumnOrder)
-                .FirstOrDefault(c => !c.IsActive && !c.IsTerminal)
-            : null;
+        var blockedColumn = board.Columns
+            .OrderBy(c => c.ColumnOrder)
+            .FirstOrDefault(c => !c.IsActive && !c.IsTerminal);
 
         var externalIds = issues.Select(i => i.ExternalId).ToList();
         var existingRefs = await _db.ExternalIssueRefs
@@ -167,12 +141,11 @@ public sealed class ExternalTrackerSyncService
             .ToDictionaryAsync(r => r.ExternalId, StringComparer.Ordinal, ct);
 
         var changed = false;
-        CardIdentifierAllocator? allocator = null;
         foreach (var issue in issues)
         {
             if (string.IsNullOrWhiteSpace(issue.ExternalId) || string.IsNullOrWhiteSpace(issue.ExternalKey))
                 continue;
-            var isBlocked = trackerOwnsColumn && blockedIssueIds.Contains(issue.ExternalId);
+            var isBlocked = blockedIssueIds.Contains(issue.ExternalId);
             if (isBlocked && blockedColumn is null)
             {
                 _logger.LogWarning(
@@ -182,7 +155,7 @@ public sealed class ExternalTrackerSyncService
                 continue;
             }
 
-            var targetColumn = isBlocked ? blockedColumn! : landingColumn;
+            var targetColumn = isBlocked ? blockedColumn! : activeColumn;
 
             if (existingRefs.TryGetValue(issue.ExternalId, out var existingRef))
             {
@@ -195,7 +168,7 @@ public sealed class ExternalTrackerSyncService
                     continue;
                 }
 
-                if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, trackerOwnsColumn, utcNow))
+                if (UpdateExisting(existingRef, targetColumn, issue, isBlocked, utcNow))
                 {
                     changed = true;
                     // Self-guarding: only acts if the tracker state landed the card in
@@ -252,14 +225,12 @@ public sealed class ExternalTrackerSyncService
                 }
             }
 
-            // Built once per board, lazily: an empty sync must not pay for the identifier read.
-            allocator ??= await CardIdentifierAllocator.ForBoardAsync(_db, board.Id, ct);
             var card = new Card
             {
                 Id = Guid.NewGuid(),
                 BoardId = board.Id,
                 BoardColumnId = targetColumn.Id,
-                Identifier = allocator.Next(),
+                Identifier = issue.ExternalKey,
                 Title = issue.Title.Trim(),
                 Description = issue.Description.Trim(),
                 Priority = issue.Priority,
@@ -302,18 +273,11 @@ public sealed class ExternalTrackerSyncService
         return changed;
     }
 
-    /// <param name="trackerOwnsColumn">
-    /// CARD-0170: true only under <c>tracker.import_column: active</c>. When false the tracker
-    /// moves a card across the TERMINAL boundary and nowhere else — the non-terminal column is
-    /// Antiphon's, so a card a human moved to In Progress or Review stays where they put it
-    /// instead of being dragged back on the next tick.
-    /// </param>
     private static bool UpdateExisting(
         ExternalIssueRef externalRef,
         BoardColumn targetColumn,
         TrackedIssue issue,
         bool isBlocked,
-        bool trackerOwnsColumn,
         DateTime utcNow)
     {
         var card = externalRef.Card;
@@ -354,9 +318,12 @@ public sealed class ExternalTrackerSyncService
             }
         }
 
-        // CARD-0175: the card's Identifier is NOT the tracker's key and is never re-asserted from
-        // it. It used to be, which made any rename of an imported card revert on the next tick.
-        // The key itself is kept current on the ref immediately below.
+        if (card.Identifier != issue.ExternalKey)
+        {
+            card.Identifier = issue.ExternalKey;
+            changed = true;
+        }
+
         if (externalRef.ExternalKey != issue.ExternalKey)
         {
             externalRef.ExternalKey = issue.ExternalKey;
@@ -376,8 +343,7 @@ public sealed class ExternalTrackerSyncService
             changed = true;
         }
 
-        var shouldMoveForTrackerState = trackerOwnsColumn
-            && card.OwnerSessionId is null
+        var shouldMoveForTrackerState = card.OwnerSessionId is null
             && !card.BoardColumn.IsTerminal
             && card.BoardColumnId != targetColumn.Id;
         if (shouldMoveForTrackerState)
@@ -397,9 +363,7 @@ public sealed class ExternalTrackerSyncService
             card.TerminalReason = isBlocked ? "External tracker blockers are not terminal." : null;
             changed = true;
         }
-        else if (trackerOwnsColumn
-            && !isBlocked
-            && card.TerminalReason == "External tracker blockers are not terminal.")
+        else if (!isBlocked && card.TerminalReason == "External tracker blockers are not terminal.")
         {
             card.TerminalReason = null;
             changed = true;
@@ -598,15 +562,6 @@ public sealed class ExternalTrackerSyncService
         externalRef.LastKnownExternalState = "closed";
         return true;
     }
-
-    /// <summary>
-    /// The constraint the database actually complained about, so a Warning names
-    /// <c>IX_Cards_BoardId_Identifier</c> rather than "another operation changed card data".
-    /// </summary>
-    private static string DescribeConstraint(DbUpdateException ex) =>
-        ex.InnerException is Npgsql.PostgresException postgres
-            ? $"{postgres.SqlState} on {postgres.ConstraintName ?? postgres.TableName ?? "an unnamed constraint"}"
-            : ex.InnerException?.Message ?? ex.Message;
 
     private static HashSet<string> ActiveStateSet(IssueTrackerConfig config) =>
         config.ActiveStates
