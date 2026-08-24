@@ -62,6 +62,8 @@ public static class StubEndpointKeys
     public const string GrokSettings = "grok.settings";
     public const string GrokApiKey = "grok.api-key";
     public const string GrokResponses = "grok.responses";
+    /// <summary>Grok -p user turn (re-probed: /responses is session-title only).</summary>
+    public const string GrokChatCompletions = "grok.chat.completions";
     public const string CodexModels = "codex.models";
     public const string CodexResponses = "codex.responses";
 }

@@ -70,5 +70,24 @@ internal static class GrokStubEndpoints
                     break;
             }
         });
+
+        // Re-probed 2026-08-24: grok -p sends the user turn to Chat Completions; /responses is
+        // session-title generation only. Without this route the CLI 404s after a successful title.
+        app.MapPost("/chat/completions", async (HttpContext ctx) =>
+        {
+            var next = script.Next(StubEndpointKeys.GrokChatCompletions);
+            switch (next)
+            {
+                case ScriptedError err:
+                    await OpenAiChatCompletionsSse.WriteErrorAsync(ctx.Response, err, ctx.RequestAborted);
+                    break;
+                case ScriptedTextTurn turn:
+                    await OpenAiChatCompletionsSse.WriteTextTurnAsync(ctx.Response, turn.Text, ctx.RequestAborted);
+                    break;
+                default:
+                    await OpenAiChatCompletionsSse.WriteTextTurnAsync(ctx.Response, "ok", ctx.RequestAborted);
+                    break;
+            }
+        });
     }
 }
