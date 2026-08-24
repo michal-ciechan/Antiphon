@@ -14,10 +14,10 @@ that commit; every live fact was queried this pass (2026-08-24 15:25Z).
   issues the read-side upsert fetched (`ExternalTrackerSyncService.SyncAsync`, `:43`), not a
   delta; every other counter is a genuine this-run write/insert count (CARD-0166 sync5 measured
   all five at 0 on a steady-state run). Counters are produced in
-  `TrackerBidirectionalSyncService.SyncBoardAsync` (`:95-176`).
+  `TrackerBidirectionalSyncService.SyncBoardAsync` (`:93-170`).
 - **Two changes the counters do NOT see** (`TrackerBidirectionalSyncService.cs`):
-  `ApplyExternalReopens` (`:178-228`) moves a terminal card back to the first active column when
-  GitHub reopened the issue — and increments **nothing**; `PushExportTitleBodyAsync` (`:275-280`)
+  `ApplyExternalReopens` (`:172-221`) moves a terminal card back to the first active column when
+  GitHub reopened the issue — and increments **nothing**; `PushExportTitleBodyAsync` (call at `:325`)
   pushes an edited export-origin title/body to GitHub — also uncounted. Both are real changes
   that would send nothing under the card's sum.
 - **Change detection for GitHub→card creates is structurally out of reach of a per-run count.**
@@ -26,12 +26,12 @@ that commit; every live fact was queried this pass (2026-08-24 15:25Z).
   a 3-hourly run fires the tick has almost always already created the card and the run's own
   `IssuesPulled` cannot tell. §9.
 - **The alert path is a severity-threshold broadcast, not an addressable send.**
-  `ChannelAlertRouter.RouteAsync` (`server/Application/Services/ChannelAlertRouter.cs:39-64`)
+  `ChannelAlertRouter.RouteAsync` (`server/Application/Services/ChannelAlertRouter.cs:37-61`)
   fans every persisted alert to **every** `ChatChannel` with
   `AlertMinSeverity != null && alert.Severity >= AlertMinSeverity`; there is no per-alert
-  target, no source filter. `AlertDigestFlusher` (`:66-181`) then sends ONE digest per sink per
-  `MinMinutesBetweenSends` (5, `AlertsSettings.cs:14`) headed `Antiphon alerts:` with a
-  severity emoji per line and `Detail` truncated at 200 chars (`:160-176`). Alert rows also
+  target, no source filter. `AlertDigestFlusher` (`:69-169`) then sends ONE digest per sink per
+  `MinMinutesBetweenSends` (5, `AlertsSettings.cs:13`) headed `Antiphon alerts:` with a
+  severity emoji per line and `Detail` truncated at 200 chars (`:151-168`). Alert rows also
   toast in the client (`client/src/hooks/useAlertToasts.ts`) and prune after 30 days.
 - **LIVE: the Family channel is not an alert sink and is agent-bound.** `GET /api/channels`:
   `caee9d25-b751-4401-a295-3b7e242842aa` telegram `-5052370282` "Family", `enabled=true`,
@@ -48,10 +48,10 @@ that commit; every live fact was queried this pass (2026-08-24 15:25Z).
   (`C:\Users\lndco\.claude\skills\windmill\SKILL.md`, "Driving the API") — used this pass to
   read the schedule and script, works as documented.
 - **`scripts/github-sync.ps1`** POSTs `/api/tracker-sync/run` (or the per-board endpoint with
-  `-BoardId`), prints the summary, and **exits 0 even when a board reports `error`** (`:82-84`),
+  `-BoardId`), prints the summary, and **exits 0 even when a board reports `error`** (`:90`),
   so a failed sync is a green Windmill job today.
 - **The draft** (`3d82003`): `ChatChannelService.SendAsync(Guid, string, ct)`
-  (`server/Application/Services/ChatChannelService.cs:84-108`) — lookup, `ConflictException
+  (`server/Application/Services/ChatChannelService.cs:92-109`) — lookup, `ConflictException
   channel_disabled` on `Enabled=false`, `IAntiphonMessagingProducer.SendAsync(new ChannelReply
   { Channel, ConversationId, Text })`; `POST /api/channels/{id}/send` +
   `SendChannelMessageRequest(Text)`; two `ChannelBridgeTests` pinning the service.
@@ -141,7 +141,7 @@ silent `return`), the 2026-07-20 alerting spec Q5/Q6 (why the alert path is shap
 
 **Why not the alert path, precisely.** Three facts, each sufficient:
 
-- *Targeting.* `ChannelAlertRouter.RouteAsync` selects sinks by severity only (`:50-54`). To
+- *Targeting.* `ChannelAlertRouter.RouteAsync` selects sinks by severity only (`:47-51`). To
   reach Family you set `Family.AlertMinSeverity = Info` (or `Warning`), and from that moment
   every alert at or above it — `TaskProgressStalled`, `subscription_quota_low`, census alerts,
   the log tap if ever enabled — lands in the family group chat. There is no way to say "only
@@ -162,7 +162,7 @@ callers, refusing on `Enabled=false`. Ratified verbatim, including the two tests
 this endpoint would be no more exposed than the GitHub-writing sync endpoint beside it — but
 because it is a generic capability nothing in this card needs once D2 holds, and one that
 should carry an audit row and a card of its own if it is ever wanted. Delete
-`ChannelEndpoints.cs:29-38` and `SendChannelMessageRequest`.
+`ChannelEndpoints.cs:31-39` and `SendChannelMessageRequest`.
 
 ## 2. Decision 2 — where the logic lives
 
@@ -221,18 +221,18 @@ public sealed record TrackerSyncNotificationResult(
 ```
 
 Recording sites in `TrackerBidirectionalSyncService.cs`, one `changes.Add(...)` each, next to
-the existing `++`: `PullCommentsAsync` insert (`:283`, `CommentIn` — one per inserted row, echo
+the existing `++`: `PullCommentsAsync` insert (`:274`, `CommentIn` — one per inserted row, echo
 closes excluded because they `continue` before the insert), `PushDiscussionCommentsAsync`
-post (`:337`) and `PushContentEditCommentsAsync` post (`:376`) (`CommentOut`),
-`SyncLabelsAsync` (`:413`/`:432`/`:438`, one `LabelsChanged` per issue that had any label
+post (`:365`) and `PushContentEditCommentsAsync` post (`:412`) (`CommentOut`),
+`SyncLabelsAsync` (`:457`/`:472`/`:478`, one `LabelsChanged` per issue that had any label
 write, so `Changes` for labels counts issues while `LabelsChanged` keeps counting writes as
-today), `SyncStateAsync` close (`:484`, `ClosedOnGitHub`) and reopen push (`:535`,
-`ReopenedOnGitHub`), `ApplyExternalReopens` (`:220`, `ReopenedFromGitHub` **and**
-`ExternalReopens++` — the gap fix), `CreateMissingIssuesAsync` (`Created`),
+today), `SyncStateAsync` close (`:518`, `ClosedOnGitHub`) and reopen push (`:550`,
+`ReopenedOnGitHub`), `ApplyExternalReopens` (`:219`, `ReopenedFromGitHub` **and**
+`ExternalReopens++` — the gap fix), `CreateMissingIssuesAsync` (`:580`, `Created`),
 `PushExportTitleBodyAsync` (`ContentPushed`). `SyncBoardAsync` threads a `List<
 TrackerSyncChange>` through those calls (or the service holds it per board — either; the list
 is per `SyncBoardAsync` invocation and must not be shared across boards). `CardIdentifier` =
-`Card.Identifier` (already used in the close body, `:474`), `ExternalKey` =
+`Card.Identifier` (already used in the close body, `:509`), `ExternalKey` =
 `ExternalIssueRef.ExternalKey`, `Url` = `ExternalIssueRef.Url`.
 
 Gate: `Changes.Count > 0`. Equivalent to the card's `commentsIn + commentsOut + labelsChanged +
@@ -304,7 +304,7 @@ overlap).
 
 ## 8. Decision 8 — failures
 
-- Per-board `Error` (`TrackerSyncBoardResult.Error`, set at `:78-85`) → not a change, never in
+- Per-board `Error` (`TrackerSyncBoardResult.Error`, set at `:76-85`) → not a change, never in
   the Family message. `github-sync.ps1` prints it (already does) and **exits 1** when any board
   has one, so the Windmill job history is red — today it is green.
 - Notification outcomes, one `TrackerSyncNotificationResult` per board with changes:
