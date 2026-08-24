@@ -463,6 +463,18 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                         bound.SessionId, bound.TranscriptPath, bound.How));
         }
 
+        if (eventName == SessionRunnerEventNames.SessionAgentStatus)
+        {
+            var status = JsonSerializer.Deserialize<RunnerAgentStatusEvent>(json, JsonOptions);
+            return status is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName,
+                    status.SessionId,
+                    AgentStatus: new SessionRunnerAgentStatusEvent(
+                        status.SessionId, status.AgentStatus, status.PreviousAgentStatus, status.ObservedAtUtc));
+        }
+
         return null;
     }
 
@@ -503,7 +515,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.LastSequence,
             dto.HostPid,
             dto.Adopted,
-            dto.AgentStatus);
+            dto.AgentStatus,
+            dto.AgentStatusSinceUtc);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

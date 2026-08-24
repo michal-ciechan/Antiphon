@@ -370,6 +370,8 @@ try
     // CARD-0072 S5a: durable API-error retry. Singleton for the same reason as compaction —
     // the supervisor hosted service is a singleton and this is the action it calls.
     builder.Services.AddSingleton<ApiErrorRecoveryService>();
+    // CARD-0162: herdr status corroboration (Warning-only; never kills/retypes).
+    builder.Services.AddSingleton<HerdrStatusCorroborationService>();
     // Compaction recovery (incident + workspace re-read note); dispatched lazily from the runtime
     // on CompactBoundary transcript entries.
     builder.Services.AddSingleton<CompactionRecoveryService>();

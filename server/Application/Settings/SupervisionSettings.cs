@@ -28,6 +28,25 @@ public sealed class SupervisionSettings
     public RcWatchSettings RcWatch { get; set; } = new();
     public DeliveryVerificationSettings DeliveryVerification { get; set; } = new();
     public ApiErrorRecoverySettings ApiErrorRecovery { get; set; } = new();
+    public HerdrCorroborationSettings HerdrCorroboration { get; set; } = new();
+}
+
+/// <summary>
+/// CARD-0162: periodic corroboration of herdr agent_status vs transcript IsWorkingAsync.
+/// Detection only — Warning incident row; never kills or retypes.
+/// </summary>
+public sealed class HerdrCorroborationSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>How often the supervisor tick piggy-backs the corroboration sweep.</summary>
+    public int SweepPeriodSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Raise only when the herdr status has been STABLE in the disagreeing value this long.
+    /// Kills turn-end flap; real stuck conditions persist for hours (CARD-0047).
+    /// </summary>
+    public int MinSustainedMinutes { get; set; } = 10;
 }
 
 /// <summary>

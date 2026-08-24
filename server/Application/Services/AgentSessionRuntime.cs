@@ -256,6 +256,27 @@ public sealed class AgentSessionRuntime
         }
     }
 
+    /// <summary>
+    /// CARD-0162: herdr agent_status changed. The ONLY permitted side effect is a narrow
+    /// <see cref="SessionMessageQueueService.FlushIfIdleAsync"/> when leaving <c>blocked</c> —
+    /// never a delivery verdict, kill, or working-state override. The flush re-checks
+    /// IsWorkingAsync and the S3 blocked gate before typing.
+    /// </summary>
+    public async Task ObserveAgentStatusAsync(SessionRunnerAgentStatusEvent evt, CancellationToken ct)
+    {
+        if (!string.Equals(evt.PreviousAgentStatus, "blocked", StringComparison.Ordinal))
+            return;
+
+        if (string.Equals(evt.AgentStatus, "blocked", StringComparison.Ordinal))
+            return;
+
+        _logger.LogInformation(
+            "Herdr status left blocked ({Previous} → {Current}) for session {SessionId}; nudging FlushIfIdleAsync",
+            evt.PreviousAgentStatus, evt.AgentStatus, evt.SessionId);
+        // Narrow flush only — re-checks IsWorkingAsync + S3 blocked gate before typing.
+        await FlushQueueAfterManualCompactionAsync(evt.SessionId, ct);
+    }
+
     /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
     /// <see cref="FlushQueueOnIdleAsync"/> for why the interrupt marker counts).</summary>
     private static bool IsTurnBoundary(SessionRunnerTranscriptEvent entry) =>

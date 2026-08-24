@@ -15,7 +15,9 @@ public sealed record SessionRunnerSessionDto(
     // True when the runner re-attached to a host that survived a previous runner's death.
     bool Adopted = false,
     // CARD-0161: herdr agent_status; null for pty / older runners.
-    string? AgentStatus = null);
+    string? AgentStatus = null,
+    // CARD-0162: when AgentStatus last changed (hysteresis). Additive — older runners omit it.
+    DateTime? AgentStatusSinceUtc = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,
@@ -105,6 +107,15 @@ public sealed record SessionRunnerTranscriptBoundEvent(
     string TranscriptPath,
     string How);
 
+/// <summary>
+/// CARD-0162: herdr agent_status changed. PreviousAgentStatus null on first observation.
+/// </summary>
+public sealed record SessionRunnerAgentStatusEvent(
+    Guid SessionId,
+    string AgentStatus,
+    string? PreviousAgentStatus,
+    DateTime ObservedAtUtc);
+
 public sealed record SessionRunnerEvent(
     string EventName,
     Guid SessionId,
@@ -113,4 +124,5 @@ public sealed record SessionRunnerEvent(
     SessionRunnerTranscriptEvent? Transcript = null,
     SessionRunnerAdoptedEvent? Adopted = null,
     SessionRunnerTranscriptFaultEvent? TranscriptFault = null,
-    SessionRunnerTranscriptBoundEvent? TranscriptBound = null);
+    SessionRunnerTranscriptBoundEvent? TranscriptBound = null,
+    SessionRunnerAgentStatusEvent? AgentStatus = null);

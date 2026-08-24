@@ -32,18 +32,21 @@ public sealed class AgentSupervisorHostedService : BackgroundService
     private readonly ChannelReplyDispatcher _channelReplies;
     private readonly ContextCompactionService _compaction;
     private readonly ApiErrorRecoveryService _apiErrorRecovery;
+    private readonly HerdrStatusCorroborationService _herdrCorroboration;
     private readonly SupervisionSettings _settings;
     private readonly ILogger<AgentSupervisorHostedService> _logger;
     private DateTime _lastPruneUtc = DateTime.MinValue;
     private DateTime _lastChannelSweepUtc = DateTime.MinValue;
     private DateTime _lastCompactionSweepUtc = DateTime.MinValue;
     private DateTime _lastApiErrorRecoverySweepUtc = DateTime.MinValue;
+    private DateTime _lastHerdrCorroborationSweepUtc = DateTime.MinValue;
 
     public AgentSupervisorHostedService(
         IServiceScopeFactory scopeFactory,
         ChannelReplyDispatcher channelReplies,
         ContextCompactionService compaction,
         ApiErrorRecoveryService apiErrorRecovery,
+        HerdrStatusCorroborationService herdrCorroboration,
         IOptions<SupervisionSettings> settings,
         ILogger<AgentSupervisorHostedService> logger)
     {
@@ -51,6 +54,7 @@ public sealed class AgentSupervisorHostedService : BackgroundService
         _channelReplies = channelReplies;
         _compaction = compaction;
         _apiErrorRecovery = apiErrorRecovery;
+        _herdrCorroboration = herdrCorroboration;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -116,6 +120,21 @@ public sealed class AgentSupervisorHostedService : BackgroundService
                         {
                             _logger.LogInformation(
                                 "Enqueued API-error resume on {Count} session(s)", resumed);
+                        }
+                    }
+
+                    var herdrPeriod = TimeSpan.FromSeconds(
+                        Math.Max(1, _settings.HerdrCorroboration.SweepPeriodSeconds));
+                    if (_settings.HerdrCorroboration.Enabled
+                        && DateTime.UtcNow - _lastHerdrCorroborationSweepUtc >= herdrPeriod)
+                    {
+                        _lastHerdrCorroborationSweepUtc = DateTime.UtcNow;
+                        var disagreements = await _herdrCorroboration.SweepAsync(stoppingToken);
+                        if (disagreements > 0)
+                        {
+                            _logger.LogWarning(
+                                "Raised {Count} HerdrStatusDisagreement incident(s) (corroboration only)",
+                                disagreements);
                         }
                     }
                 }

@@ -36,6 +36,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly HerdrClient? _herdrClient;
     private readonly ILogger<SessionRunnerRuntime> _logger;
 
+    /// <summary>
+    /// CARD-0162: fired when the set of live herdr panes changes (launch / adopt / exit) so the
+    /// event pump can recycle its subscription.
+    /// </summary>
+    public event Action? PaneSetChanged;
+
     public SessionRunnerRuntime(
         IOptions<SessionRunnerSettings> settings,
         ILogger<SessionRunnerRuntime> logger,
@@ -47,6 +53,26 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
     }
+
+    internal void NotifyPaneSetChanged() => PaneSetChanged?.Invoke();
+
+    /// <summary>
+    /// CARD-0162: live herdr sessions with a known pane id (pump subscription + verification).
+    /// </summary>
+    internal IReadOnlyList<LiveHerdrPane> LiveHerdrPanes()
+    {
+        var result = new List<LiveHerdrPane>();
+        foreach (var (id, session) in _sessions)
+        {
+            if (session.HasExited) continue;
+            if (session.HerdrPaneId is not { } paneId) continue;
+            result.Add(new LiveHerdrPane(id, paneId, session));
+        }
+
+        return result;
+    }
+
+    internal readonly record struct LiveHerdrPane(Guid SessionId, string PaneId, RunnerSession Session);
 
     public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
     {
@@ -116,7 +142,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     request,
                     _herdrClient!,
                     () => CollectLiveAntiphonPanes(request.Herdr!.WorkspaceKey),
+                    () => NotifyPaneSetChanged(),
                     ct);
+                NotifyPaneSetChanged();
             }
             else
             {
@@ -449,8 +477,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _ = await _herdrClient.PaneReadAsync(sidecar.PaneId, "visible", stripAnsi: true, lines: 1, ct);
 
                 var session = new RunnerSession(sidecar.SessionId, _settings, _events, _logger, _transcriptClaims);
-                await session.AdoptHerdrAsync(sidecar, _herdrClient, ct);
+                await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), ct);
                 _sessions.TryAdd(sidecar.SessionId, session);
+                NotifyPaneSetChanged();
                 _logger.LogInformation(
                     "Adopted herdr pane {PaneId} for session {SessionId} (child pid {Pid})",
                     sidecar.PaneId, sidecar.SessionId, sidecar.ChildPid);
@@ -566,7 +595,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             ? session
             : throw new KeyNotFoundException($"Session '{sessionId}' was not found.");
 
-    private sealed class RunnerSession : IAsyncDisposable
+    /// <summary>Per-session state. Internal so <see cref="HerdrEventPumpService"/> can verify/apply status.</summary>
+    internal sealed class RunnerSession : IAsyncDisposable
     {
         private readonly Guid _sessionId;
         private readonly SessionRunnerSettings _settings;
@@ -591,6 +621,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private PtyHostClient? _client;
         private ISessionChild? _herdrChild;
         private string? _herdrAgentStatus;
+        private DateTime? _herdrAgentStatusSinceUtc;
+        private Action? _onHerdrPaneSetChanged;
         private int _hostPid;
         private int? _childPid;
         private DateTime _startedAt;
@@ -621,6 +653,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public DateTime StartedAt => _startedAt;
 
+        /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
+        internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
+
         /// <summary>CARD-0161: fold pane.get revision into LastSequence and capture AgentStatus.</summary>
         public async Task RefreshHerdrSurfaceAsync(CancellationToken ct)
         {
@@ -633,12 +668,85 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 lock (_gate)
                 {
                     _lastSequence = Math.Max(_lastSequence, revision);
-                    _herdrAgentStatus = status;
                 }
+
+                if (status is not null)
+                    ApplyHerdrAgentStatus(status, DateTime.UtcNow, publishEvent: false);
             }
             catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
             {
                 _logger.LogDebug(ex, "Herdr pane.get refresh failed for session {SessionId}", _sessionId);
+            }
+        }
+
+        /// <summary>
+        /// CARD-0162: update the herdr status cache. <paramref name="publishEvent"/> is true for
+        /// pump-driven changes (SSE to server); GET refresh updates the cache silently.
+        /// </summary>
+        internal void ApplyHerdrAgentStatus(string status, DateTime observedAtUtc, bool publishEvent = true)
+        {
+            string? previous;
+            lock (_gate)
+            {
+                previous = _herdrAgentStatus;
+                if (string.Equals(previous, status, StringComparison.Ordinal))
+                {
+                    // Same value — since does not move (hysteresis).
+                    return;
+                }
+
+                _herdrAgentStatus = status;
+                _herdrAgentStatusSinceUtc = observedAtUtc;
+            }
+
+            if (publishEvent)
+            {
+                _events.Publish(
+                    SessionRunnerEventNames.SessionAgentStatus,
+                    new RunnerAgentStatusEvent(_sessionId, status, previous, observedAtUtc));
+            }
+        }
+
+        /// <summary>
+        /// CARD-0162: §6A evidence bar as a runtime check. Events are triggers only — alive means
+        /// pane.get answers AND ChildPid is in process_info. Unreachable → no verdict (true).
+        /// </summary>
+        internal async Task<bool> VerifyHerdrLivenessAsync(HerdrClient client, CancellationToken ct)
+        {
+            if (_herdrChild is not HerdrPaneChild herdr || herdr.PaneId is null || herdr.Sidecar is null)
+                return true;
+
+            var sidecar = herdr.Sidecar;
+            try
+            {
+                try
+                {
+                    _ = await client.PaneGetAsync(sidecar.PaneId, ct);
+                }
+                catch (HerdrApiException)
+                {
+                    herdr.RaiseVerifiedClosed("HerdrPaneClosed");
+                    return false;
+                }
+
+                if (sidecar.ChildPid is int childPid)
+                {
+                    var proc = await client.PaneProcessInfoAsync(sidecar.PaneId, ct);
+                    var childPresent = proc.ForegroundProcesses?.Any(p => p.Pid == childPid) == true;
+                    if (!childPresent)
+                    {
+                        herdr.RaiseVerifiedClosed("HerdrPaneClosed");
+                        return false;
+                    }
+                }
+
+                // ChildPid null: pane existence alone (weaker bar, stated honestly).
+                return true;
+            }
+            catch (HerdrBackendUnavailableException)
+            {
+                // Unreachable is never evidence of death.
+                return true;
             }
         }
 
@@ -647,11 +755,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             RunnerLaunchRequest request,
             HerdrClient herdrClient,
             Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
+            Action onPaneSetChanged,
             CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
             _ansiLogPath = Path.Combine(_settings.SessionLogPath, $"{_sessionId:N}.ansi.log");
             _screen = new TerminalScreen(request.Cols > 0 ? request.Cols : 120, request.Rows > 0 ? request.Rows : 30);
+            _onHerdrPaneSetChanged = onPaneSetChanged;
 
             try
             {
@@ -671,6 +781,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _events.Publish(
                         SessionRunnerEventNames.SessionExited,
                         new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                    _onHerdrPaneSetChanged?.Invoke();
                 };
 
                 var started = await _herdrChild.LaunchAsync(request, ct);
@@ -1159,11 +1270,16 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         /// <summary>Re-attach a surviving herdr pane after a runner restart (CARD-0160 §6A positive arm).</summary>
-        public async Task AdoptHerdrAsync(HerdrPaneSidecar sidecar, HerdrClient client, CancellationToken ct)
+        public async Task AdoptHerdrAsync(
+            HerdrPaneSidecar sidecar,
+            HerdrClient client,
+            Action onPaneSetChanged,
+            CancellationToken ct)
         {
             _adopted = true;
             _childPid = sidecar.ChildPid;
             _startedAt = sidecar.LaunchedAtUtc;
+            _onHerdrPaneSetChanged = onPaneSetChanged;
             _herdrChild = new HerdrPaneChild(
                 client,
                 _settings,
@@ -1186,6 +1302,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _events.Publish(
                     SessionRunnerEventNames.SessionExited,
                     new RunnerSessionExitedEvent(_sessionId, exit.ExitCode, exit.Reason, LastSequence: 0));
+                _onHerdrPaneSetChanged?.Invoke();
             };
             lock (_gate)
                 _status = "Running";
@@ -1262,7 +1379,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _lastSequence,
                     _hostPid > 0 ? _hostPid : null,
                     _adopted,
-                    _herdrAgentStatus);
+                    _herdrAgentStatus,
+                    _herdrAgentStatusSinceUtc);
             }
         }
 

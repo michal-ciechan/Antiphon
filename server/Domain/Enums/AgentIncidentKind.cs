@@ -327,4 +327,16 @@ public enum AgentIncidentKind
     /// Not deduped — every override is a separate decision. One row per overridden start.
     /// </summary>
     SubscriptionQuotaOverridden = 33,
+
+    /// <summary>
+    /// CARD-0162: herdr <c>agent_status</c> disagrees with Antiphon's transcript-derived
+    /// <c>IsWorkingAsync</c> for ≥ <c>MinSustainedMinutes</c> (default 10). Herdr's detection is
+    /// the same screen-heuristic class as our own probes; disagreement is corroboration for a
+    /// human only. <b>This kind never kills, retypes, escalates, or corrects</b> — herdr events
+    /// are verification triggers never evidence (historical <c>pane_closed</c> is REPLAYED to
+    /// every new subscriber, measured E5). Warning always; timeline-only unless channel-bound
+    /// (<c>raiseAlert</c>). No Error/Critical ladder — a corroboration hint cannot establish
+    /// "a human is being failed right now".
+    /// </summary>
+    HerdrStatusDisagreement = 34,
 }

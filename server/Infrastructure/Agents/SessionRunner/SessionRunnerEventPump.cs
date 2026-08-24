@@ -81,6 +81,11 @@ public sealed class SessionRunnerEventPump : BackgroundService
                             new { sessionId = evt.Adopted.SessionId, lastSequence = evt.Adopted.LastSequence },
                             stoppingToken);
                     }
+                    else if (evt.AgentStatus is not null)
+                    {
+                        // CARD-0162: herdr status change — blocked-exit may ONLY nudge FlushIfIdleAsync.
+                        await runtime.ObserveAgentStatusAsync(evt.AgentStatus, stoppingToken);
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
