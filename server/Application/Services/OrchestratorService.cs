@@ -74,7 +74,11 @@ public sealed class OrchestratorService
             return pausedResult;
         }
 
-        await _externalTrackerSyncService.SyncAsync(now, ct);
+        if (ShouldRunTrackerSync(now))
+        {
+            await _externalTrackerSyncService.SyncAsync(now, ct);
+            _controlState.MarkTrackerSynced(now);
+        }
 
         var candidates = await LoadEligibleCandidatesAsync(now, ct);
         var activeByBoard = await CountActiveSessionsByBoardAsync(ct);
@@ -674,6 +678,19 @@ public sealed class OrchestratorService
 
     private static SessionStatus[] ActiveSessionStatuses() =>
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
+
+    private bool ShouldRunTrackerSync(DateTime utcNow)
+    {
+        var intervalMinutes = _settings.TrackerSyncIntervalMinutes;
+        if (intervalMinutes <= 0)
+            return true;
+
+        var last = _controlState.LastTrackerSyncAt;
+        if (last is null)
+            return true;
+
+        return utcNow - last.Value >= TimeSpan.FromMinutes(intervalMinutes);
+    }
 
     private bool ShouldProbeMissingRuntime(AgentSession session, DateTime utcNow)
     {

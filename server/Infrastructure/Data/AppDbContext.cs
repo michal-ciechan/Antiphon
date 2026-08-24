@@ -39,6 +39,7 @@ public class AppDbContext : DbContext
     public DbSet<Worktree> Worktrees => Set<Worktree>();
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
     public DbSet<ExternalIssueRef> ExternalIssueRefs => Set<ExternalIssueRef>();
+    public DbSet<CardComment> CardComments => Set<CardComment>();
     public DbSet<RetrySchedule> RetrySchedules => Set<RetrySchedule>();
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
@@ -540,6 +541,8 @@ public class AppDbContext : DbContext
             entity.Property(b => b.Name).IsRequired().HasMaxLength(200);
             entity.Property(b => b.Description).HasMaxLength(2000);
             entity.Property(b => b.TrackerKind).IsRequired();
+            entity.Property(b => b.TrackerActivatedAt);
+            entity.Property(b => b.TrackerCommentsPulledAt);
             entity.Property(b => b.MaxConcurrentSessions).IsRequired();
             entity.Property(b => b.CreatedAt).IsRequired();
             entity.Property(b => b.UpdatedAt).IsRequired();
@@ -1255,6 +1258,10 @@ public class AppDbContext : DbContext
             entity.Property(r => r.Url).HasMaxLength(1000);
             entity.Property(r => r.RawPayloadJson).IsRequired().HasColumnType("jsonb");
             entity.Property(r => r.LastSyncedAt).IsRequired();
+            entity.Property(r => r.Origin).IsRequired();
+            entity.Property(r => r.LastKnownExternalState).HasMaxLength(40);
+            entity.Property(r => r.LastRevisionSynced).IsRequired();
+            entity.Property(r => r.LastOutboundSyncedAt);
 
             entity.HasIndex(r => r.CardId).IsUnique().HasDatabaseName("IX_ExternalIssueRefs_CardId");
             entity.HasIndex(r => new { r.TrackerKind, r.ExternalId })
@@ -1264,6 +1271,32 @@ public class AppDbContext : DbContext
             entity.HasOne(r => r.Card)
                 .WithOne(c => c.ExternalIssueRef)
                 .HasForeignKey<ExternalIssueRef>(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CardComment>(entity =>
+        {
+            entity.ToTable("CardComments");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.CardId).IsRequired();
+            entity.Property(c => c.Body).IsRequired();
+            entity.Property(c => c.Author).HasMaxLength(200);
+            entity.Property(c => c.Origin).IsRequired();
+            entity.Property(c => c.ExternalCommentId).HasMaxLength(200);
+            entity.Property(c => c.ExternalUrl).HasMaxLength(1000);
+            entity.Property(c => c.CreatedAt).IsRequired();
+            entity.Property(c => c.SyncedAt);
+
+            entity.HasIndex(c => new { c.CardId, c.CreatedAt })
+                .HasDatabaseName("IX_CardComments_CardId_CreatedAt");
+            entity.HasIndex(c => c.ExternalCommentId)
+                .IsUnique()
+                .HasFilter("\"ExternalCommentId\" IS NOT NULL")
+                .HasDatabaseName("IX_CardComments_ExternalCommentId");
+
+            entity.HasOne(c => c.Card)
+                .WithMany(card => card.Comments)
+                .HasForeignKey(c => c.CardId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

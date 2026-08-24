@@ -67,4 +67,5 @@ public class Card
     public ICollection<Worktree> Worktrees { get; set; } = new List<Worktree>();
     public ICollection<CardWorkflowRun> WorkflowRuns { get; set; } = new List<CardWorkflowRun>();
     public ICollection<CardRevision> Revisions { get; set; } = new List<CardRevision>();
+    public ICollection<CardComment> Comments { get; set; } = new List<CardComment>();
 }

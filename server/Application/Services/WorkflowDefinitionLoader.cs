@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.ValueObjects;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -84,6 +85,8 @@ public sealed partial class WorkflowDefinitionLoader
         try
         {
             parsed = Parse(request.Content);
+            // Fail before writing the file when tracker.kind is present but unparseable.
+            ApplyTrackerKindFromContent(board, request.Content, UtcNow());
         }
         catch (ValidationException ex)
         {
@@ -275,6 +278,8 @@ public sealed partial class WorkflowDefinitionLoader
         }
 
         var parsed = Parse(content);
+        // Same activation path as UpdateAsync — file reload must flip TrackerKind too.
+        ApplyTrackerKindFromContent(board, content, UtcNow());
         var definition = await SaveNewVersionAsync(board, content, parsed.Name, ct);
         if (publish)
             await PublishReloadedAsync(board.Id, ok: true, definition.Version, error: null, ct);
@@ -290,6 +295,11 @@ public sealed partial class WorkflowDefinitionLoader
     {
         using var lease = await _versionGate.EnterAsync(board.Id, ct);
         var now = UtcNow();
+
+        // Derive TrackerKind from the workflow YAML before the version write so an unparseable
+        // kind fails the save (ValidationException) and leaves the board unchanged.
+        ApplyTrackerKindFromContent(board, content, now);
+
         var definitions = await _db.BoardWorkflowDefinitions
             .Where(d => d.BoardId == board.Id)
             .OrderBy(d => d.Version)
@@ -299,7 +309,12 @@ public sealed partial class WorkflowDefinitionLoader
             .OrderByDescending(d => d.Version)
             .FirstOrDefault();
         if (active is not null && active.Content == content)
+        {
+            // Content unchanged, but TrackerKind may still need persisting (e.g. DB was hand-edited
+            // out of lockstep with the YAML — keep the derived index honest on every save).
+            await _db.SaveChangesAsync(ct);
             return active;
+        }
 
         foreach (var activeDefinition in definitions.Where(d => d.IsActive))
             activeDefinition.IsActive = false;
@@ -324,6 +339,34 @@ public sealed partial class WorkflowDefinitionLoader
         _db.BoardWorkflowDefinitions.Add(definition);
         await _db.SaveChangesAsync(ct);
         return definition;
+    }
+
+    /// <summary>
+    /// CARD-0166: Board.TrackerKind is a derived index of the active workflow's tracker.kind.
+    /// Block removal deactivates to Internal; first Internal→external flip stamps TrackerActivatedAt
+    /// once (never moved on reactivation — it is the OUT-create watermark).
+    /// </summary>
+    private static void ApplyTrackerKindFromContent(Board board, string content, DateTime utcNow)
+    {
+        if (!TryParseContent(content, out var parsed, out _) || parsed is null)
+            return;
+
+        if (!IssueTrackerConfigParser.TryResolveBoardTrackerKind(
+                parsed.FrontMatter,
+                out var kind,
+                out var error))
+        {
+            throw new ValidationException("tracker.kind", error ?? "Tracker kind is invalid.");
+        }
+
+        var wasInternal = board.TrackerKind == TrackerKind.Internal;
+        board.TrackerKind = kind;
+        if (wasInternal
+            && kind != TrackerKind.Internal
+            && board.TrackerActivatedAt is null)
+        {
+            board.TrackerActivatedAt = utcNow;
+        }
     }
 
     private BoardWorkflowDto ToDto(Board board, BoardWorkflowDefinition definition) =>

@@ -53,7 +53,21 @@ public static class IssueTrackerConfigParser
                 return false;
             }
 
-            var kind = ParseKind(GetScalar(trackerNode, "kind")) ?? board.TrackerKind;
+            var kindRaw = GetScalar(trackerNode, "kind");
+            if (!TryParseKind(kindRaw, out var parsedKind))
+            {
+                // Absent kind falls back to the board's derived index (kept in lockstep by the
+                // loader after CARD-0166 S1). An explicit unparseable kind is a config error.
+                if (!string.IsNullOrWhiteSpace(kindRaw))
+                {
+                    error = $"Tracker kind '{kindRaw}' is not a recognised tracker kind.";
+                    return false;
+                }
+
+                parsedKind = board.TrackerKind;
+            }
+
+            var kind = parsedKind;
             if (kind != board.TrackerKind)
             {
                 error = $"Tracker kind '{kind}' does not match board tracker kind '{board.TrackerKind}'.";
@@ -97,23 +111,89 @@ public static class IssueTrackerConfigParser
         }
     }
 
-    private static TrackerKind? ParseKind(string? value)
+    /// <summary>
+    /// Shared alias table for <c>tracker.kind</c>. Returns false for null/blank/unrecognised —
+    /// callers decide whether blank means Internal (loader) or "use board kind" (TryParse).
+    /// </summary>
+    public static bool TryParseKind(string? value, out TrackerKind kind)
     {
+        kind = TrackerKind.Internal;
         if (string.IsNullOrWhiteSpace(value))
-            return null;
+            return false;
 
         var normalized = value
             .Replace("_", string.Empty, StringComparison.Ordinal)
             .Replace("-", string.Empty, StringComparison.Ordinal);
 
-        if (Enum.TryParse<TrackerKind>(normalized, ignoreCase: true, out var kind))
-            return kind;
+        if (Enum.TryParse<TrackerKind>(normalized, ignoreCase: true, out var parsed)
+            && parsed != TrackerKind.Internal)
+        {
+            kind = parsed;
+            return true;
+        }
 
-        return normalized.Equals("github", StringComparison.OrdinalIgnoreCase)
+        if (normalized.Equals("github", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("githubissue", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("githubissues", StringComparison.OrdinalIgnoreCase)
-                ? TrackerKind.GitHubIssues
-                : null;
+            || normalized.Equals("githubissues", StringComparison.OrdinalIgnoreCase))
+        {
+            kind = TrackerKind.GitHubIssues;
+            return true;
+        }
+
+        // Explicit "internal" is a recognised kind value (deactivation via kind, not only block removal).
+        if (normalized.Equals("internal", StringComparison.OrdinalIgnoreCase))
+        {
+            kind = TrackerKind.Internal;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolve the board's derived TrackerKind from workflow front matter.
+    /// Returns false with <paramref name="error"/> when kind is present but unparseable.
+    /// </summary>
+    public static bool TryResolveBoardTrackerKind(
+        string frontMatter,
+        out TrackerKind kind,
+        out string? error)
+    {
+        kind = TrackerKind.Internal;
+        error = null;
+
+        try
+        {
+            var yamlStream = new YamlStream();
+            using var reader = new StringReader(frontMatter);
+            yamlStream.Load(reader);
+            if (yamlStream.Documents.Count == 0
+                || yamlStream.Documents[0].RootNode is not YamlMappingNode root)
+            {
+                return true;
+            }
+
+            var trackerNode = GetMapping(root, "tracker");
+            if (trackerNode is null)
+                return true;
+
+            var kindRaw = GetScalar(trackerNode, "kind");
+            if (string.IsNullOrWhiteSpace(kindRaw))
+                return true;
+
+            if (!TryParseKind(kindRaw, out kind))
+            {
+                error = $"Tracker kind '{kindRaw}' is not a recognised tracker kind.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (YamlException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
     }
 
     private static IReadOnlyList<string>? ParseStringList(YamlMappingNode mapping, string key)

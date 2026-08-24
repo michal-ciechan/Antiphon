@@ -24,6 +24,8 @@ public sealed class OrchestratorSettingsValidator : IValidateOptions<Orchestrato
             failures.Add("Orchestrator:FailureBackoffMaxMs must be positive.");
         if (options.StartingSessionGraceSeconds <= 0)
             failures.Add("Orchestrator:StartingSessionGraceSeconds must be positive.");
+        if (options.TrackerSyncIntervalMinutes < 0)
+            failures.Add("Orchestrator:TrackerSyncIntervalMinutes must be zero or positive.");
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

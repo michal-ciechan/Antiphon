@@ -12,4 +12,11 @@ public sealed class OrchestratorSettings
     public int FailureBackoffMaxMs { get; set; } = 300_000;
     public int StartingSessionGraceSeconds { get; set; } = 300;
     public string? InternalTrackerRepositoryPathPrefix { get; set; }
+
+    /// <summary>
+    /// Minimum minutes between read-only external tracker syncs on the orchestrator tick.
+    /// Default 30 so activating a real GitHub board does not poll every 30 seconds.
+    /// 0 = every tick (pre-CARD-0166 behaviour).
+    /// </summary>
+    public int TrackerSyncIntervalMinutes { get; set; } = 30;
 }

@@ -1166,6 +1166,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("TrackerActivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("TrackerCommentsPulledAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("TrackerKind")
                         .HasColumnType("integer");
 
@@ -1727,6 +1733,53 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("CostLedgerEntries", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardComment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalCommentId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExternalUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("Origin")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardId", "CreatedAt")
+                        .HasDatabaseName("IX_CardComments_CardId_CreatedAt");
+
+                    b.HasIndex("ExternalCommentId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CardComments_ExternalCommentId")
+                        .HasFilter("\"ExternalCommentId\" IS NOT NULL");
+
+                    b.ToTable("CardComments", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ExternalIssueRef", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1746,8 +1799,21 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("LastKnownExternalState")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime?>("LastOutboundSyncedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("LastRevisionSynced")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("LastSyncedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Origin")
+                        .HasColumnType("integer");
 
                     b.Property<string>("RawPayloadJson")
                         .IsRequired()
@@ -3266,6 +3332,17 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Workflow");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardComment", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
+                        .WithMany("Comments")
+                        .HasForeignKey("CardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Card");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ExternalIssueRef", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
@@ -3575,6 +3652,8 @@ namespace Antiphon.Server.Migrations
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Card", b =>
                 {
                     b.Navigation("AgentSessions");
+
+                    b.Navigation("Comments");
 
                     b.Navigation("ExternalIssueRef");
 
