@@ -274,6 +274,7 @@ POST   /api/settings/providers/{id}/test
 GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/model-routing/{routingId}
 GET    /health                               liveness + PostgreSQL
 GET    /api/version                          build-time git SHA (CARD-0179); /health stays the literal Healthy body
+POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
 ```
 
 ## 3. Real-time (SignalR)
