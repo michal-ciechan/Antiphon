@@ -652,15 +652,17 @@ describe('tracker sync button (CARD-0166 S7)', () => {
     expect(screen.queryByRole('button', { name: 'Sync tracker now' })).not.toBeInTheDocument()
   })
 
-  it('shows on GitHubIssues boards and toasts the sync summary', async () => {
+  it('shows on GitHubIssues boards and POSTs the per-board sync endpoint', async () => {
     const githubBoard: BoardDetailDto = { ...board, trackerKind: 'GitHubIssues' }
+    let syncPosts = 0
     server.use(
       http.get('/api/boards', () => HttpResponse.json([boardSummary(githubBoard)])),
       http.get('/api/boards/board-1', () => HttpResponse.json(githubBoard)),
       http.get('/api/projects', () => HttpResponse.json([])),
       agentDefinitionsHandler(),
-      http.post('/api/boards/board-1/tracker/sync', () =>
-        HttpResponse.json({
+      http.post('/api/boards/board-1/tracker/sync', () => {
+        syncPosts += 1
+        return HttpResponse.json({
           boards: [{
             boardId: 'board-1',
             boardName: 'Delivery',
@@ -673,14 +675,14 @@ describe('tracker sync button (CARD-0166 S7)', () => {
             skips: [],
           }],
           concurrentRunSkipped: false,
-        }),
-      ),
+        })
+      }),
     )
     renderBoardRoute('/boards/board-1')
     const syncButton = await screen.findByRole('button', { name: 'Sync tracker now' })
     await userEvent.click(syncButton)
     await waitFor(() => {
-      expect(screen.getByText(/pulled 2/i)).toBeInTheDocument()
+      expect(syncPosts).toBe(1)
     })
   })
 })
