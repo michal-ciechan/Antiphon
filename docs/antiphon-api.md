@@ -268,6 +268,7 @@ GET    /api/audit  |  /cost-summary  |  /cost-ledger  |  /conversation    DELETE
 GET    /api/github/status  |  /repos  |  /repos/{owner}/{repo}/branches   POST /api/github/repos/refresh
 GET    /api/filesystem/browse  |  /workspaces  |  /worktrees              ⚠ enumerates host directories
 GET/POST/PUT/DELETE /api/settings/templates | /template-groups | /providers
+GET    /api/settings/templates/{id}/stages
 POST   /api/settings/providers/{id}/test
 GET/POST /api/settings/providers/{id}/model-routing   PUT|DELETE /api/settings/model-routing/{routingId}
 GET    /health                               liveness + PostgreSQL
