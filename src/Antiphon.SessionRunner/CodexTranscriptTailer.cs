@@ -82,9 +82,12 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private readonly SessionInputLog? _inputLog;
     private readonly DateTime? _childStartUtc;
     private readonly bool _resumeLaunch;
-    private readonly string? _knownTranscriptPath;
+    private string? _knownTranscriptPath;
     private readonly string _sessionsRoot;
     private readonly Action<string, string>? _onBound;
+    private readonly Action? _onUnbound;
+    private volatile bool _claimRevoked;
+    private Guid _claimRevokedBy;
     private readonly CodexTranscriptNormalizer _normalizer = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly object _gate = new();
@@ -116,6 +119,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         string? knownTranscriptPath = null,
         string? sessionsRoot = null,
         Action<string, string>? onBound = null,
+        Action? onUnbound = null,
         TimeSpan? refusalFaultDelay = null,
         TimeSpan? refusalFaultRepeat = null)
     {
@@ -133,7 +137,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         _resumeLaunch = resumeLaunch;
         _knownTranscriptPath = string.IsNullOrWhiteSpace(knownTranscriptPath) ? null : knownTranscriptPath;
         _sessionsRoot = string.IsNullOrWhiteSpace(sessionsRoot) ? ResolveSessionsRoot(null) : sessionsRoot!;
-    _onBound = onBound;
+        _onBound = onBound;
+        _onUnbound = onUnbound;
     }
 
     /// <summary>The rollout currently being tailed, or null while unbound (tests/diagnostics).</summary>
@@ -161,6 +166,24 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
     public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
 
+    public void NotifyClaimRevoked(string path, Guid newOwner)
+    {
+        if (BoundTranscriptPath is not { } bound)
+            return;
+        try
+        {
+            if (!string.Equals(Path.GetFullPath(bound), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return;
+        }
+
+        _claimRevokedBy = newOwner;
+        _claimRevoked = true;
+    }
+
     public RunnerTranscriptDto Snapshot()
     {
         lock (_gate)
@@ -171,6 +194,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     {
         try
         {
+            while (!ct.IsCancellationRequested)
+            {
             var path = await LocateAsync(ct);
             if (path is null)
                 return; // cancelled, or the session ended without an identifiable rollout
@@ -180,9 +205,16 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
             long offset = 0;
             var pending = new List<byte>();
+            var dropped = false;
 
             while (!ct.IsCancellationRequested)
             {
+                if (_claimRevoked)
+                {
+                    HandleClaimRevoked(path);
+                    dropped = true;
+                    break;
+                }
                 try
                 {
                     var info = new FileInfo(path);
@@ -219,6 +251,10 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
                 await Task.Delay(_pollInterval, ct);
             }
+
+            if (!dropped)
+                return;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -227,6 +263,29 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         {
             _logger.LogWarning(ex, "Codex transcript tailer failed for session {SessionId}", _sessionId);
         }
+    }
+
+    private void HandleClaimRevoked(string path)
+    {
+        var newOwner = _claimRevokedBy;
+        _claimRevoked = false;
+        BoundTranscriptPath = null;
+        _knownTranscriptPath = null;
+        _logger.LogWarning(
+            "Session {SessionId}: Codex rollout {Path} was reclaimed by its namesake session {NewOwner}; "
+            + "it was never ours. Dropping it and resuming discovery.",
+            _sessionId, path, newOwner);
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.ClaimRevoked,
+                $"Reclaimed by namesake session {newOwner:D}",
+                CandidatePath: path,
+                UnboundSeconds: 0,
+                Repeat: 1));
+        try { _onUnbound?.Invoke(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Clearing the Codex binding for session {SessionId} failed", _sessionId); }
     }
 
     // Split the accumulated bytes on '\n' (never part of a UTF-8 multi-byte sequence), normalize
@@ -364,7 +423,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     /// </summary>
     private bool TryBind(string path, string how)
     {
-        if (_claims is not null && !_claims.TryClaim(path, _sessionId))
+        if (_claims is not null && !_claims.TryClaim(path, _sessionId).Claimed)
         {
             _logger.LogDebug(
                 "Session {SessionId}: Codex rollout {Path} is already claimed by another session; not adopting",

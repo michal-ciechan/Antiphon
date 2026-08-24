@@ -17,6 +17,13 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>The child process is gone — stop looking for/reading the transcript after a settle window.</summary>
     void NotifyChildExited();
 
+    /// <summary>
+    /// CARD-0181: this session's claim on <paramref name="path"/> was displaced by the file's
+    /// namesake. If we were tailing it, drop it and resume discovery; if we were not yet bound,
+    /// the registry already refuses the path from here on.
+    /// </summary>
+    void NotifyClaimRevoked(string path, Guid newOwner);
+
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     RunnerTranscriptDto Snapshot();
 }

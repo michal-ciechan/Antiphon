@@ -228,7 +228,7 @@ public class CodexTranscriptTailerTests
         var fixture = tree.Seed("codex-tui-turn.jsonl");
 
         var claims = new TranscriptClaimRegistry();
-        claims.TryClaim(fixture.Path, Guid.NewGuid()).ShouldBeTrue();
+        claims.TryClaim(fixture.Path, Guid.NewGuid()).Claimed.ShouldBeTrue();
 
         var input = new SessionInputLog();
         input.Append(TuiFixturePrompt);

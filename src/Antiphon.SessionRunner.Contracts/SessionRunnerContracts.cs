@@ -512,6 +512,12 @@ public static class TranscriptFaultKinds
 
     /// <summary>Two sessions were pointed at the same transcript (slice 2, SessionStart marker).</summary>
     public const string MarkerConflict = "MarkerConflict";
+
+    /// <summary>
+    /// CARD-0181: this session had been tailing a file whose basename is another session's id;
+    /// the namesake reclaimed it. A one-off, not a continuing refusal.
+    /// </summary>
+    public const string ClaimRevoked = "ClaimRevoked";
 }
 
 /// <summary>How a transcript came to be bound (<see cref="RunnerTranscriptBoundEvent.How"/>).</summary>
@@ -529,7 +535,7 @@ public static class TranscriptBindMethods
     /// <summary>Mid-session fork (e.g. <c>/clear</c>) followed.</summary>
     public const string Fork = "fork";
 
-    /// <summary>Restart re-adopt of a session that predates sidecars (see the migration shim).</summary>
+    /// <summary>Historical; never written since CARD-0181. Stored sidecars and incident rows may still carry it.</summary>
     public const string MigrationShim = "migration-shim";
 
     /// <summary>

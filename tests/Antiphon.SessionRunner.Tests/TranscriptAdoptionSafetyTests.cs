@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -239,7 +240,7 @@ public class TranscriptAdoptionSafetyTests
         await tree.AppendAsync(file, UserLine("u1", tree.Cwd, prompt, DateTime.UtcNow));
 
         var claims = new TranscriptClaimRegistry();
-        claims.TryClaim(file, Guid.NewGuid()).ShouldBeTrue(); // some other live session owns it
+        claims.TryClaim(file, Guid.NewGuid()).Claimed.ShouldBeTrue(); // some other live session owns it
 
         await using var hub = new HubEvents();
         var tailer = NewTailer(hub, tree, input, childStartUtc: DateTime.UtcNow.AddSeconds(-5), claims: claims);
@@ -520,7 +521,7 @@ public class TranscriptAdoptionSafetyTests
 
             await Task.Delay(200);
             var siblingFork = tree.NewTranscript();
-            claims.TryClaim(siblingFork, Guid.NewGuid()).ShouldBeTrue();
+            claims.TryClaim(siblingFork, Guid.NewGuid()).Claimed.ShouldBeTrue();
             await tree.AppendAsync(siblingFork, UserLine("s1", tree.Cwd, "the sibling's post-clear prompt", DateTime.UtcNow));
 
             await Task.Delay(RefusalWindow);
@@ -602,8 +603,7 @@ public class TranscriptAdoptionSafetyTests
         var tailer = NewTailer(
             hub, tree, new SessionInputLog(),
             childStartUtc: DateTime.UtcNow.AddMinutes(-10),
-            knownTranscriptPath: mine,
-            restartAdopt: true);
+            knownTranscriptPath: mine);
         tailer.Start();
         try
         {
@@ -618,10 +618,9 @@ public class TranscriptAdoptionSafetyTests
     }
 
     /// <summary>
-    /// The migration shim for sessions that predate sidecars: allowed ONLY when there is exactly one
-    /// active cwd-matching candidate, only on the restart path, and never silently — it announces
-    /// itself as a heuristic bind. Two candidates and it refuses, because picking between them would
-    /// be the guess this card exists to remove.
+    /// CARD-0181 S2: the migration shim is gone. Two cwd-matching candidates with an empty input
+    /// log stay unbound (the first half, kept). A unique candidate also stays unbound until new
+    /// input lands that can satisfy C4.
     /// </summary>
     [Test]
     public async Task Restart_without_sidecar_uses_migration_shim_only_for_unique_candidate()
@@ -638,7 +637,6 @@ public class TranscriptAdoptionSafetyTests
             var tailer = NewTailer(
                 hub, tree, new SessionInputLog(),
                 childStartUtc: DateTime.UtcNow.AddHours(-1),
-                restartAdopt: true,
                 refusalFaultDelay: TimeSpan.FromMilliseconds(400));
             tailer.Start();
             try
@@ -654,7 +652,7 @@ public class TranscriptAdoptionSafetyTests
             }
         }
 
-        // Exactly one active candidate: adopt, and say so.
+        // Exactly one active candidate: stays unbound (shim deleted). Reports rather than guessing.
         using (var tree = new TranscriptTree("shim-unique"))
         {
             var only = tree.NewTranscript();
@@ -664,16 +662,15 @@ public class TranscriptAdoptionSafetyTests
             var tailer = NewTailer(
                 hub, tree, new SessionInputLog(),
                 childStartUtc: DateTime.UtcNow.AddHours(-1),
-                restartAdopt: true);
+                refusalFaultDelay: TimeSpan.FromMilliseconds(400));
             tailer.Start();
             try
             {
-                (await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10)))
-                    .ShouldHaveSingleItem().Text.ShouldBe("the one live conversation here");
-
-                var bound = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptBound, TimeSpan.FromSeconds(5));
-                bound.ShouldNotBeNull();
-                bound!.RootElement.GetProperty("How").GetString().ShouldBe(TranscriptBindMethods.MigrationShim);
+                await Task.Delay(RefusalWindow);
+                tailer.BoundTranscriptPath.ShouldBeNull(
+                    "a restart-adopted never-bound session stays unbound until new input satisfies C4");
+                (await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5)))
+                    .ShouldNotBeNull();
             }
             finally
             {
@@ -713,7 +710,7 @@ public class TranscriptAdoptionSafetyTests
 
             runtime.TranscriptClaims.IsClaimedByOther(transcriptPath, Guid.NewGuid())
                 .ShouldBeTrue("a surviving session's transcript stays off-limits to everyone else");
-            runtime.TranscriptClaims.TryClaim(transcriptPath, survivor)
+            runtime.TranscriptClaims.TryClaim(transcriptPath, survivor).Claimed
                 .ShouldBeTrue("the owning session re-claims its own file (--resume reuses the id)");
         }
         finally
@@ -1030,6 +1027,449 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    // ---------------------------------------------------------------- CARD-0181 claim strength / C0
+
+    [Test]
+    public async Task THE_CARD_0181_shape_exact_id_bind_displaces_a_stale_sidecar_claim_after_restart()
+    {
+        using var tree = new TranscriptTree("0181-shape");
+        var victim = Guid.NewGuid();
+        var thief = Guid.NewGuid();
+        var file = tree.ExactTranscript(victim);
+        await tree.AppendAsync(file, UserLine("v1", tree.Cwd, "the victim's own prompt", DateTime.UtcNow));
+
+        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-0181-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logRoot);
+        try
+        {
+            new TranscriptSidecar
+            {
+                SessionId = thief,
+                Cwd = tree.Cwd,
+                TranscriptPath = file,
+                How = TranscriptBindMethods.MigrationShim,
+            }.SaveAtomic(TranscriptSidecar.PathFor(logRoot, thief));
+            new TranscriptSidecar
+            {
+                SessionId = victim,
+                Cwd = tree.Cwd,
+                TranscriptPath = null,
+            }.SaveAtomic(TranscriptSidecar.PathFor(logRoot, victim));
+
+            await using var runtime = new SessionRunnerRuntime(
+                Options.Create(new SessionRunnerSettings { SessionLogPath = logRoot }),
+                NullLogger<SessionRunnerRuntime>.Instance);
+            await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+
+            runtime.TranscriptClaims.OwnerOf(file)!.Value.Owner.ShouldBe(thief);
+            runtime.TranscriptClaims.OwnerOf(file)!.Value.Strength.ShouldBe(ClaimStrength.Heuristic);
+
+            var displaced = new List<(Guid Prev, Guid Next)>();
+            runtime.TranscriptClaims.ClaimDisplaced += (_, prev, next) => displaced.Add((prev, next));
+
+            await using var hub = new HubEvents();
+            var tailer = NewTailer(
+                hub, tree, new SessionInputLog(),
+                childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+                claims: runtime.TranscriptClaims,
+                sessionId: victim,
+                knownSessions: new SidecarKnownSessionProbe(logRoot));
+            tailer.Start();
+            try
+            {
+                var entries = await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+                entries.ShouldHaveSingleItem().Text.ShouldBe("the victim's own prompt");
+                tailer.BoundTranscriptPath.ShouldBe(file);
+                runtime.TranscriptClaims.OwnerOf(file)!.Value.Owner.ShouldBe(victim);
+                runtime.TranscriptClaims.OwnerOf(file)!.Value.Strength.ShouldBe(ClaimStrength.Exact);
+                displaced.ShouldContain(d => d.Prev == thief && d.Next == victim);
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task A_live_tailer_that_loses_its_claim_stops_reading_and_resumes_discovery()
+    {
+        using var tree = new TranscriptTree("0181-revoke");
+        var victim = Guid.NewGuid();
+        var thief = Guid.NewGuid();
+        var file = tree.ExactTranscript(victim);
+        var prompt = "shared launch note both incarnations sent";
+        await tree.AppendAsync(file, UserLine("v1", tree.Cwd, prompt, DateTime.UtcNow));
+
+        var claims = new TranscriptClaimRegistry();
+        var thiefInput = new SessionInputLog();
+        thiefInput.Append(prompt);
+        var unbound = false;
+        TranscriptTailer? tailerYRef = null;
+        claims.ClaimDisplaced += (path, prev, next) =>
+        {
+            if (prev == thief)
+                tailerYRef?.NotifyClaimRevoked(path, next);
+        };
+
+        await using var hubY = new HubEvents();
+        // C0 disabled (null probe) so the theft can be staged.
+        var tailerY = NewTailer(
+            hubY, tree, thiefInput,
+            childStartUtc: DateTime.UtcNow.AddHours(-1),
+            claims: claims,
+            sessionId: thief,
+            onUnbound: () => unbound = true);
+        tailerYRef = tailerY;
+        tailerY.Start();
+        try
+        {
+            (await PollForEntriesAsync(tailerY, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe(prompt);
+            tailerY.BoundTranscriptPath.ShouldBe(file);
+
+            await using var hubX = new HubEvents();
+            var tailerX = NewTailer(
+                hubX, tree, new SessionInputLog(),
+                childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+                claims: claims,
+                sessionId: victim);
+            tailerX.Start();
+            try
+            {
+                (await PollForEntriesAsync(tailerX, want: 1, TimeSpan.FromSeconds(10)))
+                    .ShouldHaveSingleItem().Text.ShouldBe(prompt);
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (DateTime.UtcNow < deadline && tailerY.BoundTranscriptPath is not null)
+                    await Task.Delay(50);
+                tailerY.BoundTranscriptPath.ShouldBeNull();
+                unbound.ShouldBeTrue();
+
+                var fault = await hubY.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
+                fault.ShouldNotBeNull();
+                fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.ClaimRevoked);
+                (fault.RootElement.GetProperty("Detail").GetString() ?? "").ShouldContain(victim.ToString("D"));
+
+                await tree.AppendAsync(file, UserLine("v2", tree.Cwd, "after revocation", DateTime.UtcNow));
+                var xEntries = await PollForEntriesAsync(tailerX, want: 2, TimeSpan.FromSeconds(10));
+                xEntries.Select(e => e.Text).ShouldContain("after revocation");
+                tailerY.Snapshot().Entries.Select(e => e.Text).ShouldNotContain("after revocation");
+            }
+            finally
+            {
+                await tailerX.DisposeAsync();
+            }
+        }
+        finally
+        {
+            await tailerY.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task C0_a_file_named_for_another_known_session_is_refused_even_on_a_content_match()
+    {
+        using var tree = new TranscriptTree("0181-c0");
+        var namesake = Guid.NewGuid();
+        var file = tree.ExactTranscript(namesake);
+        var prompt = "identical launch note";
+        await tree.AppendAsync(file, UserLine("n1", tree.Cwd, prompt, DateTime.UtcNow));
+
+        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c0-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logRoot);
+        try
+        {
+            new TranscriptSidecar { SessionId = namesake, Cwd = tree.Cwd }
+                .SaveAtomic(TranscriptSidecar.PathFor(logRoot, namesake));
+
+            var input = new SessionInputLog();
+            input.Append(prompt);
+            await using var hub = new HubEvents();
+            var tailer = NewTailer(
+                hub, tree, input,
+                childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+                knownSessions: new SidecarKnownSessionProbe(logRoot),
+                refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+            tailer.Start();
+            try
+            {
+                await Task.Delay(RefusalWindow);
+                tailer.BoundTranscriptPath.ShouldBeNull();
+                var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
+                fault.ShouldNotBeNull();
+                var detail = fault!.RootElement.GetProperty("Detail").GetString() ?? "";
+                detail.ShouldContain(namesake.ToString("D"));
+                detail.ShouldContain("named for session", Case.Insensitive);
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+
+            // Without the sidecar, "known" is the gate — GUID-shaped is not enough.
+            Directory.Delete(TranscriptSidecar.DirectoryFor(logRoot), recursive: true);
+            await using var hub2 = new HubEvents();
+            var tailer2 = NewTailer(
+                hub2, tree, input,
+                childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+                knownSessions: new SidecarKnownSessionProbe(logRoot));
+            tailer2.Start();
+            try
+            {
+                (await PollForEntriesAsync(tailer2, want: 1, TimeSpan.FromSeconds(10)))
+                    .ShouldHaveSingleItem().Text.ShouldBe(prompt);
+            }
+            finally
+            {
+                await tailer2.DisposeAsync();
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Templated_launch_note_does_not_let_a_previous_incarnation_bind_the_next_ones_file()
+    {
+        // Copied literally from ChannelPreamble.BootstrapBody — the runner project does not
+        // reference the server.
+        const string bootstrap =
+            "New session started. Follow your CLAUDE.md session-start ritual now (read SOUL.md, USER.md, "
+            + "MEMORY.md and today's memory log; if BOOTSTRAP.md exists, complete it and delete it), then reply READY.";
+
+        using var tree = new TranscriptTree("0181-launch-note");
+        var next = Guid.NewGuid();
+        var file = tree.ExactTranscript(next);
+        var firstRecord = DateTime.UtcNow;
+        await tree.AppendAsync(file, AgentNameLine("PredictionMarkets-Orchestrator"));
+        await tree.AppendAsync(file, UserLine("b1", tree.Cwd, bootstrap, firstRecord));
+
+        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-note-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logRoot);
+        try
+        {
+            new TranscriptSidecar { SessionId = next, Cwd = tree.Cwd, AgentName = "PredictionMarkets-Orchestrator" }
+                .SaveAtomic(TranscriptSidecar.PathFor(logRoot, next));
+
+            var input = new SessionInputLog();
+            input.Append(bootstrap);
+            await using var hub = new HubEvents();
+            var tailer = NewTailer(
+                hub, tree, input,
+                childStartUtc: firstRecord.AddHours(-16),
+                agentName: "PredictionMarkets-Orchestrator",
+                knownSessions: new SidecarKnownSessionProbe(logRoot),
+                refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+            tailer.Start();
+            try
+            {
+                await Task.Delay(RefusalWindow);
+                tailer.BoundTranscriptPath.ShouldBeNull("C0 refuses the next incarnation's file");
+            }
+            finally
+            {
+                await tailer.DisposeAsync();
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Clear_fork_named_for_a_sibling_session_is_not_followed()
+    {
+        using var tree = new TranscriptTree("0181-c0-fork");
+        var mine = Guid.NewGuid();
+        var sibling = Guid.NewGuid();
+        var myFile = tree.ExactTranscript(mine);
+        await tree.AppendAsync(myFile, UserLine("m1", tree.Cwd, "my own first prompt", DateTime.UtcNow));
+
+        var input = new SessionInputLog();
+        input.Append("my own first prompt");
+        input.Append("my own first prompt"); // next real prompt also matches sibling if followed
+
+        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-fork-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logRoot);
+        new TranscriptSidecar { SessionId = sibling, Cwd = tree.Cwd }
+            .SaveAtomic(TranscriptSidecar.PathFor(logRoot, sibling));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: DateTime.UtcNow.AddSeconds(-5),
+            claims: new TranscriptClaimRegistry(),
+            sessionId: mine,
+            knownSessions: new SidecarKnownSessionProbe(logRoot));
+        tailer.Start();
+        try
+        {
+            (await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe("my own first prompt");
+
+            var siblingFork = tree.ExactTranscript(sibling);
+            await tree.AppendAsync(siblingFork, UserLine("s1", tree.Cwd, "my own first prompt", DateTime.UtcNow));
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBe(myFile);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+            try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Restart_adopt_without_a_bound_transcript_stays_unbound_until_new_input()
+    {
+        using var tree = new TranscriptTree("0181-no-shim");
+        var only = tree.NewTranscript();
+        await tree.AppendAsync(only, UserLine("o1", tree.Cwd, "the one live conversation here", DateTime.UtcNow));
+
+        var input = new SessionInputLog();
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: DateTime.UtcNow.AddHours(-1),
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(RefusalWindow);
+            tailer.BoundTranscriptPath.ShouldBeNull();
+
+            input.Append("the one live conversation here");
+            (await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10)))
+                .ShouldHaveSingleItem().Text.ShouldBe("the one live conversation here");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Exact_step_loss_names_the_holder_in_the_refusal_report()
+    {
+        using var tree = new TranscriptTree("0181-exact-loss");
+        var victim = Guid.NewGuid();
+        var holder = Guid.NewGuid();
+        var file = tree.ExactTranscript(victim);
+        await tree.AppendAsync(file, UserLine("v1", tree.Cwd, "victim prompt", DateTime.UtcNow));
+
+        var claims = new TranscriptClaimRegistry();
+        claims.ForceClaimForTests(file, holder, ClaimStrength.Exact);
+
+        var input = new SessionInputLog();
+        input.Append("victim prompt");
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+            claims: claims,
+            sessionId: victim,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400),
+            refusalFaultRepeat: TimeSpan.FromMilliseconds(200));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(8));
+            fault.ShouldNotBeNull();
+            var detail = fault!.RootElement.GetProperty("Detail").GetString() ?? "";
+            detail.ShouldContain(holder.ToString("D"));
+            detail.ShouldContain("exact file held by", Case.Insensitive);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Restoring_a_sidecar_that_names_another_sessions_file_is_heuristic_and_logged()
+    {
+        var logs = new List<string>();
+        var root = Path.Combine(Path.GetTempPath(), $"antiphon-restore-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var thief = Guid.NewGuid();
+            var victim = Guid.NewGuid();
+            var path = Path.Combine(root, victim.ToString("D") + ".jsonl");
+            File.WriteAllText(path, "");
+            new TranscriptSidecar
+            {
+                SessionId = thief,
+                TranscriptPath = path,
+                How = TranscriptBindMethods.MigrationShim,
+            }.SaveAtomic(TranscriptSidecar.PathFor(root, thief));
+            new TranscriptSidecar { SessionId = victim }
+                .SaveAtomic(TranscriptSidecar.PathFor(root, victim));
+
+            await using var runtime = new SessionRunnerRuntime(
+                Options.Create(new SessionRunnerSettings { SessionLogPath = root }),
+                new ListLogger<SessionRunnerRuntime>(logs));
+            await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+
+            runtime.TranscriptClaims.OwnerOf(path)!.Value.Strength.ShouldBe(ClaimStrength.Heuristic);
+            logs.ShouldContain(l => l.Contains("heuristic", StringComparison.OrdinalIgnoreCase)
+                && l.Contains(thief.ToString("D"), StringComparison.OrdinalIgnoreCase)
+                && l.Contains(victim.ToString("D"), StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task Sidecar_retail_keeps_the_original_how()
+    {
+        using var tree = new TranscriptTree("0181-how");
+        var sessionId = Guid.NewGuid();
+        var file = tree.ExactTranscript(sessionId);
+        await tree.AppendAsync(file, UserLine("m1", tree.Cwd, "pre-restart work", DateTime.UtcNow.AddMinutes(-5)));
+
+        string? persistedHow = TranscriptBindMethods.Discovery;
+        string? persistedPath = file;
+        void OnBound(string path, string how)
+        {
+            if (how == TranscriptBindMethods.Sidecar
+                && persistedPath is not null
+                && string.Equals(persistedPath, path, StringComparison.OrdinalIgnoreCase)
+                && persistedHow is not null)
+                return;
+            persistedHow = how;
+            persistedPath = path;
+        }
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            childStartUtc: DateTime.UtcNow.AddMinutes(-10),
+            knownTranscriptPath: file,
+            sessionId: sessionId,
+            onBound: OnBound);
+        tailer.Start();
+        try
+        {
+            await PollForEntriesAsync(tailer, want: 1, TimeSpan.FromSeconds(10));
+            persistedHow.ShouldBe(TranscriptBindMethods.Discovery);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     // ---------------------------------------------------------------------------- test plumbing
 
     private static TranscriptTailer NewTailer(
@@ -1041,10 +1481,12 @@ public class TranscriptAdoptionSafetyTests
         bool resumeLaunch = false,
         TranscriptClaimRegistry? claims = null,
         string? knownTranscriptPath = null,
-        bool restartAdopt = false,
+        IKnownSessionProbe? knownSessions = null,
         TimeSpan? refusalFaultDelay = null,
         TimeSpan? refusalFaultRepeat = null,
-        Guid? sessionId = null) =>
+        Guid? sessionId = null,
+        Action<string, string>? onBound = null,
+        Action? onUnbound = null) =>
         new(
             sessionId ?? Guid.NewGuid(),
             tree.Cwd,
@@ -1058,7 +1500,9 @@ public class TranscriptAdoptionSafetyTests
             agentName: agentName,
             resumeLaunch: resumeLaunch,
             knownTranscriptPath: knownTranscriptPath,
-            restartAdopt: restartAdopt,
+            onBound: onBound,
+            onUnbound: onUnbound,
+            knownSessions: knownSessions,
             refusalFaultDelay: refusalFaultDelay,
             refusalFaultRepeat: refusalFaultRepeat);
 
@@ -1173,6 +1617,17 @@ public class TranscriptAdoptionSafetyTests
     }
 
     /// <summary>Drains the runner event hub so a test can wait for a specific published event.</summary>
+    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (sink)
+                sink.Add($"[{logLevel}] {formatter(state, exception)}");
+        }
+    }
+
     private sealed class HubEvents : IAsyncDisposable
     {
         private readonly CancellationTokenSource _cts = new();

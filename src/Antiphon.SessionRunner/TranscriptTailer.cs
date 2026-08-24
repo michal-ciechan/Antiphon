@@ -55,9 +55,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly ILogger _logger;
     // How long to wait for the exact <session-id>.jsonl before falling back to cwd-based discovery.
     private readonly TimeSpan _exactIdGrace;
-    // How recently a file must have been written to count as "actively written" — the only signal
-    // left to the migration shim below.
-    private readonly TimeSpan _activeWriteWindow;
+
     private readonly TimeSpan _refusalFaultDelay;
     // CARD-0101: injectable purely so a test can observe the SECOND and THIRD report of one
     // continuous fault (the repeat counter and the growing unbound clock are what the server
@@ -68,10 +66,15 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly DateTime? _childStartUtc;
     private readonly string? _agentName;
     private readonly bool _resumeLaunch;
-    private readonly string? _knownTranscriptPath;
-    private readonly bool _restartAdopt;
+    private string? _knownTranscriptPath;
     private readonly Action<string, string>? _onBound;
+    private readonly Action? _onUnbound;
+    private readonly IKnownSessionProbe? _knownSessions;
     private readonly CancellationTokenSource _cts = new();
+    private volatile bool _claimRevoked;
+    private Guid _claimRevokedBy;
+    private Guid? _lastExactLossHolder;
+    private DateTime? _lastExactLossReport;
     private readonly object _gate = new();
     private readonly List<RunnerTranscriptEvent> _entries = new();
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
@@ -87,15 +90,15 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <param name="agentName">Launch <c>--name</c>, for the C2b reject filter.</param>
     /// <param name="resumeLaunch">True for <c>--resume</c>/<c>--continue</c>: waives C3.</param>
     /// <param name="knownTranscriptPath">Sidecar-recorded path (restart re-adopt): re-tailed directly, no discovery.</param>
-    /// <param name="restartAdopt">True when adopting a host that survived a runner restart (enables the migration shim).</param>
     /// <param name="onBound">Called with (path, how) whenever a transcript is bound, so the sidecar can record it.</param>
+    /// <param name="onUnbound">Called when a bound transcript is dropped because its namesake reclaimed it.</param>
+    /// <param name="knownSessions">C0: sessions this runner launched. Null disables C0.</param>
     public TranscriptTailer(
         Guid sessionId,
         string cwd,
         SessionRunnerEventHub events,
         ILogger logger,
         TimeSpan? exactIdGrace = null,
-        TimeSpan? activeWriteWindow = null,
         TimeSpan? forkScanInterval = null,
         TranscriptClaimRegistry? claims = null,
         SessionInputLog? inputLog = null,
@@ -103,8 +106,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         string? agentName = null,
         bool resumeLaunch = false,
         string? knownTranscriptPath = null,
-        bool restartAdopt = false,
         Action<string, string>? onBound = null,
+        Action? onUnbound = null,
+        IKnownSessionProbe? knownSessions = null,
         TimeSpan? refusalFaultDelay = null,
         TimeSpan? refusalFaultRepeat = null)
     {
@@ -113,7 +117,6 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _events = events;
         _logger = logger;
         _exactIdGrace = exactIdGrace ?? TimeSpan.FromSeconds(10);
-        _activeWriteWindow = activeWriteWindow ?? TimeSpan.FromSeconds(20);
         _refusalFaultDelay = refusalFaultDelay ?? DefaultRefusalFaultDelay;
         _refusalFaultRepeat = refusalFaultRepeat ?? DefaultRefusalFaultRepeat;
         _claims = claims;
@@ -122,8 +125,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _agentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName;
         _resumeLaunch = resumeLaunch;
         _knownTranscriptPath = string.IsNullOrWhiteSpace(knownTranscriptPath) ? null : knownTranscriptPath;
-        _restartAdopt = restartAdopt;
         _onBound = onBound;
+        _onUnbound = onUnbound;
+        _knownSessions = knownSessions;
         ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
     }
 
@@ -142,6 +146,24 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// </summary>
     public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
 
+    public void NotifyClaimRevoked(string path, Guid newOwner)
+    {
+        if (BoundTranscriptPath is not { } bound)
+            return;
+        try
+        {
+            if (!string.Equals(Path.GetFullPath(bound), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return;
+        }
+
+        _claimRevokedBy = newOwner;
+        _claimRevoked = true;
+    }
+
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     public RunnerTranscriptDto Snapshot()
     {
@@ -153,17 +175,26 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     {
         try
         {
-            var path = await LocateAsync(ct);
-            if (path is null)
-                return; // cancelled, or the session ended without ever producing a transcript
-
-            _logger.LogInformation("Tailing transcript {Path} for session {SessionId}", path, _sessionId);
-
-            long offset = 0;
-            var pending = new List<byte>();
-            var lastForkScan = DateTime.UtcNow;
             while (!ct.IsCancellationRequested)
             {
+                var path = await LocateAsync(ct);
+                if (path is null)
+                    return; // cancelled, or the session ended without ever producing a transcript
+
+                _logger.LogInformation("Tailing transcript {Path} for session {SessionId}", path, _sessionId);
+
+                long offset = 0;
+                var pending = new List<byte>();
+                var lastForkScan = DateTime.UtcNow;
+                var dropped = false;
+                while (!ct.IsCancellationRequested)
+                {
+                    if (_claimRevoked)
+                    {
+                        HandleClaimRevoked(path);
+                        dropped = true;
+                        break;
+                    }
                 // Mid-session fork watch: /clear forks the conversation to a FRESH file (canary:
                 // ClaudeLocalCommandCanaryTests) — the current file goes quiet and all further
                 // activity lands in the fork. Without following it, transcript ingestion (and with
@@ -214,7 +245,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     // File is mid-write / transiently locked — retry on the next poll.
                 }
 
-                await Task.Delay(PollInterval, ct);
+                    await Task.Delay(PollInterval, ct);
+                }
+
+                if (!dropped)
+                    return;
             }
         }
         catch (OperationCanceledException)
@@ -224,6 +259,29 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         {
             _logger.LogWarning(ex, "Transcript tailer failed for session {SessionId}", _sessionId);
         }
+    }
+
+    private void HandleClaimRevoked(string path)
+    {
+        var newOwner = _claimRevokedBy;
+        _claimRevoked = false;
+        BoundTranscriptPath = null;
+        _knownTranscriptPath = null;
+        _logger.LogWarning(
+            "Session {SessionId}: transcript {Path} was reclaimed by its namesake session {NewOwner}; "
+            + "it was never ours. Dropping it and resuming discovery.",
+            _sessionId, path, newOwner);
+        _events.Publish(
+            SessionRunnerEventNames.SessionTranscriptFault,
+            new RunnerTranscriptFaultEvent(
+                _sessionId,
+                TranscriptFaultKinds.ClaimRevoked,
+                $"Reclaimed by namesake session {newOwner:D}",
+                CandidatePath: path,
+                UnboundSeconds: 0,
+                Repeat: 1));
+        try { _onUnbound?.Invoke(); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Clearing the transcript binding for session {SessionId} failed", _sessionId); }
     }
 
     // Split the accumulated bytes on '\n' (never part of a UTF-8 multi-byte sequence), decode and
@@ -342,7 +400,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                             return winner;
                         }
 
-                        refusingSince = verdict.Refusals.Count > 0 ? refusingSince ?? DateTime.UtcNow : null;
+                        refusingSince = verdict.Refusals.Count > 0 || verdict.ExactFileHeldBy is not null
+                            ? refusingSince ?? DateTime.UtcNow
+                            : null;
                         MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault, ref refusalRepeat);
 
                         // CARD-0073 S1: C2 itself found nothing, so Refusals is empty and the
@@ -391,12 +451,33 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// </summary>
     private bool TryBind(string path, string how)
     {
-        if (_claims is not null && !_claims.TryClaim(path, _sessionId))
+        if (_claims is not null)
         {
-            _logger.LogDebug(
-                "Session {SessionId}: transcript {Path} is already claimed by another session; not adopting",
-                _sessionId, path);
-            return false;
+            var claim = _claims.TryClaim(path, _sessionId);
+            if (!claim.Claimed)
+            {
+                if (how == TranscriptBindMethods.Exact)
+                {
+                    var holder = _claims.OwnerOf(path);
+                    _lastExactLossHolder = holder?.Owner;
+                    if (_lastExactLossReport is null
+                        || DateTime.UtcNow - _lastExactLossReport.Value >= _refusalFaultRepeat)
+                    {
+                        _lastExactLossReport = DateTime.UtcNow;
+                        _logger.LogWarning(
+                            "Session {SessionId}: its own transcript {Path} is held by session {Holder} ({Strength}); not adopting.",
+                            _sessionId, path, holder?.Owner, holder?.Strength);
+                    }
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Session {SessionId}: transcript {Path} is already claimed by another session; not adopting",
+                        _sessionId, path);
+                }
+
+                return false;
+            }
         }
 
         BoundTranscriptPath = path;
@@ -420,7 +501,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         string How,
         IReadOnlyList<string> Refusals,
         int FilesUnderRoot,
-        int CwdMatched);
+        int CwdMatched,
+        string? ExactFileHeldBy = null);
 
     /// <summary>
     /// Applies C1–C4 to every transcript under the projects root and returns the best qualifying
@@ -430,9 +512,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private CandidateVerdict EvaluateCandidates(string projectsRoot)
     {
         var qualified = new List<(string Path, DateTime Mtime)>();
-        var shimEligible = new List<(string Path, DateTime Mtime)>();
         var refusals = new List<string>();
-        var activeCutoff = DateTime.UtcNow - _activeWriteWindow;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var filesUnderRoot = 0;
         var cwdMatched = 0;
@@ -444,6 +524,19 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
             if (Path.GetFileNameWithoutExtension(file).Equals(_sessionId.ToString("D"), StringComparison.OrdinalIgnoreCase))
                 continue; // the exact file is handled by the fast path
+
+            // C0 — CARD-0181. A transcript whose basename is another session's id is that session's
+            // by name, and this runner knows the session exists because it wrote a sidecar for it.
+            // No amount of content evidence makes it ours: two incarnations of one always-on agent
+            // share cwd, --name and a templated launch note, so C2/C2b/C4 all pass — and C3 only
+            // rejects OLDER files.
+            if (TranscriptClaimRegistry.TryReadNamesake(file) is { } namesake
+                && namesake != _sessionId
+                && _knownSessions?.Exists(namesake) == true)
+            {
+                refusals.Add($"{file}: named for session {namesake:D}, which this runner launched");
+                continue;
+            }
 
             // C1 — someone else's transcript, definitively.
             if (_claims?.IsClaimedByOther(file, _sessionId) == true)
@@ -480,8 +573,6 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             // C4 — the only positive identification: text WE sent, recorded as a prompt in there.
             if (!probe.ContentMatched)
             {
-                if (mtime >= activeCutoff)
-                    shimEligible.Add((file, mtime));
                 refusals.Add($"{file}: no prompt in it matches input delivered to this session");
                 continue;
             }
@@ -498,21 +589,13 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 TranscriptBindMethods.Discovery,
                 refusals,
                 filesUnderRoot,
-                cwdMatched);
+                cwdMatched,
+                ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
         }
 
-        // Migration shim (removable one release after deploy): a session being re-adopted with no
-        // recorded transcript path — one that predates sidecars, or one that had not bound a
-        // transcript before the restart — starts with an EMPTY input log, so C4 can never be
-        // satisfied until new input arrives. Rather than strand every such live session, allow the
-        // old active-write heuristic, but ONLY when the candidate is the UNIQUE cwd-matching active
-        // file that also passed C2b and C3, and only on the restart-adopt path. It is never
-        // available to a fresh launch — which is where the 2026-08-09 incident happened — and it
-        // announces itself with a SessionTranscriptBound event rather than binding quietly.
-        if (_restartAdopt && _knownTranscriptPath is null && shimEligible.Count == 1)
-            return new CandidateVerdict(shimEligible[0].Path, TranscriptBindMethods.MigrationShim, refusals, filesUnderRoot, cwdMatched);
-
-        return new CandidateVerdict(null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched);
+        return new CandidateVerdict(
+            null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched,
+            ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
     }
 
     /// <summary>
@@ -597,6 +680,10 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             {
                 if (string.Equals(file, currentPath, StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (TranscriptClaimRegistry.TryReadNamesake(file) is { } forkNamesake
+                    && forkNamesake != _sessionId
+                    && _knownSessions?.Exists(forkNamesake) == true)
+                    continue;
                 if (_claims?.IsClaimedByOther(file, _sessionId) == true)
                     continue;
                 DateTime created, written;
@@ -671,7 +758,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         ref DateTime? lastRefusalFault,
         ref int refusalRepeat)
     {
-        if (verdict.Refusals.Count == 0 || refusingSince is not { } since)
+        if ((verdict.Refusals.Count == 0 && verdict.ExactFileHeldBy is null)
+            || refusingSince is not { } since)
             return;
 
         var now = DateTime.UtcNow;
@@ -754,12 +842,21 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         verdict.Winner is null
         && verdict.Refusals.Count == 0
         && verdict.CwdMatched == 0
+        && verdict.ExactFileHeldBy is null
         && _inputLog is { IsEmpty: false }
         && _childExitedAtUtc is null;
 
-    private static string FormatCensus(CandidateVerdict verdict) =>
-        $"{verdict.FilesUnderRoot} file(s) under the transcript root, "
-        + $"{verdict.CwdMatched} cwd-matched, {verdict.Refusals.Count} refused";
+    private static string FormatCensus(CandidateVerdict verdict)
+    {
+        var census =
+            $"{verdict.FilesUnderRoot} file(s) under the transcript root, "
+            + $"{verdict.CwdMatched} cwd-matched, {verdict.Refusals.Count} refused";
+        if (verdict.ExactFileHeldBy is { } holder)
+            census += $", exact file held by {holder}";
+        return census;
+    }
+
+    private static string? FormatHolder(Guid? holder) => holder?.ToString("D");
 
     // The child is dead and nothing ever bound. Only a fault if input was actually delivered: a
     // session that was never typed at legitimately has no transcript to find.

@@ -97,6 +97,11 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
 
     public void NotifyChildExited() => _childExitedAtUtc ??= DateTime.UtcNow;
 
+    public void NotifyClaimRevoked(string path, Guid newOwner)
+    {
+        // Grok holds no claims — its path is deterministic from --session-id.
+    }
+
     public RunnerTranscriptDto Snapshot()
     {
         lock (_gate)

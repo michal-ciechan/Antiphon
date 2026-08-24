@@ -52,6 +52,20 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _herdrClient = herdrClient;
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
+        _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
+    }
+
+    private void OnTranscriptClaimDisplaced(string path, Guid previousOwner, Guid newOwner)
+    {
+        if (_sessions.TryGetValue(previousOwner, out var session))
+        {
+            session.OnTranscriptClaimRevoked(path, newOwner);
+            return;
+        }
+
+        _logger.LogWarning(
+            "claim restored from the sidecar of session {Prev} on {Path} was displaced by its namesake {New}; the previous owner is not a live session",
+            previousOwner, path, newOwner);
     }
 
     internal void NotifyPaneSetChanged() => PaneSetChanged?.Invoke();
@@ -520,14 +534,41 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private void RestoreTranscriptClaims()
     {
         var restored = 0;
+        var heuristic = 0;
+        var exact = 0;
+        var suspect = 0;
         foreach (var sidecar in TranscriptSidecar.LoadAll(_settings.SessionLogPath))
         {
-            if (sidecar.TranscriptPath is { } path && _transcriptClaims.TryClaim(path, sidecar.SessionId))
-                restored++;
+            if (sidecar.TranscriptPath is not { } path
+                || !_transcriptClaims.TryClaim(path, sidecar.SessionId).Claimed)
+                continue;
+
+            restored++;
+            var strength = TranscriptClaimRegistry.IsNamesake(path, sidecar.SessionId)
+                ? ClaimStrength.Exact
+                : ClaimStrength.Heuristic;
+            if (strength == ClaimStrength.Exact)
+                exact++;
+            else
+                heuristic++;
+
+            if (strength == ClaimStrength.Heuristic
+                && TranscriptClaimRegistry.TryReadNamesake(path) is { } namesake
+                && namesake != sidecar.SessionId)
+            {
+                suspect++;
+                var alsoHere = File.Exists(TranscriptSidecar.PathFor(_settings.SessionLogPath, namesake));
+                _logger.LogWarning(
+                    "Sidecar for session {Prev} claims {Path}, a file named for session {Namesake}{Also}. Restored as a heuristic claim; the namesake's own bind will displace it.",
+                    sidecar.SessionId, path, namesake,
+                    alsoHere ? ", which also has a sidecar here" : "");
+            }
         }
 
         if (restored > 0)
-            _logger.LogInformation("Restored {Count} transcript claim(s) from sidecars", restored);
+            _logger.LogInformation(
+                "Restored {Count} transcript claim(s) from sidecars ({Heuristic} heuristic, {Exact} exact, {Suspect} on another session's file)",
+                restored, heuristic, exact, suspect);
     }
 
     private static void TryDeleteFile(string path)
@@ -652,6 +693,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         public DateTime StartedAt => _startedAt;
+
+        public void OnTranscriptClaimRevoked(string path, Guid newOwner) =>
+            _tailer?.NotifyClaimRevoked(path, newOwner);
 
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
@@ -844,7 +888,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 childStartUtc: childStartUtc,
                 agentName: agentName,
                 resumeLaunch: resumeLaunch,
-                onBound: RecordTranscriptBinding);
+                onBound: RecordTranscriptBinding,
+                onUnbound: RecordTranscriptUnbinding,
+                knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
             _tailer.Start();
         }
 
@@ -970,7 +1016,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         childStartUtc: _startedAt,
                         resumeLaunch: IsCodexResumeLaunch(request.Args),
                         sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
-                        onBound: RecordTranscriptBinding);
+                        onBound: RecordTranscriptBinding,
+                        onUnbound: RecordTranscriptUnbinding);
                     _tailer.Start();
                 }
                 else if (request.TranscriptEnabled)
@@ -998,7 +1045,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         childStartUtc: _startedAt,
                         agentName: agentName,
                         resumeLaunch: resumeLaunch,
-                        onBound: RecordTranscriptBinding);
+                        onBound: RecordTranscriptBinding,
+                        onUnbound: RecordTranscriptUnbinding,
+                        knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
                     _tailer.Start();
                 }
             }
@@ -1137,7 +1186,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         childStartUtc: manifest.ChildStartTimeUtc ?? sidecar!.ChildStartUtc,
                         resumeLaunch: sidecar!.ResumeLaunch,
                         knownTranscriptPath: sidecar.TranscriptPath,
-                        onBound: RecordTranscriptBinding);
+                        onBound: RecordTranscriptBinding,
+                        onUnbound: RecordTranscriptUnbinding);
                     _tailer.Start();
                     return true;
                 }
@@ -1158,8 +1208,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     agentName: sidecar?.AgentName,
                     resumeLaunch: sidecar?.ResumeLaunch ?? false,
                     knownTranscriptPath: sidecar?.TranscriptPath,
-                    restartAdopt: true,
-                    onBound: RecordTranscriptBinding);
+                    onBound: RecordTranscriptBinding,
+                    onUnbound: RecordTranscriptUnbinding,
+                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
                 _tailer.Start();
             }
 
@@ -1170,7 +1221,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private void RecordTranscriptBinding(string transcriptPath, string how)
         {
             var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
-            SaveSidecar(current with { TranscriptPath = transcriptPath, How = how });
+            var persistedHow = how == TranscriptBindMethods.Sidecar
+                && current.TranscriptPath is { } existing
+                && string.Equals(existing, transcriptPath, StringComparison.OrdinalIgnoreCase)
+                && current.How is not null
+                    ? current.How
+                    : how;
+            SaveSidecar(current with { TranscriptPath = transcriptPath, How = persistedHow });
+        }
+
+        private void RecordTranscriptUnbinding()
+        {
+            var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
+            SaveSidecar(current with { TranscriptPath = null, How = null });
         }
 
         private void SaveSidecar(TranscriptSidecar sidecar)
@@ -1326,7 +1389,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     childStartUtc: transcript.ChildStartUtc ?? sidecar.LaunchedAtUtc,
                     agentName: transcript.AgentName,
                     resumeLaunch: transcript.ResumeLaunch,
-                    onBound: RecordTranscriptBinding);
+                    onBound: RecordTranscriptBinding,
+                    onUnbound: RecordTranscriptUnbinding,
+                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
                 _tailer.Start();
             }
         }
