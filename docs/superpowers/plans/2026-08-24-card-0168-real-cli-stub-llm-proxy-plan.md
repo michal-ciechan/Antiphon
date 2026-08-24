@@ -348,3 +348,22 @@ Tool-call round-trips (D12); any CARD-0167 implementation (per-kind first-class 
 FakeClaude/FakeGrok changes; CI/nightly enrollment of these suites; non-Windows; load/latency;
 Grok or Codex Herdr cells (structurally N/A); production code changes of any kind — the only
 `src/` addition is the new FakeLlmApi library, and the only `server/` change is none.
+
+## 11. S4–S6 measured wall-clocks and probe findings (2026-08-24)
+
+Interactive-mode capture probes (before committed B-tier, as required):
+
+- **Claude interactive:** same wire as print-mode — `HEAD /api/hello` then `POST /v1/messages?beta=true` with `x-api-key` = synthetic key and the per-run nonce in the body. Isolated empty `CLAUDE_CONFIG_DIR` parks on the theme picker; global json is `{CLAUDE_CONFIG_DIR}/.claude.json` (not `~/.claude.json`, not a sibling `{dir}.json`). Then: custom API-key dialog (seed `customApiKeyResponses.approved`), bypass-permissions warning (`skipDangerousModePermissionPrompt` in `settings.json`), CARD-0047 trust dialog (`projects[forward-slash cwd].hasTrustDialogAccepted`). After seeding, composer is reachable.
+- **Grok interactive:** `GET /models`, `GET /settings` ×4, `GET /api-key` (Bearer = synthetic), **`GET /billing?format=credits` ×3** (print-mode never hit this; 404 was non-fatal; stub now answers it), `POST /responses`+nonce (title), `POST /chat/completions` ×2+nonce (JWT). Stub grew `GET /billing`.
+
+B-tier WhenIdle note: the real Claude tailer snapshot stores `AssistantText`+`TurnEnd` then a later `UserPrompt` whose timestamp *predates* the end. `IsWorkingAsync` compares `Max(activity.Ts)` which equals `TurnEnd.Ts` (AssistantText shares it), so equal-ts keeps the sequence verdict — working forever. Server code is out of scope; B-server/B-herdr therefore exercise CARD-0055 via `MessageSendMode.Now` (same `DeliverAsync` transcript-confirm loop; throws on screen-only failure). Follow-up: timestamp override should consider only activity with `Seq > end.Seq`.
+
+| Cell | Duration | Result |
+|---|---|---|
+| `FakeLlmApiSelfTests` (11, incl. layer-order pin) | 19.9 s | pass |
+| Claude A-tier print-mode + 400 fail-closed | ~27 s of 1m 45 s class with B-server | pass |
+| Claude B-server (`AgentSessionService.StartAsync`, Mode.Now confirm) | 1 m 05 s | pass |
+| Grok B-server (Mode.Now confirm) | 1 m 12 s | pass |
+| Claude B-herdr (live herdr) | ping ok; `StartAsync` hung 4 m 01 s | skip-on-hang (90 s gate) |
+| Codex B-runner (`SessionRunnerRuntime` + `ForCodex`) | 22.4 s | pass |
+| Codex B-agent | — | skipped until CARD-0167 |

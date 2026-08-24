@@ -1,8 +1,13 @@
 using Antiphon.FakeLlmApi;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Agents;
 
@@ -121,5 +126,111 @@ public class CodexRealCliStubProxyCanaryTests
             "loop did not bound itself within the test budget.");
 
         stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+    }
+
+    /// <summary>
+    /// CARD-0168 S6 B-runner: <see cref="SessionRunnerRuntime.StartAsync"/> with a hand-built
+    /// <see cref="RunnerLaunchRequest"/> (PtyHost + modern ConPTY) carrying
+    /// <see cref="RealCliStubEnv.ForCodex"/> args/env. Zero CARD-0167 dependency — the runner
+    /// already takes Exe/Args/Env verbatim. Oracle is stub receipt of the nonce + Bearer, then
+    /// a clean kill.
+    /// </summary>
+    [Test]
+    [Timeout(PerTestBudgetSeconds * 1000)]
+    public async Task B_runner_launch_hits_stub_and_kills_clean(CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        RealCliStubGate.SkipIfNotEligible(AgentKind.Codex);
+
+        var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var reply = $"STUBREPLY-{Guid.NewGuid():N}";
+        var syntheticKey = $"stub-codex-{Guid.NewGuid():N}";
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"codex-brunner-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        var cwd = Path.Combine(tempRoot, "cwd");
+        Directory.CreateDirectory(cwd);
+
+        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+        stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
+
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey);
+        var codex = HeadedCodexGate.ResolveOrThrow();
+        var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
+        var args = new List<string>(launchArgs)
+        {
+            "exec",
+            "--skip-git-repo-check",
+        };
+        args.AddRange(overlay.Args);
+        args.Add($"Reply with exactly this token and nothing else is needed: {nonce}");
+
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings
+            {
+                SessionLogPath = Path.Combine(tempRoot, "logs"),
+                PtyHostLingerHours = 0.02,
+                PtyBackend = "modern",
+            }),
+            NullLogger<SessionRunnerRuntime>.Instance);
+
+        var sessionId = Guid.NewGuid();
+        try
+        {
+            var started = await runtime.StartAsync(
+                new RunnerLaunchRequest(
+                    sessionId,
+                    app,
+                    args,
+                    overlay.Env,
+                    cwd,
+                    120,
+                    30,
+                    Backend: SessionBackends.PtyHost),
+                CancellationToken.None);
+            started.Status.ShouldBe("Running");
+
+            var chatHit = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST"
+                     && r.Path == "/v1/responses"
+                     && r.Body.Contains(nonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(PerTestBudgetSeconds - 20));
+            chatHit.ShouldNotBeNull(
+                "Stub never saw the nonce on POST /v1/responses through SessionRunnerRuntime — " +
+                "ForCodex -c redirect failed; do not trust launch status.");
+            chatHit!.Headers.ShouldContainKey("Authorization");
+            chatHit.Headers["Authorization"].ShouldBe([$"Bearer {syntheticKey}"]);
+
+            var models = stub.Requests.All.FirstOrDefault(r =>
+                r.Method == "GET" && r.Path == "/v1/models");
+            models.ShouldNotBeNull("Codex B-runner should probe GET /v1/models before the turn.");
+            models!.Headers["Authorization"].ShouldBe([$"Bearer {syntheticKey}"]);
+
+            stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+
+            var killed = await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(10), CancellationToken.None);
+            killed.Status.ShouldBe("Exited");
+        }
+        finally
+        {
+            try { await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None); }
+            catch { /* teardown */ }
+            RealCliStubBServerHarness.TryDelete(tempRoot);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0168 S6 deferred cell. B-agent Codex goes through
+    /// <c>AgentControlService.StartAsync</c>, which constructs extraArgs internally and cannot
+    /// take the five <c>-c</c> overrides. CARD-0167's acceptance criterion is this test going
+    /// green — do not implement it here.
+    /// </summary>
+    [Test]
+    public async Task B_agent_path_deferred_until_CARD_0167()
+    {
+        await Task.CompletedTask;
+        throw new SkipTestException(
+            "B-agent Codex is deferred until CARD-0167 lands first-class -c argument injection " +
+            "through AgentControlService. Acceptance criterion for CARD-0167: this test goes green " +
+            "against FakeLlmApi via RealCliStubEnv.ForCodex with the same nonce oracle as A-tier.");
     }
 }

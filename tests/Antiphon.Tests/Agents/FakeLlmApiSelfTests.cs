@@ -3,6 +3,12 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Antiphon.FakeLlmApi;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.AgentTui;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -195,6 +201,56 @@ public class FakeLlmApiSelfTests
         values[2].ShouldBe("model_providers.stub.env_key=\"OPENAI_API_KEY\"");
         values[3].ShouldBe("model_providers.stub.wire_api=\"responses\"");
         values[4].ShouldBe("model_provider=stub");
+    }
+
+    [Test]
+    public void ForClaude_launch_override_survives_resolver_merge_order()
+    {
+        // CARD-0168 S4 cheap B-agent layer-order pin. Same merge loops as AgentTuiLaunchResolver
+        // (profile/definition -> project default -> agent env -> LaunchEnvOverride -> ExtraEnv).
+        var configDir = Path.Combine(Path.GetTempPath(), $"claude-cfg-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(configDir);
+        try
+        {
+            var overlay = RealCliStubEnv.ForClaude("http://127.0.0.1:9", "stub-claude-key", configDir);
+            var registry = new AgentRegistry(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+            {
+                DefaultDefinition = "claude",
+                Definitions =
+                {
+                    ["claude"] = new AgentDefinition
+                    {
+                        Kind = nameof(AgentKind.ClaudeCode),
+                        Exe = "claude.exe",
+                        Env = new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com" },
+                    }
+                },
+            }));
+
+            var spec = registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp",
+                AgentEnv: new Dictionary<string, string>
+                {
+                    ["ANTHROPIC_BASE_URL"] = "https://from-agent.example",
+                    ["ANTHROPIC_API_KEY"] = "from-agent",
+                },
+                ExtraEnv: new Dictionary<string, string>
+                {
+                    ["ANTIPHON_SESSION_ID"] = "the-real-session",
+                },
+                LaunchEnvOverride: overlay.Env));
+
+            spec.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://127.0.0.1:9",
+                "LaunchEnvOverride carrying ForClaude must beat agent env and the definition default");
+            spec.Env["ANTHROPIC_API_KEY"].ShouldBe("stub-claude-key");
+            spec.Env["CLAUDE_CONFIG_DIR"].ShouldBe(Path.GetFullPath(configDir));
+            spec.Env["ANTIPHON_SESSION_ID"].ShouldBe("the-real-session",
+                "ExtraEnv (ANTIPHON_* plumbing) still outranks the override");
+        }
+        finally
+        {
+            try { Directory.Delete(configDir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     [Test]

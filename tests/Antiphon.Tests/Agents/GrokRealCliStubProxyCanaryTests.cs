@@ -1,6 +1,9 @@
 using Antiphon.FakeLlmApi;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
@@ -128,5 +131,116 @@ public class GrokRealCliStubProxyCanaryTests
             $"Retry storm: {chatHits.Count} /chat/completions hits after a scripted 400.");
 
         stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+    }
+
+    /// <summary>
+    /// CARD-0168 S4 B-server Grok. Interactive probe (same day): GET /models, /settings, /api-key,
+    /// GET /billing?format=credits (new vs print-mode; 404 was non-fatal), POST /responses (title),
+    /// POST /chat/completions (user turn, nonce). Chat-path auth is an OAuth JWT.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task B_server_session_binds_transcript_and_whenidle_confirms_via_stub(
+        CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        RealCliStubGate.SkipIfNotEligible(AgentKind.Grok);
+
+        var bootNonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var idleNonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var reply = $"STUBREPLY-{Guid.NewGuid():N}";
+        var syntheticKey = $"stub-grok-{Guid.NewGuid():N}";
+        using var git = await RealCliStubBServerHarness.GitRepo.CreateAsync();
+
+        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Grok = true });
+        stub.Script.SetDefault(StubEndpointKeys.GrokResponses, new ScriptedTextTurn("title-ok"));
+        stub.Script.SetDefault(StubEndpointKeys.GrokChatCompletions, new ScriptedTextTurn(reply));
+
+        var overlay = RealCliStubEnv.ForGrok(stub.BaseUrl, syntheticKey);
+        var grok = RealCliStubGate.ResolveGrokOrThrow();
+        var sessionLogs = Path.Combine(git.TempRoot, "runner-logs");
+        await using var client = new DirectSessionRunnerClient(
+            sessionLogs, ptyBackend: RealCliStubBServerHarness.PtyBackend);
+
+        await using var db = RealCliStubBServerHarness.CreateContext();
+        var graph = RealCliStubBServerHarness.CreateGraph(git.RepoPath);
+        db.Add(graph.Project);
+        await db.SaveChangesAsync();
+
+        var eventBus = new MockEventBus();
+        await using var provider = RealCliStubBServerHarness.BuildProvider();
+        var built = RealCliStubBServerHarness.BuildService(
+            db, git.WorktreeRoot, eventBus, provider, client, AgentKind.Grok, grok);
+
+        AgentSessionStartResult? started = null;
+        try
+        {
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "stub-cli",
+                AgentKind.Grok,
+                $"Reply with exactly this token and nothing else is needed: {bootNonce}",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "stub-cli", AgentKind.Grok, grok, [], overlay.Env, git.RepoPath, 120, 30);
+
+            started = await built.Service.StartAsync(request, spec, CancellationToken.None);
+            started.FirstDeltaReceived.ShouldBeTrue("boot prompt must produce output against the stub");
+
+            await using (var verify = RealCliStubBServerHarness.CreateContext())
+            {
+                var session = await verify.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+                session.Status.ShouldBe(SessionStatus.Running);
+            }
+
+            var bootChat = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST" && r.Path == "/chat/completions"
+                     && r.Body.Contains(bootNonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(10));
+            bootChat.ShouldNotBeNull("boot nonce must land on POST /chat/completions");
+
+            var apiKeyHit = stub.Requests.All.FirstOrDefault(r =>
+                r.Method == "GET" && r.Path == "/api-key"
+                && r.Headers.TryGetValue("Authorization", out var auth)
+                && auth.Any(a => a.Equals($"Bearer {syntheticKey}", StringComparison.Ordinal)));
+            apiKeyHit.ShouldNotBeNull("GET /api-key must carry the injected GROK_CODE_XAI_API_KEY");
+
+            var chatBeforeIdle = stub.Requests.All.Count(r => r.Method == "POST" && r.Path == "/chat/completions");
+
+            await RealCliStubBServerHarness.CatchUpWhenSnapshotReadyAsync(
+                client,
+                built.Runtime,
+                started.SessionId,
+                snap => snap.Entries.Any(e => e.Kind == TranscriptKinds.TurnEnd),
+                TimeSpan.FromSeconds(45),
+                "Grok runner snapshot never contained TurnEnd");
+            // WhenIdle cannot flush against the real-CLI tailer snapshot order (see Claude B-server).
+            // Mode.Now still exercises CARD-0055 transcript confirm (throws on screen-only failure).
+            await built.Queue.EnqueueAsync(
+                started.SessionId,
+                $"Now nonce {idleNonce} — reply with exactly {reply}",
+                MessageSendMode.Now,
+                CancellationToken.None);
+
+            var idleChat = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST" && r.Path == "/chat/completions"
+                     && r.Body.Contains(idleNonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5));
+            idleChat.ShouldNotBeNull("Mode.Now nonce must arrive on /chat/completions");
+
+            var chatAfter = stub.Requests.All.Count(r => r.Method == "POST" && r.Path == "/chat/completions");
+            (chatAfter - chatBeforeIdle).ShouldBeGreaterThanOrEqualTo(1);
+            (chatAfter - chatBeforeIdle).ShouldBeLessThanOrEqualTo(4);
+            stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+        }
+        finally
+        {
+            if (started is not null)
+            {
+                try { await built.Service.KillAsync(started.SessionId, CancellationToken.None); }
+                catch { /* teardown */ }
+            }
+        }
     }
 }
