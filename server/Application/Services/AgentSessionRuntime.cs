@@ -31,6 +31,8 @@ public sealed class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, PendingTerminalInput> _pendingInputs = new();
     private readonly ConcurrentDictionary<Guid, byte> _manualTurns = new();
     private readonly ConcurrentDictionary<Guid, IAgentProtocolAdapter> _testAdapters = new();
+    // CARD-0164 test seam: herdr AgentStatus on in-process adapters (production reads it from the runner).
+    private readonly ConcurrentDictionary<Guid, string?> _testAgentStatuses = new();
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
@@ -732,7 +734,8 @@ public sealed class AgentSessionRuntime
     {
         if (_testAdapters.ContainsKey(sessionId))
         {
-            metadata = new AgentSessionLiveMetadata(sessionId, GetDeltaSequenceOrDefault(sessionId));
+            _testAgentStatuses.TryGetValue(sessionId, out var status);
+            metadata = new AgentSessionLiveMetadata(sessionId, GetDeltaSequenceOrDefault(sessionId), status);
             return true;
         }
 
@@ -812,6 +815,14 @@ public sealed class AgentSessionRuntime
         return _runnerClient.GetAsync(sessionId, ct);
     }
 
+    /// <summary>
+    /// CARD-0164 test seam: set the herdr <c>agent_status</c> reported by
+    /// <see cref="TryGetLiveMetadata"/> for an in-process test adapter. Production reads this from
+    /// the runner; tests have no runner session DTO.
+    /// </summary>
+    public void SetTestAgentStatus(Guid sessionId, string? status) =>
+        _testAgentStatuses[sessionId] = status;
+
     public bool TryRemove(Guid sessionId, out IAgentProtocolAdapter? adapter)
     {
         _pendingInputs.TryRemove(sessionId, out _);
@@ -819,6 +830,7 @@ public sealed class AgentSessionRuntime
         _lastSequences.TryRemove(sessionId, out _);
         _firstDeltas.TryRemove(sessionId, out _);
         _testBuffers.TryRemove(sessionId, out _);
+        _testAgentStatuses.TryRemove(sessionId, out _);
         return _testAdapters.TryRemove(sessionId, out adapter);
     }
 

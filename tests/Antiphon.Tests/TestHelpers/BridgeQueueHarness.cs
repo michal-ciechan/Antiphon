@@ -89,6 +89,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                     // Compressed too: long enough for a record that lands just past the deadline,
                     // short enough that the genuine-failure suites do not pay for it.
                     PostFailureConfirmGraceSeconds = 3,
+                    // CARD-0164: wall-clock floor for unobservable/null-baseline confirm. Keep the
+                    // production default — tests that need an "old" row stamp it explicitly.
+                    UnobservableBaselineConfirmClockToleranceSeconds = 30,
                     // Production attempt COUNT (the retry is what CARD-0056 slice 3 is about) with
                     // the pause between attempts compressed away.
                     BootPromptRetryDelaySeconds = 0,
@@ -197,6 +200,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         // measuring the working rule rather than this addition.
         adapter.OnSubmitted = async submitted =>
         {
+            // Timestamp left null by default: production rows carry the JSONL stamp, and CARD-0164's
+            // unobservable wall-clock floor rejects null timestamps. Tests that need the
+            // unobservable confirm path insert explicitly with Timestamp = UtcNow (or override
+            // OnSubmitted). Leaving null here keeps existing pre-first-turn screen-fallback tests
+            // byte-identical — they confirm via sequence advance at the deadline, not via these rows.
             await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted);
             await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
         };

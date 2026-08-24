@@ -1371,17 +1371,25 @@ public sealed class SessionMessageQueueService
         }
 
         // The confirmation floor, captured BEFORE a byte is written: everything ingested from here
-        // on sits above it. Also the observability gate — a session with no transcript rows at all
-        // has no ground truth to confirm against, so it keeps the legacy screen-only verdict.
+        // on sits above it. CARD-0164: observability no longer gates WHETHER we enter the confirm
+        // loop — an unobservable baseline runs a wall-clock-floored variant that looks for the
+        // FIRST matching UserPrompt, with the screen-only verdict retained only as the deadline
+        // fallback (bind-failed sessions still degrade-Delivered rather than hard-failing).
         var baseline = verify && _verification.TranscriptConfirmEnabled
             ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
-        var confirmTranscript = baseline.Observable;
-        if (verify && _verification.TranscriptConfirmEnabled && !confirmTranscript)
+        var confirmTranscript = verify && _verification.TranscriptConfirmEnabled;
+        // Captured BEFORE the body write — same shape as BootConfirmClockTolerance (CARD-0056).
+        DateTime? unobservableConfirmFrom = null;
+        if (confirmTranscript && !baseline.Observable)
         {
+            unobservableConfirmFrom = UtcNow() - TimeSpan.FromSeconds(
+                Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
             _logger.LogDebug(
-                "Delivery to session {SessionId} cannot be transcript-confirmed (no transcript entries "
-                + "yet — unbound or pre-first-turn); falling back to the screen-only verdict", sessionId);
+                "Delivery to session {SessionId} has no transcript entries yet (unbound or "
+                + "pre-first-turn); confirming via the first matching UserPrompt after {ConfirmFrom:o}, "
+                + "with screen-advance as the deadline fallback",
+                sessionId, unobservableConfirmFrom);
         }
 
         // Multi-line bodies MUST travel as one bracketed paste (\e[200~..\e[201~): ConPTY chunks
@@ -1451,8 +1459,12 @@ public sealed class SessionMessageQueueService
         await _runtime.SendInputAsync(sessionId, "\r", ct);
 
         if (confirmTranscript)
-            return await WaitForTranscriptConfirmAsync(sessionId, trimmed, baseline, sequenceBeforeSubmit, ct, ceilings);
+        {
+            return await WaitForTranscriptConfirmAsync(
+                sessionId, trimmed, baseline, sequenceBeforeSubmit, ct, ceilings, unobservableConfirmFrom);
+        }
 
+        // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
         if (sequenceBeforeSubmit is { } advanceFrom
             && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
         {
@@ -1489,18 +1501,26 @@ public sealed class SessionMessageQueueService
     /// </summary>
     private async Task<DeliveryOutcome> WaitForTranscriptConfirmAsync(
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct,
-        PtyDeliveryCeilings? ceilings = null)
+        PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
+        var observable = baseline.Observable;
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.TranscriptConfirmTimeoutSeconds);
         var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
         var lastEnter = UtcNow();
         var entersSent = 1; // the caller's submitting Enter
         var sawSequenceAdvance = false;
+        // CARD-0164: pull cadence for the unobservable branch — CatchUpTranscriptAsync, never
+        // SyncTranscriptAsync (turn-boundary flush re-enters the queue under the caller's lock).
+        var pullEvery = TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs));
+        var lastPull = DateTime.MinValue;
 
         while (true)
         {
-            var match = await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct);
+            var match = observable
+                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct)
+                : await TryFindUnobservableConfirmingRecordAsync(
+                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct);
             if (match.Identity)
             {
                 if (!match.Complete)
@@ -1509,7 +1529,7 @@ public sealed class SessionMessageQueueService
                         "Delivery to session {SessionId} reached a UserPrompt record past sequence "
                         + "{Baseline} after {Enters} Enter(s) but the body is truncated "
                         + "(sent {Sent} normalized chars, recorded {Recorded})",
-                        sessionId, baseline.MaxSequence, entersSent,
+                        sessionId, observable ? baseline.MaxSequence : 0, entersSent,
                         PromptSubmissionMatch.Normalize(body).Length,
                         PromptSubmissionMatch.Normalize(match.Text ?? "").Length);
                     return DeliveryOutcome.Of(DeliveryVerdict.Truncated, match.Text);
@@ -1517,13 +1537,16 @@ public sealed class SessionMessageQueueService
 
                 _logger.LogDebug(
                     "Delivery to session {SessionId} confirmed by a UserPrompt record past sequence "
-                    + "{Baseline} after {Enters} Enter(s) ({Strength} match)",
-                    sessionId, baseline.MaxSequence, entersSent, strong ? "text" : "weak");
+                    + "{Baseline} after {Enters} Enter(s) ({Strength} match{Unobs})",
+                    sessionId, observable ? baseline.MaxSequence : 0, entersSent,
+                    strong ? "text" : "weak",
+                    observable ? "" : ", unobservable-baseline");
                 return DeliveryOutcome.Delivered;
             }
 
-            // Kept only as a wedge signal for the log: a terminal that redrew but produced no record
-            // is a different failure from one that did nothing at all. It can no longer say Delivered.
+            // Kept only as a wedge signal for the log on the observable path; on the unobservable
+            // path it ALSO decides the deadline fallback (CARD-0164: screen advance → degraded
+            // Delivered, exactly today's claim, made no sooner).
             if (!sawSequenceAdvance
                 && sequenceBeforeSubmit is { } from
                 && _runtime.TryGetLiveMetadata(sessionId, out var meta)
@@ -1534,6 +1557,29 @@ public sealed class SessionMessageQueueService
 
             if (UtcNow() >= deadline)
             {
+                if (!observable)
+                {
+                    // NoTranscriptRecord is deliberately NOT produced here: its post-verdict grace
+                    // would re-pull what this loop already pulled, and its meaning presupposes a
+                    // bound transcript the session may not have.
+                    if (sawSequenceAdvance)
+                    {
+                        _logger.LogWarning(
+                            "Delivery to session {SessionId} confirmed by degraded screen-only verdict "
+                            + "after {Timeout}s with no transcript row (bind-failed / pre-first-turn "
+                            + "fallback); {Enters} Enter(s) sent",
+                            sessionId, _verification.TranscriptConfirmTimeoutSeconds, entersSent);
+                        return DeliveryOutcome.Delivered;
+                    }
+
+                    _logger.LogWarning(
+                        "Delivery verification failed for session {SessionId}: submit Enter produced no "
+                        + "output within {Timeout}s after {Enters} Enter(s) and no transcript row "
+                        + "arrived (unobservable baseline)",
+                        sessionId, _verification.TranscriptConfirmTimeoutSeconds, entersSent);
+                    return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
+                }
+
                 _logger.LogWarning(
                     "Delivery verification failed for session {SessionId}: the body ({Length} chars) never "
                     + "became a UserPrompt record past sequence {Baseline} within {Timeout}s after {Enters} "
@@ -1544,10 +1590,25 @@ public sealed class SessionMessageQueueService
                 return DeliveryOutcome.Of(DeliveryVerdict.NoTranscriptRecord);
             }
 
-            if (entersSent < _verification.SubmitAttempts && UtcNow() - lastEnter >= reEnterAfter)
+            if (!observable && UtcNow() - lastPull >= pullEvery)
+            {
+                await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+                lastPull = UtcNow();
+            }
+
+            // Re-press when the submit may have been swallowed. On the unobservable path, once
+            // sequence has advanced the screen already shows a submit happened — further Enters
+            // cannot help transcript confirmation (and would break the measured empty-composer
+            // contract only if something else stood in the composer). Observable path keeps today's
+            // schedule unconditionally (stale-body recovery needs the re-press even after a redraw).
+            var mayReEnter = entersSent < _verification.SubmitAttempts
+                && UtcNow() - lastEnter >= reEnterAfter
+                && (observable || !sawSequenceAdvance);
+            if (mayReEnter)
             {
                 // CARD-0161 B4: withhold re-press Enter while herdr reports blocked (CARD-0141
                 // hazard — a keystroke into a permission picker). entersSent not incremented.
+                // Shared by the unobservable loop by construction (CARD-0164 decision 11).
                 if (ceilings?.Backend == DeliveryBackend.HerdrPane
                     && _runtime.TryGetLiveMetadata(sessionId, out var live)
                     && string.Equals(live.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
@@ -1571,6 +1632,38 @@ public sealed class SessionMessageQueueService
 
             await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
         }
+    }
+
+    /// <summary>
+    /// CARD-0164: unobservable-baseline confirm — any UserPrompt/QueuedUserPrompt whose
+    /// <c>Timestamp</c> is at/after <paramref name="confirmFrom"/> may confirm. Sequence floor is
+    /// effectively 0; the wall clock is the floor (resume-history / backfill safety). Null
+    /// timestamps are never evidence.
+    /// </summary>
+    private async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
+        Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var candidates = await db.TranscriptEntries
+            .AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt)
+                && t.Timestamp != null
+                && t.Timestamp >= confirmFrom)
+            .OrderBy(t => t.Sequence)
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+
+        foreach (var text in candidates)
+        {
+            var match = TranscriptConfirm.Classify(body, text);
+            if (match.Identity)
+                return match;
+        }
+
+        return TranscriptConfirm.None;
     }
 
     /// <summary>

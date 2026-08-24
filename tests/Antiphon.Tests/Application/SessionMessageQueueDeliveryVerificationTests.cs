@@ -1559,6 +1559,217 @@ public class SessionMessageQueueDeliveryVerificationTests
         message.SentAt.ShouldBeNull();
     }
 
+    // ---- CARD-0164 B2: unobservable-baseline transcript-first confirm --------------------------
+    //
+    // Fresh session (zero TranscriptEntries) used to skip the confirm loop and rely on
+    // WaitForSequenceAdvanceAsync. Herdr's revision is sticky, so that path false-Negatives.
+    // B2 runs the confirm loop from sequence floor 0 with a wall-clock floor; screen advance is
+    // only the deadline fallback. PromptSubmissionMatch is untouched.
+
+    [Test]
+    public async Task Card0164_unobservable_matching_complete_row_with_fresh_timestamp_confirms()
+    {
+        // (i) Headline false-negative pin — RED without B2 (NoSubmitOutput).
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = ""; // sequence never advances
+        const string body = "CARD0164 unobservable confirm body that is long enough";
+        h.Adapter.OnSubmitted = b =>
+        {
+            // Fire-and-forget insert mid-confirm-window (same shape as the grace-lag pin).
+#pragma warning disable CS4014
+            Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(400));
+                await h.InsertTranscriptEntryAsync(
+                    TranscriptKinds.UserPrompt, b, timestamp: DateTime.UtcNow);
+            });
+#pragma warning restore CS4014
+            return Task.CompletedTask;
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_no_row_and_no_advance_still_NoSubmitOutput()
+    {
+        // (ii) Never-weaken: sticky sequence + no row → still fails.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "CARD0164 never-weaken body long enough", MessageSendMode.WhenIdle,
+            CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(1);
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_old_timestamp_row_does_not_confirm()
+    {
+        // (ii) Resume-history / backfill shape — wall-clock floor rejects it.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        const string body = "CARD0164 old-timestamp body that is long enough";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, body,
+            timestamp: DateTime.UtcNow - TimeSpan.FromMinutes(10));
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_null_timestamp_row_does_not_confirm()
+    {
+        // (ii) Null timestamp is never evidence.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        const string body = "CARD0164 null-timestamp body that is long enough";
+        h.Adapter.OnSubmitted = async b =>
+        {
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, b); // Timestamp null
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_identity_without_completeness_is_Truncated()
+    {
+        // (iii) CARD-0024 Truncated from zero baseline.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        // Body longer than MatchWindowChars so a head-only record identity-matches but is incomplete.
+        var body = "CARD0164 truncation head " + new string('X', 220) + " TAIL-MARKER-MUST-BE-ABSENT";
+        var clipped = body[..220]; // contains head needle, missing TAIL
+        h.Adapter.OnSubmitted = _ =>
+        {
+#pragma warning disable CS4014
+            Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300));
+                await h.InsertTranscriptEntryAsync(
+                    TranscriptKinds.UserPrompt, clipped, timestamp: DateTime.UtcNow);
+            });
+#pragma warning restore CS4014
+            return Task.CompletedTask;
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBeGreaterThanOrEqualTo(3); // parked at MaxDeliveryAttempts
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.TruncatedTerminalDelivery))
+            .ShouldBeTrue();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_weak_arm_rejects_old_timestamp()
+    {
+        // (v) Short body: old-timestamp row must not weak-confirm.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        const string body = "ok"; // under MinMatchChars
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, "unrelated old",
+            timestamp: DateTime.UtcNow - TimeSpan.FromHours(1));
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending, "old-timestamp row must not weak-confirm");
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_weak_arm_confirms_on_fresh_timestamp()
+    {
+        // (v) Short body: any fresh-timestamped row confirms.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        const string body = "ok"; // under MinMatchChars
+        h.Adapter.OnSubmitted = _ =>
+        {
+#pragma warning disable CS4014
+            Task.Run(async () =>
+            {
+                await Task.Delay(200);
+                await h.InsertTranscriptEntryAsync(
+                    TranscriptKinds.UserPrompt, "any fresh row", timestamp: DateTime.UtcNow);
+            });
+#pragma warning restore CS4014
+            return Task.CompletedTask;
+        };
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_screen_advance_at_deadline_is_degraded_Delivered()
+    {
+        // (vi) Bind-failed no-regression: no row + sequence DOES advance → Delivered at deadline.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask; // no timestamped row
+        // SubmitAck default "\n" advances sequence.
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "CARD0164 screen-fallback body long enough", MessageSendMode.WhenIdle,
+            CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    public async Task Card0164_unobservable_agent_status_working_does_not_confirm()
+    {
+        // (viii) Status prohibition — working/done is never delivery evidence.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        h.Runtime.SetTestAgentStatus(h.SessionId, "working");
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "CARD0164 status-prohibition body long enough", MessageSendMode.WhenIdle,
+            CancellationToken.None);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Pending);
+    }
+
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
     {
         await using var db = CreateContext();

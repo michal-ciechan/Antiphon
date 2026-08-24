@@ -225,6 +225,18 @@ public sealed class DeliveryVerificationSettings
     public int PostFailureConfirmGraceSeconds { get; set; } = 20;
 
     /// <summary>
+    /// CARD-0164: wall-clock floor for the unobservable-baseline confirm loop (and the late-confirm
+    /// null-baseline arm). Same shape as <c>AgentSessionService.BootConfirmClockTolerance</c>
+    /// (CARD-0056): a <c>--resume</c>'s copied history and a late-binding tailer's backfill keep
+    /// ORIGINAL timestamps while backfill rebases their sequences past any sequence floor — only
+    /// the wall clock tells them from fresh evidence. A candidate row must have
+    /// <c>Timestamp != null &amp;&amp; Timestamp &gt;= UtcNow − this</c>, captured before the body
+    /// write. Default 30 s also covers <c>QueuedUserPrompt</c> rows whose stamp is the
+    /// composer-enqueue time (at most the evidence window before Enter).
+    /// </summary>
+    public int UnobservableBaselineConfirmClockToleranceSeconds { get; set; } = 30;
+
+    /// <summary>
     /// How many times a queued message may be typed into a terminal before it PARKS for a human
     /// (CARD-0055). A parked message stays Pending and visible in the queue UI, where cancel and
     /// re-enqueue already exist, but no automatic path picks it up again — an unbounded retry loop
