@@ -29,7 +29,8 @@ public class Card
     /// Set when the card is archived. Archive is what "delete" means here — the row stays, so a
     /// card that is cited in commit messages, docs and other cards' terminal reasons never turns
     /// into a dangling reference, and <c>NextIdentifierAsync</c> keeps seeing its identifier
-    /// (a hard delete of the highest card would hand its number out again — CARD-0005).
+    /// (a hard delete of the highest card would hand its number out again — CARD-0005;
+    /// <c>CardIdentifierAllocator</c> counts archived rows).
     /// </summary>
     public DateTime? ArchivedAt { get; set; }
     public string? ArchivedReason { get; set; }

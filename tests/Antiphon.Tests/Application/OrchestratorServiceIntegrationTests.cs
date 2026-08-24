@@ -125,6 +125,7 @@ public class OrchestratorServiceIntegrationTests
                   kind: github_issues
                   repository: acme/app
                   active_states: [open]
+                  import_column: active
                 ---
                 Work on {{ issue.identifier }}: {{ issue.title }}
                 """;
@@ -159,13 +160,75 @@ public class OrchestratorServiceIntegrationTests
                 .Include(c => c.ExternalIssueRef)
                 .Include(c => c.AgentSessions)
                 .SingleAsync(c => c.BoardId == graph.Board.Id);
-            syncedCard.Identifier.ShouldBe("#42");
+            syncedCard.Identifier.ShouldBe("CARD-0001");
             syncedCard.Title.ShouldBe("External issue");
             syncedCard.Priority.ShouldBe(4);
             syncedCard.ExternalIssueRef.ShouldNotBeNull();
             syncedCard.ExternalIssueRef!.TrackerKind.ShouldBe(TrackerKind.GitHubIssues);
             syncedCard.ExternalIssueRef.ExternalId.ShouldBe("acme/app#42");
+            syncedCard.ExternalIssueRef.ExternalKey.ShouldBe("#42");
             syncedCard.AgentSessions.ShouldContain(s => s.Status == SessionStatus.Stopped);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Default_import_lands_in_the_backlog_column_and_the_tick_does_not_dispatch_it()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            graph.Board.Cards.Remove(graph.Card);
+            graph.ActiveColumn.Cards.Remove(graph.Card);
+            graph.Board.TrackerKind = TrackerKind.GitHubIssues;
+            graph.Board.WorkflowDefinitions.Single().Content = """
+                ---
+                tracker:
+                  kind: github_issues
+                  repository: acme/app
+                  active_states: [open]
+                ---
+                Work on {{ issue.identifier }}: {{ issue.title }}
+                """;
+            db.Projects.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var tracker = new FakeIssueTracker(TrackerKind.GitHubIssues, [
+                new TrackedIssue(
+                    "acme/app#42",
+                    "#42",
+                    "External issue",
+                    "Synced from tracker",
+                    "open",
+                    4,
+                    ["e10", "sync"],
+                    [],
+                    "https://github.test/acme/app/issues/42",
+                    """{"number":42}""")
+            ]);
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "SHOULD_NOT_START" };
+            await using var harness = BuildHarness(tempRoot, [adapter], issueTrackers: [tracker]);
+
+            var result = await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+
+            result.Dispatched.ShouldBe(0);
+            adapter.Started.ShouldBeFalse();
+
+            await using var verify = CreateContext();
+            var syncedCard = await verify.Cards
+                .Include(c => c.AgentSessions)
+                .SingleAsync(c => c.BoardId == graph.Board.Id);
+            syncedCard.BoardColumnId.ShouldBe(graph.Board.Columns.Single(c => c.CardStatus == CardStatus.Backlog).Id);
+            syncedCard.Status.ShouldBe(CardStatus.Backlog);
+            syncedCard.StartedAt.ShouldBeNull();
+            syncedCard.AgentSessions.ShouldBeEmpty();
         }
         finally
         {
@@ -337,6 +400,7 @@ public class OrchestratorServiceIntegrationTests
                   kind: linear
                   project: Antiphon
                   active_states: [Todo]
+                  import_column: active
                 ---
                 Work on {{ issue.title }}
                 """;

@@ -88,6 +88,13 @@ public static class IssueTrackerConfigParser
                     ? null
                     : $"{owner}/{repo}");
 
+            if (options.TryGetValue(TrackerLandingColumn.OptionKey, out var importColumn)
+                && !TrackerLandingColumn.IsValidImportColumn(importColumn))
+            {
+                error = $"Tracker import_column '{importColumn}' is not a recognised value (backlog or active).";
+                return false;
+            }
+
             config = new IssueTrackerConfig(
                 kind,
                 GetScalar(trackerNode, "base_url")
@@ -186,6 +193,13 @@ public static class IssueTrackerConfigParser
             if (!TryParseKind(kindRaw, out kind))
             {
                 error = $"Tracker kind '{kindRaw}' is not a recognised tracker kind.";
+                return false;
+            }
+
+            var importColumn = GetScalar(trackerNode, TrackerLandingColumn.OptionKey);
+            if (!TrackerLandingColumn.IsValidImportColumn(importColumn))
+            {
+                error = $"Tracker import_column '{importColumn}' is not a recognised value (backlog or active).";
                 return false;
             }
 

@@ -993,6 +993,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .Include(c => c.Board).ThenInclude(b => b.Project)
             .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
             .Include(c => c.CurrentWorktree)
+            .Include(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct)
             ?? throw new NotFoundException(nameof(Card), cardId);
     }

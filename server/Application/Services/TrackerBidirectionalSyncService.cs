@@ -151,7 +151,7 @@ public sealed class TrackerBidirectionalSyncService
         }
 
         // IN reopen arm (cursor-proven external reopen of a terminal card)
-        var externalReopens = ApplyExternalReopens(board, refsByExternalId, pulledIssues, utcNow, changes);
+        var externalReopens = ApplyExternalReopens(board, config, refsByExternalId, pulledIssues, utcNow, changes);
 
         // (2) comments IN
         var commentsIn = await PullCommentsAsync(board, bi, config, refsByExternalId, utcNow, changes, ct);
@@ -178,6 +178,7 @@ public sealed class TrackerBidirectionalSyncService
 
     private int ApplyExternalReopens(
         Board board,
+        IssueTrackerConfig config,
         IReadOnlyDictionary<string, ExternalIssueRef> refsByExternalId,
         IReadOnlyList<TrackedIssue> pulledIssues,
         DateTime utcNow,
@@ -185,10 +186,8 @@ public sealed class TrackerBidirectionalSyncService
     {
         var issuesById = pulledIssues.ToDictionary(i => i.ExternalId, StringComparer.Ordinal);
         var reopened = 0;
-        var firstActive = board.Columns
-            .OrderBy(c => c.ColumnOrder)
-            .FirstOrDefault(c => c.IsActive && !c.IsTerminal);
-        if (firstActive is null)
+        var landing = TrackerLandingColumn.Resolve(board, config);
+        if (landing is null)
             return reopened;
 
         foreach (var issueRef in refsByExternalId.Values)
@@ -217,10 +216,10 @@ public sealed class TrackerBidirectionalSyncService
             var card = issueRef.Card;
             var reason =
                 $"External tracker reopened; superseded local completion at {card.CompletedAt:o}";
-            CardRevisionLog.AppendReopen(card, firstActive, reason, TrackerActor, utcNow);
-            card.BoardColumnId = firstActive.Id;
-            card.BoardColumn = firstActive;
-            card.Status = firstActive.CardStatus;
+            CardRevisionLog.AppendReopen(card, landing, reason, TrackerActor, utcNow);
+            card.BoardColumnId = landing.Id;
+            card.BoardColumn = landing;
+            card.Status = landing.CardStatus;
             card.CompletedAt = null;
             card.TerminalReason = null;
             card.UpdatedAt = utcNow;

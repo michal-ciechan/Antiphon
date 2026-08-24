@@ -57,6 +57,58 @@ public class WorkflowDefinitionLoaderTests
     }
 
     [Test]
+    public void BuildPromptVariables_linked_card_binds_external_key_and_url()
+    {
+        var card = new Card
+        {
+            Identifier = "CARD-0176",
+            Title = "Imported",
+            Description = "body",
+            Priority = 2,
+            BoardId = Guid.NewGuid(),
+            ExternalIssueRef = new ExternalIssueRef
+            {
+                TrackerKind = TrackerKind.GitHubIssues,
+                ExternalKey = "#3",
+                Url = "https://github.test/acme/app/issues/3"
+            }
+        };
+
+        var vars = WorkflowDefinitionLoader.BuildPromptVariables(card, worktree: null);
+
+        vars["issue.identifier"].ShouldBe("#3");
+        vars["issue.url"].ShouldBe("https://github.test/acme/app/issues/3");
+        vars["issue.tracker"].ShouldBe("GitHub");
+        vars["card.identifier"].ShouldBe("CARD-0176");
+        vars["issue.citation"].ShouldBe(" (GitHub issue #3, https://github.test/acme/app/issues/3)");
+
+        var rendered = WorkflowDefinitionLoader.RenderPrompt(
+            "Work on card {{ card.identifier }}{{ issue.citation }}: {{ issue.title }}",
+            vars);
+        rendered.ShouldBe("Work on card CARD-0176 (GitHub issue #3, https://github.test/acme/app/issues/3): Imported");
+    }
+
+    [Test]
+    public void BuildPromptVariables_unlinked_card_uses_the_card_identifier_for_both()
+    {
+        var card = new Card
+        {
+            Identifier = "CARD-0004",
+            Title = "Manual",
+            Description = "body",
+            Priority = 1,
+            BoardId = Guid.NewGuid()
+        };
+
+        var vars = WorkflowDefinitionLoader.BuildPromptVariables(card, worktree: null);
+
+        vars["issue.identifier"].ShouldBe("CARD-0004");
+        vars["card.identifier"].ShouldBe("CARD-0004");
+        vars["issue.url"].ShouldBeNull();
+        vars["issue.citation"].ShouldBe("");
+    }
+
+    [Test]
     public void PromptRenderer_unknown_variable_throws()
     {
         var ex = Should.Throw<ValidationException>(() =>

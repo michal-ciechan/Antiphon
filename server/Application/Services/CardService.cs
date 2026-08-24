@@ -183,14 +183,27 @@ public sealed class CardService
                 + "Use the card's guid, or its identifier (CARD-0051, card-51, #51, 51).");
         }
 
-        // Canonical form OR the raw text case-insensitively, so a board synced from a foreign
-        // tracker resolves by the identifier IT hands out and not only by ours.
         var lowered = raw.ToLowerInvariant();
         var canonicalOrRaw = canonical ?? raw;
-        var matches = await _db.Cards
-            .AsNoTracking()
-            .Where(c => c.Identifier == canonicalOrRaw || c.Identifier.ToLower() == lowered)
+        // Canonical form is OUR identifier (CARD-000N / #N / 51). A foreign tracker key
+        // (ANT-12) is resolved through ExternalIssueRef.ExternalKey as well as Identifier, so
+        // import-origin cards that store CARD-nnnn and keep the tracker key on the ref still
+        // answer to `card.ps1 get ANT-12`. #N is deliberately NOT routed to a GitHub key — it
+        // is the canonical CARD-000N form.
+        IQueryable<Card> query = _db.Cards.AsNoTracking()
+            .Where(c => c.Identifier == canonicalOrRaw || c.Identifier.ToLower() == lowered);
+        if (canonical is null)
+        {
+            query = query.Union(
+                _db.Cards.AsNoTracking()
+                    .Where(c => c.ExternalIssueRef != null
+                        && (c.ExternalIssueRef.ExternalKey == raw
+                            || c.ExternalIssueRef.ExternalKey.ToLower() == lowered)));
+        }
+
+        var matches = await query
             .Select(c => c.Id)
+            .Distinct()
             .Take(2)
             .ToListAsync(ct);
 
@@ -199,7 +212,7 @@ public sealed class CardService
             0 => throw new NotFoundException(nameof(Card), canonicalOrRaw),
             1 => matches[0],
             _ => throw new ConflictException(
-                $"Card identifier '{canonicalOrRaw}' matches cards on more than one board "
+                $"Card identifier '{canonicalOrRaw}' matches more than one card "
                 + "— use the card's guid."),
         };
     }
@@ -730,6 +743,7 @@ public sealed class CardService
             .Include(c => c.AgentSessions)
             .Include(c => c.AssignedAgent)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
+            .Include(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
     }
@@ -743,6 +757,7 @@ public sealed class CardService
             .Include(c => c.AgentSessions)
             .Include(c => c.AssignedAgent)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
+            .Include(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(c => c.Id == id, ct)
             ?? throw new NotFoundException(nameof(Card), id);
     }
@@ -811,47 +826,16 @@ public sealed class CardService
         }
     }
 
-    /// <summary>
-    /// The next identifier for a board: one past the HIGHEST suffix already handed out.
-    /// </summary>
-    /// <remarks>
-    /// This used to be <c>count + 1</c>, which reused an identifier after a delete (CARD-0005):
-    /// remove CARD-0007 from a seven-card board and the next create hands out CARD-0007 again,
-    /// silently pointing every existing reference — commit messages, docs, other cards' terminal
-    /// reasons — at a different card. Identifiers are cited outside the database, so the sequence
-    /// has to move forward even when rows leave. Suffixes that do not parse (a board synced from a
-    /// foreign tracker) are ignored rather than blocking allocation.
-    ///
-    /// <para>A HARD delete of the current highest card still frees its number, because the only
-    /// record that it was ever taken is the row itself. That is now avoidable rather than
-    /// inevitable: <see cref="ArchiveAsync"/> is what "delete" means for a card, and an archived
-    /// row is still counted here — which is exactly why archived cards are filtered at the read
-    /// site and NOT by a global EF query filter.</para>
-    /// </remarks>
     private async Task<string> NextIdentifierAsync(Guid boardId, CancellationToken ct)
     {
-        var identifiers = await _db.Cards
-            .Where(c => c.BoardId == boardId)
-            .Select(c => c.Identifier)
-            .ToListAsync(ct);
-
-        var highest = 0;
-        foreach (var identifier in identifiers)
-        {
-            if (string.IsNullOrEmpty(identifier))
-                continue;
-            var suffix = identifier.AsSpan(identifier.LastIndexOf('-') + 1);
-            if (int.TryParse(suffix, out var value) && value > highest)
-                highest = value;
-        }
-
-        return $"CARD-{highest + 1:0000}";
+        var allocator = await CardIdentifierAllocator.ForBoardAsync(_db, boardId, ct);
+        return allocator.Next();
     }
 
     private static string BuildPrompt(Card card, BoardWorkflowDefinition? activeDefinition)
     {
         var prompt = $"""
-            Work on card {card.Identifier}: {card.Title}
+            Work on card {card.Identifier}{TrackerIssueCitation.Suffix(card)}: {card.Title}
 
             Description:
             {card.Description}

@@ -76,7 +76,8 @@ and reversible from `GET /api/cards/{id}/revisions`.
 
 Anywhere a card id appears in a route it is a **string**, resolved by `CardService.ResolveCardIdAsync`.
 `CARD-0051`, `card-51`, `#51`, `51`, and the guid all address the same card. There is no separate
-lookup step.
+lookup step. A foreign tracker's key (for example a Jira `ANT-12`) resolves through the card's
+external-issue ref; `#N` is always `CARD-000N` and never a GitHub issue number.
 
 ## 2. The surface
 

@@ -211,10 +211,15 @@ public sealed partial class WorkflowDefinitionLoader
     {
         return new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["issue.identifier"] = card.Identifier,
+            ["issue.identifier"] = card.ExternalIssueRef?.ExternalKey ?? card.Identifier,
             ["issue.title"] = card.Title,
             ["issue.description"] = card.Description,
             ["issue.priority"] = card.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["issue.url"] = card.ExternalIssueRef?.Url,
+            ["issue.tracker"] = card.ExternalIssueRef is { } ext
+                ? TrackerIssueCitation.DisplayName(ext.TrackerKind)
+                : null,
+            ["issue.citation"] = TrackerIssueCitation.Suffix(card),
             ["card.identifier"] = card.Identifier,
             ["card.title"] = card.Title,
             ["card.description"] = card.Description,
@@ -234,7 +239,7 @@ public sealed partial class WorkflowDefinitionLoader
         agent:
           max_concurrent: {{{Math.Max(1, board.MaxConcurrentSessions)}}}
         ---
-        Work on card {{ issue.identifier }}: {{ issue.title }}
+        Work on card {{ card.identifier }}{{ issue.citation }}: {{ issue.title }}
 
         Priority: {{ issue.priority }}
 
@@ -356,7 +361,11 @@ public sealed partial class WorkflowDefinitionLoader
                 out var kind,
                 out var error))
         {
-            throw new ValidationException("tracker.kind", error ?? "Tracker kind is invalid.");
+            var field = error is not null
+                && error.Contains("import_column", StringComparison.OrdinalIgnoreCase)
+                ? "tracker.import_column"
+                : "tracker.kind";
+            throw new ValidationException(field, error ?? "Tracker kind is invalid.");
         }
 
         var wasInternal = board.TrackerKind == TrackerKind.Internal;

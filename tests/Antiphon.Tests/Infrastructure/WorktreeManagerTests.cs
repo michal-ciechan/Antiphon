@@ -16,7 +16,7 @@ public class WorktreeManagerSafetyTests
     [Test]
     public void Sanitise_rejects_path_traversal_and_special_chars()
     {
-        foreach (var cardId in new[] { "../x", "x/../y", "x;y", "x y", "x\\y", "x/y", "x\0y" })
+        foreach (var cardId in new[] { "../x", "x/../y", "x;y", "x y", "x\\y", "x/y", "x\0y", "#3" })
         {
             Should.Throw<ValidationException>(() => WorktreeManager.ValidateCardId(cardId));
         }
