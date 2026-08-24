@@ -419,6 +419,8 @@ try
     builder.Services.AddScoped<ApiKeyService>();
     // CARD-0106 S2: launch-time placeholder resolution. Scoped, because it reads the key store.
     builder.Services.AddScoped<ApiKeyEnvResolver>();
+    // CARD-0166 S2: tracker token_key -> ApiKeys resolution (project then global), env-var fallback.
+    builder.Services.AddScoped<TrackerTokenResolver>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
