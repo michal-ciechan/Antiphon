@@ -57,6 +57,8 @@ public class CodexTranscriptTailerTests
             entries.Select(e => e.Kind).ShouldBe(
                 [TranscriptKinds.UserPrompt, TranscriptKinds.AssistantText, TranscriptKinds.TurnEnd]);
             await Assert.That(entries[2].StopReason).IsEqualTo("end_turn");
+            entries[1].ApiCallId.ShouldBe(entries[2].ApiCallId,
+                "the final_answer identity must survive the normalizer-to-runner event mapping");
         }
         finally
         {

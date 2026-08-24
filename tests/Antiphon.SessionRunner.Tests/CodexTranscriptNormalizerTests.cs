@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -51,6 +52,11 @@ public class CodexTranscriptNormalizerTests
         parts[1].Text.ShouldBe("b2526831");
         parts[1].Role.ShouldBe("assistant");
 
+        // TUI AgentMessage.final_answer and task_complete carry the same turn_id. This is the
+        // identity the generic delegate-report gate requires to select the true final answer.
+        parts[1].ApiCallId.ShouldBe(parts[2].ApiCallId);
+        parts[1].Text.ShouldBe(LastAgentMessage("codex-tui-turn.jsonl"));
+
         // The item's own id is preferred over a positional key — it is what a response_item
         // cross-reference uses and it survives any change to how rows are numbered.
         parts[0].Uuid.ShouldBe("01a01fbe-c3da-7a12-9dc1-7bfd06fa928f");
@@ -96,12 +102,38 @@ public class CodexTranscriptNormalizerTests
         ]);
         parts[0].Text.ShouldBe("Reply with exactly the word OK and nothing else.");
         parts[1].Text.ShouldBe("OK");
+        parts[1].ApiCallId.ShouldBeNull("the flat dialect supplies no turn_id on agent_message");
+        parts[2].ApiCallId.ShouldNotBeNullOrWhiteSpace();
 
         // No `ordinal` on an exec rollout (measured: only codex-tui stamps one), so the row's
         // position stands in — still stable under a re-tail from offset 0.
         parts[0].Uuid.ShouldBe("01a01d76-d22f-78a1-a94b-8f9431fae11a#6");
 
         await Assert.That(parts[0].Uuid!.Length).IsLessThanOrEqualTo(64);
+    }
+
+    /// <summary>
+    /// The TUI uses the same AgentMessage item type for narration and final answers. Only the
+    /// final_answer phase may share task_complete's turn identity; commentary must remain outside
+    /// the final-report join.
+    /// </summary>
+    [Test]
+    public async Task TUI_final_answers_share_their_turn_identity_while_commentary_stays_unattributed()
+    {
+        var parts = NormalizeFixture("codex-tui-multi-turn.jsonl");
+        var texts = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ToArray();
+        var ends = parts.Where(p => p.Kind == TranscriptKinds.TurnEnd).ToArray();
+
+        texts.Length.ShouldBe(3);
+        ends.Length.ShouldBe(3);
+        texts[0].ApiCallId.ShouldBe(ends[1].ApiCallId);
+        texts[1].Text.ShouldStartWith("I’ll check the current Codex guidance");
+        texts[1].ApiCallId.ShouldBeNull("commentary is narration, never the delegate's final report");
+        texts[2].ApiCallId.ShouldBe(ends[2].ApiCallId);
+        texts[2].ApiCallId.ShouldNotBe(texts[0].ApiCallId, "each final_answer belongs to its own turn");
+        texts[2].Text.ShouldBe(LastAgentMessage("codex-tui-multi-turn.jsonl"));
+
+        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -250,8 +282,8 @@ public class CodexTranscriptNormalizerTests
         var first = NormalizeFixture("codex-tui-multi-turn.jsonl");
         var second = NormalizeFixture("codex-tui-multi-turn.jsonl");
 
-        second.Select(p => (p.Kind, p.Uuid, p.Text, p.InputTokens))
-            .ShouldBe(first.Select(p => (p.Kind, p.Uuid, p.Text, p.InputTokens)));
+        second.Select(p => (p.Kind, p.Uuid, p.Text, p.ApiCallId, p.InputTokens))
+            .ShouldBe(first.Select(p => (p.Kind, p.Uuid, p.Text, p.ApiCallId, p.InputTokens)));
 
         await Assert.That(first.Select(p => p.Uuid).Distinct().Count()).IsEqualTo(first.Count);
     }
@@ -287,5 +319,24 @@ public class CodexTranscriptNormalizerTests
         var path = FixturePath(name);
         File.Exists(path).ShouldBeTrue($"captured Codex rollout fixture missing: {path}");
         return File.ReadAllLines(path).Where(l => l.Length > 0).ToArray();
+    }
+
+    private static string? LastAgentMessage(string fixture)
+    {
+        string? lastAgentMessage = null;
+        foreach (var line in ReadFixtureLines(fixture))
+        {
+            using var document = JsonDocument.Parse(line);
+            if (!document.RootElement.TryGetProperty("payload", out var payload)
+                || !payload.TryGetProperty("type", out var type)
+                || type.GetString() != "task_complete")
+            {
+                continue;
+            }
+
+            lastAgentMessage = payload.GetProperty("last_agent_message").GetString() ?? lastAgentMessage;
+        }
+
+        return lastAgentMessage;
     }
 }

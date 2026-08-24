@@ -212,6 +212,7 @@ public sealed class CodexTranscriptNormalizer
         // The item's own id is a better uuid than a positional one: it survives any future change
         // to how rows are numbered, and it is what a response_item cross-reference uses.
         var itemUuid = Fit(GetString(item, "id")) ?? uuid;
+        var turnId = Fit(GetString(payload, "turn_id"));
 
         switch (GetString(item, "type"))
         {
@@ -232,7 +233,9 @@ public sealed class CodexTranscriptNormalizer
                 var text = ItemText(item);
                 return string.IsNullOrWhiteSpace(text)
                     ? []
-                    : [Part(TranscriptKinds.AssistantText, itemUuid, ts, "assistant", text)];
+                    : [Part(
+                        TranscriptKinds.AssistantText, itemUuid, ts, "assistant", text,
+                        ApiCallId: GetString(item, "phase") == "final_answer" ? turnId : null)];
             }
 
             case "Reasoning":
@@ -383,8 +386,9 @@ public sealed class CodexTranscriptNormalizer
         return latch == candidate;
     }
 
-    private static TranscriptPart Part(string kind, string? uuid, DateTimeOffset? ts, string role, string? text) =>
-        new(kind, uuid, null, ts, role, text, null, null, null, null, null);
+    private static TranscriptPart Part(
+        string kind, string? uuid, DateTimeOffset? ts, string role, string? text, string? ApiCallId = null) =>
+        new(kind, uuid, null, ts, role, text, null, null, null, null, null, ApiCallId);
 
     /// <summary>
     /// A stable per-row key for the server's (Uuid, Kind) dedup. The interactive TUI stamps an
