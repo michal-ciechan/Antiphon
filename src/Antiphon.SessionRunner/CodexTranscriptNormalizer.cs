@@ -33,7 +33,11 @@ namespace Antiphon.SessionRunner;
 /// <para>Structured rows this maps:</para>
 /// <list type="bullet">
 /// <item><c>user_message</c> / <c>item_completed{UserMessage}</c> → <c>UserPrompt</c>.</item>
-/// <item><c>agent_message</c> / <c>item_completed{AgentMessage}</c> → <c>AssistantText</c>.</item>
+/// <item><c>agent_message</c> / <c>item_completed{AgentMessage}</c> → <c>AssistantText</c>. A
+/// TUI thread item's <c>phase:"final_answer"</c> also carries its enclosing
+/// <c>payload.turn_id</c> as <c>ApiCallId</c>, matching the later <c>task_complete</c> boundary;
+/// commentary stays unattributed so it cannot become a delegate report. The flat dialect has no
+/// turn id on its agent_message row and deliberately remains unattributed.</item>
 /// <item><c>agent_reasoning</c> / <c>item_completed{Reasoning}</c> → <c>Thinking</c>, only when it
 /// actually carries text (the TUI's Reasoning items have empty <c>summary_text</c>/<c>raw_content</c>
 /// — that content is in the encrypted <c>response_item</c>, which v1 does not read).</item>

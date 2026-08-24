@@ -133,6 +133,23 @@ public class TranscriptNormalizerTests
         parts.ShouldAllBe(p => p.ApiCallId == text.ApiCallId);
     }
 
+    /// <summary>
+    /// The provider-normalizer contract consumed by generic settlement: the response's own text
+    /// shares an identity with every TurnEnd it emits. This is deliberately not a Claude branch in
+    /// the settlement service; a dropped normalizer stamp must fail here instead.
+    /// </summary>
+    [Test]
+    public void Claudes_turn_ending_response_text_shares_its_ApiCallId_with_the_TurnEnd()
+    {
+        var parts = SplitFinalResponseFixtureLines().SelectMany(TranscriptNormalizer.Normalize).ToList();
+        var text = parts.Where(p => p.Kind == TranscriptKinds.AssistantText).ShouldHaveSingleItem();
+        var ends = parts.Where(p => p.Kind == TranscriptKinds.TurnEnd).ToArray();
+
+        ends.ShouldNotBeEmpty();
+        text.ApiCallId.ShouldNotBeNullOrWhiteSpace();
+        ends.ShouldAllBe(end => end.ApiCallId == text.ApiCallId);
+    }
+
     // Verbatim real records (CARD-0072 sweep): one line per measured error/status combination,
     // line 0 being the exact wall stub that killed delegate task ee0a18a5 on 2026-08-17, plus the
     // benign "No response requested." synthetic (isApiErrorMessage:FALSE) as the negative §6.6

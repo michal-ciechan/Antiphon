@@ -112,6 +112,8 @@ public class GrokTranscriptTailerTests
             end.StopReason.ShouldBe("end_turn");
             end.Uuid.ShouldBe($"{Sid}-5081");
             end.ApiCallId.ShouldBe(PromptId);
+            text.ApiCallId.ShouldBe(end.ApiCallId,
+                "the turn-ending response text and turn_completed boundary share Grok's promptId");
             end.InputTokens.ShouldBe(18747424);
             end.OutputTokens.ShouldBe(70713);
             end.CacheReadTokens.ShouldBe(18482432);

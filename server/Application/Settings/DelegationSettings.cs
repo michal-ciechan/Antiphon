@@ -371,13 +371,15 @@ public sealed class DelegationSettings
     /// How long settlement waits for the turn-ending response's OWN text before giving up and
     /// settling on whatever the turn produced (CARD-0046).
     ///
-    /// Claude Code writes one API response as several JSONL records — a signature-only
-    /// <c>thinking</c> record, then the <c>text</c> record — and stamps EVERY one with the
-    /// response's <c>stop_reason</c>, so the first thing that reaches us is a BARE TurnEnd. The wait
-    /// is closed by IDENTITY (both records share one <c>message.id</c> → <c>ApiCallId</c>), and this
-    /// is only the backstop for a response that never writes text at all: 1 in 180 in the measured
-    /// corpus, an <c>end_turn</c> thinking record followed by <c>API Error: Connection lost
-    /// mid-response</c>. Without the backstop such a task would sit Dispatched forever.
+    /// The wait is closed by IDENTITY, supplied by each provider's normalizer: Claude Code's
+    /// <c>message.id</c>, Grok's <c>promptId</c>, and Codex TUI's <c>turn_id</c> on only its
+    /// <c>final_answer</c> AgentMessage and matching <c>task_complete</c>. For Claude, one API
+    /// response arrives as several JSONL records — a signature-only <c>thinking</c> record, then
+    /// the <c>text</c> record — all with one <c>message.id</c>, so the first thing that reaches us
+    /// can be a BARE TurnEnd. The wait is only the backstop for a response that never writes text
+    /// at all: 1 in 180 in the measured corpus, an <c>end_turn</c> thinking record followed by
+    /// <c>API Error: Connection lost mid-response</c>. Without the backstop such a task would sit
+    /// Dispatched forever.
     ///
     /// Measured need is ~1.2 s (persist gap 0.01-1.17 s at a 300 ms tailer poll). 120 s absorbs a
     /// tailer stall or a stream gap and still sits far under

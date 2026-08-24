@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -82,6 +83,7 @@ public class CodexAdapterIntegrationTests
 
         try
         {
+            var sessionId = Guid.NewGuid();
             var spec = new AgentLaunchSpec(
                 DefinitionName: "codex",
                 Kind: AgentKind.Codex,
@@ -91,7 +93,7 @@ public class CodexAdapterIntegrationTests
                 Cwd: cwd,
                 Cols: 120,
                 Rows: 30,
-                SessionId: Guid.NewGuid());
+                SessionId: sessionId);
 
             await adapter.StartAsync(spec, CancellationToken.None);
 
@@ -116,6 +118,18 @@ public class CodexAdapterIntegrationTests
                 Case.Sensitive,
                 $"ResponseText must be the MODEL's answer, not the status bar. Got: {result.ResponseText}");
             result.IsAskingQuestion.ShouldBeFalse();
+
+            // Live schema-drift canary: a fixture cannot detect a codex-cli change that drops the
+            // final_answer phase or its turn_id. The generic report gate needs the normalized
+            // final text to carry the same identity as task_complete.
+            var transcript = await client.GetTranscriptAsync(sessionId, CancellationToken.None);
+            var end = transcript.Entries.Last(e => e.Kind == TranscriptKinds.TurnEnd);
+            var finalTexts = transcript.Entries
+                .Where(e => e.Kind == TranscriptKinds.AssistantText && e.ApiCallId == end.ApiCallId)
+                .ToArray();
+            end.ApiCallId.ShouldNotBeNullOrWhiteSpace();
+            finalTexts.ShouldNotBeEmpty("the turn-ending Codex response must retain task_complete's identity");
+            finalTexts.ShouldContain(e => e.Text!.Contains("PONG", StringComparison.OrdinalIgnoreCase));
 
             var killed = await adapter.KillAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             killed.ShouldBeTrue();
