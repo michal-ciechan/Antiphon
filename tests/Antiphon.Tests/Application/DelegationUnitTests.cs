@@ -985,16 +985,16 @@ public class DelegationKindPricingTests
     public void the_shipped_grok_table_is_xais_published_list_price()
     {
         // https://docs.x.ai/docs/models, retrieved 2026-08-18, sub-200k tier:
-        //   grok-4.6  $2.00 in / $6.00 out / $0.50 cached input   (Frontier and High — ForGrok)
-        //   grok-4.5  $2.00 in / $6.00 out / $0.30 cached input   (Medium and Low)
-        // Cache WRITE is $2.00 on both: xAI publishes no cache-write price, so a cache write is
-        // ordinary input — Anthropic's 1.25x TTL premium does not exist here.
+        //   grok-4.6  $2.00 in / $6.00 out / $0.50 cached input   (every level — ForGrok, CARD-0169)
+        // grok-4.5 no longer has a rung on the ladder to price; all four levels share one rate.
+        // Cache WRITE is $2.00: xAI publishes no cache-write price, so a cache write is ordinary
+        // input — Anthropic's 1.25x TTL premium does not exist here.
         var expected = new (AgentModelLevel Level, decimal CachedIn)[]
         {
             (AgentModelLevel.Frontier, 0.50m),
             (AgentModelLevel.High, 0.50m),
-            (AgentModelLevel.Medium, 0.30m),
-            (AgentModelLevel.Low, 0.30m),
+            (AgentModelLevel.Medium, 0.50m),
+            (AgentModelLevel.Low, 0.50m),
         };
 
         foreach (var (level, cachedIn) in expected)
@@ -1031,16 +1031,19 @@ public class DelegationKindPricingTests
     }
 
     [Test]
-    public void a_grok_escalation_from_high_to_frontier_costs_the_same_because_both_are_grok_4_6()
+    public void a_grok_escalation_at_any_level_costs_the_same_because_every_rung_is_grok_4_6()
     {
-        // ForGrok maps Frontier and High to the same model. The ladder still buys a fresh context;
-        // it does not buy a dearer one, and the price must say so rather than imply otherwise.
-        DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok)
-            .ShouldBe(DelegationCost.Estimate(Pricing, AgentModelLevel.High, Session, AfterPromo, AgentKind.Grok));
+        // CARD-0169: ForGrok maps every level to the same model. The ladder still buys a fresh
+        // context; it does not buy a dearer one, and the price must say so rather than imply
+        // otherwise — asserted across all six pairs, not just the two that were already equal.
+        var frontier = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok);
+        var high = DelegationCost.Estimate(Pricing, AgentModelLevel.High, Session, AfterPromo, AgentKind.Grok);
+        var medium = DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok);
+        var low = DelegationCost.Estimate(Pricing, AgentModelLevel.Low, Session, AfterPromo, AgentKind.Grok);
 
-        // ...and Medium/Low likewise share grok-4.5.
-        DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok)
-            .ShouldBe(DelegationCost.Estimate(Pricing, AgentModelLevel.Low, Session, AfterPromo, AgentKind.Grok));
+        frontier.ShouldBe(high);
+        frontier.ShouldBe(medium);
+        frontier.ShouldBe(low);
     }
 
     /// <summary>
@@ -1060,9 +1063,10 @@ public class DelegationKindPricingTests
         var grok = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo, AgentKind.Grok);
         grok.ShouldBe(0.604600m);
 
-        // grok-4.5 differs only in the cached-input rate ($0.30): 742,000 x $0.30 = 0.222600.
+        // CARD-0169: Medium is grok-4.6 too now, so it prices identically to Frontier — grok-4.5's
+        // cheaper cached-input rate ($0.30) no longer applies to any level.
         DelegationCost.Estimate(Pricing, AgentModelLevel.Medium, Session, AfterPromo, AgentKind.Grok)
-            .ShouldBe(0.456200m);
+            .ShouldBe(0.604600m);
 
         // What the same session cost before this slice — the fable rung it happens to share.
         var asClaudeFrontier = DelegationCost.Estimate(Pricing, AgentModelLevel.Frontier, Session, AfterPromo);

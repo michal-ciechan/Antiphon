@@ -63,16 +63,18 @@ public class GrokDelegateDispatchTests
     }
 
     [Test]
-    public void grok_maps_frontier_and_high_to_the_same_alias_and_the_lower_tiers_to_the_older_one()
+    public void grok_maps_every_level_to_grok_4_6()
     {
-        // The ladder Grok actually has, asserted through the launch path rather than the alias
-        // table — this is what makes the escalation disclosure below true rather than decorative.
+        // CARD-0169: the operator's own instruction retired grok-4.5 from the ladder entirely -
+        // asserted through the launch path rather than the alias table, since this is what makes
+        // the escalation disclosure below (every Grok escalation is now same-model) true rather
+        // than decorative.
         var (dispatcher, _) = CreateHarness();
 
         ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Frontier)).ShouldBe("grok-4.6");
         ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.High)).ShouldBe("grok-4.6");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium)).ShouldBe("grok-4.5");
-        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low)).ShouldBe("grok-4.5");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Medium)).ShouldBe("grok-4.6");
+        ModelArgOf(dispatcher, TaskFor(AgentKind.Grok, AgentModelLevel.Low)).ShouldBe("grok-4.6");
     }
 
     [Test]
@@ -173,7 +175,7 @@ public class GrokDelegateDispatchTests
         spec.Args.ShouldContain("--no-alt-screen");
         spec.Args.ShouldContain("--rules");
         spec.Args.ShouldNotContain("--name");
-        spec.Args.ToList()[spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.5");
+        spec.Args.ToList()[spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.6");
         spec.Cwd.ShouldBe(task.WorkingDirectory);
     }
 
@@ -390,10 +392,11 @@ public class GrokDelegateDispatchTests
     }
 
     [Test]
-    public async Task escalating_a_grok_task_between_real_models_makes_no_such_disclosure()
+    public async Task escalating_a_grok_task_from_medium_also_shows_the_disclosure_now()
     {
-        // Medium -> High IS a model change on Grok (grok-4.5 -> grok-4.6), so the note must not
-        // fire — a disclosure that appears on every escalation stops being read.
+        // CARD-0169 retired grok-4.5 from the ladder entirely, so Medium -> High is no longer a
+        // real model change either — every Grok escalation is now same-model, and this pairing
+        // must show the disclosure exactly like Frontier/High already did before this change.
         using var workspace = new TempWorkspace();
         var task = await SeedSettledTaskAsync(workspace.Path, AgentKind.Grok, AgentModelLevel.Medium);
 
@@ -401,8 +404,8 @@ public class GrokDelegateDispatchTests
         await CreateService(db).EscalateAsync(task.Id, to: null, CancellationToken.None);
 
         var detail = await LatestEscalationDetailAsync(task.Id);
-        detail.ShouldContain("grok-4.5 -> grok-4.6");
-        detail.ShouldNotContain("FRESH CONTEXT");
+        detail.ShouldContain("grok-4.6 -> grok-4.6");
+        detail.ShouldContain("FRESH CONTEXT at the same model");
     }
 
     [Test]
@@ -436,7 +439,7 @@ public class GrokDelegateDispatchTests
 
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Dispatched to agent ");
-        detail.ShouldContain("(grok-4.5)", customMessage: "the seeded task is Medium");
+        detail.ShouldContain("(grok-4.6)", customMessage: "the seeded task is Medium, which now also maps to grok-4.6");
         detail.ShouldNotContain("sonnet");
     }
 
@@ -470,7 +473,7 @@ public class GrokDelegateDispatchTests
 
         var detail = await LatestDispatchDetailAsync(task.Id);
         detail.ShouldStartWith("Reused warm delegate ");
-        detail.ShouldContain("(grok-4.5)");
+        detail.ShouldContain("(grok-4.6)");
         detail.ShouldNotContain("sonnet");
     }
 

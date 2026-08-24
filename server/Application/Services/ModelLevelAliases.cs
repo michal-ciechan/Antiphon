@@ -27,12 +27,11 @@ public static class ModelLevelAliases
         _ => "opus",
     };
 
-    public static string ForGrok(AgentModelLevel level) => level switch
-    {
-        AgentModelLevel.Frontier or AgentModelLevel.High => "grok-4.6",
-        AgentModelLevel.Medium or AgentModelLevel.Low => "grok-4.5",
-        _ => "grok-4.6",
-    };
+    // CARD-0169: every level maps to grok-4.6 — the operator's own instruction, not a
+    // capability/cost-derived rung. grok-4.5 stays a valid, selectable model id elsewhere
+    // (the AgentTuiRunnerCatalog listing, historical records) — this only removes it from the
+    // level ladder new dispatches resolve through.
+    public static string ForGrok(AgentModelLevel level) => "grok-4.6";
 
     /// <summary>
     /// Codex's ladder (CARD-0099 S3). Verified against the live CLI's own catalog
@@ -41,12 +40,13 @@ public static class ModelLevelAliases
     /// coding model", "balanced … for everyday work" and "fast and affordable" — which is NOT the
     /// Sol/Luna/Terra order the card names them in.
     ///
-    /// <para>Medium and Low share <c>gpt-5.6-luna</c>, the way Grok's Frontier and High share
-    /// grok-4.6. That is a genuinely short rung, not an oversight, and it is why
-    /// <c>AgentTaskService.SameModelEscalationNote</c> — which compares ALIASES, not kinds — tells a
-    /// Low → Medium Codex escalation that it bought a fresh context rather than a bigger model. The
-    /// three rungs above it are all real model changes. <c>gpt-5.4-mini</c> exists if a cheaper
-    /// bottom rung is ever wanted; three names were asked for, so Luna covers both.</para>
+    /// <para>Medium and Low share <c>gpt-5.6-luna</c> — a genuinely short rung, not an oversight,
+    /// and it is why <c>AgentTaskService.SameModelEscalationNote</c> — which compares ALIASES, not
+    /// kinds — tells a Low → Medium Codex escalation that it bought a fresh context rather than a
+    /// bigger model. The three rungs above it are all real model changes. <c>gpt-5.4-mini</c>
+    /// exists if a cheaper bottom rung is ever wanted; three names were asked for, so Luna covers
+    /// both. (Grok's own ladder no longer has rungs to compare against — CARD-0169 collapsed
+    /// <see cref="ForGrok"/> to grok-4.6 for every level.)</para>
     /// </summary>
     public static string ForCodex(AgentModelLevel level) => level switch
     {

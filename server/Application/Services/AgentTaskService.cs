@@ -581,13 +581,13 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// What an escalation buys when both rungs map to the SAME model. Grok's ladder is shorter than
-    /// the generic one — Frontier and High are both grok-4.6 — so a Debug escalation on Grok moves
-    /// no model at all. That is still worth doing (a fresh context is most of what escalation buys
-    /// in practice: the stalled session is killed and the next attempt starts from the handoff
-    /// block rather than the dead end), but the event must SAY so. Silence here would read as a
-    /// promise of a larger model that xAI does not currently offer, and the operator would spend
-    /// the escalation expecting something the ladder cannot deliver.
+    /// What an escalation buys when both rungs map to the SAME model. Grok's ladder has no rungs
+    /// left at all (CARD-0169 — every level maps to grok-4.6, the operator's own instruction), so
+    /// EVERY escalation on Grok moves no model at all. That is still worth doing (a fresh context
+    /// is most of what escalation buys in practice: the stalled session is killed and the next
+    /// attempt starts from the handoff block rather than the dead end), but the event must SAY so.
+    /// Silence here would read as a promise of a larger model that xAI does not currently offer,
+    /// and the operator would spend the escalation expecting something the ladder cannot deliver.
     ///
     /// <para>The test is the ALIAS COMPARISON, not the kind (CARD-0084 S4): now that
     /// <see cref="ModelLevelAliases.For"/> answers per kind, "both rungs are the same model" is

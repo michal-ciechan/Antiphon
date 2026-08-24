@@ -77,10 +77,11 @@ public sealed class DelegationPricingSettings
     /// (https://docs.x.ai/docs/models, retrieved 2026-08-18) — NOT from a model's memory of it,
     /// which is exactly how a rate table acquires a plausible wrong number.
     ///
-    /// Tier mapping follows <see cref="Services.ModelLevelAliases.ForGrok"/>: Frontier and High
-    /// both launch <c>grok-4.6</c>, Medium and Low both launch <c>grok-4.5</c>. The two share
-    /// input/output rates ($2/$6 per million) and differ only in the cached-input rate, so a
-    /// Grok escalation buys a fresh context at the same price, not a dearer model.
+    /// Tier mapping follows <see cref="Services.ModelLevelAliases.ForGrok"/>: every level launches
+    /// <c>grok-4.6</c> (CARD-0169 — the operator's own instruction retired grok-4.5 from the
+    /// ladder). All four levels therefore share identical rates; the per-level entries below stay
+    /// separate only because <see cref="DefaultKindRates"/> is keyed by level, not because the
+    /// price actually differs.
     ///
     /// Two documented caveats, both under-pricing rather than over-pricing (the safe direction for
     /// a ceiling that gates dispatch):
@@ -98,11 +99,11 @@ public sealed class DelegationPricingSettings
             [nameof(AgentKind.Grok)] = new(StringComparer.OrdinalIgnoreCase)
             {
                 // grok-4.6 — $2.00 in / $6.00 out / $0.50 cached input, per million (< 200k).
+                // CARD-0169: every level now launches grok-4.6, so all four entries match.
                 [nameof(AgentModelLevel.Frontier)] = GrokTextRates(cachedInputPerMillion: 0.50m),
                 [nameof(AgentModelLevel.High)] = GrokTextRates(cachedInputPerMillion: 0.50m),
-                // grok-4.5 — same $2.00/$6.00, cached input $0.30.
-                [nameof(AgentModelLevel.Medium)] = GrokTextRates(cachedInputPerMillion: 0.30m),
-                [nameof(AgentModelLevel.Low)] = GrokTextRates(cachedInputPerMillion: 0.30m),
+                [nameof(AgentModelLevel.Medium)] = GrokTextRates(cachedInputPerMillion: 0.50m),
+                [nameof(AgentModelLevel.Low)] = GrokTextRates(cachedInputPerMillion: 0.50m),
             },
         };
 
