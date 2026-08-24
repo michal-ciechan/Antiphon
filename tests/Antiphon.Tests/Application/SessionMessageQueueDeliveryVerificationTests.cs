@@ -88,7 +88,11 @@ public class SessionMessageQueueDeliveryVerificationTests
         await h.Queue.EnqueueAsync(
             h.SessionId, "swallowed submit", MessageSendMode.WhenIdle, CancellationToken.None);
 
-        h.Adapter.Inputs.ShouldBe(["swallowed submit", "\r"]);
+        // CARD-0164: an unobservable baseline (no transcript yet) now gets the SAME
+        // SubmitAttempts-bounded re-press loop an observable baseline already had, instead of
+        // failing fast on the first swallowed Enter - so a genuinely-swallowed submit burns all
+        // 3 attempts before reverting, same as it always has for an observable-baseline session.
+        h.Adapter.Inputs.ShouldBe(["swallowed submit", "\r", "\r", "\r"]);
 
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
