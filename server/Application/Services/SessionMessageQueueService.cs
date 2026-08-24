@@ -1032,8 +1032,13 @@ public sealed class SessionMessageQueueService
     /// has sat Pending: some prompt will always have arrived. A short body that cannot be identified
     /// by text is therefore redelivered rather than assumed delivered. Duplicating an auto-continue
     /// is cheap; silently dropping a human's "yes please" is not.</item>
-    /// <item>A message with no stored baseline (the session had no observable transcript at attempt
-    /// time) is never late-confirmed — there is no floor, so a match would prove nothing.</item>
+    /// <item>CARD-0164: a message with no stored sequence baseline (unobservable at attempt time)
+    /// is late-confirmed against a <b>wall-clock</b> floor keyed on <c>LastDeliveryStartedAt</c>
+    /// (same <c>UnobservableBaselineConfirmClockToleranceSeconds</c> as the inline confirm). The
+    /// old claim that "no floor, so a match would prove nothing" is superseded — the floor is the
+    /// attempt's own wall clock, and CARD-0056's argument applies: copied history and backfill keep
+    /// original timestamps. Without this arm, a WhenIdle first flush on a fresh herdr session that
+    /// reverted for NoSubmitOutput was re-typed on the very turn-end its own delivery produced.</item>
     /// </list>
     /// </summary>
     private async Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
@@ -1044,14 +1049,31 @@ public sealed class SessionMessageQueueService
 
         var confirmed = 0;
         var truncated = 0;
+        var tolerance = TimeSpan.FromSeconds(
+            Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
         foreach (var m in pending)
         {
-            if (m.DeliveryAttempts == 0 || m.LastDeliveryBaselineSequence is not { } floor)
+            if (m.DeliveryAttempts == 0)
                 continue;
             if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
                 continue;
 
-            var match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct);
+            TranscriptConfirm match;
+            if (m.LastDeliveryBaselineSequence is { } floor)
+            {
+                match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct);
+            }
+            else if (m.LastDeliveryStartedAt is { } started)
+            {
+                // CARD-0164 null-baseline arm: wall-clock floor from the attempt's own start.
+                match = await TryFindUnobservableConfirmingRecordAsync(
+                    db, sessionId, m.Body, started - tolerance, ct);
+            }
+            else
+            {
+                continue;
+            }
+
             if (!match.Identity)
                 continue;
 
@@ -1076,9 +1098,10 @@ public sealed class SessionMessageQueueService
             confirmed++;
             _logger.LogInformation(
                 "Message {MessageId} on session {SessionId} late-confirmed: its body became a UserPrompt "
-                + "record past sequence {Baseline} after attempt {Attempt}, so it is marked Sent and the "
+                + "record after attempt {Attempt} (baseline {Baseline}), so it is marked Sent and the "
                 + "redelivery is skipped",
-                m.Id, sessionId, floor, m.DeliveryAttempts);
+                m.Id, sessionId, m.DeliveryAttempts,
+                m.LastDeliveryBaselineSequence?.ToString() ?? $"wall-clock from {m.LastDeliveryStartedAt:o}");
         }
 
         if (confirmed > 0)
@@ -1645,6 +1668,12 @@ public sealed class SessionMessageQueueService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await TryFindUnobservableConfirmingRecordAsync(db, sessionId, body, confirmFrom, ct);
+    }
+
+    private static async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
+        AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct)
+    {
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId

@@ -1770,6 +1770,45 @@ public class SessionMessageQueueDeliveryVerificationTests
             .Status.ShouldBe(QueuedMessageStatus.Pending);
     }
 
+    [Test]
+    public async Task Card0164_null_baseline_attempt_is_late_confirmed_without_retype()
+    {
+        // (iv) Double-type pin — RED without B3 (late-confirm skipped null baselines → re-types).
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "CARD0164 null-baseline late-confirm body long enough";
+        var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: null);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, body, timestamp: DateTime.UtcNow);
+
+        var inputsBefore = h.Adapter.Inputs.Count;
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.Count.ShouldBe(inputsBefore, "late-confirm must not write to the terminal");
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        message.Status.ShouldBe(QueuedMessageStatus.Sent);
+        message.SentAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Card0164_null_baseline_old_timestamp_still_redelivers()
+    {
+        // (iv) Negative: old-timestamp match must not late-confirm — redelivery proceeds.
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        const string body = "CARD0164 null-baseline old-row body long enough";
+        var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: 1, baselineSequence: null);
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.UserPrompt, body,
+            timestamp: DateTime.UtcNow - TimeSpan.FromHours(2));
+
+        await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldContain(body, "old row is not a floor — redelivery types");
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == id))
+            .Status.ShouldBe(QueuedMessageStatus.Sent); // confirmed by the fresh OnSubmitted path
+    }
+
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
     {
         await using var db = CreateContext();
