@@ -34,6 +34,7 @@ import { FilesReviewPanel, type FilesPanelHeights } from '../agents/FilesReviewP
 import { SessionTranscriptPanel } from '../agents/SessionTranscriptPanel'
 import { AgentRail } from './AgentRail'
 import { MobileHomePage } from './MobileHomePage'
+import { ReportBugButton } from '../diagnostics/ReportBugButton'
 import { ProjectTasksPanel } from './ProjectTasksPanel'
 import {
   buildProjects,
@@ -261,6 +262,9 @@ function DesktopHomePage() {
               <Tabs.Tab value="tasks" leftSection={<TbLayoutList size={14} />}>
                 Tasks
               </Tabs.Tab>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', paddingRight: 8 }}>
+                <ReportBugButton agentId={agent?.id} sessionId={sessionId ?? undefined} />
+              </div>
             </Tabs.List>
             <Tabs.Panel
               value="chat"
