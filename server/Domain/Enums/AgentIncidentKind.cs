@@ -339,4 +339,12 @@ public enum AgentIncidentKind
     /// "a human is being failed right now".
     /// </summary>
     HerdrStatusDisagreement = 34,
+
+    /// <summary>
+    /// CARD-0181: this session had been reading another session's transcript (a heuristic claim
+    /// on a file named for someone else); the namesake reclaimed it. Warning; Critical when the
+    /// displaced agent is channel-bound — it had been relaying a stranger's turns. A one-off:
+    /// does not feed <c>TranscriptBindStuck</c>.
+    /// </summary>
+    TranscriptClaimRevoked = 35,
 }

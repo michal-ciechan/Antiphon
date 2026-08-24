@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -90,6 +91,22 @@ public sealed class TranscriptBindingIncidentService
 
             // RecordIncidentAsync does NOT save; this scope's SaveChanges commits the row.
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            if (fault.Kind == TranscriptFaultKinds.ClaimRevoked)
+            {
+                await supervisor.RecordIncidentAsync(
+                    owner,
+                    fault.SessionId,
+                    AgentIncidentKind.TranscriptClaimRevoked,
+                    channelBound ? AlertSeverity.Critical : AlertSeverity.Warning,
+                    "This session had been reading the transcript of another session as its own; "
+                    + "that file has been handed back. Nothing ingested from it belonged to this session. "
+                    + detail,
+                    failureReason: fault.Kind,
+                    ct: ct);
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+
             await supervisor.RecordIncidentAsync(
                 owner,
                 fault.SessionId,

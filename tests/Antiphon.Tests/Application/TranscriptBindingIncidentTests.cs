@@ -497,6 +497,108 @@ public class TranscriptBindingIncidentTests
             .ShouldBe(1, "one escalation per repeat window, or the escalation is just more noise");
     }
 
+    [Test]
+    public async Task ClaimRevoked_fault_records_TranscriptClaimRevoked_warning()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
+        });
+
+        var namesake = Guid.NewGuid();
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.ClaimRevoked,
+                    $"Reclaimed by namesake session {namesake:D}",
+                    CandidatePath: $@"C:\Users\someone\.claude\projects\C--src-Antiphon\{namesake:D}.jsonl",
+                    UnboundSeconds: 0,
+                    Repeat: 1),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptClaimRevoked);
+        incident.Severity.ShouldBe(AlertSeverity.Warning);
+        incident.FailureReason.ShouldBe(TranscriptFaultKinds.ClaimRevoked);
+        incident.Message.ShouldContain("handed back", Case.Insensitive);
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindStuck))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task ClaimRevoked_fault_is_critical_when_the_displaced_agent_is_channel_bound()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s => s.AddSingleton<TranscriptBindingIncidentService>(),
+        });
+
+        var channelId = await BindChannelAsync(harness.AgentId);
+        try
+        {
+            await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+                .OnTranscriptFaultAsync(
+                    new SessionRunnerTranscriptFaultEvent(
+                        harness.SessionId,
+                        TranscriptFaultKinds.ClaimRevoked,
+                        "Reclaimed by namesake session",
+                        CandidatePath: null),
+                    CancellationToken.None);
+
+            await using var db = BridgeQueueHarness.CreateContext();
+            var incident = await db.AgentIncidents.SingleAsync(
+                i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptClaimRevoked);
+            incident.Severity.ShouldBe(AlertSeverity.Critical);
+        }
+        finally
+        {
+            await using var cleanup = BridgeQueueHarness.CreateContext();
+            await cleanup.ChatChannels.Where(c => c.Id == channelId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task ClaimRevoked_fault_never_escalates_to_TranscriptBindStuck()
+    {
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton(Options.Create(new TranscriptBindingSettings
+                {
+                    StuckAfterMinutes = 1,
+                    StuckRepeatMinutes = 1,
+                }));
+                s.AddSingleton<TranscriptBindingIncidentService>();
+            },
+        });
+
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.ClaimRevoked,
+                    "Reclaimed by namesake session",
+                    CandidatePath: null,
+                    UnboundSeconds: 11165,
+                    Repeat: 37),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindStuck))
+            .ShouldBeFalse();
+        (await db.AgentIncidents.CountAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptClaimRevoked))
+            .ShouldBe(1);
+    }
+
     private static async Task<Guid> BindChannelAsync(Guid agentId)
     {
         await using var db = BridgeQueueHarness.CreateContext();
