@@ -142,7 +142,11 @@ export function AgentsPage() {
                         <BundleDriftBadge agent={agent} />
                         <SupervisionBadge agent={agent} compact />
                         {agent.liveSession?.agentKind === 'ClaudeCode' && (
-                          <SessionContextBadge fullness={agent.liveSession.contextFullness} size="xs" />
+                          <SessionContextBadge
+                            fullness={agent.liveSession.contextFullness}
+                            state={agent.liveSession.contextFullnessState}
+                            size="xs"
+                          />
                         )}
                         <AgentActivityBadge agent={agent} />
                       </Group>
@@ -242,7 +246,10 @@ export function AgentsPage() {
                   <Title order={3}>{selected.data.name}</Title>
                   <AgentActivityBadge agent={selected.data} />
                   {selected.data.liveSession?.agentKind === 'ClaudeCode' && (
-                    <SessionContextBadge fullness={selected.data.liveSession.contextFullness} />
+                    <SessionContextBadge
+                      fullness={selected.data.liveSession.contextFullness}
+                      state={selected.data.liveSession.contextFullnessState}
+                    />
                   )}
                   <SupervisionBadge agent={selected.data} />
                   <ReplyStyleBadge agent={selected.data} />

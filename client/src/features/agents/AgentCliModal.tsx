@@ -54,7 +54,10 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
           </Text>
           {liveSession && <SessionWorkingBadge sessionId={liveSession.id} />}
           {liveSession?.agentKind === 'ClaudeCode' && (
-            <SessionContextBadge fullness={liveSession.contextFullness} />
+            <SessionContextBadge
+              fullness={liveSession.contextFullness}
+              state={liveSession.contextFullnessState}
+            />
           )}
         </Group>
       }
