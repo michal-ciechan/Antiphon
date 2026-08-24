@@ -137,6 +137,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <summary>The transcript currently being tailed, or null while unbound (tests/diagnostics).</summary>
     public string? BoundTranscriptPath { get; private set; }
 
+    /// <inheritdoc />
+    public string? BindHow { get; private set; }
+
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
 
     /// <summary>
@@ -266,6 +269,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         var newOwner = _claimRevokedBy;
         _claimRevoked = false;
         BoundTranscriptPath = null;
+        BindHow = null;
         _knownTranscriptPath = null;
         _logger.LogWarning(
             "Session {SessionId}: transcript {Path} was reclaimed by its namesake session {NewOwner}; "
@@ -481,6 +485,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         }
 
         BoundTranscriptPath = path;
+        BindHow = how;
         try { _onBound?.Invoke(path, how); }
         catch (Exception ex) { _logger.LogDebug(ex, "Recording the transcript binding for session {SessionId} failed", _sessionId); }
 

@@ -1438,6 +1438,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             lock (_gate)
             {
+                var boundPath = _tailer?.BoundTranscriptPath;
                 return new RunnerSessionDto(
                     _sessionId,
                     _childPid,
@@ -1449,7 +1450,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _hostPid > 0 ? _hostPid : null,
                     _adopted,
                     _herdrAgentStatus,
-                    _herdrAgentStatusSinceUtc);
+                    _herdrAgentStatusSinceUtc,
+                    TranscriptBound: _tailer is null ? null : boundPath is not null,
+                    TranscriptBindHow: boundPath is not null ? _tailer!.BindHow : null);
             }
         }
 

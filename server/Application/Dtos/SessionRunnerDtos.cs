@@ -17,7 +17,10 @@ public sealed record SessionRunnerSessionDto(
     // CARD-0161: herdr agent_status; null for pty / older runners.
     string? AgentStatus = null,
     // CARD-0162: when AgentStatus last changed (hysteresis). Additive — older runners omit it.
-    DateTime? AgentStatusSinceUtc = null);
+    DateTime? AgentStatusSinceUtc = null,
+    // CARD-0180 S4: runner transcript bind. Null on older runners / no tailer.
+    bool? TranscriptBound = null,
+    string? TranscriptBindHow = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

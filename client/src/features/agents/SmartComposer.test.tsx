@@ -1,5 +1,7 @@
+import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { server } from '../../test/mocks/server'
 import { SmartComposer } from './SmartComposer'
 
 describe('SmartComposer', () => {
@@ -64,5 +66,102 @@ describe('SmartComposer', () => {
     // No MSW handler is registered for the enqueue endpoint — a dispatch here would throw
     // onUnhandledRequest and fail the test.
     await user.click(send)
+  })
+
+  it('renders a transcript-confirmed receipt, then clears it on typing', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/sessions/s1/messages', () =>
+        HttpResponse.json({
+          sessionId: 's1',
+          messages: [],
+          working: false,
+          lastDelivery: {
+            verdict: 'Delivered',
+            confirmedBy: 'transcript',
+            degraded: false,
+            reason: null,
+            at: '2026-08-24T12:00:00Z',
+          },
+        }),
+      ),
+    )
+    renderWithProviders(<SmartComposer sessionId="s1" />)
+    await user.type(screen.getByPlaceholderText(/Message to the agent/), 'hello there')
+    await user.click(screen.getByRole('button', { name: /Send now/ }))
+    expect(await screen.findByTestId('delivery-receipt')).toHaveTextContent(
+      'Delivered · confirmed by transcript',
+    )
+    expect(screen.getByTestId('delivery-receipt')).toHaveAttribute('data-confirmed-by', 'transcript')
+
+    await user.type(screen.getByPlaceholderText(/Message to the agent/), 'x')
+    expect(screen.queryByTestId('delivery-receipt')).not.toBeInTheDocument()
+  })
+
+  it('renders the unverified receipt for a screen confirmation', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/sessions/s1/messages', () =>
+        HttpResponse.json({
+          sessionId: 's1',
+          messages: [],
+          working: false,
+          lastDelivery: {
+            verdict: 'Delivered',
+            confirmedBy: 'screen',
+            degraded: true,
+            reason: 'this session has no transcript bound (or has not written one yet)',
+            at: '2026-08-24T12:00:00Z',
+          },
+        }),
+      ),
+    )
+    renderWithProviders(<SmartComposer sessionId="s1" />)
+    await user.type(screen.getByPlaceholderText(/Message to the agent/), 'hello there')
+    await user.click(screen.getByRole('button', { name: /Send now/ }))
+    expect(await screen.findByTestId('delivery-receipt')).toHaveTextContent(
+      'Typed · unverified — no transcript bound (see incidents)',
+    )
+    expect(screen.getByTestId('delivery-receipt')).toHaveAttribute('data-confirmed-by', 'screen')
+  })
+
+  it('renders Queued after a when-idle send', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/sessions/s1/messages', () =>
+        HttpResponse.json({
+          sessionId: 's1',
+          messages: [
+            {
+              id: 'm1',
+              sequence: 1,
+              body: 'later',
+              status: 'Pending',
+              createdAt: '2026-08-24T12:00:00Z',
+              deliveryAttempts: 0,
+              origin: 'Ui',
+              parked: false,
+            },
+          ],
+          working: true,
+        }),
+      ),
+    )
+    renderWithProviders(<SmartComposer sessionId="s1" />)
+    await user.click(screen.getByLabelText('Queue when idle'))
+    await user.type(screen.getByPlaceholderText(/Message to the agent/), 'later please')
+    await user.click(screen.getByRole('button', { name: /Queue when idle/ }))
+    expect(await screen.findByTestId('delivery-receipt')).toHaveTextContent('Queued')
+    expect(screen.getByTestId('delivery-receipt')).toHaveAttribute('data-confirmed-by', 'queued')
+  })
+
+  it('never renders a receipt for raw keystrokes', async () => {
+    const user = userEvent.setup()
+    server.use(http.post('/api/sessions/s1/input', () => HttpResponse.json(null)))
+    renderWithProviders(<SmartComposer sessionId="s1" defaultMode="raw" />)
+    await user.type(screen.getByPlaceholderText(/Message to the agent/), 'typed raw')
+    await user.click(screen.getByRole('button', { name: /Type into terminal/ }))
+    await waitFor(() => expect(screen.getByPlaceholderText(/Message to the agent/)).toHaveValue(''))
+    expect(screen.queryByTestId('delivery-receipt')).not.toBeInTheDocument()
   })
 })

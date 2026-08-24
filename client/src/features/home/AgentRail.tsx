@@ -49,18 +49,21 @@ export function AgentRail({
           <Group gap={8} wrap="nowrap">
             <Tooltip
               label={
-                agent.liveSession?.status === 'Running'
-                  ? 'Terminal — live now'
-                  : agent.liveSession
-                    ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
-                    : 'No live session'
+                agent.liveSession?.status === 'Running' &&
+                agent.liveSession.transcriptBinding === 'unbound'
+                  ? 'Terminal live — no transcript bound'
+                  : agent.liveSession?.status === 'Running'
+                    ? 'Terminal — live now'
+                    : agent.liveSession
+                      ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
+                      : 'No live session'
               }
               openDelay={400}
               withArrow
             >
               <Box
                 component="span"
-                style={{ display: 'inline-flex', flexShrink: 0 }}
+                style={{ display: 'inline-flex', flexShrink: 0, position: 'relative' }}
                 c={
                   agent.liveSession?.status === 'Running'
                     ? 'green'
@@ -70,6 +73,22 @@ export function AgentRail({
                 }
               >
                 <TbTerminal2 size={15} />
+                {agent.liveSession?.status === 'Running' &&
+                  agent.liveSession.transcriptBinding === 'unbound' && (
+                    <Box
+                      component="span"
+                      data-testid={`rail-unbound-dot-${agent.id}`}
+                      style={{
+                        position: 'absolute',
+                        top: -1,
+                        right: -1,
+                        width: 6,
+                        height: 6,
+                        borderRadius: 6,
+                        background: 'var(--mantine-color-orange-6)',
+                      }}
+                    />
+                  )}
               </Box>
             </Tooltip>
             <Text size="sm" fw={500} truncate style={{ flexGrow: 1, minWidth: 0 }}>

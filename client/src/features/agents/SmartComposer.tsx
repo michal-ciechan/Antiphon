@@ -12,11 +12,13 @@ import {
   useCombobox,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { TbClock, TbKeyboard, TbMessagePlus, TbSend } from 'react-icons/tb'
+import { useQueryClient } from '@tanstack/react-query'
+import { TbCheck, TbClock, TbKeyboard, TbMessagePlus, TbSend } from 'react-icons/tb'
 import {
   enqueueSessionMessage,
   sendSessionInput,
   useSessionCommands,
+  type DeliveryReceiptDto,
   type SlashCommandDto,
 } from '../../api/sessions'
 import { getApiErrorMessage } from '../../api/client'
@@ -75,8 +77,12 @@ export function SmartComposer({
   const [mode, setMode] = useState<ComposerMode>(defaultMode)
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState(!collapsible)
+  const [lastReceipt, setLastReceipt] = useState<
+    { kind: 'now'; receipt: DeliveryReceiptDto } | { kind: 'queued' } | null
+  >(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const combobox = useCombobox()
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (expanded && collapsible) textareaRef.current?.focus()
@@ -112,8 +118,17 @@ export function SmartComposer({
     try {
       if (target === 'raw') {
         await sendSessionInput(sessionId, text + '\r')
+        setLastReceipt(null)
       } else {
-        await enqueueSessionMessage(sessionId, text, target === 'send-now' ? 'Now' : 'WhenIdle')
+        const dto = await enqueueSessionMessage(sessionId, text, target === 'send-now' ? 'Now' : 'WhenIdle')
+        if (target === 'send-now' && dto.lastDelivery) {
+          setLastReceipt({ kind: 'now', receipt: dto.lastDelivery })
+        } else if (target === 'queue') {
+          setLastReceipt({ kind: 'queued' })
+        } else {
+          setLastReceipt(null)
+        }
+        void queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       }
       setValue('')
       combobox.closeDropdown()
@@ -233,7 +248,10 @@ export function SmartComposer({
             minRows={variant === 'terminal' ? 1 : 2}
             maxRows={6}
             value={value}
-            onChange={(e) => setValue(e.currentTarget.value)}
+            onChange={(e) => {
+              setValue(e.currentTarget.value)
+              if (lastReceipt) setLastReceipt(null)
+            }}
             onKeyDown={handleKeyDown}
           />
         </Combobox.Target>
@@ -291,7 +309,43 @@ export function SmartComposer({
           </Button>
         </Tooltip>
       </Group>
+      {lastReceipt && <DeliveryReceiptLine receipt={lastReceipt} />}
     </Stack>
+  )
+}
+
+function DeliveryReceiptLine({
+  receipt,
+}: {
+  receipt: { kind: 'now'; receipt: DeliveryReceiptDto } | { kind: 'queued' }
+}) {
+  if (receipt.kind === 'queued') {
+    return (
+      <Text size="xs" c="dimmed" data-testid="delivery-receipt" data-confirmed-by="queued">
+        Queued
+      </Text>
+    )
+  }
+  const by = receipt.receipt.confirmedBy
+  if (by === 'screen' || receipt.receipt.degraded) {
+    return (
+      <Text size="xs" c="orange" data-testid="delivery-receipt" data-confirmed-by="screen">
+        Typed · unverified — no transcript bound (see incidents)
+      </Text>
+    )
+  }
+  if (by === 'transcript') {
+    return (
+      <Text size="xs" c="green" data-testid="delivery-receipt" data-confirmed-by="transcript">
+        <TbCheck size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+        Delivered · confirmed by transcript
+      </Text>
+    )
+  }
+  return (
+    <Text size="xs" c="dimmed" data-testid="delivery-receipt" data-confirmed-by={by}>
+      Delivered
+    </Text>
   )
 }
 

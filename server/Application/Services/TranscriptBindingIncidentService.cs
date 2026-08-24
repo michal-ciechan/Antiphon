@@ -51,7 +51,7 @@ public sealed class TranscriptBindingIncidentService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var agentId = await ResolveOwningAgentIdAsync(db, fault.SessionId, ct);
+            var agentId = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, fault.SessionId, ct);
             if (agentId is not Guid owner)
             {
                 // CARD-0101: this used to be a bare log-and-return, and it is the one path by which
@@ -210,7 +210,7 @@ public sealed class TranscriptBindingIncidentService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var agentId = await ResolveOwningAgentIdAsync(db, bound.SessionId, ct);
+            var agentId = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, bound.SessionId, ct);
             if (agentId is not Guid owner)
             {
                 _logger.LogError(
@@ -237,27 +237,4 @@ public sealed class TranscriptBindingIncidentService
         }
     }
 
-    /// <summary>
-    /// Standing agents own a session via <c>PersistentSessionId</c>; a delegate task session often
-    /// does not — the pool/ephemeral agent is on the task row, and a later spawn can overwrite
-    /// the standing pointer. Same two-step lookup AttentionService uses for session owners; when
-    /// neither hits, the caller logs at Error rather than dropping the outcome.
-    /// </summary>
-    private static async Task<Guid?> ResolveOwningAgentIdAsync(
-        AppDbContext db, Guid sessionId, CancellationToken ct)
-    {
-        var sessionIdText = sessionId.ToString("D");
-        var standing = await db.Agents
-            .Where(a => a.PersistentSessionId == sessionIdText)
-            .Select(a => (Guid?)a.Id)
-            .FirstOrDefaultAsync(ct);
-        if (standing is Guid standingId)
-            return standingId;
-
-        return await db.AgentTasks
-            .Where(t => t.AgentSessionId == sessionId && t.AgentId != null)
-            .OrderByDescending(t => t.DispatchedAt ?? t.CreatedAt)
-            .Select(t => t.AgentId)
-            .FirstOrDefaultAsync(ct);
-    }
 }

@@ -35,6 +35,7 @@ public sealed class AgentService
     private readonly ILogger<AgentService> _logger;
     private readonly AgentWorkspaceProvisioner? _workspace;
     private readonly ContextWindowSettings _contextWindow;
+    private readonly ISessionRunnerClient? _runnerClient;
 
     public AgentService(
         AppDbContext db,
@@ -46,7 +47,8 @@ public sealed class AgentService
         // Optional so the many harnesses that construct this service by hand keep compiling; without
         // it an agent is simply created without its CLAUDE.md floor, which the next launch writes.
         AgentWorkspaceProvisioner? workspace = null,
-        IOptions<ContextWindowSettings>? contextWindow = null)
+        IOptions<ContextWindowSettings>? contextWindow = null,
+        ISessionRunnerClient? runnerClient = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -56,6 +58,7 @@ public sealed class AgentService
         _logger = logger;
         _workspace = workspace;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
+        _runnerClient = runnerClient;
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -199,6 +202,7 @@ public sealed class AgentService
                     s.TuiProfileRevisionId,
                     s.EffectiveModelId,
                     null,
+                    null,
                     null),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
@@ -210,7 +214,7 @@ public sealed class AgentService
             _logger,
             ct);
 
-        return sessions.ToDictionary(
+        var result = sessions.ToDictionary(
             s => s.Dto.Id,
             s =>
             {
@@ -225,6 +229,48 @@ public sealed class AgentService
                     },
                 };
             });
+        await AttachTranscriptBindingAsync(result, ct);
+        return result;
+    }
+
+    /// <summary>
+    /// CARD-0180 S4: overlay runner bind state onto live session DTOs. A runner that does not
+    /// answer leaves <c>TranscriptBinding</c> null (unknown) — never guessed as unbound.
+    /// </summary>
+    private async Task AttachTranscriptBindingAsync(
+        Dictionary<Guid, LiveSession> liveSessions, CancellationToken ct)
+    {
+        if (_runnerClient is null || liveSessions.Count == 0)
+            return;
+
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions;
+        try
+        {
+            runnerSessions = await _runnerClient.ListAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Runner unreachable; transcriptBinding left unknown");
+            return;
+        }
+
+        foreach (var runner in runnerSessions)
+        {
+            if (!liveSessions.TryGetValue(runner.SessionId, out var live))
+                continue;
+            var binding = runner.TranscriptBound switch
+            {
+                true => "bound",
+                false => "unbound",
+                _ => (string?)null,
+            };
+            if (binding is null)
+                continue;
+            liveSessions[runner.SessionId] = live with
+            {
+                Dto = live.Dto with { TranscriptBinding = binding },
+            };
+        }
     }
 
     private static LiveSession? ResolveLiveSession(

@@ -748,7 +748,9 @@ public sealed class AgentSessionRuntime
                 return false;
             }
 
-            metadata = new AgentSessionLiveMetadata(sessionId, session.LastSequence, session.AgentStatus);
+            metadata = new AgentSessionLiveMetadata(
+                sessionId, session.LastSequence, session.AgentStatus,
+                session.TranscriptBound, session.TranscriptBindHow);
             return true;
         }
         catch
@@ -1228,7 +1230,9 @@ public sealed record AgentSessionLiveSnapshot(
 public sealed record AgentSessionLiveMetadata(
     Guid SessionId,
     long LastSequence,
-    string? AgentStatus = null);
+    string? AgentStatus = null,
+    bool? TranscriptBound = null,
+    string? TranscriptBindHow = null);
 
 public static class AgentSessionGroups
 {

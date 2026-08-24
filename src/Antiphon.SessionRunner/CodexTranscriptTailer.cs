@@ -144,6 +144,9 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     /// <summary>The rollout currently being tailed, or null while unbound (tests/diagnostics).</summary>
     public string? BoundTranscriptPath { get; private set; }
 
+    /// <inheritdoc />
+    public string? BindHow { get; private set; }
+
     /// <summary>
     /// Where Codex keeps its rollouts: <c>{CODEX_HOME}/sessions</c>, defaulting to
     /// <c>~/.codex/sessions</c>. CODEX_HOME resolves from the launch env first — that is the
@@ -270,6 +273,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         var newOwner = _claimRevokedBy;
         _claimRevoked = false;
         BoundTranscriptPath = null;
+        BindHow = null;
         _knownTranscriptPath = null;
         _logger.LogWarning(
             "Session {SessionId}: Codex rollout {Path} was reclaimed by its namesake session {NewOwner}; "
@@ -432,6 +436,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         }
 
         BoundTranscriptPath = path;
+        BindHow = how;
         try { _onBound?.Invoke(path, how); }
         catch (Exception ex)
         {

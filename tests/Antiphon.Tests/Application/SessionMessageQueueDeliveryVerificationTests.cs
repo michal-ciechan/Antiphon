@@ -551,7 +551,12 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent, "screen advanced: today's verdict still stands here");
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        // CARD-0180 S3: the screen-only fallback is now an incident (observation only — still Sent,
+        // still no kill). Deduped per session; this is the first send so it records once.
+        var unverified = await db.AgentIncidents.SingleOrDefaultAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified);
+        unverified.ShouldNotBeNull();
+        unverified.Severity.ShouldBe(AlertSeverity.Warning);
         h.Adapter.Killed.ShouldBeFalse();
     }
 
@@ -1876,6 +1881,85 @@ public class SessionMessageQueueDeliveryVerificationTests
         ex.Message.ShouldContain("never appeared in the composer");
         (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(5),
             "NoComposerEvidence must not burn the grace window");
+    }
+
+    [Test]
+    public async Task Mode_Now_response_carries_a_transcript_confirmed_receipt()
+    {
+        await using var h = await ObservableHarnessAsync(alwaysOn: false);
+        var dto = await h.Queue.EnqueueAsync(
+            h.SessionId, "CARD0180 transcript-confirmed body long enough",
+            MessageSendMode.Now, CancellationToken.None);
+
+        dto.LastDelivery.ShouldNotBeNull();
+        dto.LastDelivery!.Verdict.ShouldBe("Delivered");
+        dto.LastDelivery.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Transcript);
+        dto.LastDelivery.Degraded.ShouldBeFalse();
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Mode_Now_screen_only_fallback_returns_a_degraded_receipt_and_records_DeliveryUnverified_once_per_window()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask; // no UserPrompt row — keep the screen-only path
+        const string body = "CARD0180 screen-fallback body long enough for identity";
+
+        var first = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        first.LastDelivery.ShouldNotBeNull();
+        first.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
+        first.LastDelivery.Degraded.ShouldBeTrue();
+        first.LastDelivery.Reason.ShouldNotBeNull();
+        first.LastDelivery.Reason.ShouldContain("no transcript bound");
+
+        var second = await h.Queue.EnqueueAsync(
+            h.SessionId, body + " again", MessageSendMode.Now, CancellationToken.None);
+        second.LastDelivery.ShouldNotBeNull();
+        second.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
+
+        await using var db = CreateContext();
+        var incidents = await db.AgentIncidents
+            .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified)
+            .ToListAsync();
+        incidents.Count.ShouldBe(1, "two sends inside 10 min → one incident row");
+        incidents[0].Severity.ShouldBe(AlertSeverity.Warning);
+        incidents[0].SessionId.ShouldBe(h.SessionId);
+    }
+
+    [Test]
+    public async Task Mode_Now_degraded_receipt_is_Critical_when_channel_bound()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+        await h.BindChannelAsync();
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "CARD0180 channel-bound screen-fallback body long enough",
+            MessageSendMode.Now, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var incident = await db.AgentIncidents.SingleAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified);
+        incident.Severity.ShouldBe(AlertSeverity.Critical);
+    }
+
+    [Test]
+    public async Task Mode_Now_failure_still_throws_409_with_no_receipt()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            h.Queue.EnqueueAsync(h.SessionId, "send now please", MessageSendMode.Now, CancellationToken.None));
+        ex.Message.ShouldContain("never appeared in the composer");
+
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified))
+            .ShouldBeFalse("NoComposerEvidence is not the screen-only fallback");
     }
 
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)

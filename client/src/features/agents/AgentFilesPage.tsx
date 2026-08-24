@@ -122,7 +122,15 @@ export function AgentFilesPage() {
           data-testid="conversation-dock"
         >
           {sessionId ? (
-            <SessionTranscriptPanel sessionId={sessionId} withComposer composerCollapsed fitHeight />
+            <SessionTranscriptPanel
+              sessionId={sessionId}
+              withComposer
+              composerCollapsed
+              fitHeight
+              transcriptBinding={agent.data?.liveSession?.transcriptBinding}
+              liveStatus={agent.data?.liveSession?.status}
+              agentId={id}
+            />
           ) : (
             <Text size="sm" c="dimmed" ta="center" py="xl">
               No session for this agent yet — start it from the Agents page to talk to it here.

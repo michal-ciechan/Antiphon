@@ -1112,10 +1112,37 @@ public class AgentServiceIntegrationTests
             TuiProfileId: tuiProfileId,
             Kind: kind);
 
+    [Test]
+    public async Task Live_session_dto_carries_transcriptBinding_from_runner_metadata()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var runner = new BindingRunnerClient(sessionId, transcriptBound: false);
+            await using var db = CreateContext();
+            var detail = await CreateService(db, new MockEventBus(), runnerClient: runner)
+                .GetByIdAsync(agentId, CancellationToken.None);
+
+            detail.LiveSession.ShouldNotBeNull();
+            detail.LiveSession!.TranscriptBinding.ShouldBe("unbound");
+
+            var boundRunner = new BindingRunnerClient(sessionId, transcriptBound: true);
+            await using var db2 = CreateContext();
+            var bound = await CreateService(db2, new MockEventBus(), runnerClient: boundRunner)
+                .GetByIdAsync(agentId, CancellationToken.None);
+            bound.LiveSession!.TranscriptBinding.ShouldBe("bound");
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
     private static AgentService CreateService(
         AppDbContext db,
         IEventBus eventBus,
-        IDirectoryWriter? directoryWriter = null)
+        IDirectoryWriter? directoryWriter = null,
+        ISessionRunnerClient? runnerClient = null)
     {
         return new AgentService(
             db,
@@ -1123,7 +1150,64 @@ public class AgentServiceIntegrationTests
             eventBus,
             TimeProvider.System,
             directoryWriter ?? new NoOpDirectoryWriter(),
-            NullLogger<AgentService>.Instance);
+            NullLogger<AgentService>.Instance,
+            runnerClient: runnerClient);
+    }
+
+    private sealed class BindingRunnerClient : ISessionRunnerClient
+    {
+        private readonly SessionRunnerSessionDto _session;
+
+        public BindingRunnerClient(Guid sessionId, bool transcriptBound)
+        {
+            _session = new SessionRunnerSessionDto(
+                sessionId,
+                Pid: 1,
+                StartedAt: DateTime.UtcNow,
+                Status: "Running",
+                ExitCode: null,
+                ExitReason: AgentExitReason.Unknown,
+                LastSequence: 0,
+                TranscriptBound: transcriptBound,
+                TranscriptBindHow: transcriptBound ? TranscriptBindMethods.Exact : null);
+        }
+
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([_session]);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
+            Task.FromResult(_session);
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     private sealed class NoOpDirectoryWriter : IDirectoryWriter

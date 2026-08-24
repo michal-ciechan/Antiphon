@@ -89,7 +89,14 @@ public sealed record RunnerSessionDto(
     string? AgentStatus = null,
     // CARD-0162: UTC when AgentStatus last CHANGED (hysteresis for corroboration). Null when
     // unobserved / pty / older runner. Additive — old servers ignore the extra JSON field.
-    DateTime? AgentStatusSinceUtc = null);
+    DateTime? AgentStatusSinceUtc = null,
+    // CARD-0180 S4: whether a transcript is currently bound. Null on older runners / sessions
+    // with no tailer (Raw). false = locating or refused; true = BoundTranscriptPath is set.
+    bool? TranscriptBound = null,
+    // CARD-0180 S4 / CARD-0181: bind method (`exact`/`sidecar`/`discovery`/`fork`/`deterministic`),
+    // or null while unbound. Claim strength (Exact/Heuristic) is derived at claim time and is
+    // not this field.
+    string? TranscriptBindHow = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,

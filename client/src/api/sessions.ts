@@ -79,11 +79,22 @@ export interface QueuedMessageDto {
   parked: boolean
 }
 
+/** CARD-0180 S3: how a Mode:Now delivery was confirmed. */
+export interface DeliveryReceiptDto {
+  verdict: string
+  confirmedBy: 'transcript' | 'screen' | 'none' | string
+  degraded: boolean
+  reason: string | null
+  at: string
+}
+
 /** Pending messages for a session, plus whether the agent is currently working. */
 export interface SessionQueueDto {
   sessionId: string
   messages: QueuedMessageDto[]
   working: boolean
+  /** Populated only on the Mode:Now response. */
+  lastDelivery?: DeliveryReceiptDto | null
 }
 
 /** Global SignalR `SessionFinished` payload — broadcast when an agent finishes with an empty queue. */

@@ -168,6 +168,11 @@ export interface AgentSessionSummaryDto {
    * and the badge falls back to "unknown".
    */
   contextFullnessState?: ContextFullnessState | null
+  /**
+   * CARD-0180 S4: runner transcript bind. `"bound"` | `"unbound"` when the runner answered;
+   * omitted/null = unknown (older server / unreachable).
+   */
+  transcriptBinding?: 'bound' | 'unbound' | null
 }
 
 export type ContextFullnessState =

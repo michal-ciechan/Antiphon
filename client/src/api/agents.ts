@@ -213,6 +213,7 @@ export type AgentIncidentKind =
   | 'LivenessProbeFailed'
   | 'DeliveryVerificationFailed'
   | 'ContextCompacted'
+  | 'DeliveryUnverified'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 

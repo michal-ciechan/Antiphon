@@ -38,10 +38,33 @@ public sealed record QueuedMessageDto(
     bool Parked = false);
 
 /// <summary>
+/// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.
+/// </summary>
+public static class DeliveryConfirmedBy
+{
+    public const string Transcript = "transcript";
+    public const string Screen = "screen";
+    public const string None = "none";
+}
+
+/// <summary>
+/// CARD-0180 S3: what Mode:Now actually proved about the delivery. Populated only on the Mode:Now
+/// response (WhenIdle stays a queue row with no receipt). <see cref="ConfirmedBy"/> is
+/// <c>transcript</c>, <c>screen</c>, or <c>none</c>.
+/// </summary>
+public sealed record DeliveryReceiptDto(
+    string Verdict,
+    string ConfirmedBy,
+    bool Degraded,
+    string? Reason,
+    DateTime At);
+
+/// <summary>
 /// The pending messages waiting to be delivered to a session, plus whether the agent is currently
 /// working. "Finished" in the UI = <see cref="Working"/> is false and <see cref="Messages"/> is empty.
 /// </summary>
 public sealed record SessionQueueDto(
     Guid SessionId,
     IReadOnlyList<QueuedMessageDto> Messages,
-    bool Working);
+    bool Working,
+    DeliveryReceiptDto? LastDelivery = null);

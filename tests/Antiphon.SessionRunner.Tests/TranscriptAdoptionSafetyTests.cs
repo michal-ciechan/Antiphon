@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
@@ -1505,6 +1506,81 @@ public class TranscriptAdoptionSafetyTests
             knownSessions: knownSessions,
             refusalFaultDelay: refusalFaultDelay,
             refusalFaultRepeat: refusalFaultRepeat);
+
+    [Test]
+    public async Task ToDto_reports_unbound_while_locating_exact_after_bind_and_sidecar_after_readopt()
+    {
+        using var tree = new TranscriptTree("0180-todto");
+        var sessionId = Guid.NewGuid();
+        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-0180-dto-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logRoot);
+        var settings = new SessionRunnerSettings { SessionLogPath = logRoot };
+        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var request = new RunnerLaunchRequest(
+            sessionId,
+            cmd,
+            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            new Dictionary<string, string>(),
+            tree.Cwd,
+            Cols: 80,
+            Rows: 24,
+            TranscriptEnabled: true);
+
+        await using var runtimeA = new SessionRunnerRuntime(
+            Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var locating = await runtimeA.StartAsync(request, CancellationToken.None);
+        int? childPid = locating.Pid;
+        try
+        {
+            for (var i = 0; i < 20 && locating.Status != "Running"; i++)
+            {
+                await Task.Delay(100);
+                locating = runtimeA.Get(sessionId);
+            }
+
+            locating.TranscriptBound.ShouldBe(false);
+            locating.TranscriptBindHow.ShouldBeNull();
+
+            var file = tree.ExactTranscript(sessionId);
+            await tree.AppendAsync(file, UserLine("u1", tree.Cwd, "hello", DateTime.UtcNow));
+
+            RunnerSessionDto? bound = null;
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                bound = runtimeA.Get(sessionId);
+                if (bound.TranscriptBound == true)
+                    break;
+                await Task.Delay(100);
+            }
+
+            bound.ShouldNotBeNull();
+            bound!.TranscriptBound.ShouldBe(true);
+            bound.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Exact);
+
+            await runtimeA.DisposeAsync();
+
+            await using var runtimeB = new SessionRunnerRuntime(
+                Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            (await runtimeB.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), cts.Token))
+                .ShouldBe(1);
+            var adopted = runtimeB.Get(sessionId);
+            adopted.TranscriptBound.ShouldBe(true);
+            adopted.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Sidecar);
+
+            await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
+        finally
+        {
+            if (childPid is int pid)
+            {
+                try { Process.GetProcessById(pid).Kill(entireProcessTree: true); }
+                catch (ArgumentException) { /* already gone */ }
+            }
+            try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+        }
+    }
 
     /// <summary>A minimal Claude "user" JSONL record: cwd (rule C2), timestamp (C3), prompt text (C4).</summary>
     private static string UserLine(string uuid, string cwd, string text, DateTimeOffset timestamp) =>

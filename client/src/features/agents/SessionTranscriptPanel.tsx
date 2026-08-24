@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
+  Alert,
+  Anchor,
   Badge,
   Box,
   Code,
@@ -32,6 +34,7 @@ import {
   TbUser,
 } from 'react-icons/tb'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
+import { Link } from 'react-router'
 import {
   getSessionTranscript,
   type SessionTranscriptPayload,
@@ -152,6 +155,9 @@ export function SessionTranscriptPanel({
   composerCollapsed = false,
   fitHeight = false,
   initialEntries = null,
+  transcriptBinding = null,
+  liveStatus = null,
+  agentId = null,
 }: {
   sessionId: string
   /** Show a message-entry composer at the bottom (send now / queue when idle / raw keystrokes). */
@@ -162,6 +168,10 @@ export function SessionTranscriptPanel({
   fitHeight?: boolean
   /** Storybook/screenshot hook: render these entries statically — no HTTP fetch, no SignalR. */
   initialEntries?: TranscriptEntryDto[] | null
+  /** CARD-0180 S4: runner bind from the live session DTO. */
+  transcriptBinding?: 'bound' | 'unbound' | null
+  liveStatus?: string | null
+  agentId?: string | null
 }) {
   const [entries, setEntries] = useState<TranscriptEntryDto[]>(initialEntries ?? [])
   const [loading, setLoading] = useState(initialEntries == null)
@@ -296,7 +306,14 @@ export function SessionTranscriptPanel({
     return { input, output, cache }
   }, [metrics])
 
-  const statusBadge = (
+  const unboundLive =
+    entries.length === 0 && transcriptBinding === 'unbound' && liveStatus === 'Running'
+
+  const statusBadge = unboundLive ? (
+    <Badge color="orange" variant="light" style={{ flexShrink: 0 }} data-testid="unbound-badge">
+      Unbound
+    </Badge>
+  ) : (
     <Badge
       color={working ? 'yellow' : 'green'}
       variant="light"
@@ -347,6 +364,18 @@ export function SessionTranscriptPanel({
           <Group justify="center" py="xl">
             <Loader size="sm" />
           </Group>
+        ) : entries.length === 0 && unboundLive ? (
+          <Alert color="orange" variant="light" data-testid="unbound-banner">
+            This session has no transcript bound. Messages are typed into the terminal but nothing
+            can be read back — the agent will look idle with 0 turns regardless of what it does.{' '}
+            {agentId ? (
+              <Anchor component={Link} to={`/agents/${agentId}?tab=incidents`} size="sm">
+                See incidents.
+              </Anchor>
+            ) : (
+              'See incidents.'
+            )}
+          </Alert>
         ) : entries.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="xl">
             No transcript yet. Send the agent a prompt and the structured turn-by-turn flow appears here.

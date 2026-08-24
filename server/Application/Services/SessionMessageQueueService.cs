@@ -238,7 +238,10 @@ public sealed class SessionMessageQueueService
                                 "Mode:Now delivery to session {SessionId} grace-confirmed after a "
                                 + "{Verdict} verdict — returning success with no incident",
                                 sessionId, outcome.Verdict);
-                            return await GetQueueAsync(sessionId, ct);
+                            return (await GetQueueAsync(sessionId, ct)) with
+                            {
+                                LastDelivery = ToReceipt(grace),
+                            };
                         }
                         if (grace.Verdict == DeliveryVerdict.Truncated)
                         {
@@ -259,7 +262,7 @@ public sealed class SessionMessageQueueService
             {
                 nowLock.Release();
             }
-            return await GetQueueAsync(sessionId, ct);
+            return (await GetQueueAsync(sessionId, ct)) with { LastDelivery = ToReceipt(outcome) };
         }
 
         var sem = GetLock(sessionId);
@@ -1184,6 +1187,66 @@ public sealed class SessionMessageQueueService
         }
     }
 
+    private const int DeliveryUnverifiedDedupMinutes = 10;
+
+    private DeliveryReceiptDto ToReceipt(DeliveryOutcome outcome)
+    {
+        var degraded = outcome.ConfirmedBy == DeliveryConfirmedBy.Screen;
+        return new DeliveryReceiptDto(
+            outcome.Verdict.ToString(),
+            outcome.ConfirmedBy,
+            degraded,
+            Reason: degraded
+                ? "this session has no transcript bound (or has not written one yet)"
+                : null,
+            At: UtcNow());
+    }
+
+    /// <summary>
+    /// CARD-0180 S3: the screen-only fallback proved a redraw, not a UserPrompt. Observation
+    /// only — no kill, no re-type, no change to the Delivered verdict. Deduped per session
+    /// per 10 minutes.
+    /// </summary>
+    private async Task RecordDeliveryUnverifiedAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var owner = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, sessionId, ct);
+            if (owner is not Guid agentId)
+                return;
+
+            var window = TimeSpan.FromMinutes(DeliveryUnverifiedDedupMinutes);
+            var last = await db.AgentIncidents
+                .Where(i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DeliveryUnverified)
+                .OrderByDescending(i => i.CreatedAt)
+                .Select(i => (DateTime?)i.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (last is DateTime at && UtcNow() - at < window)
+                return;
+
+            var channelBound = await db.ChatChannels.AnyAsync(c => c.AgentId == agentId, ct);
+            var severity = channelBound ? AlertSeverity.Critical : AlertSeverity.Warning;
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                agentId,
+                sessionId,
+                AgentIncidentKind.DeliveryUnverified,
+                severity,
+                "Send-now was typed but could not be confirmed: this session has no transcript bound "
+                + "(or has not written one yet). The terminal redrew, so the text probably landed — "
+                + "nothing can verify it.",
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+            await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Failed to record DeliveryUnverified for session {SessionId}", sessionId);
+        }
+    }
+
     // Sibling of RecordTransportFailureAsync: surfaces an oversize delivery on the agent card and
     // the alert feed. Best-effort by design — an unowned session (no agent row) still gets the log
     // line above, and failing to record must never abort the delivery it is only annotating.
@@ -1246,11 +1309,14 @@ public sealed class SessionMessageQueueService
         Sent,
     }
 
-    private readonly record struct DeliveryOutcome(DeliveryVerdict Verdict, string? RecordText = null)
+    private readonly record struct DeliveryOutcome(
+        DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None)
     {
         public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
         public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
             new(verdict, recordText);
+        public static DeliveryOutcome Confirmed(string confirmedBy) =>
+            new(DeliveryVerdict.Delivered, ConfirmedBy: confirmedBy);
     }
 
     private readonly record struct TranscriptConfirm(bool Identity, bool Complete, string? Text)
@@ -1598,7 +1664,7 @@ public sealed class SessionMessageQueueService
                     sessionId, observable ? baseline.MaxSequence : 0, entersSent,
                     strong ? "text" : "weak",
                     observable ? "" : ", unobservable-baseline");
-                return DeliveryOutcome.Delivered;
+                return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Transcript);
             }
 
             // Kept only as a wedge signal for the log on the observable path; on the unobservable
@@ -1626,7 +1692,8 @@ public sealed class SessionMessageQueueService
                             + "after {Timeout}s with no transcript row (bind-failed / pre-first-turn "
                             + "fallback); {Enters} Enter(s) sent",
                             sessionId, _verification.TranscriptConfirmTimeoutSeconds, entersSent);
-                        return DeliveryOutcome.Delivered;
+                        await RecordDeliveryUnverifiedAsync(sessionId, ct);
+                        return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Screen);
                     }
 
                     _logger.LogWarning(
@@ -1755,7 +1822,7 @@ public sealed class SessionMessageQueueService
             {
                 if (!match.Complete)
                     return DeliveryOutcome.Of(DeliveryVerdict.Truncated, match.Text);
-                return DeliveryOutcome.Delivered;
+                return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Transcript);
             }
 
             if (UtcNow() >= deadline)

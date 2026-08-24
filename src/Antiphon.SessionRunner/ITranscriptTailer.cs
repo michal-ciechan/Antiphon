@@ -26,4 +26,15 @@ internal interface ITranscriptTailer : IAsyncDisposable
 
     /// <summary>Full ordered snapshot of everything parsed so far (for catch-up after a missed stream).</summary>
     RunnerTranscriptDto Snapshot();
+
+    /// <summary>The transcript currently being tailed, or null while unbound.</summary>
+    string? BoundTranscriptPath { get; }
+
+    /// <summary>
+    /// How the current bind was made (<see cref="TranscriptBindMethods"/>), or null while unbound.
+    /// CARD-0180 S4 / CARD-0181: Exact vs Heuristic is derived at claim time; this is the
+    /// tailer's own bind method (<c>exact</c>/<c>sidecar</c>/<c>discovery</c>/<c>fork</c>/
+    /// <c>deterministic</c>).
+    /// </summary>
+    string? BindHow { get; }
 }

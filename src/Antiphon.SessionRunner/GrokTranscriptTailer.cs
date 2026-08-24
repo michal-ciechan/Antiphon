@@ -68,6 +68,12 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
     /// <summary>The (deterministic) file this tailer reads — for the sidecar and diagnostics.</summary>
     public string UpdatesPath => _updatesPath;
 
+    /// <inheritdoc />
+    public string? BoundTranscriptPath { get; private set; }
+
+    /// <inheritdoc />
+    public string? BindHow { get; private set; }
+
     /// <summary>
     /// Where grok will write this session's update stream:
     /// <c>{GROK_HOME}/sessions/{Uri.EscapeDataString(full-cwd)}/{sessionId:D}/updates.jsonl</c>
@@ -128,6 +134,11 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
                     if (info.Exists)
                     {
                         everExisted = true;
+                        if (BoundTranscriptPath is null)
+                        {
+                            BoundTranscriptPath = _updatesPath;
+                            BindHow = TranscriptBindMethods.Deterministic;
+                        }
                         if (info.Length > offset)
                         {
                             byte[] buffer;

@@ -88,6 +88,26 @@ public class PtyHostAdoptionTests
     }
 
     [Test]
+    public async Task ToDto_without_a_tailer_leaves_transcript_bind_unknown()
+    {
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var dto = await StartInteractiveSessionAsync(runtime, sessionId);
+        try
+        {
+            dto.TranscriptBound.ShouldBeNull("cmd.exe launches have no transcript tailer");
+            dto.TranscriptBindHow.ShouldBeNull();
+            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        }
+        finally
+        {
+            await runtime.DisposeAsync();
+            KillBestEffort(dto.Pid);
+        }
+    }
+
+    [Test]
     public Task Exit_while_runner_down_is_collected_on_adoption_with_the_real_exit_code() =>
         ExitWhileRunnerDownIsCollectedOnAdoptionAsync(BuildSettings());
 

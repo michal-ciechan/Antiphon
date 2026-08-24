@@ -272,7 +272,15 @@ function DesktopHomePage() {
               style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
             >
               {sessionId ? (
-                <SessionTranscriptPanel sessionId={sessionId} withComposer composerCollapsed fitHeight />
+                <SessionTranscriptPanel
+                  sessionId={sessionId}
+                  withComposer
+                  composerCollapsed
+                  fitHeight
+                  transcriptBinding={agent?.liveSession?.transcriptBinding}
+                  liveStatus={agent?.liveSession?.status}
+                  agentId={agent?.id}
+                />
               ) : (
                 <Text size="sm" c="dimmed" ta="center" py="xl">
                   {agent

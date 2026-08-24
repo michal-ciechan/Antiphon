@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { renderWithProviders, screen } from '../../test/utils'
 import type { TranscriptEntryDto } from '../../api/sessions'
+import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 import {
   buildTurns,
   computeTurnMetrics,
@@ -39,6 +41,27 @@ const at = (seconds: number) => new Date(Date.UTC(2026, 6, 30, 10, 0, seconds)).
 const CONTINUATION =
   'This session is being continued from a previous conversation that ran out of context. ' +
   'The conversation is summarized below:'
+
+describe('SessionTranscriptPanel', () => {
+  it('unbound live session shows the banner and an Unbound badge, not Idle / No transcript yet', () => {
+    renderWithProviders(
+      <SessionTranscriptPanel
+        sessionId="s1"
+        initialEntries={[]}
+        transcriptBinding="unbound"
+        liveStatus="Running"
+        agentId="a1"
+      />,
+    )
+    expect(screen.getByTestId('unbound-banner')).toHaveTextContent(
+      'This session has no transcript bound',
+    )
+    expect(screen.getByTestId('unbound-banner')).toHaveTextContent('See incidents.')
+    expect(screen.getByTestId('unbound-badge')).toHaveTextContent('Unbound')
+    expect(screen.queryByText(/No transcript yet/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Idle')).not.toBeInTheDocument()
+  })
+})
 
 describe('isWorking', () => {
   it('reads working while activity outranks the last turn end', () => {

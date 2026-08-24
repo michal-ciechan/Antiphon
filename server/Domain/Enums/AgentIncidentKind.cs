@@ -347,4 +347,12 @@ public enum AgentIncidentKind
     /// does not feed <c>TranscriptBindStuck</c>.
     /// </summary>
     TranscriptClaimRevoked = 35,
+
+    /// <summary>
+    /// CARD-0180 S3: a Mode:Now (or unobservable-baseline) delivery was marked Delivered by the
+    /// screen-only fallback — the terminal redrew, but no UserPrompt row confirmed the body.
+    /// Observation only: no kill, no re-type, no change to the verdict. Warning; Critical when
+    /// the agent is channel-bound. Deduped per session per 10 minutes.
+    /// </summary>
+    DeliveryUnverified = 36,
 }

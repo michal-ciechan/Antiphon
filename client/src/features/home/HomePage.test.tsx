@@ -198,6 +198,20 @@ describe('HomePage', () => {
     expect(screen.queryByText(/Compacted/i)).not.toBeInTheDocument()
   })
 
+  it('shows an unbound rail dot on a live session with no transcript bound', async () => {
+    seed({
+      agents: [
+        agent({
+          id: 'a2',
+          name: 'pool-1',
+          liveSession: { id: 's2', status: 'Running', transcriptBinding: 'unbound' },
+        }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+    await waitFor(() => expect(screen.getByTestId('rail-unbound-dot-a2')).toBeInTheDocument())
+  })
+
   it('selecting an agent in the rail redirects the files pane and the chat dock', async () => {
     seed({
       agents: [
