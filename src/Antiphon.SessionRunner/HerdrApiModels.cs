@@ -234,3 +234,16 @@ internal sealed record HerdrPaneReadEnvelope(
 internal sealed record HerdrAgentStartedEnvelope(
     [property: JsonPropertyName("agent")] HerdrAgentInfo Agent,
     [property: JsonPropertyName("argv")] IReadOnlyList<string>? Argv = null);
+
+// --- subscription event payloads (CARD-0162; unknown fields ignored) ---
+
+/// <summary>Data on a <c>pane_agent_status_changed</c> wire event.</summary>
+public sealed record HerdrPaneStatusEventData(
+    [property: JsonPropertyName("pane_id")] string PaneId,
+    [property: JsonPropertyName("workspace_id")] string WorkspaceId,
+    [property: JsonPropertyName("agent_status")] string AgentStatus);
+
+/// <summary>Data on a <c>pane_closed</c> / <c>pane_exited</c> wire event (pane_id + workspace_id only).</summary>
+public sealed record HerdrPaneClosedEventData(
+    [property: JsonPropertyName("pane_id")] string PaneId,
+    [property: JsonPropertyName("workspace_id")] string WorkspaceId);

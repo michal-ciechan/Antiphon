@@ -35,6 +35,12 @@ internal sealed class HerdrPaneChild : ISessionChild
 
     public event Action<ChildExit>? Exited;
 
+    /// <summary>Pane id once launched/attached; null before launch.</summary>
+    public string? PaneId => _paneId;
+
+    /// <summary>Sidecar (workspace/tab/pane ids + ChildPid); null before launch.</summary>
+    public HerdrPaneSidecar? Sidecar => _sidecar;
+
     /// <summary>Re-bind an already-running pane after runner restart (adoption). Does not agent.start.</summary>
     public Task AttachExistingAsync(HerdrPaneSidecar sidecar, CancellationToken ct)
     {
@@ -42,6 +48,17 @@ internal sealed class HerdrPaneChild : ISessionChild
         _paneId = sidecar.PaneId;
         _sidecar = sidecar;
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// CARD-0162: raise Exited(<paramref name="reason"/>) once after verification fails. Deletes
+    /// the sidecar. Idempotent against MarkVanishedIfDead and repeated close events.
+    /// </summary>
+    public void RaiseVerifiedClosed(string reason = "HerdrPaneClosed")
+    {
+        if (_exited) return;
+        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+        RaiseExited(reason);
     }
 
     public async Task<ChildStarted> LaunchAsync(RunnerLaunchRequest request, CancellationToken ct)

@@ -2,27 +2,43 @@ using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using Antiphon.SessionRunner;
 using Shouldly;
 
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
 /// Named-pipe fake for <see cref="Antiphon.SessionRunner.HerdrClient"/> — one NDJSON request per
-/// connection, matching herdr's normal-request contract. Holds a small scripted state model so the
-/// §8 typed wrappers can round-trip without a live herdr.
+/// normal connection (herdr's normal-request contract); <c>events.subscribe</c> keeps the pipe
+/// open and pushes events (CARD-0162). Holds a small scripted state model so the typed wrappers
+/// can round-trip without a live herdr. Emulates herdr's historical <c>pane_closed</c> REPLAY
+/// buffer (measured E5): every new subscription receives <see cref="ReplayBuffer"/> first.
 /// </summary>
 internal sealed class FakeHerdrServer : IAsyncDisposable
 {
     private readonly string _session;
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentQueue<JsonElement> _requests = new();
+    private readonly ConcurrentQueue<string> _liveEvents = new();
+    private readonly List<string> _replayBuffer = [];
+    private readonly List<IReadOnlyList<JsonElement>> _subscriptionRecords = [];
     private readonly object _listenGate = new();
+    private readonly object _eventGate = new();
     private TaskCompletionSource _listening = NewListeningTcs();
+    private TaskCompletionSource _eventAvailable = NewListeningTcs();
     private Task? _loop;
     private int _workspaceSeq;
     private int _tabSeq;
     private int _paneSeq;
     private int _termSeq;
+    private int _maxInstances = 4;
+
+    /// <summary>
+    /// When set, the next <c>events.subscribe</c> that names this pane_id on a status entry fails
+    /// the WHOLE call with <c>pane_not_found</c> and a SUFFIXED error id (CARD-0162 E2 shape).
+    /// Cleared after one rejection.
+    /// </summary>
+    public string? RejectSubscribePaneId { get; set; }
 
     public FakeHerdrServer(string? session = null)
     {
@@ -37,7 +53,38 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
     public IReadOnlyList<JsonElement> Requests => _requests.ToArray();
 
+    /// <summary>Each subscribe call's subscriptions array, in order (CARD-0162).</summary>
+    public IReadOnlyList<IReadOnlyList<JsonElement>> SubscriptionRecords => _subscriptionRecords.ToArray();
+
+    /// <summary>
+    /// Historical events re-delivered to EVERY new subscription (emulates measured E5 replay).
+    /// Each entry is a full NDJSON event line (<c>{"event":"...","data":{...}}</c>).
+    /// </summary>
+    public IList<string> ReplayBuffer => _replayBuffer;
+
     public List<WorkspaceState> Workspaces { get; } = [];
+
+    /// <summary>Enqueue a live push event for the current (or next) open subscription stream.</summary>
+    public void EnqueueEvent(string eventName, object data)
+    {
+        var json = JsonSerializer.Serialize(new { @event = eventName, data });
+        lock (_eventGate)
+        {
+            _liveEvents.Enqueue(json);
+            _eventAvailable.TrySetResult();
+        }
+    }
+
+    /// <summary>Record a historical <c>pane_closed</c> that every future subscriber will replay.</summary>
+    public void AddReplayPaneClosed(string paneId, string workspaceId)
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            @event = HerdrEventTypes.PaneClosedWire,
+            data = new { pane_id = paneId, workspace_id = workspaceId }
+        });
+        _replayBuffer.Add(json);
+    }
 
     public void Start()
     {
@@ -75,15 +122,16 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             try
             {
                 pipe = new NamedPipeServerStream(
-                    PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    PipeName, PipeDirection.InOut, _maxInstances, PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
                 SignalListening();
                 await pipe.WaitForConnectionAsync(ct);
                 // Next Accept will re-signal; clear so WaitUntilListeningAsync after a call waits for
                 // the subsequent listen rather than the one we just consumed.
                 ResetListening();
-                using var reader = new StreamReader(
+                var reader = new StreamReader(
                     pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false, leaveOpen: true);
-                using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
+                var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
                 { AutoFlush = true };
 
                 var line = await reader.ReadLineAsync(ct);
@@ -91,7 +139,41 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 using var doc = JsonDocument.Parse(line!);
                 var request = doc.RootElement.Clone();
                 _requests.Enqueue(request);
-                await WriteLineAsync(writer, Handle(request), ct);
+
+                var method = request.GetProperty("method").GetString()!;
+                if (method == "events.subscribe")
+                {
+                    // Long-lived on a detached task so AcceptLoop can keep serving pane.get / etc.
+                    // while the subscription stream is open (CARD-0162 pump needs both).
+                    var subPipe = pipe;
+                    pipe = null; // ownership transferred — do not dispose in finally
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await HandleSubscribeAsync(request, writer, ct);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                        catch (IOException) { }
+                        finally
+                        {
+                            try { writer.Dispose(); } catch (IOException) { }
+                            try { reader.Dispose(); } catch (IOException) { }
+                            await subPipe.DisposeAsync();
+                        }
+                    }, ct);
+                    continue;
+                }
+
+                try
+                {
+                    await WriteLineAsync(writer, Handle(request), ct);
+                }
+                finally
+                {
+                    writer.Dispose();
+                    reader.Dispose();
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -105,6 +187,76 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             {
                 if (pipe is not null)
                     await pipe.DisposeAsync();
+            }
+        }
+    }
+
+    private async Task HandleSubscribeAsync(JsonElement request, StreamWriter writer, CancellationToken ct)
+    {
+        var id = request.GetProperty("id").GetString()!;
+        var parameters = request.TryGetProperty("params", out var p) ? p : default;
+        var subs = new List<JsonElement>();
+        if (parameters.ValueKind == JsonValueKind.Object
+            && parameters.TryGetProperty("subscriptions", out var arr)
+            && arr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in arr.EnumerateArray())
+                subs.Add(entry.Clone());
+        }
+
+        _subscriptionRecords.Add(subs);
+
+        // E2: naming an unknown / rejected pane fails the WHOLE call with a SUFFIXED error id.
+        var rejectPane = RejectSubscribePaneId;
+        if (rejectPane is not null)
+        {
+            var hit = subs.Any(s =>
+                s.TryGetProperty("pane_id", out var pid)
+                && string.Equals(pid.GetString(), rejectPane, StringComparison.Ordinal));
+            if (hit)
+            {
+                RejectSubscribePaneId = null;
+                var suffixedId = $"{id}:sub:1:probe";
+                var err = $"{{\"id\":\"{suffixedId}\",\"error\":{{\"code\":\"pane_not_found\",\"message\":{JsonSerializer.Serialize($"pane '{rejectPane}' not found")}}}}}";
+                await WriteLineAsync(writer, err, ct);
+                return;
+            }
+        }
+
+        await WriteLineAsync(writer,
+            $"{{\"id\":\"{id}\",\"result\":{{\"type\":\"subscription_started\",\"subscriptions\":{subs.Count}}}}}",
+            ct);
+
+        // E5: replay historical pane_closed (and any other buffered events) to every new subscriber.
+        foreach (var replay in _replayBuffer.ToArray())
+            await WriteLineAsync(writer, replay, ct);
+
+        while (!ct.IsCancellationRequested)
+        {
+            string? next;
+            Task? wait = null;
+            lock (_eventGate)
+            {
+                if (!_liveEvents.TryDequeue(out next))
+                {
+                    _eventAvailable = NewListeningTcs();
+                    wait = _eventAvailable.Task;
+                }
+            }
+
+            if (next is not null)
+            {
+                await WriteLineAsync(writer, next, ct);
+                continue;
+            }
+
+            try
+            {
+                await wait!.WaitAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
             }
         }
     }

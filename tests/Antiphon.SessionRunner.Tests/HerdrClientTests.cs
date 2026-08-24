@@ -254,6 +254,127 @@ public class HerdrClientTests
         fake.Workspaces[0].Tabs.Any(t => t.TabId == tab.TabId).ShouldBeFalse();
     }
 
+    [Test]
+    public void HerdrSubscription_serializes_pane_id_and_omits_it_when_null()
+    {
+        var withPane = new HerdrSubscription(HerdrEventTypes.PaneAgentStatusChangedSubscribe, "w1:p1");
+        var json = JsonSerializer.Serialize(withPane, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using (var doc = JsonDocument.Parse(json))
+        {
+            doc.RootElement.GetProperty("type").GetString().ShouldBe("pane.agent_status_changed");
+            doc.RootElement.GetProperty("pane_id").GetString().ShouldBe("w1:p1");
+        }
+
+        var typeOnly = new HerdrSubscription(HerdrEventTypes.PaneClosedSubscribe);
+        var typeOnlyJson = JsonSerializer.Serialize(typeOnly, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        using (var doc = JsonDocument.Parse(typeOnlyJson))
+        {
+            doc.RootElement.GetProperty("type").GetString().ShouldBe("pane.closed");
+            doc.RootElement.TryGetProperty("pane_id", out _).ShouldBeFalse();
+        }
+    }
+
+    [Test]
+    public async Task Subscribe_ack_accepts_suffixed_error_id_and_surfaces_pane_not_found()
+    {
+        // CARD-0162 E2: herdr returns error id "<requestId>:sub:1:probe" — must be HerdrApiException,
+        // not HerdrProtocolException("mismatched request id").
+        var pipeName = NewPipeName();
+        var server = ServePingThenSubscribeErrorAsync(pipeName);
+        var client = ClientFor(pipeName);
+
+        var error = await Should.ThrowAsync<HerdrApiException>(async () =>
+        {
+            await foreach (var _ in client.SubscribeEventsAsync(
+                               [new HerdrSubscription(HerdrEventTypes.PaneAgentStatusChangedSubscribe, "w9:p9")],
+                               CancellationToken.None))
+            {
+            }
+        });
+
+        error.Code.ShouldBe("pane_not_found");
+        await server;
+    }
+
+    [Test]
+    public async Task Normal_request_still_requires_strict_id_equality()
+    {
+        var pipeName = NewPipeName();
+        var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            // Deliberately wrong id — strict path must still reject.
+            await WriteLineAsync(writer,
+                "{\"id\":\"not-the-request-id\",\"result\":{\"type\":\"ok\"}}", ct);
+        });
+
+        await Should.ThrowAsync<HerdrProtocolException>(
+            () => ClientFor(pipeName).SendRequestAsync("pane.send_text", new { pane_id = "w1:p1", text = "x" },
+                CancellationToken.None));
+        await server;
+    }
+
+    [Test]
+    public async Task Fake_replays_historical_pane_closed_to_every_new_subscriber()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.AddReplayPaneClosed("w2:p3", "w2");
+        fake.Start();
+        var client = ClientFor(fake.Session);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        // ping validation connection
+        _ = await client.ConnectAndValidateAsync(cts.Token);
+
+        await fake.WaitUntilListeningAsync(cts.Token);
+        using var subCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        subCts.CancelAfter(TimeSpan.FromSeconds(3));
+        var events = new List<HerdrEvent>();
+        try
+        {
+            await foreach (var item in client.SubscribeEventsAsync(
+                               [new HerdrSubscription(HerdrEventTypes.PaneClosedSubscribe)],
+                               subCts.Token))
+            {
+                events.Add(item);
+                if (events.Count >= 1)
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // expected if we break via cancel after first event
+        }
+
+        events.Count.ShouldBeGreaterThanOrEqualTo(1);
+        events[0].Name.ShouldBe(HerdrEventTypes.PaneClosedWire);
+        var data = JsonSerializer.Deserialize<HerdrPaneClosedEventData>(events[0].Data.GetRawText())!;
+        data.PaneId.ShouldBe("w2:p3");
+        data.WorkspaceId.ShouldBe("w2");
+        fake.SubscriptionRecords.Count.ShouldBeGreaterThanOrEqualTo(1);
+    }
+
+    private static async Task ServePingThenSubscribeErrorAsync(string pipeName)
+    {
+        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            request.GetProperty("method").GetString().ShouldBe("ping");
+            await WriteLineAsync(writer,
+                $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"type\":\"pong\",\"version\":\"0.8.2\",\"protocol\":20}}}}",
+                ct);
+        });
+
+        await ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            request.GetProperty("method").GetString().ShouldBe("events.subscribe");
+            var id = request.GetProperty("id").GetString();
+            // Measured E2 wire shape: error id is the request id SUFFIXED.
+            await WriteLineAsync(writer,
+                $"{{\"id\":\"{id}:sub:1:probe\",\"error\":{{\"code\":\"pane_not_found\",\"message\":\"pane 'w9:p9' not found\"}}}}",
+                ct);
+        });
+    }
+
     private static HerdrClient ClientFor(string pipeName) => new(new HerdrSettings
     {
         Enabled = true,

@@ -86,7 +86,10 @@ public sealed record RunnerSessionDto(
     bool Adopted = false,
     // CARD-0161: herdr pane.get agent_status verbatim; null for pty sessions and older runners.
     // Only the literal "blocked" may gate delivery (done ≠ idle — measured 2026-08-23).
-    string? AgentStatus = null);
+    string? AgentStatus = null,
+    // CARD-0162: UTC when AgentStatus last CHANGED (hysteresis for corroboration). Null when
+    // unobserved / pty / older runner. Additive — old servers ignore the extra JSON field.
+    DateTime? AgentStatusSinceUtc = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -126,6 +129,18 @@ public sealed record RunnerSessionAdoptedEvent(
     int? Pid,
     DateTime StartedAt,
     long LastSequence);
+
+/// <summary>
+/// CARD-0162: herdr agent_status changed for a tracked pane. Additive SSE event — old servers
+/// skip unknown names. PreviousAgentStatus is null for the first observation; lets the server
+/// detect blocked-exit without holding its own per-session history.
+/// </summary>
+public sealed record RunnerAgentStatusEvent(
+    Guid SessionId,
+    // herdr agent_status verbatim (open vocabulary — consumers may only equality-match).
+    string AgentStatus,
+    string? PreviousAgentStatus,
+    DateTime ObservedAtUtc);
 
 /// <summary>
 /// One normalized entry parsed from the agent's Claude Code JSONL session transcript.
@@ -570,4 +585,6 @@ public static class SessionRunnerEventNames
     public const string SessionTranscript = "SessionTranscript";
     public const string SessionTranscriptFault = "SessionTranscriptFault";
     public const string SessionTranscriptBound = "SessionTranscriptBound";
+    // CARD-0162: herdr agent_status change. Additive — ParseEvent returns null on unknown names.
+    public const string SessionAgentStatus = "SessionAgentStatus";
 }

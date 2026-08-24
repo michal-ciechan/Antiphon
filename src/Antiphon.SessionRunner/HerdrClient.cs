@@ -354,7 +354,10 @@ public sealed class HerdrClient
             await WriteRequestAsync(writer,
                 new HerdrRequest(requestId, "events.subscribe", new { subscriptions }), cancellationToken);
             var acknowledgement = await ReadResponseAsync(reader, cancellationToken);
-            _ = RequireResult(acknowledgement, requestId);
+            // Subscribe-only: herdr suffixes the error id as "<id>:sub:N:probe" (CARD-0162 E2).
+            // Accept equality or a "{requestId}:" prefix so pane_not_found surfaces as
+            // HerdrApiException instead of a protocol mismatch.
+            _ = RequireResult(acknowledgement, requestId, allowSuffixedId: true);
 
             while (true)
             {
@@ -456,10 +459,21 @@ public sealed class HerdrClient
         }
     }
 
-    private static JsonElement RequireResult(JsonDocument response, string requestId)
+    private static JsonElement RequireResult(
+        JsonDocument response,
+        string requestId,
+        bool allowSuffixedId = false)
     {
         var root = response.RootElement;
-        if (!root.TryGetProperty("id", out var id) || !string.Equals(id.GetString(), requestId, StringComparison.Ordinal))
+        if (!root.TryGetProperty("id", out var idElement))
+            throw new HerdrProtocolException("Herdr returned a response with a missing or mismatched request id.");
+
+        var responseId = idElement.GetString();
+        var idMatches = string.Equals(responseId, requestId, StringComparison.Ordinal)
+            || (allowSuffixedId
+                && responseId is not null
+                && responseId.StartsWith(requestId + ":", StringComparison.Ordinal));
+        if (!idMatches)
             throw new HerdrProtocolException("Herdr returned a response with a missing or mismatched request id.");
 
         if (root.TryGetProperty("error", out var error))
@@ -493,9 +507,34 @@ public sealed class HerdrClient
 
 public sealed record HerdrServerInfo(string Version, int Protocol);
 
-public sealed record HerdrSubscription([property: JsonPropertyName("type")] string Type);
+/// <summary>
+/// One <c>events.subscribe</c> entry. Subscribe types are dotted (<c>pane.closed</c>); the wire
+/// event name on the stream is underscored (<c>pane_closed</c>) — both measured (CARD-0162).
+/// <see cref="PaneId"/> is required by schema for <c>pane.agent_status_changed</c> and omitted
+/// when null for type-only global entries.
+/// </summary>
+public sealed record HerdrSubscription(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("pane_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? PaneId = null);
 
 public sealed record HerdrEvent(string Name, JsonElement Data);
+
+/// <summary>
+/// Subscribe TYPE (dotted) ↔ wire EVENT name (underscored) pairs measured against herdr 0.8.2
+/// (CARD-0162 E7). Consumers must use these constants — never ad-hoc string matches.
+/// </summary>
+public static class HerdrEventTypes
+{
+    public const string PaneClosedSubscribe = "pane.closed";
+    public const string PaneClosedWire = "pane_closed";
+
+    public const string PaneExitedSubscribe = "pane.exited";
+    public const string PaneExitedWire = "pane_exited";
+
+    public const string PaneAgentStatusChangedSubscribe = "pane.agent_status_changed";
+    public const string PaneAgentStatusChangedWire = "pane_agent_status_changed";
+}
 
 public class HerdrProtocolException : Exception
 {

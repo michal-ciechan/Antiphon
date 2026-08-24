@@ -20,4 +20,13 @@ public sealed class HerdrSettings
 
     /// <summary>The wire protocol this client was compiled and tested against.</summary>
     public int ExpectedProtocol { get; set; } = 20;
+
+    /// <summary>
+    /// CARD-0162: lower bound (seconds) for the event-pump reconnect backoff after a dropped
+    /// stream. Doubles up to <see cref="EventsReconnectMaxSeconds"/>.
+    /// </summary>
+    public int EventsReconnectMinSeconds { get; set; } = 1;
+
+    /// <summary>CARD-0162: upper bound (seconds) for the event-pump reconnect backoff.</summary>
+    public int EventsReconnectMaxSeconds { get; set; } = 30;
 }
