@@ -1,6 +1,8 @@
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -661,6 +663,46 @@ public class ChannelBridgeTests
         File.Delete(path);
     }
 
+    [Test]
+    public async Task A_proactive_send_reaches_the_channel_without_an_inbound_message()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        await using var scope = h.Provider.CreateAsyncScope();
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        var channel = (await channels.GetAllAsync(CancellationToken.None))
+            .Single(c => c.ExternalId == h.ChatId);
+
+        await channels.SendAsync(channel.Id, "sync ran: 2 comments, 1 label change", CancellationToken.None);
+
+        var sent = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        sent.Channel.ShouldBe("telegram");
+        sent.ConversationId.ShouldBe(h.ChatId);
+        sent.Text.ShouldBe("sync ran: 2 comments, 1 label change");
+    }
+
+    [Test]
+    public async Task A_proactive_send_to_a_disabled_channel_is_refused()
+    {
+        await using var h = await HarnessAsync();
+        await h.BindChannelAsync();
+
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+            var channel = (await channels.GetAllAsync(CancellationToken.None))
+                .Single(c => c.ExternalId == h.ChatId);
+            await channels.UpdateAsync(channel.Id, new UpdateChatChannelRequest(Enabled: false), CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                channels.SendAsync(channel.Id, "should not go out", CancellationToken.None));
+            ex.Code.ShouldBe("channel_disabled");
+        }
+
+        h.Messaging.SentReplies.ShouldBeEmpty();
+    }
+
     // ---------- harness ----------
 
     private static ChannelMessage TelegramText(
@@ -690,6 +732,7 @@ public class ChannelBridgeTests
         var messaging = new FakeAntiphonMessagingClient();
         services.AddSingleton(eventBus);
         services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton<IAntiphonMessagingProducer>(messaging);
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IOptions<AgentSessionSettings>>(Options.Create(new AgentSessionSettings()));
         // DebounceWindowMs 0 = passthrough: these tests assert synchronous routing; the debounce

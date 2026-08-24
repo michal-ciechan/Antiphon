@@ -25,5 +25,17 @@ public static class ChannelEndpoints
         {
             return Results.Ok(await service.UpdateAsync(id, request, cancellationToken));
         });
+
+        // Proactive send - a scheduled job or operator script pushing a status message, not a
+        // reply to anything inbound. Bypasses the alert throttle/digest path entirely.
+        channels.MapPost("/{id:guid}/send", async (
+            Guid id,
+            SendChannelMessageRequest request,
+            ChatChannelService service,
+            CancellationToken cancellationToken) =>
+        {
+            await service.SendAsync(id, request.Text, cancellationToken);
+            return Results.Ok();
+        });
     }
 }

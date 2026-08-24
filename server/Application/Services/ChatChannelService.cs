@@ -1,4 +1,5 @@
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Entities;
@@ -19,11 +20,13 @@ public sealed class ChatChannelService
 
     private readonly AppDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IAntiphonMessagingProducer _producer;
 
-    public ChatChannelService(AppDbContext db, TimeProvider timeProvider)
+    public ChatChannelService(AppDbContext db, TimeProvider timeProvider, IAntiphonMessagingProducer producer)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _producer = producer;
     }
 
     public async Task<IReadOnlyList<ChatChannelDto>> GetAllAsync(CancellationToken ct)
@@ -76,6 +79,33 @@ public sealed class ChatChannelService
         channel.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         return ToDto(channel);
+    }
+
+    /// <summary>
+    /// Sends a proactive, out-of-band message to a channel — the caller (a scheduled job, an
+    /// operator script) initiates it, not an inbound message. This bypasses the alert
+    /// throttle/digest path entirely (<see cref="ChannelAlertRouter"/>/<c>AlertDigestFlusher</c>):
+    /// no alert row, no severity gate, one send per call. A disabled channel refuses
+    /// - Enabled=false means routing is deliberately off, and this must respect that the same way
+    /// inbound routing already does, not offer a side door around it.
+    /// </summary>
+    public async Task SendAsync(Guid id, string text, CancellationToken ct)
+    {
+        var channel = await _db.ChatChannels
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == id, ct)
+            ?? throw new NotFoundException(nameof(ChatChannel), id);
+
+        if (!channel.Enabled)
+        {
+            throw new ConflictException(
+                $"Channel {id} is disabled; enable it before sending.",
+                "channel_disabled");
+        }
+
+        await _producer.SendAsync(
+            new ChannelReply { Channel = channel.Provider, ConversationId = channel.ExternalId, Text = text },
+            ct);
     }
 
     /// <summary>

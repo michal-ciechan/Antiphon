@@ -32,3 +32,6 @@ public sealed record UpdateChatChannelRequest(
     // (same JSON absent-vs-null dance as the agent binding).
     AlertSeverity? AlertMinSeverity = null,
     bool ClearAlertMinSeverity = false);
+
+/// <summary>A proactive, out-of-band message body for <c>ChatChannelService.SendAsync</c>.</summary>
+public sealed record SendChannelMessageRequest(string Text);

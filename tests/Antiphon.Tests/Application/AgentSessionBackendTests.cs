@@ -1,3 +1,4 @@
+using Antiphon.Messaging.Client.Testing;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -263,7 +264,7 @@ public class AgentSessionBackendTests
         db.ChatChannels.Add(channel);
         await db.SaveChangesAsync();
 
-        var channels = new ChatChannelService(db, TimeProvider.System);
+        var channels = new ChatChannelService(db, TimeProvider.System, new FakeAntiphonMessagingClient());
         var ex = await Should.ThrowAsync<ConflictException>(() =>
             channels.UpdateAsync(
                 channel.Id,
