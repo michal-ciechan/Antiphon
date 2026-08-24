@@ -190,6 +190,15 @@ public sealed class SessionMessageQueueService
                     ? TypedBodySpill.TryReadChannelEnvelope(trimmed)
                     : null,
                 db: null, ct);
+            // CARD-0164: capture the floor BEFORE typing so Mode:Now's post-verdict grace uses the
+            // same baseline the confirm loop did (sequence when observable; wall-clock when not).
+            var nowBaseline = _verification.TranscriptConfirmEnabled
+                ? await CaptureTranscriptBaselineAsync(sessionId, ct)
+                : default;
+            DateTime? nowConfirmFrom = nowBaseline.Observable
+                ? null
+                : UtcNow() - TimeSpan.FromSeconds(
+                    Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
             // CARD-0137 S7: take the per-session lock the poll already holds, so a Mode.Now send
             // cannot interleave with a poll (or another Now) in one composer. DeliverAsync itself
             // must not take the lock — SendNowAsync and the turn-end flush already hold it.
@@ -198,7 +207,7 @@ public sealed class SessionMessageQueueService
             DeliveryOutcome outcome;
             try
             {
-                outcome = await DeliverAsync(sessionId, nowBody, ct);
+                outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
                 if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
                 {
                     await HandleForbiddenBodyAsync(sessionId, null, nowBody, outcome.RecordText, ct);
@@ -215,6 +224,31 @@ public sealed class SessionMessageQueueService
                 }
                 if (outcome.Verdict != DeliveryVerdict.Delivered)
                 {
+                    // CARD-0164 B4: Mode:Now has no message row, so HandleDeliveryFailureAsync's
+                    // grace (gated on messageIds) never ran. Pull-and-recheck for NoSubmitOutput /
+                    // NoTranscriptRecord only — never NoComposerEvidence (Enter withheld).
+                    if (outcome.Verdict is DeliveryVerdict.NoSubmitOutput
+                        or DeliveryVerdict.NoTranscriptRecord)
+                    {
+                        var grace = await TryGraceConfirmModeNowAsync(
+                            sessionId, nowBody, nowBaseline, nowConfirmFrom, ct);
+                        if (grace.Verdict == DeliveryVerdict.Delivered)
+                        {
+                            _logger.LogInformation(
+                                "Mode:Now delivery to session {SessionId} grace-confirmed after a "
+                                + "{Verdict} verdict — returning success with no incident",
+                                sessionId, outcome.Verdict);
+                            return await GetQueueAsync(sessionId, ct);
+                        }
+                        if (grace.Verdict == DeliveryVerdict.Truncated)
+                        {
+                            await HandleTruncationAsync(sessionId, null, nowBody, grace.RecordText, ct);
+                            throw new ConflictException(
+                                "Message delivery reached the transcript truncated "
+                                + $"({Describe(grace.Verdict)}). See the agent's incidents.");
+                        }
+                    }
+
                     await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct);
                     throw new ConflictException(
                         "Message delivery could not be verified — the terminal did not accept it "
@@ -1693,6 +1727,43 @@ public sealed class SessionMessageQueueService
         }
 
         return TranscriptConfirm.None;
+    }
+
+    /// <summary>
+    /// CARD-0164 B4: Mode:Now has no queued message row, so the messageIds-gated
+    /// <see cref="GraceConfirmAsync"/> never runs. This is the same pull-and-recheck for a bare
+    /// body — <see cref="PostFailureConfirmGraceSeconds"/>, same floors as the confirm loop.
+    /// Only turns a failure into success on positive evidence; never the reverse.
+    /// </summary>
+    private async Task<DeliveryOutcome> TryGraceConfirmModeNowAsync(
+        Guid sessionId, string body, TranscriptBaseline baseline, DateTime? unobservableConfirmFrom,
+        CancellationToken ct)
+    {
+        var grace = TimeSpan.FromSeconds(Math.Max(0, _verification.PostFailureConfirmGraceSeconds));
+        if (!_verification.TranscriptConfirmEnabled || grace <= TimeSpan.Zero)
+            return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
+
+        var deadline = UtcNow() + grace;
+        while (true)
+        {
+            await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+            var match = baseline.Observable
+                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct)
+                : await TryFindUnobservableConfirmingRecordAsync(
+                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct);
+            if (match.Identity)
+            {
+                if (!match.Complete)
+                    return DeliveryOutcome.Of(DeliveryVerdict.Truncated, match.Text);
+                return DeliveryOutcome.Delivered;
+            }
+
+            if (UtcNow() >= deadline)
+                return DeliveryOutcome.Of(DeliveryVerdict.NoSubmitOutput);
+
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs)), _timeProvider, ct);
+        }
     }
 
     /// <summary>

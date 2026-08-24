@@ -1809,6 +1809,71 @@ public class SessionMessageQueueDeliveryVerificationTests
             .Status.ShouldBe(QueuedMessageStatus.Sent); // confirmed by the fresh OnSubmitted path
     }
 
+    [Test]
+    public async Task Card0164_ModeNow_grace_confirms_late_record_without_409()
+    {
+        // (vii) Record lands during PostFailureConfirmGraceSeconds after NoSubmitOutput.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        const string body = "CARD0164 ModeNow grace body that is long enough";
+        h.Adapter.OnSubmitted = b =>
+        {
+#pragma warning disable CS4014
+            // Past the 3s confirm timeout, inside the 3s grace.
+            Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                await h.InsertTranscriptEntryAsync(
+                    TranscriptKinds.UserPrompt, b, timestamp: DateTime.UtcNow);
+            });
+#pragma warning restore CS4014
+            return Task.CompletedTask;
+        };
+
+        var dto = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.Now, CancellationToken.None);
+        dto.ShouldNotBeNull();
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeFalse("grace-confirmed Mode:Now raises no incident");
+    }
+
+    [Test]
+    public async Task Card0164_ModeNow_grace_expiring_empty_still_409s()
+    {
+        // (vii) Grace expires empty → 409 + incident.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.SubmitAck = "";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            h.Queue.EnqueueAsync(
+                h.SessionId, "CARD0164 ModeNow grace empty body long enough",
+                MessageSendMode.Now, CancellationToken.None));
+        ex.Message.ShouldContain("submitting Enter produced no output");
+        await using var db = CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Card0164_ModeNow_NoComposerEvidence_gets_no_grace()
+    {
+        // (vii) Enter withheld — grace must not wait 20s to learn nothing.
+        await using var h = await CreateHarnessAsync(alwaysOn: false);
+        h.Adapter.EchoTypedInputToScreen = false;
+
+        var started = DateTime.UtcNow;
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            h.Queue.EnqueueAsync(
+                h.SessionId, "CARD0164 ModeNow no-composer body long enough",
+                MessageSendMode.Now, CancellationToken.None));
+        ex.Message.ShouldContain("never appeared in the composer");
+        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(5),
+            "NoComposerEvidence must not burn the grace window");
+    }
+
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
     {
         await using var db = CreateContext();
