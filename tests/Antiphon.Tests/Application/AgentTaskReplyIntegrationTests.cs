@@ -394,7 +394,122 @@ public class AgentTaskReplyIntegrationTests
         note.Body.IndexOf("may be PREAMBLE", StringComparison.Ordinal)
             .ShouldBeLessThan(
                 note.Body.IndexOf("I'll start by reading the spec.", StringComparison.Ordinal),
-                "a caveat read after the report is a caveat read too late");
+            "a caveat read after the report is a caveat read too late");
+    }
+
+    /// <summary>
+    /// CARD-0116's measured Codex shape: commentary is a null-attributed thread item, then the
+    /// final_answer and task_complete share payload.turn_id 65 ms apart. The generic identity gate
+    /// must settle immediately on the final answer without treating the commentary as a report.
+    /// </summary>
+    [Test]
+    public async Task a_Codex_final_answer_with_the_turn_identity_settles_cleanly_without_a_warning()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, configure: t => t.AgentId = agentId);
+        const string narration = "I'll start by reading the spec.";
+        const string finalMessage = "Implemented the fix. 42 tests passed, 0 failed.";
+
+        await SeedCodexTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration, finalMessage);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(finalMessage, "the final_answer is the caller's report");
+
+        var completed = await verify.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Completed);
+        completed.Detail.ShouldContain($"{narration.Length:N0} characters of mid-turn narration not included");
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeFalse();
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing))
+            .ShouldBeFalse();
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldNotContain("may be PREAMBLE");
+    }
+
+    /// <summary>
+    /// The identity stamp corrects attribution, not the warning policy. A Codex-shaped turn that
+    /// really ends after commentary without a final_answer must still warn once the grace expires.
+    /// </summary>
+    [Test]
+    public async Task a_Codex_turn_with_no_final_answer_still_warns_after_the_grace_window()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var agentId = await SeedAgentAsync(workspace.Path, $"delegate-{Guid.NewGuid():N}"[..20]);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(
+            workspace.Path, parentSessionId, configure: t => t.AgentId = agentId);
+        const string narration = "I'll start by reading the spec.";
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var settings = new DelegationSettings { ReplyInlineMaxChars = 20_000, FinalMessageGraceSeconds = 120 };
+        var service = CreateService(settings: settings, timeProvider: clock);
+
+        await SeedCodexTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration, finalMessage: null);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var insideGrace = CreateContext())
+        {
+            (await insideGrace.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(121));
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(narration);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeTrue();
+        (await verify.AgentIncidents.AnyAsync(
+            i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.DelegateFinalMessageMissing))
+            .ShouldBeTrue();
+
+        var note = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == parentSessionId);
+        note.Body.ShouldContain("may be PREAMBLE");
+    }
+
+    /// <summary>
+    /// An out-of-order tail is still safe: the boundary first defers, then the later final_answer
+    /// with that boundary's turn id settles cleanly when persistence retriggers the service.
+    /// </summary>
+    [Test]
+    public async Task a_Codex_final_answer_that_arrives_after_its_turn_end_settles_cleanly()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+        var service = CreateService();
+        const string narration = "I'll start by reading the spec.";
+        const string finalMessage = "Implemented the fix after backfill.";
+
+        var turnId = await SeedCodexTurnAsync(
+            sessionId, DelegationReportFormatter.TaskMarker(task.Id) + "\n\nDo the thing.",
+            narration, finalMessage: null);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await using (var deferred = CreateContext())
+        {
+            (await deferred.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+        }
+
+        await SeedEntryAsync(sessionId, TranscriptKinds.AssistantText, finalMessage, DateTime.UtcNow, turnId);
+        await service.OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.Result.ShouldBe(finalMessage);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)).ShouldBeFalse();
     }
 
     /// <summary>
@@ -2129,6 +2244,43 @@ public class AgentTaskReplyIntegrationTests
         end.ApiCallId = turnEndApiCallId;
         db.TranscriptEntries.Add(end);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The Codex TUI sequence: a null-id commentary AgentMessage, its final_answer stamped with
+    /// payload.turn_id, then task_complete carrying the same turn id 65 ms later.
+    /// </summary>
+    private static async Task<string> SeedCodexTurnAsync(
+        Guid sessionId, string prompt, string narration, string? finalMessage)
+    {
+        var turnId = $"turn_{Guid.NewGuid():N}";
+        var at = DateTime.UtcNow;
+        await using var db = CreateContext();
+        var seq = await db.TranscriptEntries
+            .Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence) ?? 0;
+
+        db.TranscriptEntries.Add(NewEntry(sessionId, ++seq, TranscriptKinds.UserPrompt, prompt));
+
+        var commentary = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, narration);
+        commentary.Timestamp = at;
+        db.TranscriptEntries.Add(commentary);
+
+        if (finalMessage is not null)
+        {
+            var final = NewEntry(sessionId, ++seq, TranscriptKinds.AssistantText, finalMessage);
+            final.ApiCallId = turnId;
+            final.Timestamp = at.AddMilliseconds(65);
+            db.TranscriptEntries.Add(final);
+        }
+
+        var end = NewEntry(sessionId, ++seq, TranscriptKinds.TurnEnd, null);
+        end.StopReason = "end_turn";
+        end.ApiCallId = turnId;
+        end.Timestamp = at.AddMilliseconds(130);
+        db.TranscriptEntries.Add(end);
+        await db.SaveChangesAsync();
+        return turnId;
     }
 
     /// <summary>
