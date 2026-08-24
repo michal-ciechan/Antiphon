@@ -274,8 +274,9 @@ eleven-row one-off is not worth it. The old value is not lost — it is the card
 on the card after Decision 6. The migration's summary comment lists the mapping. `Down` is a no-op
 with a comment: the sequence must not run backwards (CARD-0005).
 
-**External citations of `#3`…`#13`:** none in git (`grep` of `.antiphon/`, docs, commits — the
-only `#N` mentions are CARD-0170/0175's own text, which describe the bug). Nothing to rewrite.
+**External citations of `#3`…`#13`:** none found (`grep -i 'card #N' / 'issue #N'` over `docs/`,
+`.antiphon/`, `scripts/` and the last 30 commit subjects — the only mentions are CARD-0170/0175's
+own text, which describe the bug). Nothing to rewrite.
 
 ## 5. Decision 6 — the key stays visible and addressable
 
@@ -353,8 +354,8 @@ assertion to the rows the test made (AGENTS.md).
 - T10 `Import_column_active_keeps_the_e10_behaviour`: the two existing E10 tests gain
   `import_column: active` in their YAML and pass unchanged; one new assertion that with the key
   set the reopen goes to the first active column.
-- T11 `Unknown_import_column_value_is_a_validation_error_on_save` (`IssueTrackerConfigParserTests`
-  or the workflow-save test that already covers `kind`).
+- T11 `Unknown_import_column_value_is_a_validation_error_on_save` (`WorkflowTrackerActivationTests`,
+  beside the existing `kind` validation cases — there is no separate parser test file).
 - T12 `Landing_column_falls_back_when_the_board_has_no_backlog_status_column`: columns
   `[Todo(InProgress, active), Done(terminal)]` ⇒ first non-active non-terminal, then first column.
 
