@@ -33,14 +33,24 @@ public sealed class ExternalTrackerSyncService
         _logger = logger;
     }
 
-    public async Task<int> SyncAsync(DateTime utcNow, CancellationToken ct)
+    public Task<int> SyncAsync(DateTime utcNow, CancellationToken ct) =>
+        SyncAsync(utcNow, boardId: null, ct);
+
+    /// <summary>
+    /// Read-only issue upsert. When <paramref name="boardId"/> is set, only that board is synced
+    /// (CARD-0166 bidirectional pass scopes the read half to the boards it is about to write).
+    /// </summary>
+    public async Task<int> SyncAsync(DateTime utcNow, Guid? boardId, CancellationToken ct)
     {
-        var boards = await _db.Boards
+        var query = _db.Boards
             .Include(b => b.Project)
             .Include(b => b.Columns)
             .Include(b => b.WorkflowDefinitions)
-            .Where(b => b.TrackerKind != TrackerKind.Internal)
-            .ToListAsync(ct);
+            .Where(b => b.TrackerKind != TrackerKind.Internal);
+        if (boardId is Guid id)
+            query = query.Where(b => b.Id == id);
+
+        var boards = await query.ToListAsync(ct);
 
         if (boards.Count == 0)
             return 0;
@@ -94,8 +104,8 @@ public sealed class ExternalTrackerSyncService
             return syncedIssues;
 
         await _db.SaveChangesAsync(ct);
-        foreach (var boardId in changedBoardIds)
-            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId }, ct);
+        foreach (var changedBoardId in changedBoardIds)
+            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = changedBoardId }, ct);
         foreach (var queueRemoval in _pendingQueueRemovals)
             await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
 
@@ -172,6 +182,49 @@ public sealed class ExternalTrackerSyncService
                 continue;
             }
 
+            // CARD-0166: an issue whose body already carries an Antiphon card marker for an
+            // unlinked card on this board is a create-phase orphan, not a fresh import. Link it
+            // instead of spawning a duplicate card.
+            if (TrackerSyncMarkers.TryReadCardMarker(issue.Description, out var markedCardId))
+            {
+                var existingCard = board.Cards.FirstOrDefault(c => c.Id == markedCardId && c.ExternalIssueRef is null);
+                if (existingCard is null)
+                {
+                    var alreadyLinked = await _db.ExternalIssueRefs.AnyAsync(r => r.CardId == markedCardId, ct);
+                    if (!alreadyLinked)
+                    {
+                        existingCard = await _db.Cards.FirstOrDefaultAsync(
+                            c => c.Id == markedCardId && c.BoardId == board.Id, ct);
+                    }
+                }
+                if (existingCard is not null && existingCard.ExternalIssueRef is null)
+                {
+                    var linked = new ExternalIssueRef
+                    {
+                        Id = Guid.NewGuid(),
+                        CardId = existingCard.Id,
+                        TrackerKind = trackerKind,
+                        ExternalId = issue.ExternalId,
+                        ExternalKey = issue.ExternalKey,
+                        Url = issue.Url,
+                        RawPayloadJson = string.IsNullOrWhiteSpace(issue.RawPayloadJson) ? "{}" : issue.RawPayloadJson,
+                        LastSyncedAt = utcNow,
+                        Origin = ExternalIssueOrigin.AntiphonExport,
+                        LastKnownExternalState = string.Equals(issue.State, "closed", StringComparison.OrdinalIgnoreCase)
+                            ? "closed"
+                            : "open",
+                        LastRevisionSynced = existingCard.RevisionCount,
+                        LastOutboundSyncedAt = utcNow,
+                        Card = existingCard
+                    };
+                    existingCard.ExternalIssueRef = linked;
+                    _db.ExternalIssueRefs.Add(linked);
+                    existingRefs[issue.ExternalId] = linked;
+                    changed = true;
+                    continue;
+                }
+            }
+
             var card = new Card
             {
                 Id = Guid.NewGuid(),
@@ -181,7 +234,8 @@ public sealed class ExternalTrackerSyncService
                 Title = issue.Title.Trim(),
                 Description = issue.Description.Trim(),
                 Priority = issue.Priority,
-                LabelsJson = BoardService.SerializeLabels(issue.Labels),
+                LabelsJson = BoardService.SerializeLabels(
+                    TrackerSyncMarkers.StripManagedLabels(issue.Labels)),
                 Status = targetColumn.CardStatus,
                 ConcurrencyToken = Guid.NewGuid(),
                 CreatedAt = utcNow,
@@ -199,6 +253,11 @@ public sealed class ExternalTrackerSyncService
                 Url = issue.Url,
                 RawPayloadJson = string.IsNullOrWhiteSpace(issue.RawPayloadJson) ? "{}" : issue.RawPayloadJson,
                 LastSyncedAt = utcNow,
+                Origin = ExternalIssueOrigin.ExternalImport,
+                LastKnownExternalState = string.Equals(issue.State, "closed", StringComparison.OrdinalIgnoreCase)
+                    ? "closed"
+                    : "open",
+                LastRevisionSynced = 0,
                 Card = card
             };
             card.ExternalIssueRef = externalRef;
@@ -223,30 +282,45 @@ public sealed class ExternalTrackerSyncService
     {
         var card = externalRef.Card;
         var changed = false;
-        var title = issue.Title.Trim();
-        if (card.Title != title)
-        {
-            card.Title = title;
-            changed = true;
-        }
+        // CARD-0166 decision 11: export-origin cards are Antiphon-authoritative for
+        // title/body/free-form labels/priority — IN skips those fields.
+        var importAuthoritative = externalRef.Origin != ExternalIssueOrigin.AntiphonExport;
 
-        var description = issue.Description.Trim();
-        if (card.Description != description)
+        if (importAuthoritative)
         {
-            card.Description = description;
-            changed = true;
+            var title = issue.Title.Trim();
+            if (card.Title != title)
+            {
+                card.Title = title;
+                changed = true;
+            }
+
+            var description = issue.Description.Trim();
+            if (card.Description != description)
+            {
+                card.Description = description;
+                changed = true;
+            }
+
+            // Strip managed status:*/priority:* so card labels never accumulate sync-owned prefixes.
+            var labelsJson = BoardService.SerializeLabels(
+                TrackerSyncMarkers.StripManagedLabels(issue.Labels));
+            if (card.LabelsJson != labelsJson)
+            {
+                card.LabelsJson = labelsJson;
+                changed = true;
+            }
+
+            if (card.Priority != issue.Priority)
+            {
+                card.Priority = issue.Priority;
+                changed = true;
+            }
         }
 
         if (card.Identifier != issue.ExternalKey)
         {
             card.Identifier = issue.ExternalKey;
-            changed = true;
-        }
-
-        var labelsJson = BoardService.SerializeLabels(issue.Labels);
-        if (card.LabelsJson != labelsJson)
-        {
-            card.LabelsJson = labelsJson;
             changed = true;
         }
 
@@ -266,12 +340,6 @@ public sealed class ExternalTrackerSyncService
         if (externalRef.RawPayloadJson != rawPayload)
         {
             externalRef.RawPayloadJson = rawPayload;
-            changed = true;
-        }
-
-        if (card.Priority != issue.Priority)
-        {
-            card.Priority = issue.Priority;
             changed = true;
         }
 
@@ -298,6 +366,22 @@ public sealed class ExternalTrackerSyncService
         else if (!isBlocked && card.TerminalReason == "External tracker blockers are not terminal.")
         {
             card.TerminalReason = null;
+            changed = true;
+        }
+
+        // Keep the external state cursor honest for the bidirectional pass — but do NOT advance
+        // closed→open here when the card is still terminal: that cursor-proven reopen is handled
+        // by TrackerBidirectionalSyncService.ApplyExternalReopens (CARD-0166 §8).
+        var normalizedState = string.Equals(issue.State, "closed", StringComparison.OrdinalIgnoreCase)
+            ? "closed"
+            : "open";
+        var deferOpenCursor = normalizedState == "open"
+            && string.Equals(externalRef.LastKnownExternalState, "closed", StringComparison.OrdinalIgnoreCase)
+            && (card.BoardColumn.IsTerminal || card.Status is CardStatus.Done or CardStatus.Canceled);
+        if (!deferOpenCursor
+            && !string.Equals(externalRef.LastKnownExternalState, normalizedState, StringComparison.Ordinal))
+        {
+            externalRef.LastKnownExternalState = normalizedState;
             changed = true;
         }
 
@@ -475,6 +559,7 @@ public sealed class ExternalTrackerSyncService
         card.UpdatedAt = utcNow;
         card.ConcurrencyToken = Guid.NewGuid();
         externalRef.LastSyncedAt = utcNow;
+        externalRef.LastKnownExternalState = "closed";
         return true;
     }
 

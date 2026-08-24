@@ -93,6 +93,13 @@ public interface IBidirectionalIssueTracker : IIssueTracker
         string body,
         IReadOnlyList<string> labels,
         CancellationToken ct);
+
+    Task UpdateIssueContentAsync(
+        IssueTrackerConfig config,
+        string externalId,
+        string title,
+        string body,
+        CancellationToken ct);
 }
 
 public sealed record TrackedIssueComment(

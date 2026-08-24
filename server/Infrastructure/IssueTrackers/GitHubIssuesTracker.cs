@@ -232,6 +232,26 @@ public sealed class GitHubIssuesTracker : IBidirectionalIssueTracker
         return ParseIssue(repository, doc.RootElement);
     }
 
+    public async Task UpdateIssueContentAsync(
+        IssueTrackerConfig config,
+        string externalId,
+        string title,
+        string body,
+        CancellationToken ct)
+    {
+        var repository = RequireRepository(config);
+        var number = ParseIssueNumber(externalId);
+        var payload = JsonSerializer.Serialize(new { title, body });
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = await SendAsync(
+            config,
+            HttpMethod.Patch,
+            $"repos/{repository}/issues/{number}",
+            ct,
+            content);
+        _ = response;
+    }
+
     private async Task<HttpResponseMessage> SendAsync(
         IssueTrackerConfig config,
         HttpMethod method,
