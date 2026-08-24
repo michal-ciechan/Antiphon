@@ -11,6 +11,48 @@ All AI coding agents working on this project MUST read and follow:
 This file contains naming conventions, layer boundaries, enforcement rules,
 and architectural decisions that all code must comply with.
 
+## Living reference docs
+
+These are kept current against the code and each names its own source of truth. Read the relevant
+one **before** changing behaviour in its area; a plan doc under `docs/superpowers/` is a snapshot of
+what was believed on one day, not a reference.
+
+**Running agents**
+
+- [docs/agent-kinds.md](docs/agent-kinds.md) — the five agent kinds, how each is launched, the model
+  ladders, and the per-provider API keys and environment variables (Claude / Grok / Codex).
+- [docs/agent-credentials.md](docs/agent-credentials.md) — where a secret may live, the env merge
+  order, `{{key:NAME}}` API-key placeholders, key-ring custody.
+- [docs/ai-agent-tui-configuration.md](docs/ai-agent-tui-configuration.md) — creating and validating
+  runner profiles through the Settings UI.
+- [docs/herdr-sessions.md](docs/herdr-sessions.md) — the optional herdr pane lane: when to choose
+  it, its hard refusals, and its failure modes.
+- [docs/agent-workspaces.md](docs/agent-workspaces.md) — how a channel-facing agent is scoped on
+  disk (the ClaudeBot workspace convention: `SOUL.md` / `USER.md` / `MEMORY.md` / …).
+- [docs/agent-card-lifecycle.md](docs/agent-card-lifecycle.md) — card status vs session status, and
+  which transitions each launch path makes.
+
+**Talking to Antiphon**
+
+- [docs/antiphon-api.md](docs/antiphon-api.md) — the HTTP API: conventions, the full route map,
+  SignalR events, and the scripted front doors.
+- [docs/messaging/build-your-own-gateway.md](docs/messaging/build-your-own-gateway.md) — integrating
+  a channel provider over Kafka (Telegram, Slack, or your own), with
+  [the wire contract](docs/messaging/contract/v1/CONTRACT.md) and the
+  [EchoGateway sample](samples/EchoGateway).
+- Provider ops for the two shipped gateways: [docs/telegram-bot-ops.md](docs/telegram-bot-ops.md),
+  [docs/slack-bot-ops.md](docs/slack-bot-ops.md) (formatting and settings are
+  [docs/telegram.md](docs/telegram.md), listed above).
+- [docs/workflow-tracker-block.md](docs/workflow-tracker-block.md) — the board `tracker:` block that
+  activates GitHub Issues sync.
+
+**Operating**
+
+- [docs/bootstrap.md](docs/bootstrap.md) — standing the stack up on a new machine, and where every
+  secret comes from.
+- [docs/adr/0002-modern-conpty-backend.md](docs/adr/0002-modern-conpty-backend.md) — the
+  pseudoconsole agent sessions run in, and the delivery ceilings that follow from it.
+
 ## Working cards from a shell
 
 `scripts/card.ps1` talks to the board API so nothing has to hand-compose HTTP or hand-quote card

@@ -2,6 +2,17 @@
 
 Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) through Antiphon instead of editing server files by hand.
 
+> **Scope.** This page is the **profiles UI**: how to create, edit, validate and recover a runner
+> profile. Two companion references carry what used to be missing here:
+>
+> - **[agent-kinds.md](agent-kinds.md)** — the per-kind facts. Which executable and arguments,
+>   which model a tier resolves to, and **the actual environment variable names each provider
+>   reads** (`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY`; `GROK_CODE_XAI_API_KEY` +
+>   `GROK_CLI_CHAT_PROXY_BASE_URL`, and why `GROK_XAI_API_BASE_URL` alone is a false safety;
+>   `OPENAI_API_KEY` plus Codex's five `-c` launch arguments).
+> - **[agent-credentials.md](agent-credentials.md)** — where a secret may live, the six-layer env
+>   merge order, and `{{key:NAME}}` API-key placeholders.
+
 ## Concepts
 
 | Concept | Meaning |
@@ -51,7 +62,16 @@ Grok is a first-class runner kind (`AgentKind.Grok`), not only an OpenCode model
 | Auth | WrapperManaged (login lives in `~/.grok/auth.json`) |
 | Model arg | `--model` |
 
-Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`; standing instructions go through `--rules`. Structured activity is quiet-time until Grok's ACP `updates.jsonl` is tailed — do not enable the Claude JSONL transcript tailer.
+Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with `--resume <session-id>`; standing instructions go through `--rules`, never `--append-system-prompt`.
+
+**Structured activity is live for Grok** (CARD-0080 S2): the runner tails Grok's own ACP
+`updates.jsonl` at `GROK_HOME/sessions/<url-enc-cwd>/<session-id>/updates.jsonl`, selected by the
+launch request's `transcriptFormat: "grok"`. Do not point the Claude JSONL tailer at it — the two
+formats and their discovery rules are different, and Grok's path is deterministic precisely because
+it needs none of Claude's claim machinery.
+
+Note that the level ladder resolves **every** tier to `grok-4.6` (CARD-0169); `grok-4.5` remains
+selectable as an explicit profile model but is not what a `Low`/`Medium` dispatch will pick.
 
 ## Key custody
 
@@ -74,13 +94,24 @@ Pick `grok-4.6` (default) or `grok-4.5` from the catalogue. Sessions resume with
 
 ## API surface (summary)
 
-- `GET/POST/PATCH/DELETE /api/agent-tui/profiles…`
-- `PUT/DELETE …/secrets/{name}` (write-only)
-- `POST …/models/refresh`, `POST …/validate`
-- `GET /metrics/agent-tui`
-- Agent create/update accepts `tuiProfileId` + `modelId`
+- `GET /api/agent-tui/runner-types` — the per-kind capability catalogue
+- `GET/POST/PATCH/DELETE /api/agent-tui/profiles…`, `POST …/profiles/{id}/duplicate`
+- `PUT/DELETE …/profiles/{id}/secrets/{environmentName}` (write-only)
+- `GET …/profiles/{id}/models`, `POST …/models/refresh`, `GET …/profiles/{id}/capabilities`
+- `POST …/profiles/{id}/validate`, `GET /api/agent-tui/validation-runs/{runId}`
+- `GET /metrics/agent-tui` (root route, not under `/api`)
+- Agent create/update accepts `tuiProfileId` + `modelId` (plus `launchEnv`, `sessionBackend`)
+- Named secrets that several profiles share live in the separate API-key store —
+  `/api/api-keys` and `/api/projects/{projectId}/api-keys`, referenced as `{{key:NAME}}`
+  ([agent-credentials.md](agent-credentials.md))
+
+The full route map is [antiphon-api.md](antiphon-api.md).
 
 ## Smoke verification
+
+`verify-agent-tui-profile.ps1` defaults to `-BaseUrl http://localhost:17282` — the **simple-mode**
+Vite origin, which proxies `/api`. On the canonical Aspire stack pass
+`-BaseUrl http://localhost:17202` instead.
 
 ```powershell
 # After stack is up:

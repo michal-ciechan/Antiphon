@@ -160,6 +160,14 @@ There is **no per-message correlation on the wire**. A reply is addressed to
 a conversation, not to the inbound message that prompted it. Threading
 (Slack) is conversation-level state in the adapter.
 
+A `ChannelReply` may also arrive for a conversation with **nothing pending**.
+Antiphon has a proactive send (`POST /api/channels/{id}/send`) for scheduled
+jobs and operator scripts, and the reply-durability model (CARD-0067) resolves
+a reply's target from the stored prompt row at dispatch time rather than from
+an in-memory correlation. `SendAsync` must therefore not assume it is
+answering the last thing it received — address `ReplyHandle` /
+`ConversationId` and send.
+
 ## 4. Host it
 
 ```csharp
