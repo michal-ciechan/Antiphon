@@ -24,7 +24,7 @@ import {
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbAlertCircle, TbFileCode, TbFilter, TbPlus, TbSearch } from 'react-icons/tb'
+import { TbAlertCircle, TbFileCode, TbFilter, TbPlus, TbRefresh, TbSearch } from 'react-icons/tb'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useProjects } from '../../api/projects'
 import {
@@ -32,11 +32,13 @@ import {
   type BoardColumnDto,
   type BoardDetailDto,
   type CardStatus,
+  formatTrackerSyncSummary,
   useAllBoardDetails,
   useBoard,
   useBoards,
   useCreateBoard,
   useCreateCard,
+  useSyncTracker,
 } from '../../api/boards'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { BoardColumn } from './BoardColumn'
@@ -222,6 +224,9 @@ export function BoardPage() {
                     >
                       <TbFileCode size={18} />
                     </ActionIcon>
+                    {board.trackerKind !== 'Internal' && (
+                      <SyncTrackerButton boardId={board.id} compact />
+                    )}
                     <ActionIcon size="lg" aria-label="New Card" onClick={() => setNewCardOpen(true)}>
                       <TbPlus size={18} />
                     </ActionIcon>
@@ -239,6 +244,9 @@ export function BoardPage() {
                     <Button leftSection={<TbFileCode size={16} />} variant="light" onClick={() => setWorkflowOpen(true)}>
                       Workflow
                     </Button>
+                    {board.trackerKind !== 'Internal' && (
+                      <SyncTrackerButton boardId={board.id} />
+                    )}
                     <Button leftSection={<TbPlus size={16} />} onClick={() => setNewCardOpen(true)}>
                       New Card
                     </Button>
@@ -278,6 +286,55 @@ export function BoardPage() {
         />
       )}
     </Box>
+  )
+}
+
+/** CARD-0166 S7: on-demand sync for boards with TrackerKind != Internal. */
+function SyncTrackerButton({ boardId, compact = false }: { boardId: string; compact?: boolean }) {
+  const sync = useSyncTracker(boardId)
+
+  const run = () => {
+    sync.mutate(undefined, {
+      onSuccess: (result) => {
+        notifications.show({
+          color: 'green',
+          title: 'Tracker sync',
+          message: formatTrackerSyncSummary(result),
+        })
+      },
+      onError: (error) => {
+        notifications.show({
+          color: 'red',
+          title: 'Tracker sync failed',
+          message: getApiErrorMessage(error),
+        })
+      },
+    })
+  }
+
+  if (compact) {
+    return (
+      <ActionIcon
+        variant="light"
+        size="lg"
+        aria-label="Sync tracker now"
+        loading={sync.isPending}
+        onClick={run}
+      >
+        <TbRefresh size={18} />
+      </ActionIcon>
+    )
+  }
+
+  return (
+    <Button
+      leftSection={<TbRefresh size={16} />}
+      variant="light"
+      loading={sync.isPending}
+      onClick={run}
+    >
+      Sync tracker now
+    </Button>
   )
 }
 

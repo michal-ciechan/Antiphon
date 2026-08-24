@@ -577,6 +577,7 @@ try
     app.MapProjectEndpoints();
     app.MapApiKeyEndpoints();
     app.MapBoardEndpoints();
+    app.MapTrackerSyncEndpoints();
     app.MapCardEndpoints();
     app.MapAgentEndpoints();
     app.MapAgentTuiEndpoints();

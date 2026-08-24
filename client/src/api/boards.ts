@@ -335,6 +335,25 @@ export interface UpdateBoardWorkflowRequest {
   content: string
 }
 
+/** CARD-0166 S7: summary returned by POST /boards/{id}/tracker/sync and /tracker-sync/run. */
+export interface TrackerSyncBoardResultDto {
+  boardId: string
+  boardName: string
+  issuesPulled: number
+  commentsIn: number
+  commentsOut: number
+  labelsChanged: number
+  stateChanges: number
+  creates: number
+  skips: string[]
+  error?: string | null
+}
+
+export interface TrackerSyncRunResultDto {
+  boards: TrackerSyncBoardResultDto[]
+  concurrentRunSkipped?: boolean
+}
+
 export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
@@ -596,6 +615,37 @@ export function useUpdateBoardWorkflow(boardId: string) {
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
     },
   })
+}
+
+/** CARD-0166 S7: on-demand bidirectional tracker sync for one board. */
+export function useSyncTracker(boardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<TrackerSyncRunResultDto>(`/boards/${boardId}/tracker/sync`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+      queryClient.invalidateQueries({ queryKey: boardKeys.all })
+      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+    },
+  })
+}
+
+export function formatTrackerSyncSummary(result: TrackerSyncRunResultDto): string {
+  if (!result.boards.length) return 'Tracker sync: no external boards.'
+  return result.boards
+    .map((b) => {
+      const parts = [
+        `pulled ${b.issuesPulled}`,
+        `comments in ${b.commentsIn}/out ${b.commentsOut}`,
+        `labels ${b.labelsChanged}`,
+        `state ${b.stateChanges}`,
+        `creates ${b.creates}`,
+      ]
+      if (b.skips.length) parts.push(`skips: ${b.skips.join(', ')}`)
+      if (b.error) parts.push(`error: ${b.error}`)
+      return `${b.boardName}: ${parts.join(', ')}`
+    })
+    .join(' | ')
 }
 
 export function moveCardOptimistically(

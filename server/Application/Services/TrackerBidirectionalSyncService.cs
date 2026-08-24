@@ -58,11 +58,13 @@ public sealed class TrackerBidirectionalSyncService
 
         var boards = await query.ToListAsync(ct);
         var results = new List<TrackerSyncBoardResult>();
+        var concurrentSkipped = false;
 
         foreach (var board in boards)
         {
             if (!RunningBoards.TryAdd(board.Id, 0))
             {
+                concurrentSkipped = true;
                 results.Add(new TrackerSyncBoardResult(
                     board.Id, board.Name, 0, 0, 0, 0, 0, 0,
                     ["concurrent_run"], Error: "Sync already running for this board."));
@@ -85,7 +87,7 @@ public sealed class TrackerBidirectionalSyncService
             }
         }
 
-        return new TrackerSyncRunResult(results);
+        return new TrackerSyncRunResult(results, ConcurrentRunSkipped: concurrentSkipped);
     }
 
     private async Task<TrackerSyncBoardResult> SyncBoardAsync(Board board, DateTime utcNow, CancellationToken ct)
