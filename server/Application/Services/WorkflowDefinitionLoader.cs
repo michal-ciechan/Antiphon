@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -207,11 +207,33 @@ public sealed partial class WorkflowDefinitionLoader
         return rendered;
     }
 
+    /// <summary>
+    /// The variables a workflow prompt template may reference.
+    /// </summary>
+    /// <remarks>
+    /// CARD-0175: <c>issue.*</c> is the TRACKER's view and <c>card.*</c> is Antiphon's. They were
+    /// identical while an imported card's <c>Identifier</c> WAS the tracker key; now that every
+    /// card carries a <c>CARD-nnnn</c> identifier, <c>issue.identifier</c> resolves to
+    /// <c>ExternalIssueRef.ExternalKey</c> when the card is linked and falls back to the card's own
+    /// identifier when it is not — so an existing board's <c>Work on {{ issue.identifier }}</c>
+    /// keeps naming the thing the tracker calls it. <c>issue.reference</c> is the composed
+    /// <c> (GitHub issue #3, url)</c> clause (empty when unlinked), which is what lets the default
+    /// template name both schemes without rendering empty parentheses on an internal board.
+    /// </remarks>
     public static IReadOnlyDictionary<string, string?> BuildPromptVariables(Card card, Worktree? worktree)
     {
+        var externalRef = card.ExternalIssueRef;
+        var externalKey = string.IsNullOrWhiteSpace(externalRef?.ExternalKey)
+            ? null
+            : externalRef!.ExternalKey.Trim();
         return new Dictionary<string, string?>(StringComparer.Ordinal)
         {
-            ["issue.identifier"] = card.Identifier,
+            ["issue.identifier"] = externalKey ?? card.Identifier,
+            ["issue.url"] = externalRef?.Url,
+            ["issue.tracker"] = externalRef is null
+                ? null
+                : CardExternalReference.TrackerName(externalRef.TrackerKind),
+            ["issue.reference"] = CardExternalReference.Clause(externalRef),
             ["issue.title"] = card.Title,
             ["issue.description"] = card.Description,
             ["issue.priority"] = card.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -234,7 +256,7 @@ public sealed partial class WorkflowDefinitionLoader
         agent:
           max_concurrent: {{{Math.Max(1, board.MaxConcurrentSessions)}}}
         ---
-        Work on card {{ issue.identifier }}: {{ issue.title }}
+        Work on card {{ card.identifier }}{{ issue.reference }}: {{ issue.title }}
 
         Priority: {{ issue.priority }}
 
@@ -358,6 +380,9 @@ public sealed partial class WorkflowDefinitionLoader
         {
             throw new ValidationException("tracker.kind", error ?? "Tracker kind is invalid.");
         }
+
+        if (!IssueTrackerConfigParser.TryValidateTrackerOptions(parsed.FrontMatter, out var optionError))
+            throw new ValidationException("tracker.import_column", optionError ?? "Tracker options are invalid.");
 
         var wasInternal = board.TrackerKind == TrackerKind.Internal;
         board.TrackerKind = kind;

@@ -1,6 +1,7 @@
 import { Badge, Box, Group, Text, Tooltip } from '@mantine/core'
 import { TbTerminal2 } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
+import { trackerAbbreviation } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { ageInDays, hasLiveSession } from './boardShapeModel'
 import { priorityBadgeColor } from './boardVisuals'
@@ -31,8 +32,16 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
   // the live board" without becoming unreadable — the row is still the record.
   const archived = !!card.archivedAt
 
+  // CARD-0175: an imported card's identifier is CARD-nnnn, so the tracker's key rides along in the
+  // tooltip - the row's identifier lane is a fixed 42px and must not grow.
   const identifier = (
-    <Tooltip label={card.identifier} withArrow openDelay={400}>
+    <Tooltip
+      label={card.externalIssue
+        ? `${card.identifier} - ${trackerAbbreviation(card.externalIssue.trackerKind)} ${card.externalIssue.key}`.trim()
+        : card.identifier}
+      withArrow
+      openDelay={400}
+    >
       <Text
         size="sm"
         fw={700}

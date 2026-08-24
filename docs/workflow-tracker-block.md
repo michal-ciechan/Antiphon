@@ -19,6 +19,7 @@ Parsed by `IssueTrackerConfigParser.TryParse` / `TryResolveBoardTrackerKind`.
 | `sync_out_create` | no | `true` enables Antiphon→GitHub issue creates for cards after the export watermark. Default off. |
 | `export_since` | no | ISO-8601 watermark for creates; defaults to `Board.TrackerActivatedAt`. |
 | `notify_channel` | no | CARD-0171. Catalog channel that receives a plain-text change summary when a sync is triggered with `notify=true`. A channel GUID (recommended - titles are editable) or an exact, case-insensitive `Title` that is unique in the catalog. Unset = notify is a no-op for this board. |
+| `import_column` | no | CARD-0170. Which column the sync may land a card in: `backlog` (default) or `active`. Any other value is a validation error on workflow save. See [Landing column](#landing-column). |
 | `project` / `project_key` | Linear/Jira | Project key. |
 | `jql` | Jira | Extra JQL filter. |
 
@@ -40,6 +41,35 @@ tracker:
 
 Work on {{ issue.identifier }}.
 ```
+
+## Landing column
+
+`import_column` decides **which column the tracker is allowed to put a card in**, and by extension
+whether the tracker owns this board's queue.
+
+| Value | New open issue | Open issue, card already non-terminal | Cursor-proven reopen | Closed / left active states | Blocked (Linear) |
+|---|---|---|---|---|---|
+| `backlog` (default) | the board's `CardStatus.Backlog` column | **no move** — the column is Antiphon's; title/body/labels/priority still sync per origin authority | landing column | terminal column (unchanged) | ignored |
+| `active` | first `IsActive && !IsTerminal` column | dragged to the column the tracker state maps to | first active column | terminal column (unchanged) | waiting column (first non-active non-terminal) |
+
+Fallback order for `backlog` when a board has no `Backlog`-status column: first non-active
+non-terminal column, then the first column.
+
+**Why the default changed (CARD-0170).** `BoardColumn.IsActive` means "auto-dispatch MAY start an
+agent here" — it has never meant "new work lands here"; the only intake rule in the codebase is
+`CardService.CreateAsync`'s "first column whose `CardStatus` is `Backlog`". Every board seeded by
+`BoardService.CreateDefaultColumns` is `Backlog > In Progress[active] > Review > Done[terminal]`, so
+the original E10 behaviour meant **"an issue is open on GitHub" was equivalent to "start an agent on
+it"** — the CARD-0087 hole re-opened through the sync. It also dragged any unowned non-terminal card
+back to the active column on every tick, so moving an imported card to Backlog by hand did not stick.
+
+`active` is not a deprecation: a board whose tracker genuinely IS its queue (a Linear "Todo" column
+that means "go") is a legitimate configuration. It is just not the default.
+
+Resolved in one place — `TrackerLandingColumn.Resolve` — used by all three push sites:
+`ExternalTrackerSyncService.UpsertIssuesAsync` (create), `UpdateExisting` (the state-driven move)
+and `TrackerBidirectionalSyncService.ApplyExternalReopens` (reopen). Fixing only the create leaves
+the other two re-breaking it on the next tick.
 
 ## Triggers
 

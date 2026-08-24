@@ -85,6 +85,32 @@ export interface CardDto {
    * may pick up.
    */
   autoDispatchHeldAt?: string | null
+  /**
+   * The tracker issue this card is linked to, if any (CARD-0175). `identifier` is `CARD-nnnn` on
+   * EVERY card now — including imported ones — so this is the only place the GitHub/Jira/Linear
+   * key survives, and rendering it is what keeps our `#12` and GitHub's `#12` apart.
+   */
+  externalIssue?: ExternalIssueDto | null
+}
+
+export interface ExternalIssueDto {
+  trackerKind: TrackerKind
+  key: string
+  url: string
+}
+
+/** `GitHubIssues` -> `GH`: the short tracker badge shown next to a linked card's identifier. */
+export function trackerAbbreviation(trackerKind: TrackerKind): string {
+  switch (trackerKind) {
+    case 'GitHubIssues':
+      return 'GH'
+    case 'Jira':
+      return 'JIRA'
+    case 'Linear':
+      return 'LIN'
+    default:
+      return ''
+  }
 }
 
 /**

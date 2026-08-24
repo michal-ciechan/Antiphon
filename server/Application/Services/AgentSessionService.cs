@@ -993,6 +993,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             .Include(c => c.Board).ThenInclude(b => b.Project)
             .Include(c => c.Board).ThenInclude(b => b.WorkflowDefinitions)
             .Include(c => c.CurrentWorktree)
+            // CARD-0175: the workflow prompt's issue.* variables read the tracker key off the ref.
+            .Include(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct)
             ?? throw new NotFoundException(nameof(Card), cardId);
     }

@@ -1,4 +1,4 @@
-using Antiphon.Server.Application.Dtos;
+﻿using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -119,12 +119,17 @@ public class OrchestratorServiceIntegrationTests
             graph.Board.Cards.Remove(graph.Card);
             graph.ActiveColumn.Cards.Remove(graph.Card);
             graph.Board.TrackerKind = TrackerKind.GitHubIssues;
+            // CARD-0170: this test is the E10 "the tracker IS the queue" behaviour, which is now
+            // the OPT-IN. Without import_column: active an open issue lands in Backlog and the
+            // tick correctly declines to dispatch it (ExternalTrackerSyncLandingColumnTests pins
+            // the default).
             graph.Board.WorkflowDefinitions.Single().Content = """
                 ---
                 tracker:
                   kind: github_issues
                   repository: acme/app
                   active_states: [open]
+                  import_column: active
                 ---
                 Work on {{ issue.identifier }}: {{ issue.title }}
                 """;
@@ -159,7 +164,9 @@ public class OrchestratorServiceIntegrationTests
                 .Include(c => c.ExternalIssueRef)
                 .Include(c => c.AgentSessions)
                 .SingleAsync(c => c.BoardId == graph.Board.Id);
-            syncedCard.Identifier.ShouldBe("#42");
+            // CARD-0175: the tracker key lives on the ref; the card gets its own identifier.
+            syncedCard.Identifier.ShouldBe("CARD-0001");
+            syncedCard.ExternalIssueRef!.ExternalKey.ShouldBe("#42");
             syncedCard.Title.ShouldBe("External issue");
             syncedCard.Priority.ShouldBe(4);
             syncedCard.ExternalIssueRef.ShouldNotBeNull();
@@ -331,12 +338,15 @@ public class OrchestratorServiceIntegrationTests
             graph.Board.Cards.Remove(graph.Card);
             graph.ActiveColumn.Cards.Remove(graph.Card);
             graph.Board.TrackerKind = TrackerKind.Linear;
+            // CARD-0170: blocked/unblocked column movement is only meaningful when the tracker owns
+            // the column, i.e. under the import_column: active opt-in. The default ignores it.
             graph.Board.WorkflowDefinitions.Single().Content = """
                 ---
                 tracker:
                   kind: linear
                   project: Antiphon
                   active_states: [Todo]
+                  import_column: active
                 ---
                 Work on {{ issue.title }}
                 """;

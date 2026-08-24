@@ -531,7 +531,12 @@ public sealed class OrchestratorService
                     .Where(d => d.IsActive)
                     .OrderByDescending(d => d.Version)
                     .Select(d => d.Content)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+                // CARD-0175: the identifier is CARD-nnnn on every card now, so the dispatch prompt
+                // carries the tracker key/url alongside it or a linked card loses its issue number.
+                c.ExternalIssueRef == null ? (TrackerKind?)null : c.ExternalIssueRef.TrackerKind,
+                c.ExternalIssueRef == null ? null : c.ExternalIssueRef.ExternalKey,
+                c.ExternalIssueRef == null ? null : c.ExternalIssueRef.Url))
             .ToListAsync(ct);
     }
 
@@ -646,8 +651,10 @@ public sealed class OrchestratorService
 
     private static string BuildPrompt(DispatchCandidate candidate)
     {
+        var reference = CardExternalReference.Clause(
+            candidate.ExternalTrackerKind, candidate.ExternalKey, candidate.ExternalUrl);
         var prompt = $"""
-            Work on card {candidate.Identifier}: {candidate.Title}
+            Work on card {candidate.Identifier}{reference}: {candidate.Title}
 
             Description:
             {candidate.Description}
@@ -734,7 +741,10 @@ public sealed class OrchestratorService
         Guid ConcurrencyToken,
         Guid? AssignedAgentId,
         Guid? WorkflowDefinitionId,
-        string? WorkflowContent);
+        string? WorkflowContent,
+        TrackerKind? ExternalTrackerKind = null,
+        string? ExternalKey = null,
+        string? ExternalUrl = null);
 
     private sealed record CardChangedNotification(Guid BoardId, Guid CardId);
 

@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
@@ -78,6 +78,7 @@ public sealed class CardThreadService
             .Include(c => c.AssignedAgent)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .Include(c => c.CurrentWorktree)
+            .Include(c => c.ExternalIssueRef)
             .Include(c => c.Board).ThenInclude(b => b.Project)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct)
             ?? throw new NotFoundException(nameof(Card), cardId);

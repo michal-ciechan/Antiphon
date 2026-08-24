@@ -80,6 +80,40 @@ function discussionHandler(cardId = 'card-1') {
 }
 
 describe('CardModal', () => {
+  // CARD-0175: an imported card's identifier is CARD-nnnn now, so the GitHub number only survives
+  // on the ref. Without this badge the tracker key is invisible and `#12` on the board would be
+  // indistinguishable from GitHub's `#12` — the collision the card exists to remove.
+  it('links the tracker issue when the card is linked, and shows nothing when it is not', async () => {
+    server.use(agentDefinitionsHandler(), discussionHandler())
+
+    const { unmount } = renderWithProviders(
+      <CardModal
+        boardId="board-1"
+        card={{
+          ...card,
+          externalIssue: { trackerKind: 'GitHubIssues', key: '#3', url: 'https://github.test/acme/app/issues/3' },
+        }}
+        opened
+        onClose={() => undefined}
+      />,
+    )
+
+    const link = await screen.findByTestId('card-external-issue')
+    expect(link).toHaveTextContent('GH #3')
+    expect(link).toHaveAttribute('href', 'https://github.test/acme/app/issues/3')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    // The card's own identifier is unchanged beside it.
+    expect(screen.getByText('#1')).toBeInTheDocument()
+    unmount()
+
+    renderWithProviders(
+      <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
+    )
+
+    await waitFor(() => expect(screen.getByText('Implement terminal')).toBeInTheDocument())
+    expect(screen.queryByTestId('card-external-issue')).not.toBeInTheDocument()
+  })
+
   it('posts spawn with the selected agent definition', async () => {
     const spawnSpy = vi.fn()
     server.use(
