@@ -17,11 +17,16 @@ public static class TrackerSyncEndpoints
         var boards = app.MapGroup("/api/boards")
             .WithTags("Boards");
 
+        // CARD-0171: ?notify=true asks this run to announce what it changed to the channel the
+        // board's tracker.notify_channel names. Off by default — the "Sync tracker now" button
+        // must not ping a family chat on every click.
         boards.MapPost("/{id:guid}/tracker/sync", async (
             Guid id,
             AppDbContext db,
             TrackerBidirectionalSyncService sync,
-            CancellationToken cancellationToken) =>
+            TrackerSyncNotifier notifier,
+            CancellationToken cancellationToken,
+            bool notify = false) =>
         {
             var board = await db.Boards.AsNoTracking()
                 .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
@@ -43,14 +48,23 @@ public static class TrackerSyncEndpoints
                     "tracker_sync_running");
             }
 
+            // After the 409 arm: a refused run changed nothing and must never announce.
+            if (notify)
+                result = result with { Notifications = await notifier.NotifyAsync(result, cancellationToken) };
+
             return Results.Ok(result);
         });
 
         app.MapPost("/api/tracker-sync/run", async (
             TrackerBidirectionalSyncService sync,
-            CancellationToken cancellationToken) =>
+            TrackerSyncNotifier notifier,
+            CancellationToken cancellationToken,
+            bool notify = false) =>
         {
             var result = await sync.RunAsync(boardId: null, cancellationToken);
+            if (notify)
+                result = result with { Notifications = await notifier.NotifyAsync(result, cancellationToken) };
+
             return Results.Ok(result);
         }).WithTags("TrackerSync");
     }

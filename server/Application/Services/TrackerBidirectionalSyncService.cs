@@ -93,6 +93,9 @@ public sealed class TrackerBidirectionalSyncService
     private async Task<TrackerSyncBoardResult> SyncBoardAsync(Board board, DateTime utcNow, CancellationToken ct)
     {
         var skips = new List<string>();
+        // CARD-0171: itemised record of what this run changed. Per SyncBoardAsync invocation —
+        // never shared across boards, because a notification is addressed per board.
+        var changes = new List<TrackerSyncChange>();
         if (!IssueTrackerConfigParser.TryParse(board, out var config, out var error) || config is null)
         {
             skips.Add(error ?? "tracker config unavailable");
@@ -148,39 +151,45 @@ public sealed class TrackerBidirectionalSyncService
         }
 
         // IN reopen arm (cursor-proven external reopen of a terminal card)
-        ApplyExternalReopens(board, refsByExternalId, pulledIssues, utcNow);
+        var externalReopens = ApplyExternalReopens(board, refsByExternalId, pulledIssues, utcNow, changes);
 
         // (2) comments IN
-        var commentsIn = await PullCommentsAsync(board, bi, config, refsByExternalId, utcNow, ct);
+        var commentsIn = await PullCommentsAsync(board, bi, config, refsByExternalId, utcNow, changes, ct);
 
         // (3) pushes OUT
         var (commentsOut, labelsChanged, stateChanges) = await PushOutboundAsync(
-            board, bi, config, refsByExternalId, pulledIssues, utcNow, ct);
+            board, bi, config, refsByExternalId, pulledIssues, utcNow, changes, ct);
 
         // (4) creates
         var creates = await CreateMissingIssuesAsync(
-            board, bi, config, refsByExternalId, pulledIssues, utcNow, ct);
+            board, bi, config, refsByExternalId, pulledIssues, utcNow, changes, ct);
 
         await _db.SaveChangesAsync(ct);
         await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
 
         return new TrackerSyncBoardResult(
             board.Id, board.Name, issuesPulled, commentsIn, commentsOut,
-            labelsChanged, stateChanges, creates, skips);
+            labelsChanged, stateChanges, creates, skips)
+        {
+            ExternalReopens = externalReopens,
+            Changes = changes
+        };
     }
 
-    private void ApplyExternalReopens(
+    private int ApplyExternalReopens(
         Board board,
         IReadOnlyDictionary<string, ExternalIssueRef> refsByExternalId,
         IReadOnlyList<TrackedIssue> pulledIssues,
-        DateTime utcNow)
+        DateTime utcNow,
+        List<TrackerSyncChange> changes)
     {
         var issuesById = pulledIssues.ToDictionary(i => i.ExternalId, StringComparer.Ordinal);
+        var reopened = 0;
         var firstActive = board.Columns
             .OrderBy(c => c.ColumnOrder)
             .FirstOrDefault(c => c.IsActive && !c.IsTerminal);
         if (firstActive is null)
-            return;
+            return reopened;
 
         foreach (var issueRef in refsByExternalId.Values)
         {
@@ -217,8 +226,16 @@ public sealed class TrackerBidirectionalSyncService
             card.UpdatedAt = utcNow;
             card.ConcurrencyToken = Guid.NewGuid();
             issueRef.LastKnownExternalState = "open";
+            reopened++;
+            changes.Add(Change(TrackerSyncChangeKind.ReopenedFromGitHub, issueRef));
         }
+
+        return reopened;
     }
+
+    /// <summary>CARD-0171: an itemised change, addressed by the card and its tracker key.</summary>
+    private static TrackerSyncChange Change(TrackerSyncChangeKind kind, ExternalIssueRef issueRef) =>
+        new(kind, issueRef.Card.Identifier, issueRef.ExternalKey, issueRef.Url);
 
     private async Task<int> PullCommentsAsync(
         Board board,
@@ -226,6 +243,7 @@ public sealed class TrackerBidirectionalSyncService
         IssueTrackerConfig config,
         IReadOnlyDictionary<string, ExternalIssueRef> refsByExternalId,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         var since = board.TrackerCommentsPulledAt is DateTime pulled
@@ -284,6 +302,7 @@ public sealed class TrackerBidirectionalSyncService
                 Card = issueRef.Card
             });
             inserted++;
+            changes.Add(Change(TrackerSyncChangeKind.CommentIn, issueRef));
         }
 
         board.TrackerCommentsPulledAt = pullStarted;
@@ -297,6 +316,7 @@ public sealed class TrackerBidirectionalSyncService
         IReadOnlyDictionary<string, ExternalIssueRef> refsByExternalId,
         IReadOnlyList<TrackedIssue> pulledIssues,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         var commentsOut = 0;
@@ -310,13 +330,13 @@ public sealed class TrackerBidirectionalSyncService
             if (card.ArchivedAt is not null)
                 continue;
 
-            commentsOut += await PushDiscussionCommentsAsync(tracker, config, issueRef, utcNow, ct);
-            commentsOut += await PushContentEditCommentsAsync(tracker, config, issueRef, utcNow, ct);
+            commentsOut += await PushDiscussionCommentsAsync(tracker, config, issueRef, utcNow, changes, ct);
+            commentsOut += await PushContentEditCommentsAsync(tracker, config, issueRef, utcNow, changes, ct);
 
             if (issuesByExternalId.TryGetValue(issueRef.ExternalId, out var current))
-                labelsChanged += await SyncLabelsAsync(tracker, config, issueRef, current, utcNow, ct);
+                labelsChanged += await SyncLabelsAsync(tracker, config, issueRef, current, utcNow, changes, ct);
 
-            stateChanges += await SyncStateAsync(tracker, config, issueRef, utcNow, ct);
+            stateChanges += await SyncStateAsync(tracker, config, issueRef, utcNow, changes, ct);
 
             if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport
                 && (issueRef.LastOutboundSyncedAt is null || card.UpdatedAt > issueRef.LastOutboundSyncedAt)
@@ -324,6 +344,7 @@ public sealed class TrackerBidirectionalSyncService
             {
                 await PushExportTitleBodyAsync(tracker, config, issueRef, ct);
                 issueRef.LastOutboundSyncedAt = utcNow;
+                changes.Add(Change(TrackerSyncChangeKind.ContentPushed, issueRef));
             }
         }
 
@@ -335,6 +356,7 @@ public sealed class TrackerBidirectionalSyncService
         IssueTrackerConfig config,
         ExternalIssueRef issueRef,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         var pending = await _db.CardComments
@@ -363,6 +385,7 @@ public sealed class TrackerBidirectionalSyncService
                 comment.ExternalCommentId = remote.ExternalCommentId;
                 comment.ExternalUrl = remote.Url;
                 posted++;
+                changes.Add(Change(TrackerSyncChangeKind.CommentOut, issueRef));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -380,6 +403,7 @@ public sealed class TrackerBidirectionalSyncService
         IssueTrackerConfig config,
         ExternalIssueRef issueRef,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         if (issueRef.Origin != ExternalIssueOrigin.ExternalImport)
@@ -410,6 +434,7 @@ public sealed class TrackerBidirectionalSyncService
             {
                 await tracker.PostCommentAsync(config, issueRef.ExternalId, marked, ct);
                 posted++;
+                changes.Add(Change(TrackerSyncChangeKind.CommentOut, issueRef));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -429,6 +454,7 @@ public sealed class TrackerBidirectionalSyncService
         ExternalIssueRef issueRef,
         TrackedIssue current,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         var card = issueRef.Card;
@@ -480,7 +506,12 @@ public sealed class TrackerBidirectionalSyncService
         }
 
         if (changed > 0)
+        {
             issueRef.LastOutboundSyncedAt = utcNow;
+            // One change per ISSUE that had any label write, while the counter keeps counting
+            // writes as it always has.
+            changes.Add(Change(TrackerSyncChangeKind.LabelsChanged, issueRef));
+        }
 
         return changed;
     }
@@ -490,6 +521,7 @@ public sealed class TrackerBidirectionalSyncService
         IssueTrackerConfig config,
         ExternalIssueRef issueRef,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         var card = issueRef.Card;
@@ -516,6 +548,7 @@ public sealed class TrackerBidirectionalSyncService
                 issueRef.LastKnownExternalState = "closed";
                 issueRef.LastOutboundSyncedAt = utcNow;
                 changed++;
+                changes.Add(Change(TrackerSyncChangeKind.ClosedOnGitHub, issueRef));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -548,6 +581,7 @@ public sealed class TrackerBidirectionalSyncService
                     issueRef.LastKnownExternalState = "open";
                     issueRef.LastOutboundSyncedAt = utcNow;
                     changed++;
+                    changes.Add(Change(TrackerSyncChangeKind.ReopenedOnGitHub, issueRef));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -584,6 +618,7 @@ public sealed class TrackerBidirectionalSyncService
         IReadOnlyDictionary<string, ExternalIssueRef> refsByExternalId,
         IReadOnlyList<TrackedIssue> pulledIssues,
         DateTime utcNow,
+        List<TrackerSyncChange> changes,
         CancellationToken ct)
     {
         if (!IsSyncOutCreateEnabled(config))
@@ -625,6 +660,9 @@ public sealed class TrackerBidirectionalSyncService
             card.ExternalIssueRef = linked;
             _db.ExternalIssueRefs.Add(linked);
             creates++; // linked, not duplicated
+            // Recorded so Changes.Count > 0 stays equivalent to the counter sum: this arm
+            // increments `creates`, so it must contribute a change too.
+            changes.Add(Change(TrackerSyncChangeKind.Created, linked));
         }
 
         var linkedIds = board.Cards
@@ -669,6 +707,7 @@ public sealed class TrackerBidirectionalSyncService
                 card.ExternalIssueRef = issueRef;
                 _db.ExternalIssueRefs.Add(issueRef);
                 creates++;
+                changes.Add(Change(TrackerSyncChangeKind.Created, issueRef));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -205,6 +206,11 @@ public class TrackerBidirectionalSyncTests
             result.Boards.Single().StateChanges.ShouldBe(1);
             fake.SetStateCalls.Single().State.ShouldBe("closed");
             fake.SetStateCalls.Single().StateReason.ShouldBe("completed");
+            // CARD-0171: the close is itemised, named by card and tracker key.
+            var closed = result.Boards.Single().Changes
+                .Single(c => c.Kind == TrackerSyncChangeKind.ClosedOnGitHub);
+            closed.CardIdentifier.ShouldBe(graph.Card.Identifier);
+            closed.ExternalKey.ShouldBe("#1");
 
             // Conflict pin: import-origin, issue reopened externally while card was completed.
             graph.Card.ExternalIssueRef!.LastKnownExternalState = "closed";
@@ -216,7 +222,15 @@ public class TrackerBidirectionalSyncTests
             fake.Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])];
             fake.ClearWriteCounters();
 
-            await sut.RunAsync(graph.Board.Id, CancellationToken.None);
+            var reopenRun = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            // CARD-0171 gap pin: before this card an external reopen incremented NOTHING, so a run
+            // that only moved a card back out of Done looked like a no-op to every counter.
+            reopenRun.ExternalReopens.ShouldBe(1);
+            var reopenChange = reopenRun.Changes
+                .Single(c => c.Kind == TrackerSyncChangeKind.ReopenedFromGitHub);
+            reopenChange.CardIdentifier.ShouldBe(graph.Card.Identifier);
+            reopenChange.ExternalKey.ShouldBe("#1");
 
             await using var verify = CreateContext();
             var card = await verify.Cards
@@ -306,6 +320,73 @@ public class TrackerBidirectionalSyncTests
             result.Boards.Single().Creates.ShouldBe(1);
             fake.CreateIssueCalls.Count.ShouldBe(1);
             fake.CreateIssueCalls[0].Title.ShouldBe(fresh.Title);
+            // CARD-0171
+            result.Boards.Single().Changes
+                .Single(c => c.Kind == TrackerSyncChangeKind.Created)
+                .CardIdentifier.ShouldBe(fresh.Identifier);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Changes_itemise_comments_and_labels_and_a_steady_state_run_records_none()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            db.CardComments.Add(new CardComment
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                Body = "From Antiphon",
+                Author = "operator",
+                Origin = CardCommentOrigin.Antiphon,
+                CreatedAt = clock.GetUtcNow().UtcDateTime
+            });
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                // No status label yet -> the label arm writes exactly once for this issue.
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])],
+                CommentsSince =
+                [
+                    new TrackedIssueComment(
+                        "101", "acme/app#1", "alice", "Hello from GH",
+                        "https://github.test/acme/app/issues/1#issuecomment-101",
+                        clock.GetUtcNow().UtcDateTime.AddMinutes(-1),
+                        clock.GetUtcNow().UtcDateTime.AddMinutes(-1))
+                ]
+            };
+
+            var sut = NewSut(db, fake, clock);
+            var first = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            first.Changes.Count(c => c.Kind == TrackerSyncChangeKind.CommentIn).ShouldBe(1);
+            first.Changes.Count(c => c.Kind == TrackerSyncChangeKind.CommentOut).ShouldBe(1);
+            // One LabelsChanged per ISSUE that had any label write, while the counter counts writes.
+            first.Changes.Count(c => c.Kind == TrackerSyncChangeKind.LabelsChanged).ShouldBe(1);
+            first.LabelsChanged.ShouldBeGreaterThanOrEqualTo(1);
+            // Every change names the card and its tracker key. The identifier is read back off the
+            // card AFTER the run: the read-side upsert rewrites an import-origin card's identifier
+            // to the tracker's own key, so the pre-run value is not what the message would carry.
+            var identifier = (await db.Cards.AsNoTracking().SingleAsync(c => c.Id == graph.Card.Id)).Identifier;
+            first.Changes.ShouldAllBe(c => c.CardIdentifier == identifier);
+            first.Changes.ShouldAllBe(c => c.ExternalKey == "#1");
+            first.Changes.ShouldAllBe(c => c.Url != null && c.Url.StartsWith("https://github.test/"));
+
+            // Steady state: IssuesPulled is not a change, so the gate stays shut.
+            fake.CommentsSince = [];
+            var second = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            second.Changes.ShouldBeEmpty();
+            second.ExternalReopens.ShouldBe(0);
+            second.IssuesPulled.ShouldBeGreaterThanOrEqualTo(1);
         }
         finally
         {

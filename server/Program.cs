@@ -424,6 +424,8 @@ try
     builder.Services.AddScoped<TrackerTokenResolver>();
     // CARD-0166 S4+: bidirectional sync (never on the orchestrator tick — trigger endpoints in S7).
     builder.Services.AddScoped<TrackerBidirectionalSyncService>();
+    // CARD-0171: opt-in change summary to the board's tracker.notify_channel, after a sync commits.
+    builder.Services.AddScoped<TrackerSyncNotifier>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
