@@ -261,7 +261,10 @@ public sealed class BoardService
             card.ArchivedAt,
             card.ArchivedReason,
             card.ArchivedBy,
-            card.AutoDispatchHeldAt);
+            card.AutoDispatchHeldAt,
+            card.ExternalIssueRef is { } ext
+                ? new ExternalIssueDto(ext.TrackerKind, ext.ExternalKey, ext.Url)
+                : null);
     }
 
     internal static CardRevisionDto ToRevisionDto(CardRevision revision)
@@ -297,6 +300,8 @@ public sealed class BoardService
                 .ThenInclude(c => c.AssignedAgent)
             .Include(b => b.Cards)
                 .ThenInclude(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
+            .Include(b => b.Cards)
+                .ThenInclude(c => c.ExternalIssueRef)
             .FirstOrDefaultAsync(b => b.Id == id, ct)
             ?? throw new NotFoundException(nameof(Board), id);
     }

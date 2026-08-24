@@ -68,7 +68,13 @@ public sealed record CardDto(
     DateTime? ArchivedAt = null,
     string? ArchivedReason = null,
     string? ArchivedBy = null,
-    DateTime? AutoDispatchHeldAt = null);
+    DateTime? AutoDispatchHeldAt = null,
+    ExternalIssueDto? ExternalIssue = null);
+
+public sealed record ExternalIssueDto(
+    TrackerKind TrackerKind,
+    string Key,
+    string Url);
 
 public sealed record AgentSessionSummaryDto(
     Guid Id,

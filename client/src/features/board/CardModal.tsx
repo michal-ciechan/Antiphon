@@ -1,11 +1,11 @@
-import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
+import { ActionIcon, Anchor, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { useCardDiscussion, useSpawnCard } from '../../api/boards'
-import { displayIdentifier } from '../../shared/cardIdentifier'
+import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardDiscussionPanel } from './CardDiscussionPanel'
 import { CardEditModal } from './CardEditModal'
@@ -90,6 +90,21 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               <Badge color="gray" variant="outline" title={card.identifier}>
                 {displayIdentifier(card.identifier)}
               </Badge>
+              {card.externalIssue && (
+                card.externalIssue.url ? (
+                  <Anchor
+                    href={card.externalIssue.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    size="sm"
+                    c="dimmed"
+                  >
+                    {externalIssueTag(card.externalIssue)} ↗
+                  </Anchor>
+                ) : (
+                  <Text size="sm" c="dimmed">{externalIssueTag(card.externalIssue)}</Text>
+                )
+              )}
               <Title order={3} className="card-page__title">
                 {card.title}
               </Title>

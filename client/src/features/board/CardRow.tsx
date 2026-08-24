@@ -1,7 +1,7 @@
 import { Badge, Box, Group, Text, Tooltip } from '@mantine/core'
 import { TbTerminal2 } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { displayIdentifier } from '../../shared/cardIdentifier'
+import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { ageInDays, hasLiveSession } from './boardShapeModel'
 import { priorityBadgeColor } from './boardVisuals'
 import { MoveMenu } from './MoveMenu'
@@ -32,16 +32,23 @@ export function CardRow({ card, boardId, columns, now, onOpen, layout = 'row' }:
   const archived = !!card.archivedAt
 
   const identifier = (
-    <Tooltip label={card.identifier} withArrow openDelay={400}>
-      <Text
-        size="sm"
-        fw={700}
-        c="dimmed"
-        style={{ width: 42, flex: 'none', fontVariantNumeric: 'tabular-nums' }}
-      >
-        {displayIdentifier(card.identifier)}
-      </Text>
-    </Tooltip>
+    <Group gap={4} wrap="nowrap" style={{ flex: 'none' }}>
+      <Tooltip label={card.identifier} withArrow openDelay={400}>
+        <Text
+          size="sm"
+          fw={700}
+          c="dimmed"
+          style={{ width: 42, flex: 'none', fontVariantNumeric: 'tabular-nums' }}
+        >
+          {displayIdentifier(card.identifier)}
+        </Text>
+      </Tooltip>
+      {card.externalIssue && (
+        <Text size="xs" c="dimmed" style={{ flex: 'none' }}>
+          {externalIssueTag(card.externalIssue)}
+        </Text>
+      )}
+    </Group>
   )
 
   const title = (

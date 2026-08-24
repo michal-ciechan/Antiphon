@@ -159,6 +159,39 @@ describe('CardModal', () => {
     expect(screen.getByText('archived')).toBeInTheDocument()
   })
 
+  it('renders the external tracker link when externalIssue is present', async () => {
+    server.use(agentDefinitionsHandler(), discussionHandler())
+    renderWithProviders(
+      <CardModal
+        boardId="board-1"
+        card={{
+          ...card,
+          identifier: 'CARD-0176',
+          externalIssue: {
+            trackerKind: 'GitHubIssues',
+            key: '#3',
+            url: 'https://github.com/acme/app/issues/3',
+          },
+        }}
+        opened
+        onClose={() => undefined}
+      />,
+    )
+
+    const link = await screen.findByRole('link', { name: /GH #3/ })
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/app/issues/3')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('renders no tracker link when the card is not linked', async () => {
+    server.use(agentDefinitionsHandler(), discussionHandler())
+    renderWithProviders(
+      <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
+    )
+
+    expect(screen.queryByRole('link', { name: /GH #/ })).not.toBeInTheDocument()
+  })
+
   it('closes itself once the card is archived — it is about to leave the board payload', async () => {
     const onClose = vi.fn()
     server.use(

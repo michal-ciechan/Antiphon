@@ -78,6 +78,7 @@ public sealed class CardThreadService
             .Include(c => c.AssignedAgent)
             .Include(c => c.ActiveWorkflowRun)!.ThenInclude(r => r!.CurrentStage)
             .Include(c => c.CurrentWorktree)
+            .Include(c => c.ExternalIssueRef)
             .Include(c => c.Board).ThenInclude(b => b.Project)
             .FirstOrDefaultAsync(c => c.Id == cardId, ct)
             ?? throw new NotFoundException(nameof(Card), cardId);

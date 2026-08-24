@@ -20,6 +20,14 @@ export function displayIdentifier(identifier: string): string {
   return number === null ? identifier : `#${number}`
 }
 
+/** Dimmed tag for a linked tracker issue: GitHub `#3` → `GH #3`. */
+export function externalIssueTag(issue: { trackerKind: string; key: string }): string {
+  if (issue.trackerKind === 'GitHubIssues') {
+    return issue.key.startsWith('#') ? `GH ${issue.key}` : `GH #${issue.key}`
+  }
+  return issue.key
+}
+
 /**
  * The digits an identifier-shaped query is asking for, across every form a human types:
  * `#41`, `41`, `CARD-0041`, `card-41`. Returns null when the query is not an identifier

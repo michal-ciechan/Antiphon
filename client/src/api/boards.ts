@@ -85,6 +85,13 @@ export interface CardDto {
    * may pick up.
    */
   autoDispatchHeldAt?: string | null
+  externalIssue?: ExternalIssueDto | null
+}
+
+export interface ExternalIssueDto {
+  trackerKind: TrackerKind
+  key: string
+  url: string
 }
 
 /**
