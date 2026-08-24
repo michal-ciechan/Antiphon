@@ -273,6 +273,46 @@ public class WorkflowTrackerActivationTests
     }
 
     [Test]
+    public async Task Unknown_import_column_value_is_a_validation_error_on_save()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = NewGraph(tempRoot);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+
+            var loader = NewLoader(db, TimeProvider.System);
+            var ex = await Should.ThrowAsync<ValidationException>(() =>
+                loader.UpdateAsync(
+                    graph.Board.Id,
+                    new UpdateBoardWorkflowRequest("""
+                        ---
+                        name: Bad column
+                        tracker:
+                          kind: github
+                          repository: acme/app
+                          import_column: waiting
+                        ---
+                        Work on {{ issue.title }}.
+                        """),
+                    CancellationToken.None));
+
+            ex.Errors.Keys.ShouldContain("tracker.import_column");
+            await using var verify = CreateContext();
+            var board = await verify.Boards.SingleAsync(b => b.Id == graph.Board.Id);
+            board.TrackerKind.ShouldBe(TrackerKind.Internal);
+            (await verify.BoardWorkflowDefinitions.CountAsync(d => d.BoardId == graph.Board.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public void TryParseKind_recognises_github_aliases_and_rejects_unknown()
     {
         IssueTrackerConfigParser.TryParseKind("github", out var github).ShouldBeTrue();

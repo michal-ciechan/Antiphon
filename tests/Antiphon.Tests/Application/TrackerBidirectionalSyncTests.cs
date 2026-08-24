@@ -253,6 +253,83 @@ public class TrackerBidirectionalSyncTests
     }
 
     [Test]
+    public async Task Default_mode_reopen_lands_in_backlog_not_active()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock, origin: ExternalIssueOrigin.ExternalImport);
+            graph.Card.BoardColumnId = graph.DoneColumn.Id;
+            graph.Card.BoardColumn = graph.DoneColumn;
+            graph.Card.Status = CardStatus.Done;
+            graph.Card.CompletedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.StartedAt = clock.GetUtcNow().UtcDateTime.AddHours(-2);
+            graph.Card.ExternalIssueRef!.LastKnownExternalState = "closed";
+            await db.SaveChangesAsync();
+            var startedAt = graph.Card.StartedAt;
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var reopenRun = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            reopenRun.ExternalReopens.ShouldBe(1);
+
+            await using var verify = CreateContext();
+            var card = await verify.Cards.Include(c => c.BoardColumn).SingleAsync(c => c.Id == graph.Card.Id);
+            card.BoardColumnId.ShouldBe(graph.BacklogColumn.Id);
+            card.Status.ShouldBe(CardStatus.Backlog);
+            card.StartedAt.ShouldBe(startedAt);
+            card.BoardColumn.IsActive.ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Import_column_active_reopen_lands_in_the_first_active_column()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(
+                db, tempRoot, clock,
+                origin: ExternalIssueOrigin.ExternalImport,
+                importColumn: "active");
+            graph.Card.BoardColumnId = graph.DoneColumn.Id;
+            graph.Card.BoardColumn = graph.DoneColumn;
+            graph.Card.Status = CardStatus.Done;
+            graph.Card.CompletedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.ExternalIssueRef!.LastKnownExternalState = "closed";
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var reopenRun = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            reopenRun.ExternalReopens.ShouldBe(1);
+
+            await using var verify = CreateContext();
+            var card = await verify.Cards.Include(c => c.BoardColumn).SingleAsync(c => c.Id == graph.Card.Id);
+            card.BoardColumnId.ShouldBe(graph.ActiveColumn.Id);
+            card.BoardColumn.IsActive.ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Creates_are_gated_and_orphan_marker_relinks_without_duplicate()
     {
         await using var db = CreateContext();
@@ -415,9 +492,10 @@ public class TrackerBidirectionalSyncTests
         AppDbContext db,
         string tempRoot,
         FakeTimeProvider clock,
-        ExternalIssueOrigin origin = ExternalIssueOrigin.ExternalImport)
+        ExternalIssueOrigin origin = ExternalIssueOrigin.ExternalImport,
+        string? importColumn = null)
     {
-        var graph = await SeedBoardAsync(db, tempRoot, clock, syncOutCreate: false);
+        var graph = await SeedBoardAsync(db, tempRoot, clock, syncOutCreate: false, importColumn: importColumn);
         var card = NewCard(graph, clock.GetUtcNow().UtcDateTime);
         var issueRef = new ExternalIssueRef
         {
@@ -446,7 +524,8 @@ public class TrackerBidirectionalSyncTests
         string tempRoot,
         FakeTimeProvider clock,
         bool syncOutCreate,
-        DateTime? trackerActivatedAt = null)
+        DateTime? trackerActivatedAt = null,
+        string? importColumn = null)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         var project = new Project
@@ -488,7 +567,7 @@ public class TrackerBidirectionalSyncTests
             BoardId = board.Id,
             Version = 1,
             Name = "Tracked",
-            Content = WorkflowYaml(syncOutCreate),
+            Content = WorkflowYaml(syncOutCreate, importColumn),
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now,
@@ -537,7 +616,7 @@ public class TrackerBidirectionalSyncTests
             Board = board
         };
 
-    private static string WorkflowYaml(bool syncOutCreate) =>
+    private static string WorkflowYaml(bool syncOutCreate, string? importColumn = null) =>
         string.Join('\n',
             "---",
             "tracker:",
@@ -545,6 +624,7 @@ public class TrackerBidirectionalSyncTests
             "  repository: acme/app",
             "  active_states: [open]",
             $"  sync_out_create: {syncOutCreate.ToString().ToLowerInvariant()}",
+            importColumn is null ? "" : $"  import_column: {importColumn}",
             "---",
             "Work on {{ issue.identifier }}.");
 

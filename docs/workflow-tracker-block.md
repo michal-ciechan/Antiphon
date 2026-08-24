@@ -19,11 +19,24 @@ Parsed by `IssueTrackerConfigParser.TryParse` / `TryResolveBoardTrackerKind`.
 | `sync_out_create` | no | `true` enables Antiphon→GitHub issue creates for cards after the export watermark. Default off. |
 | `export_since` | no | ISO-8601 watermark for creates; defaults to `Board.TrackerActivatedAt`. |
 | `notify_channel` | no | CARD-0171. Catalog channel that receives a plain-text change summary when a sync is triggered with `notify=true`. A channel GUID (recommended - titles are editable) or an exact, case-insensitive `Title` that is unique in the catalog. Unset = notify is a no-op for this board. |
+| `import_column` | no | CARD-0170. Where newly imported (and GitHub-reopened) issues land. `backlog` (default): the board's `CardStatus.Backlog` column, matching manual creates; the tracker then moves a card only across the terminal boundary. `active`: first `IsActive && !IsTerminal` column, and the tracker owns the non-terminal column (the original E10 behaviour). Any other value is a validation error on workflow save. |
 | `project` / `project_key` | Linear/Jira | Project key. |
 | `jql` | Jira | Extra JQL filter. |
 
 Any other scalar key under `tracker:` is retained in `IssueTrackerConfig.Options` (that is how
-`sync_out_create` and `export_since` are read).
+`sync_out_create`, `export_since` and `import_column` are read).
+
+## Landing column
+
+New open issues land where manual creates land: the board's `CardStatus.Backlog` column
+(fallback: first non-active non-terminal, then first column). The tracker then moves a card only
+across the terminal boundary — closed → Done, cursor-proven GitHub reopen → landing column. It
+does **not** drag an unowned card back to In Progress on every tick.
+
+`tracker.import_column: active` opts a board back into the original E10 behaviour: first
+`IsActive && !IsTerminal` column, tracker state owns the non-terminal column, Linear blocked →
+waiting column. That is legitimate when the tracker really is the team's queue; on the default
+column shape it means every open issue is eligible for auto-dispatch.
 
 ## Example (GitHub)
 
