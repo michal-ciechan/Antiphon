@@ -17,8 +17,9 @@ public sealed record CreateAgentTaskRequest(
     /// <summary>
     /// WHICH AGENT PROGRAM runs it (CARD-0084). Null takes the role policy's <c>Kind</c>, which
     /// ships unset — so an omitted value is <see cref="AgentKind.ClaudeCode"/> and nothing about an
-    /// existing caller changes. Only <c>ClaudeCode</c> and <c>Grok</c> are accepted, and only a
-    /// Worker may be <c>Grok</c>.
+    /// existing caller changes. Only <c>ClaudeCode</c>, <c>Grok</c>, and <c>Codex</c> are accepted
+    /// (<see cref="Services.AgentTaskService.DelegatableKinds"/>), and only a Worker may be
+    /// <c>Grok</c> or <c>Codex</c>.
     /// </summary>
     AgentKind? AgentKind = null,
     /// <summary>
