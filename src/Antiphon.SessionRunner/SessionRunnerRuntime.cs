@@ -656,7 +656,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
 
-        /// <summary>CARD-0161: fold pane.get revision into LastSequence and capture AgentStatus.</summary>
+        /// <summary>
+        /// CARD-0161 / CARD-0164: fold pane.get revision AND the runner content-delta counter into
+        /// LastSequence; capture AgentStatus. Herdr's own revision is sticky on 0.8.2 — the
+        /// content counter is the real advance signal.
+        /// </summary>
         public async Task RefreshHerdrSurfaceAsync(CancellationToken ct)
         {
             if (_herdrChild is not HerdrPaneChild herdr)
@@ -664,10 +668,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             try
             {
-                var (revision, status) = await herdr.RefreshStatusAsync(ct);
+                var (revision, contentSequence, status) = await herdr.RefreshStatusAsync(ct);
                 lock (_gate)
                 {
-                    _lastSequence = Math.Max(_lastSequence, revision);
+                    _lastSequence = Math.Max(_lastSequence, Math.Max(revision, contentSequence));
                 }
 
                 if (status is not null)
@@ -1405,7 +1409,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     {
                         lock (_gate)
                         {
-                            _lastSequence = Math.Max(_lastSequence, screen.Revision);
+                            // CARD-0164: fold content-delta counter alongside herdr revision.
+                            _lastSequence = Math.Max(
+                                _lastSequence, Math.Max(screen.Revision, screen.ContentSequence));
                             return new RunnerSnapshotDto(
                                 _sessionId,
                                 screen.Text,

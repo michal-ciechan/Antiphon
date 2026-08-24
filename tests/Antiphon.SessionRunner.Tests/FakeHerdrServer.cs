@@ -469,9 +469,68 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var paneId = parameters.GetProperty("pane_id").GetString()!;
         var (_, tab, pane) = RequirePane(paneId);
         var source = parameters.GetProperty("source").GetString()!;
-        var text = pane.ScreenText ?? "";
+        // CARD-0164: scripted text queue advances one step per read when present; otherwise the
+        // sticky ScreenText. Identical consecutive reads must stay byte-identical (M1 pin).
+        string text;
+        if (pane.ScreenTextQueue is { Count: > 0 } queue)
+        {
+            text = queue[0];
+            if (queue.Count > 1)
+                queue.RemoveAt(0);
+            pane.ScreenText = text;
+        }
+        else
+        {
+            text = pane.ScreenText ?? "";
+        }
+
         return
             $"{{\"type\":\"pane_read\",\"read\":{{\"pane_id\":\"{paneId}\",\"workspace_id\":\"{pane.WorkspaceId}\",\"tab_id\":\"{tab.TabId}\",\"source\":\"{source}\",\"format\":\"text\",\"text\":{JsonSerializer.Serialize(text)},\"revision\":{pane.Revision},\"truncated\":false}}}}";
+    }
+
+    /// <summary>
+    /// CARD-0164: set the sticky visible text for a pane (revision untouched — measured 0.8.2 truth).
+    /// </summary>
+    public void SetPaneScreenText(string paneId, string text)
+    {
+        var (_, _, pane) = RequirePane(paneId);
+        pane.ScreenText = text;
+        pane.ScreenTextQueue = null;
+    }
+
+    /// <summary>
+    /// CARD-0164: script a per-read text sequence. Each <c>pane.read</c> consumes the next entry;
+    /// the final entry sticks (repeated identical reads do not fabricate a delta).
+    /// </summary>
+    public void SetPaneScreenTextSequence(string paneId, params string[] texts)
+    {
+        if (texts is null || texts.Length == 0)
+            throw new ArgumentException("At least one text entry is required.", nameof(texts));
+        var (_, _, pane) = RequirePane(paneId);
+        pane.ScreenTextQueue = texts.ToList();
+        pane.ScreenText = texts[0];
+    }
+
+    /// <summary>
+    /// CARD-0164: pin herdr revision explicitly. Default is sticky (never auto-bumps) — tests that
+    /// need revision to move must call this. Fold-only path for "revision moves, text does not".
+    /// </summary>
+    public void SetPaneRevision(string paneId, long revision)
+    {
+        var (_, _, pane) = RequirePane(paneId);
+        pane.Revision = revision;
+    }
+
+    /// <summary>
+    /// Resolve the pane that <c>agent.start</c> bound (workspace.create also leaves a root pane).
+    /// </summary>
+    public string RequireAgentPaneId()
+    {
+        var panes = Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .Where(p => p.Agent is not null)
+            .ToList();
+        panes.Count.ShouldBe(1, "expected exactly one agent-started pane");
+        return panes[0].PaneId;
     }
 
     private string PaneCloseJson(JsonElement parameters)
@@ -503,8 +562,9 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var (_, _, pane) = RequirePane(paneId);
         pane.Agent = kind;
         pane.Label = name;
+        // CARD-0164: sticky revision is the fake's default (measured 0.8.2). Screen text may change
+        // on agent.start; revision does NOT auto-bump — tests that need it call SetPaneRevision.
         pane.ScreenText = $"agent:{kind} env={FormatEnv(pane.Env)}";
-        pane.Revision++;
         return
             $"{{\"type\":\"agent_started\",\"agent\":{{\"pane_id\":\"{pane.PaneId}\",\"tab_id\":\"{pane.TabId}\",\"workspace_id\":\"{pane.WorkspaceId}\",\"terminal_id\":\"{pane.TerminalId}\",\"name\":{JsonSerializer.Serialize(name)},\"agent\":{JsonSerializer.Serialize(kind)},\"agent_status\":\"idle\",\"cwd\":{JsonSerializer.Serialize(pane.Cwd)},\"revision\":{pane.Revision},\"focused\":false,\"interactive_ready\":true,\"launch_pending\":false}},\"argv\":[]}}";
     }
@@ -651,6 +711,9 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public Dictionary<string, string>? Tokens { get; set; }
         public AgentSessionState? AgentSession { get; set; }
         public string? ScreenText { get; set; }
+        /// <summary>CARD-0164: optional per-read text script; last entry sticks.</summary>
+        public List<string>? ScreenTextQueue { get; set; }
+        /// <summary>Sticky by default (CARD-0164) — only moves via <c>SetPaneRevision</c>.</summary>
         public long Revision { get; set; }
     }
 

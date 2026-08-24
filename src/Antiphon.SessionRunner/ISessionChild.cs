@@ -22,4 +22,9 @@ internal sealed record ChildStarted(int? ChildPid, int? HostPid, DateTime ChildS
 
 internal sealed record ChildExit(int? ExitCode, string Reason);
 
-internal sealed record ChildScreen(string Text, long Revision);
+/// <param name="ContentSequence">
+/// CARD-0164: runner-owned monotonic counter bumped when visible text changes. Folded into
+/// <c>LastSequence</c> alongside <paramref name="Revision"/> — herdr's own revision is sticky on
+/// 0.8.2 and must not be the sole advance signal.
+/// </param>
+internal sealed record ChildScreen(string Text, long Revision, long ContentSequence = 0);

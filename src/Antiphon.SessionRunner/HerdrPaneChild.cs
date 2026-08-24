@@ -21,6 +21,14 @@ internal sealed class HerdrPaneChild : ISessionChild
     private HerdrPaneSidecar? _sidecar;
     private bool _exited;
 
+    // CARD-0164: herdr's pane.revision measurably stays flat across real turns (0/3), so the
+    // runner owns a content-delta counter — bump whenever stripped visible pane.read text differs
+    // from the last observation. Folded into LastSequence alongside revision (Math.Max); nothing
+    // may *require* revision to move. First observation establishes the baseline without a bump.
+    private readonly object _contentGate = new();
+    private long _contentSequence;
+    private string? _lastVisibleText;
+
     public HerdrPaneChild(
         HerdrClient client,
         SessionRunnerSettings settings,
@@ -141,16 +149,20 @@ internal sealed class HerdrPaneChild : ISessionChild
     }
 
     /// <summary>
-    /// CARD-0161: one <c>pane.get</c> for revision + agent_status. Used by the single-session GET
-    /// so LastSequence can advance without a full pane.read, and the queue can see "blocked".
+    /// CARD-0161 / CARD-0164: <c>pane.get</c> for revision + agent_status, plus one
+    /// <c>pane.read</c> (same params as <see cref="ReadScreenAsync"/>) so the content-delta
+    /// counter can advance when herdr's own revision is sticky. Used by the single-session GET.
     /// </summary>
-    public async Task<(long Revision, string? AgentStatus)> RefreshStatusAsync(CancellationToken ct)
+    public async Task<(long Revision, long ContentSequence, string? AgentStatus)> RefreshStatusAsync(
+        CancellationToken ct)
     {
         if (_paneId is null)
             throw new InvalidOperationException("HerdrPaneChild has not been launched.");
 
         var pane = await _client.PaneGetAsync(_paneId, ct);
-        return (pane.Revision, pane.AgentStatus);
+        var read = await _client.PaneReadAsync(_paneId, source: "visible", stripAnsi: true, lines: null, ct);
+        var contentSequence = ObserveVisibleText(read.Text);
+        return (pane.Revision, contentSequence, pane.AgentStatus);
     }
 
     public async Task WriteAsync(string input, CancellationToken ct)
@@ -211,8 +223,35 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (_paneId is null)
             return null;
 
+        // Identical pane.read params to RefreshStatusAsync — path interleaving must not fabricate
+        // a content delta (CARD-0164 decision 10).
         var read = await _client.PaneReadAsync(_paneId, source: "visible", stripAnsi: true, lines: null, ct);
-        return new ChildScreen(read.Text, read.Revision);
+        var contentSequence = ObserveVisibleText(read.Text);
+        return new ChildScreen(read.Text, read.Revision, contentSequence);
+    }
+
+    /// <summary>
+    /// CARD-0164: ordinal full-string compare against the last-seen visible text. First sighting
+    /// sets the baseline without bumping (no idle false-advance). Differ → increment.
+    /// </summary>
+    private long ObserveVisibleText(string text)
+    {
+        lock (_contentGate)
+        {
+            if (_lastVisibleText is null)
+            {
+                _lastVisibleText = text;
+                return _contentSequence;
+            }
+
+            if (!string.Equals(_lastVisibleText, text, StringComparison.Ordinal))
+            {
+                _lastVisibleText = text;
+                _contentSequence++;
+            }
+
+            return _contentSequence;
+        }
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
