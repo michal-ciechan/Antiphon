@@ -123,9 +123,9 @@ public sealed record HerdrWorkspaceCreateResult(
 // --- request param records (optional fields omitted when null via JsonIgnore) ---
 
 public sealed record HerdrWorkspaceCreateParams(
-    [property: JsonPropertyName("cwd")] string? Cwd = null,
-    [property: JsonPropertyName("label")] string? Label = null,
-    [property: JsonPropertyName("env")] IReadOnlyDictionary<string, string>? Env = null,
+    [property: JsonPropertyName("cwd"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cwd = null,
+    [property: JsonPropertyName("label"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
+    [property: JsonPropertyName("env"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Env = null,
     [property: JsonPropertyName("focus")] bool Focus = false);
 
 public sealed record HerdrWorkspaceReportMetadataParams(
@@ -136,10 +136,10 @@ public sealed record HerdrWorkspaceReportMetadataParams(
     [property: JsonPropertyName("seq"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? Seq = null);
 
 public sealed record HerdrTabCreateParams(
-    [property: JsonPropertyName("workspace_id")] string? WorkspaceId = null,
-    [property: JsonPropertyName("cwd")] string? Cwd = null,
-    [property: JsonPropertyName("env")] IReadOnlyDictionary<string, string>? Env = null,
-    [property: JsonPropertyName("label")] string? Label = null,
+    [property: JsonPropertyName("workspace_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceId = null,
+    [property: JsonPropertyName("cwd"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cwd = null,
+    [property: JsonPropertyName("env"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Env = null,
+    [property: JsonPropertyName("label"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
     [property: JsonPropertyName("focus")] bool Focus = false);
 
 public sealed record HerdrPaneSplitParams(
