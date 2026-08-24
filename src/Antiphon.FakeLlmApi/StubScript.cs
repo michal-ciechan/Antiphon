@@ -64,6 +64,8 @@ public static class StubEndpointKeys
     public const string GrokResponses = "grok.responses";
     /// <summary>Grok -p user turn (re-probed: /responses is session-title only).</summary>
     public const string GrokChatCompletions = "grok.chat.completions";
+    /// <summary>Interactive Grok (S4 probe): GET /billing?format=credits. 404 is non-fatal but is a surface gap.</summary>
+    public const string GrokBilling = "grok.billing";
     public const string CodexModels = "codex.models";
     public const string CodexResponses = "codex.responses";
 }

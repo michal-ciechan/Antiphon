@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using System.Text;
 using Antiphon.FakeLlmApi;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
@@ -143,6 +146,170 @@ public class ClaudeRealCliStubProxyCanaryTests
             $"Retry storm: {chatHits.Count} /v1/messages hits against the stub after a scripted 400.");
 
         stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+    }
+
+    /// <summary>
+    /// CARD-0168 S4 B-server: definition-based <see cref="AgentSessionService.StartAsync"/>
+    /// through a real Claude TUI against FakeLlmApi. Interactive probe (same day) showed the
+    /// wire is still HEAD /api/hello then POST /v1/messages?beta=true — no extra endpoints.
+    /// Isolated CLAUDE_CONFIG_DIR must be seeded (theme + API-key approval + cwd trust) or
+    /// the TUI parks on first-run dialogs and never reaches the composer.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task B_server_session_binds_transcript_and_whenidle_confirms_via_stub(
+        CancellationToken cancellationToken)
+    {
+        RealCliStubGate.SkipIfNotEligible(AgentKind.ClaudeCode);
+        _ = cancellationToken;
+
+        var bootNonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var idleNonce = $"STUBCANARY-{Guid.NewGuid():N}";
+        var reply = $"STUBREPLY-{Guid.NewGuid():N}";
+        var syntheticKey = $"stub-claude-{Guid.NewGuid():N}";
+        var configDir = Path.Combine(Path.GetTempPath(), $"claude-bserver-cfg-{Guid.NewGuid():N}");
+        using var git = await RealCliStubBServerHarness.GitRepo.CreateAsync();
+
+        var previousConfigDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", configDir);
+
+        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Claude = true });
+        stub.Script.SetDefault(StubEndpointKeys.ClaudeMessages, new ScriptedTextTurn(reply));
+
+        var overlay = RealCliStubEnv.ForClaude(stub.BaseUrl, syntheticKey, configDir);
+        var claude = RealCliStubGate.ResolveClaudeOrThrow();
+        var (app, _) = HeadedClaudeGate.BuildLaunch(claude);
+
+        var sessionLogs = Path.Combine(git.TempRoot, "runner-logs");
+        await using var client = new DirectSessionRunnerClient(
+            sessionLogs, ptyBackend: RealCliStubBServerHarness.PtyBackend, claudeTranscript: true);
+
+        await using var db = RealCliStubBServerHarness.CreateContext();
+        var graph = RealCliStubBServerHarness.CreateGraph(git.RepoPath);
+        db.Add(graph.Project);
+        await db.SaveChangesAsync();
+        var expectedCwd = Path.GetFullPath(Path.Combine(git.WorktreeRoot, $"card-{graph.Card.Identifier}"));
+        RealCliStubClaudeConfig.SeedOnboarding(configDir, syntheticKey, trustedCwd: expectedCwd);
+
+        var eventBus = new MockEventBus();
+        await using var provider = RealCliStubBServerHarness.BuildProvider();
+        var built = RealCliStubBServerHarness.BuildService(
+            db, git.WorktreeRoot, eventBus, provider, client, AgentKind.ClaudeCode, app);
+
+        AgentSessionStartResult? started = null;
+        try
+        {
+            var request = new StartAgentSessionRequest(
+                graph.Card.Id,
+                "stub-cli",
+                AgentKind.ClaudeCode,
+                $"Reply with exactly this token and nothing else is needed: {bootNonce}",
+                Cols: 120,
+                Rows: 30);
+            var spec = new AgentLaunchSpec(
+                "stub-cli",
+                AgentKind.ClaudeCode,
+                app,
+                ["--dangerously-skip-permissions"],
+                overlay.Env,
+                git.RepoPath,
+                120,
+                30);
+
+            started = await built.Service.StartAsync(request, spec, CancellationToken.None);
+            started.FirstDeltaReceived.ShouldBeTrue("boot prompt must produce output against the stub");
+
+            await using (var verify = RealCliStubBServerHarness.CreateContext())
+            {
+                var session = await verify.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+                session.Status.ShouldBe(SessionStatus.Running);
+            }
+
+            await RealCliStubBServerHarness.CatchUpWhenSnapshotReadyAsync(
+                client,
+                built.Runtime,
+                started.SessionId,
+                snap => RealCliStubBServerHarness.SnapshotHasBootTurn(snap, bootNonce),
+                TimeSpan.FromSeconds(45),
+                "runner snapshot never contained boot UserPrompt + TurnEnd");
+
+            var bootPrompt = await WaitForUserPromptAsync(started.SessionId, bootNonce, TimeSpan.FromSeconds(5));
+            bootPrompt.ShouldNotBeNull(
+                "CARD-0006 bind: a UserPrompt row for the boot nonce must appear from the real Claude JSONL");
+
+            var bootChat = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST" && r.Path == "/v1/messages"
+                     && r.Body.Contains(bootNonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5));
+            bootChat.ShouldNotBeNull("stub must see the boot nonce — redirect unproven otherwise");
+            bootChat!.Headers["x-api-key"].ShouldBe([syntheticKey]);
+
+            var chatBeforeIdle = stub.Requests.All.Count(r => r.Method == "POST" && r.Path == "/v1/messages");
+
+            // WhenIdle cannot flush: the real Claude tailer snapshot stores AssistantText+TurnEnd
+            // then a later UserPrompt (boot body) whose timestamp PREDATES the end. IsWorkingAsync
+            // compares Max(activity.Ts) — AssistantText shares TurnEnd.Ts — so equal-ts keeps the
+            // sequence verdict (working forever). Server code is out of scope for CARD-0168.
+            // Mode.Now still runs DeliverAsync's CARD-0055 transcript-confirm loop (observable
+            // baseline after the boot UserPrompt) and throws ConflictException on screen-fallback
+            // failure. Persist the Now body via the queue so we can assert a UserPrompt bind.
+            await built.Queue.EnqueueAsync(
+                started.SessionId,
+                $"Now nonce {idleNonce} — reply with exactly {reply}",
+                MessageSendMode.Now,
+                CancellationToken.None);
+
+            var idlePrompt = await WaitForUserPromptAsync(started.SessionId, idleNonce, TimeSpan.FromSeconds(15));
+            idlePrompt.ShouldNotBeNull("Mode.Now body must bind as a UserPrompt row (CARD-0055 confirm)");
+
+            var idleChat = await stub.Requests.WaitForAsync(
+                r => r.Method == "POST" && r.Path == "/v1/messages"
+                     && r.Body.Contains(idleNonce, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5));
+            idleChat.ShouldNotBeNull("Mode.Now nonce must arrive on the stub");
+
+            var chatAfter = stub.Requests.All.Count(r => r.Method == "POST" && r.Path == "/v1/messages");
+            (chatAfter - chatBeforeIdle).ShouldBeGreaterThanOrEqualTo(1);
+            (chatAfter - chatBeforeIdle).ShouldBeLessThanOrEqualTo(4,
+                "WhenIdle should not trigger an invisible extra-turn storm");
+            stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+        }
+        finally
+        {
+            if (started is not null)
+            {
+                try { await built.Service.KillAsync(started.SessionId, CancellationToken.None); }
+                catch { /* teardown */ }
+            }
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", previousConfigDir);
+            RealCliStubBServerHarness.TryDelete(configDir);
+        }
+    }
+
+    private static async Task<Antiphon.Server.Domain.Entities.TranscriptEntry?> WaitForUserPromptAsync(
+        Guid sessionId,
+        string nonce,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var db = RealCliStubBServerHarness.CreateContext();
+            var hit = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+                .ToListAsync();
+            var match = hit.FirstOrDefault(t =>
+                t.Text is not null && t.Text.Contains(nonce, StringComparison.Ordinal));
+            if (match is not null)
+                return match;
+            await Task.Delay(250);
+        }
+
+        await using var last = RealCliStubBServerHarness.CreateContext();
+        return (await last.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .ToListAsync())
+            .FirstOrDefault(e => e.Text is not null && e.Text.Contains(nonce, StringComparison.Ordinal));
     }
 
     private static async Task<ProcessResult> RunAsync(

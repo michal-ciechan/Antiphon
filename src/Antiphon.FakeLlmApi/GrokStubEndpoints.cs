@@ -37,6 +37,22 @@ internal static class GrokStubEndpoints
             await ctx.Response.WriteAsync("""{"ok":true}""", ctx.RequestAborted);
         });
 
+        // S4 interactive probe (2026-08-24): GET /billing?format=credits three times around the
+        // turn. 404 did not stall the TUI, but a recorded unmatched path is a surface gap.
+        app.MapGet("/billing", async (HttpContext ctx) =>
+        {
+            var next = script.Next(StubEndpointKeys.GrokBilling);
+            if (next is ScriptedError err)
+            {
+                await OpenAiResponsesSse.WriteErrorAsync(ctx.Response, err, ctx.RequestAborted);
+                return;
+            }
+
+            ctx.Response.StatusCode = StatusCodes.Status200OK;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsync("""{"credits":1,"format":"credits"}""", ctx.RequestAborted);
+        });
+
         app.MapGet("/api-key", async (HttpContext ctx) =>
         {
             var next = script.Next(StubEndpointKeys.GrokApiKey);

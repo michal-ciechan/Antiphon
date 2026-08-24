@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     private readonly SessionRunnerRuntime _runtime;
     private readonly bool _codexTranscript;
+    private readonly bool _claudeTranscript;
 
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
@@ -36,10 +38,26 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// <c>~/.codex/sessions</c> — the only way to observe a full <c>-Kind Codex</c> round trip
     /// (CARD-0108 S3).
     /// </param>
+    /// <param name="claudeTranscript">
+    /// CARD-0168 B-tier: opt in to the production Claude JSONL tailer. Same safety argument as
+    /// <paramref name="codexTranscript"/> — the caller MUST give the session a unique temp cwd
+    /// (C2) so discovery cannot bind a stranger's conversation under <c>~/.claude/projects</c>.
+    /// Isolated <c>CLAUDE_CONFIG_DIR</c> is the preferred pairing (ForClaude) and must also be
+    /// set on THIS process so the in-proc tailer looks at the same root the child writes to.
+    /// </param>
+    /// <param name="herdrClient">
+    /// CARD-0168 S5: when non-null, herdr-backend launches on this in-proc runtime talk to this
+    /// client (live herdr or FakeHerdrServer). Null keeps the pre-herdr pty-host-only runtime.
+    /// </param>
     public DirectSessionRunnerClient(
-        string sessionLogPath, string? ptyBackend = null, bool codexTranscript = false)
+        string sessionLogPath,
+        string? ptyBackend = null,
+        bool codexTranscript = false,
+        bool claudeTranscript = false,
+        HerdrClient? herdrClient = null)
     {
         _codexTranscript = codexTranscript;
+        _claudeTranscript = claudeTranscript;
         _runtime = new SessionRunnerRuntime(
             Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
             {
@@ -48,7 +66,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
                 PtyHostLingerHours = 0.02,
                 PtyBackend = ptyBackend,
             }),
-            NullLogger<SessionRunnerRuntime>.Instance);
+            NullLogger<SessionRunnerRuntime>.Instance,
+            herdrClient);
     }
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
@@ -61,15 +80,20 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         // instead, and CodexTranscriptTailerTests drives the real Codex tailer against a temp
         // sessions root of its own.
         //
-        // The ONE opt-in exception is `codexTranscript` (CARD-0108 S3): the headed Codex round-trip
-        // test needs the real rollout tailer, because the round trip it proves — submit confirmed by
-        // a UserPrompt row, turn completed by a task_complete row — is made ENTIRELY of transcript
-        // evidence. Searching the machine's real sessions root is safe there because that test gives
-        // its session a unique temp cwd, which makes the tailer's C2 rule exact rather than a
-        // recency guess.
+        // Opt-in exceptions (unique temp cwd so C2 is exact, never a recency guess):
+        //   * `codexTranscript` (CARD-0108 S3) — headed Codex round-trip.
+        //   * `claudeTranscript` (CARD-0168 B-tier) — real-CLI stub-proxy canaries that assert
+        //     CARD-0006 bind + CARD-0055 transcript-confirm against a real Claude JSONL.
         var kind = spec.Kind;
         var isGrok = kind == Antiphon.Server.Domain.Enums.AgentKind.Grok;
         var isCodex = _codexTranscript && kind == Antiphon.Server.Domain.Enums.AgentKind.Codex;
+        var isClaude = _claudeTranscript && kind == Antiphon.Server.Domain.Enums.AgentKind.ClaudeCode;
+        var transcriptEnabled = isGrok || isCodex || isClaude;
+        string? transcriptFormat = isGrok
+            ? TranscriptFormats.Grok
+            : isCodex
+                ? TranscriptFormats.Codex
+                : null; // Claude is the pre-Grok default — null keeps old runners' meaning.
         var request = new RunnerLaunchRequest(
             sessionId,
             spec.Exe,
@@ -79,8 +103,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             spec.Cols,
             spec.Rows,
             spec.MemoryLimitMb,
-            TranscriptEnabled: isGrok || isCodex,
-            TranscriptFormat: isGrok ? TranscriptFormats.Grok : isCodex ? TranscriptFormats.Codex : null);
+            TranscriptEnabled: transcriptEnabled,
+            TranscriptFormat: transcriptFormat,
+            Backend: SessionRunnerHttpClient.BackendWire(spec.Backend),
+            Herdr: spec.Herdr);
 
         return Map(await _runtime.StartAsync(request, ct));
     }
