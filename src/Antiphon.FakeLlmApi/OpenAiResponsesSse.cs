@@ -150,18 +150,20 @@ public static class OpenAiResponsesSse
         await response.WriteAsync(body, ct);
     }
 
-    /// <summary>Minimal models list used by Grok/Codex startup probes.</summary>
+    /// <summary>
+    /// Minimal models list used by Grok/Codex startup probes. Includes both OpenAI
+    /// <c>data</c> and Codex's expected <c>models</c> field (Codex 0.147 errors without it).
+    /// </summary>
     public static async Task WriteModelsListAsync(HttpResponse response, CancellationToken ct)
     {
         response.StatusCode = StatusCodes.Status200OK;
         response.ContentType = "application/json";
+        var model = new { id = "stub-model", @object = "model", created = 1_700_000_000, owned_by = "stub" };
         var body = JsonSerializer.Serialize(new
         {
             @object = "list",
-            data = new object[]
-            {
-                new { id = "stub-model", @object = "model", created = 1_700_000_000, owned_by = "stub" },
-            },
+            data = new object[] { model },
+            models = new object[] { model },
         });
         await response.WriteAsync(body, ct);
     }

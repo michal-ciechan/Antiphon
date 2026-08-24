@@ -24,6 +24,9 @@ internal static class RealCliStubProcess
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Close stdin immediately after start — Codex `exec` otherwise blocks on
+            // "Reading additional input from stdin..." when a redirected pipe stays open.
+            RedirectStandardInput = true,
             CreateNoWindow = true,
             WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
         };
@@ -43,6 +46,7 @@ internal static class RealCliStubProcess
 
         if (!proc.Start())
             throw new InvalidOperationException($"Failed to start {app}");
+        proc.StandardInput.Close();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
 
