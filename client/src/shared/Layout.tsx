@@ -16,6 +16,7 @@ import { useDisclosure, useViewportSize } from '@mantine/hooks'
 import { TbWifi, TbWifiOff, TbLoader } from 'react-icons/tb'
 import { Outlet, useNavigate, NavLink } from 'react-router'
 import { useConnectionStore } from '../stores/connectionStore'
+import { ReportBugButton } from '../features/diagnostics/ReportBugButton'
 
 function RebelLogo({ size = 20 }: { size?: number }) {
   return (
@@ -170,8 +171,9 @@ export function Layout() {
             <NavLinks />
           </Group>
 
-          {/* Right — connection status + user avatar + mobile burger */}
+          {/* Right — report-bug + connection status + user avatar + mobile burger */}
           <Group gap="sm" wrap="nowrap">
+            <ReportBugButton />
             <ConnectionIndicator />
             <Tooltip label="May the Force be with you, Admin" withArrow position="bottom-end">
               <Avatar radius="xl" size="sm" color="active" style={{ cursor: 'default' }}>

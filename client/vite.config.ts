@@ -1,6 +1,15 @@
 /// <reference types="vitest/config" />
+import { execSync } from 'node:child_process'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+function gitSha(): string {
+  try {
+    return execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim() || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
 
 // When running under Aspire, the server URL is injected via environment variable.
 // Falls back to the fixed standalone dev backend on localhost:17202.
@@ -11,6 +20,9 @@ const serverUrl =
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __ANTIPHON_SHA__: JSON.stringify(gitSha()),
+  },
   server: {
     port: parseInt(process.env['VITE_PORT'] ?? '17203'),
     // Allow access via the per-machine reverse proxies (antiphon.laptop.codeperf.net /

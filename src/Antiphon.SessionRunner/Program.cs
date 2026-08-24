@@ -137,7 +137,8 @@ app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings) =>
         : [SessionBackends.PtyHost];
     return Results.Ok(new RunnerCapabilitiesDto(
         decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
-        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends));
+        SessionRunnerRuntime.SupportedTranscriptFormats, runnerBuild, sessionBackends,
+        Version: runnerBuild.CommitSha ?? "unknown"));
 });
 
 app.MapGet("/sessions", (SessionRunnerRuntime runtime) => Results.Ok(runtime.List()));

@@ -1,4 +1,7 @@
+import { pushConsoleEntry } from '../shared/consoleRing'
+
 const BASE_URL = '/api'
+const CLIENT_SHA_HEADER = 'X-Antiphon-Client-Sha'
 
 export class ApiError extends Error {
   status: number
@@ -79,6 +82,30 @@ export function getApiFieldErrors(error: unknown): Record<string, string> {
   return fields
 }
 
+function withClientSha(headers?: HeadersInit): Headers {
+  const next = new Headers(headers)
+  next.set(CLIENT_SHA_HEADER, __ANTIPHON_SHA__)
+  return next
+}
+
+async function apiFetch(path: string, init: RequestInit): Promise<Response> {
+  const started = Date.now()
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers: withClientSha(init.headers),
+  })
+  if (!response.ok) {
+    pushConsoleEntry({
+      level: 'fetch',
+      message: `${init.method ?? 'GET'} ${path} ${response.status}`,
+      url: path,
+      status: response.status,
+      ms: Date.now() - started,
+    })
+  }
+  return response
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text()
@@ -101,12 +128,12 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`)
+  const response = await apiFetch(path, { method: 'GET' })
   return handleResponse<T>(response)
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -115,7 +142,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -124,7 +151,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -133,7 +160,7 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiDelete<T = void>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     method: 'DELETE',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),

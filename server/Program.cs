@@ -115,6 +115,7 @@ try
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+    builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
     builder.Services.AddSingleton<IValidateOptions<AgentSessionSettings>, AgentSessionSettingsValidator>();
     builder.Services.AddOptions<AgentSessionSettings>()
         .Bind(builder.Configuration.GetSection("AgentSessions"))
@@ -271,6 +272,7 @@ try
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
+    builder.Services.AddScoped<DiagnosticsBundleService>();
     // The read-only projection over the plan files in the repo (mobile-thread spec §D1). A
     // singleton because its 30s catalog cache is the whole point — a phone polling a thread must
     // not stat two dozen files per tap.
@@ -573,6 +575,9 @@ try
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
     app.MapHealthChecks("/health");
+    // CARD-0179 R3: git SHA identity. Kept off /health because SmokeTests pins that body as
+    // the literal "Healthy".
+    app.MapVersionEndpoints();
 
     // API endpoints
     app.MapSettingsEndpoints();
@@ -594,6 +599,7 @@ try
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapAttentionEndpoints();
+    app.MapDiagnosticsEndpoints();
     app.MapPlanEndpoints();
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();

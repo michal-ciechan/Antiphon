@@ -13,5 +13,38 @@
   -->
   <PropertyGroup>
     <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-*/**</DefaultItemExcludes>
+    <!--
+      CARD-0179 R3: stamp the git SHA into AssemblyInformationalVersion at build time.
+      SourceControlInformationFeatureSupported=true tells the SDK that a later target will
+      supply SourceRevisionId (so it does not also try to probe git itself). The Exec
+      below is best-effort: ContinueOnError + fallback "unknown" so a machine without git
+      still builds. IncludeSourceRevisionInInformationalVersion is the SDK default (true).
+    -->
+    <SourceControlInformationFeatureSupported>true</SourceControlInformationFeatureSupported>
+    <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
   </PropertyGroup>
+
+  <!--
+    Runs before the SDK's empty InitializeSourceControlInformation target. WorkingDirectory
+    is this file's directory (the repo root), not the project folder, so nested projects
+    still stamp the same commit.
+  -->
+  <Target Name="SetSourceRevisionIdFromGit"
+          BeforeTargets="InitializeSourceControlInformation"
+          Condition="'$(SourceRevisionId)' == '' or '$(SourceRevisionId)' == 'unknown'">
+    <Exec Command="git rev-parse HEAD"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true"
+          ContinueOnError="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitHeadSha" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitRevParseExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <_GitHeadShaTrimmed>$([System.String]::Copy('$(_GitHeadSha)').Trim())</_GitHeadShaTrimmed>
+      <SourceRevisionId Condition="'$(_GitRevParseExitCode)' == '0' and '$(_GitHeadShaTrimmed)' != ''">$(_GitHeadShaTrimmed)</SourceRevisionId>
+      <SourceRevisionId Condition="'$(SourceRevisionId)' == '' or '$(SourceRevisionId)' == 'unknown'">unknown</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
 </Project>

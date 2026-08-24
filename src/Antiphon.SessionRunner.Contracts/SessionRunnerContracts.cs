@@ -571,7 +571,10 @@ public sealed record RunnerCapabilitiesDto(
     RunnerBuildDto? Build = null,
     // CARD-0160: session backends this runner can host. Null = older runner = no evidence
     // (same contract as TranscriptFormats). A herdr launch is refused unless this contains "herdr".
-    IReadOnlyList<string>? SessionBackends = null);
+    IReadOnlyList<string>? SessionBackends = null,
+    // CARD-0179 R3: git SHA stamped at build time (InformationalVersion +SourceRevisionId).
+    // Null on an older runner that predates the field.
+    string? Version = null);
 
 /// <summary>Build identity of the running session-runner process (CARD-0112).</summary>
 public sealed record RunnerBuildDto(

@@ -172,6 +172,21 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         }
     }
 
+    public async Task<string?> GetHealthAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var response = await _httpClient.GetAsync("health", ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return $"{(int)response.StatusCode} {body}";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Uses one cached capability snapshot per TTL. The first launch waits for its bounded probe so
     /// an explicit refusal is caught before a process starts; later stale snapshots refresh in the

@@ -18,6 +18,13 @@ public interface ISessionRunnerClient
         Task.FromResult<RunnerCapabilitiesDto?>(null);
 
     /// <summary>
+    /// Body of the runner's <c>GET /health</c> (CARD-0179). Null means this client cannot say —
+    /// the diagnostics bundle records that in errors.txt rather than failing the zip.
+    /// </summary>
+    Task<string?> GetHealthAsync(CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+
+    /// <summary>
     /// Positive-evidence-only transcript compatibility verdict (CARD-0112). Null means either the
     /// runner cannot answer or it explicitly supports the requested format; neither absence nor a
     /// failed probe is evidence that a launch is unsafe.
