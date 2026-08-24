@@ -2,11 +2,12 @@ import { ActionIcon, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, 
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
-import { TbHistory, TbInfoCircle, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
+import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { useSpawnCard } from '../../api/boards'
+import { useCardDiscussion, useSpawnCard } from '../../api/boards'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
+import { CardDiscussionPanel } from './CardDiscussionPanel'
 import { CardEditModal } from './CardEditModal'
 import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
@@ -31,6 +32,8 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
   // the one-tap verbs — the terminal is the desktop's default, not the thumb's.
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const spawnCard = useSpawnCard(boardId)
+  const discussion = useCardDiscussion(card?.id, opened && !!card)
+  const discussionCount = discussion.data?.length ?? 0
   const hasActiveSession = useMemo(
     () => card?.sessions.some((session) =>
       session.status === 'Starting'
@@ -104,6 +107,11 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                   {activeSessionCount} active
                 </Badge>
               )}
+              {discussionCount > 0 && (
+                <Badge color="blue" variant="light" leftSection={<TbMessage size={12} />}>
+                  {discussionCount}
+                </Badge>
+              )}
               {card.labels.map((label) => (
                 <Badge key={label} color="active" variant="light">{label}</Badge>
               ))}
@@ -169,6 +177,9 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                 <Tabs.Tab value="history" leftSection={<TbHistory size={14} />}>
                   History ({card.revisionCount})
                 </Tabs.Tab>
+                <Tabs.Tab value="discussion" leftSection={<TbMessage size={14} />}>
+                  Discussion{discussionCount > 0 ? ` (${discussionCount})` : ''}
+                </Tabs.Tab>
                 <Tabs.Tab value="details" leftSection={<TbInfoCircle size={14} />} className="card-page__detailsTab">
                   Details
                 </Tabs.Tab>
@@ -203,6 +214,12 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
               <Tabs.Panel value="history" className="card-page__panel">
                 <ScrollArea h="100%" type="auto" offsetScrollbars>
                   <CardHistory cardId={card.id} columns={columns} />
+                </ScrollArea>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="discussion" className="card-page__panel">
+                <ScrollArea h="100%" type="auto" offsetScrollbars>
+                  <CardDiscussionPanel cardId={card.id} />
                 </ScrollArea>
               </Tabs.Panel>
 

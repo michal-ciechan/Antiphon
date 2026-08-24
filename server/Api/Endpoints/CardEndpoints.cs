@@ -152,6 +152,30 @@ public static class CardEndpoints
                 $"/api/cards/{cardId}", await service.PostCommentAsync(cardId, request, cancellationToken));
         });
 
+        // CARD-0166: stored discussion thread. Deliberately not /comments — that route injects
+        // into a live session (CardReviewService) and must keep that meaning.
+        cards.MapGet("/{id}/discussion", async (
+            string id,
+            CardService cardService,
+            CardCommentService service,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            return Results.Ok(await service.ListAsync(cardId, cancellationToken));
+        });
+
+        cards.MapPost("/{id}/discussion", async (
+            string id,
+            CreateCardDiscussionRequest request,
+            CardService cardService,
+            CardCommentService service,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await cardService.ResolveCardIdAsync(id, cancellationToken);
+            var created = await service.CreateAsync(cardId, request, cancellationToken);
+            return Results.Created($"/api/cards/{cardId}/discussion", created);
+        });
+
         cards.MapPost("/{id}/pr", async (
             string id,
             CardService cardService,

@@ -291,6 +291,24 @@ export interface CardCommentResult {
   formattedMessage: string
 }
 
+/** CARD-0166: stored discussion thread (not session-inject /comments). */
+export interface CardDiscussionCommentDto {
+  id: string
+  cardId: string
+  body: string
+  author: string | null
+  origin: 'Antiphon' | 'External'
+  externalCommentId: string | null
+  externalUrl: string | null
+  createdAt: string
+  syncedAt: string | null
+}
+
+export interface CreateCardDiscussionRequest {
+  body: string
+  author?: string | null
+}
+
 export interface CardPullRequestResult {
   cardId: string
   prNumber: number
@@ -332,6 +350,7 @@ export const boardKeys = {
   workflow: (id: string) => ['boards', id, 'workflow'] as const,
   cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
   cardRevisions: (cardId: string) => ['cards', cardId, 'revisions'] as const,
+  cardDiscussion: (cardId: string) => ['cards', cardId, 'discussion'] as const,
 }
 
 export function useBoards() {
@@ -520,6 +539,26 @@ export function useCardDiff(cardId: string | undefined, enabled = true) {
     enabled: !!cardId && enabled,
     retry: 1,
     staleTime: 30_000,
+  })
+}
+
+export function useCardDiscussion(cardId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: cardId ? boardKeys.cardDiscussion(cardId) : ['cards', 'missing', 'discussion'],
+    queryFn: () => apiGet<CardDiscussionCommentDto[]>(`/cards/${cardId}/discussion`),
+    enabled: !!cardId && enabled,
+    staleTime: 15_000,
+  })
+}
+
+export function useCreateCardDiscussion(cardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: CreateCardDiscussionRequest) =>
+      apiPost<CardDiscussionCommentDto>(`/cards/${cardId}/discussion`, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: boardKeys.cardDiscussion(cardId) })
+    },
   })
 }
 

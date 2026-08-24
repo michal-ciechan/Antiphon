@@ -75,11 +75,16 @@ describe('AgentPicker', () => {
   })
 })
 
+function discussionHandler(cardId = 'card-1') {
+  return http.get(`/api/cards/${cardId}/discussion`, () => HttpResponse.json([]))
+}
+
 describe('CardModal', () => {
   it('posts spawn with the selected agent definition', async () => {
     const spawnSpy = vi.fn()
     server.use(
       agentDefinitionsHandler(),
+      discussionHandler(),
       http.post('/api/cards/card-1/spawn', async ({ request }) => {
         spawnSpy(await request.json())
         return HttpResponse.json({ cardId: 'card-1', sessionId: 'session-1' }, { status: 202 })
@@ -101,7 +106,7 @@ describe('CardModal', () => {
   })
 
   it('opens the edit dialog from the header actions, prefilled', async () => {
-    server.use(agentDefinitionsHandler())
+    server.use(agentDefinitionsHandler(), discussionHandler())
     renderWithProviders(
       <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
     )
@@ -118,6 +123,7 @@ describe('CardModal', () => {
     const revisionsSpy = vi.fn()
     server.use(
       agentDefinitionsHandler(),
+      discussionHandler(),
       http.get('/api/cards/card-1/revisions', () => {
         revisionsSpy()
         return HttpResponse.json([])
@@ -137,7 +143,7 @@ describe('CardModal', () => {
   })
 
   it('refuses to spawn on an archived card, and says why', async () => {
-    server.use(agentDefinitionsHandler())
+    server.use(agentDefinitionsHandler(), discussionHandler())
     renderWithProviders(
       <CardModal
         boardId="board-1"
@@ -157,6 +163,7 @@ describe('CardModal', () => {
     const onClose = vi.fn()
     server.use(
       agentDefinitionsHandler(),
+      discussionHandler(),
       http.post('/api/cards/card-1/archive', () =>
         HttpResponse.json({ ...card, archivedAt: '2026-08-12T09:00:00Z' })),
     )
@@ -190,7 +197,7 @@ describe('CardModal', () => {
   })
 
   it('disables spawn while a session is stopping', async () => {
-    server.use(agentDefinitionsHandler())
+    server.use(agentDefinitionsHandler(), discussionHandler())
     renderWithProviders(
       <CardModal
         boardId="board-1"
