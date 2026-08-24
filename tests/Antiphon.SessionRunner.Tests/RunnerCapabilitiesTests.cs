@@ -29,13 +29,20 @@ public class RunnerCapabilitiesTests
         var oldRoundTrip = JsonSerializer.Deserialize<RunnerCapabilitiesDto>(JsonSerializer.Serialize(oldShape));
         oldRoundTrip!.TranscriptFormats.ShouldBeNull();
         oldRoundTrip.Build.ShouldBeNull();
+        oldRoundTrip.Version.ShouldBeNull();
 
         var build = new RunnerBuildDto("1.0.0+0123456789012345678901234567890123456789",
             "0123456789012345678901234567890123456789", DateTime.UnixEpoch, DateTime.UnixEpoch.AddMinutes(1));
-        var current = oldShape with { TranscriptFormats = SessionRunnerRuntime.SupportedTranscriptFormats, Build = build };
+        var current = oldShape with
+        {
+            TranscriptFormats = SessionRunnerRuntime.SupportedTranscriptFormats,
+            Build = build,
+            Version = build.CommitSha,
+        };
         var currentRoundTrip = JsonSerializer.Deserialize<RunnerCapabilitiesDto>(JsonSerializer.Serialize(current));
         currentRoundTrip!.TranscriptFormats.ShouldBe(SessionRunnerRuntime.SupportedTranscriptFormats);
         currentRoundTrip.Build.ShouldBe(build);
+        currentRoundTrip.Version.ShouldBe(build.CommitSha);
     }
 
     [Test]

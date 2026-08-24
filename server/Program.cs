@@ -573,6 +573,9 @@ try
 
     // Health check endpoint (replaces simple /api/health from Story 1.1)
     app.MapHealthChecks("/health");
+    // CARD-0179 R3: git SHA identity. Kept off /health because SmokeTests pins that body as
+    // the literal "Healthy".
+    app.MapVersionEndpoints();
 
     // API endpoints
     app.MapSettingsEndpoints();
