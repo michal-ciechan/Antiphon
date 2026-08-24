@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Options;
 using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Agents;
@@ -82,5 +83,27 @@ internal static class RealCliStubGate
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var auth = Path.Combine(home, ".grok", "auth.json");
         return File.Exists(auth);
+    }
+
+    /// <summary>
+    /// CARD-0168 S5 composed gate: herdr pipe must answer. Skip, never fail, when herdr is
+    /// absent — matching the design's "herdr absent ⇒ skip, not fail" rule.
+    /// </summary>
+    public static async Task SkipIfHerdrUnreachableAsync(CancellationToken cancellationToken)
+    {
+        var client = new Antiphon.SessionRunner.HerdrClient(
+            Options.Create(new Antiphon.SessionRunner.HerdrSettings { Enabled = true }));
+        try
+        {
+            await client.ConnectAndValidateAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not SkipTestException and not OperationCanceledException)
+        {
+            throw new SkipTestException(
+                "Live herdr is not reachable (pipe did not answer ping). "
+                + "CARD-0168 S5 B-herdr cell skips rather than fails. "
+                + $"Start herdr, or set SessionRunner:Herdr:Enabled=true on a running instance. "
+                + $"Detail: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 }
