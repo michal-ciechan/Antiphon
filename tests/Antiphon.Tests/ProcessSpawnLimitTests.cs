@@ -36,6 +36,7 @@ public class ProcessSpawnLimitTests
             typeof(DelegationBriefCeilingPtyTests),
             typeof(GrokDelegateEndToEndTests),
             typeof(SlashCommandMenuReconciliationTests),
+            typeof(ClaudeRealCliStubProxyCanaryTests),
         ];
 
         foreach (var type in types)

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.FakeLlmApi</RootNamespace>
+    <AssemblyName>Antiphon.FakeLlmApi</AssemblyName>
+    <Description>
+      In-process recording stub for Anthropic/xAI/OpenAI LLM HTTP APIs. Used by real-CLI canary
+      tests (CARD-0168) so Claude/Grok/Codex binaries talk to a local Kestrel listener instead of
+      the paid upstream. No Antiphon project references — contracts-free; tests compose it.
+    </Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
