@@ -1806,7 +1806,11 @@ public sealed class AgentTaskDispatcher
     /// Starting session with no process (the CARD-0056 leak shape). Everything else is the registry
     /// path this method replaced: <c>(task.AgentKind, DefinitionNameForKind(task.AgentKind), null)</c>.
     /// </summary>
-    internal readonly record struct DelegateProgram(AgentKind Kind, string DefinitionName, Guid? ProfileId);
+    internal readonly record struct DelegateProgram(
+        AgentKind Kind,
+        string DefinitionName,
+        Guid? ProfileId,
+        string? ModelArgumentName = null);
 
     internal async Task<DelegateProgram> ResolveDelegateProgramAsync(AgentTask task, CancellationToken ct)
     {
@@ -1825,6 +1829,9 @@ public sealed class AgentTaskDispatcher
                         p.ActiveRevisionId,
                         p.SourceDefinitionName,
                         p.DisplayName,
+                        ModelArgumentName = p.ActiveRevision != null
+                            ? p.ActiveRevision.ModelArgumentName
+                            : null,
                     })
                     .FirstOrDefaultAsync(ct);
                 if (profile is not null)
@@ -1852,7 +1859,8 @@ public sealed class AgentTaskDispatcher
                             + "inherits the agent's current kind.");
                     }
 
-                    return new DelegateProgram(profile.Kind, definitionName, profileId);
+                    return new DelegateProgram(
+                        profile.Kind, definitionName, profileId, profile.ModelArgumentName);
                 }
             }
         }
@@ -1883,7 +1891,7 @@ public sealed class AgentTaskDispatcher
         IReadOnlyList<string>? attachedBundleKeys = null,
         IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
     {
-        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, includeModelAlias: true);
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys);
         var kind = session.AgentKind;
 
         return _agentRegistry.Resolve(
@@ -1908,7 +1916,8 @@ public sealed class AgentTaskDispatcher
                 AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
                 ExtraEnv: BuildEnv(task, agent, session),
                 LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
-                ProjectDefaultEnv: projectDefaultEnv));
+                ProjectDefaultEnv: projectDefaultEnv,
+                TierModelAlias: TierAliasFor(kind, task.ModelLevel)));
     }
 
     /// <summary>
@@ -1936,11 +1945,14 @@ public sealed class AgentTaskDispatcher
             return BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults);
         }
 
-        // D4: an exact ModelId wins, so the tier alias is omitted and the resolver appends the
-        // catalogue-validated model. Two --model flags would otherwise reach the process, the
-        // first of them the Claude/Codex tier alias.
-        var includeModelAlias = string.IsNullOrWhiteSpace(agent.ModelId);
-        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, includeModelAlias);
+        // CARD-0182 D2 / CARD-0140 D4: an exact ModelId wins, so the tier alias is omitted and
+        // the resolver appends the catalogue-validated model. Two --model flags would otherwise
+        // reach the process. The alias is offered through TierModelAlias, never ExtraArgs, so a
+        // blank ModelArgumentName can drop it.
+        var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys);
+        var tierModelAlias = string.IsNullOrWhiteSpace(agent.ModelId)
+            ? TierAliasFor(session.AgentKind, task.ModelLevel)
+            : null;
 
         Guid? apiKeyProjectId = task.ProjectId;
         if (apiKeyProjectId is null && _apiKeyEnvResolver is not null)
@@ -1958,7 +1970,8 @@ public sealed class AgentTaskDispatcher
                 AgentEnv: AgentLaunchEnv.ParseForAgent(agent),
                 ExtraEnv: BuildEnv(task, agent, session),
                 ApiKeyProjectId: apiKeyProjectId,
-                LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson)),
+                LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
+                TierModelAlias: tierModelAlias),
             ct,
             _apiKeyEnvResolver);
 
@@ -1971,12 +1984,20 @@ public sealed class AgentTaskDispatcher
         return resolved.Spec;
     }
 
+    private static string? TierAliasFor(AgentKind kind, AgentModelLevel level) =>
+        kind == AgentKind.Codex
+            ? ModelLevelAliases.ForCodex(level)
+            : kind == AgentKind.Grok
+                ? ModelLevelAliases.ForGrok(level)
+                : kind == AgentKind.ClaudeCode
+                    ? ModelLevelAliases.ForClaude(level)
+                    : null;
+
     private List<string> ComposeDelegateArgs(
         AgentTask task,
         Agent agent,
         AgentSession session,
-        IReadOnlyList<string>? attachedBundleKeys,
-        bool includeModelAlias)
+        IReadOnlyList<string>? attachedBundleKeys)
     {
         // WHICH PROGRAM is being launched, read off the session row the dispatch just wrote — the
         // same value BuildEnv, the brief's spill gate and the pool claim all key on, so there is one
@@ -1992,23 +2013,9 @@ public sealed class AgentTaskDispatcher
         // and ANTIPHON_TASK_ID in the environment.
         if (!isGrok && !isCodex)
             extraArgs.AddRange(["--name", agent.Name]);
-        // Family alias where the provider offers one — Codex does not, so its rung is a pinned
-        // gpt-5.6-* slug (see ModelLevelAliases.ForCodex; a bare `-m luna` is a 400). Branched
-        // EXPLICITLY rather than through ModelLevelAliases.For: a wrong alias here is a wrong
-        // process, not a wrong word, so a new kind must be added deliberately at this site.
-        // CARD-0140 D4: a pinned standing agent with an exact ModelId omits this so the resolver
-        // supplies one --model, not two.
-        if (includeModelAlias)
-        {
-            extraArgs.AddRange([
-                "--model",
-                isCodex
-                    ? ModelLevelAliases.ForCodex(task.ModelLevel)
-                    : isGrok
-                        ? ModelLevelAliases.ForGrok(task.ModelLevel)
-                        : ModelLevelAliases.ForClaude(task.ModelLevel),
-            ]);
-        }
+        // CARD-0182 D2: the tier alias is no longer appended here. Callers pass it as
+        // TierModelAlias so only the resolver (profile path) or AgentRegistry.Resolve
+        // (profile-less) can ever emit --model.
         if (isCodex)
         {
             // Explicit, because Codex's own default for the FRONTIER slug is `low` and the operator's
@@ -2060,6 +2067,8 @@ public sealed class AgentTaskDispatcher
 
     private static string ShippedModelDisplay(AgentTask task, Agent agent, DelegateProgram program)
     {
+        if (program.ProfileId is not null && string.IsNullOrWhiteSpace(program.ModelArgumentName))
+            return "none (profile owns the model)";
         if (program.ProfileId is not null && !string.IsNullOrWhiteSpace(agent.ModelId))
             return $"{agent.ModelId.Trim()} from agent ModelId";
         return ModelLevelAliases.For(program.Kind, task.ModelLevel);

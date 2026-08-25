@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -129,6 +130,60 @@ public class AgentControlServiceIntegrationTests
             preambleIndex.ShouldNotBe(-1);
             var preambleArgument = adapter.StartedArgs[preambleIndex + 1];
             preambleArgument.ShouldContain("Keep responses concise.");
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task T6_blank_field_grok_profile_starts_without_a_model_argument()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(isolatedSchema.ConnectionString);
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "gkp-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(
+                tempRoot,
+                [adapter],
+                defaultKind: "Grok",
+                includeLaunchResolver: true,
+                connectionString: isolatedSchema.ConnectionString);
+
+            var profile = await SeedBlankModelArgumentProfileAsync(db, AgentKind.Grok);
+            var now = DateTime.UtcNow;
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(),
+                Name = "GKP Grok",
+                Slug = $"gkp-grok-{Guid.NewGuid():N}",
+                WorkingDirectory = workspace,
+                Details = string.Empty,
+                Status = AgentStatus.Idle,
+                Kind = AgentKind.Grok,
+                ModelLevel = AgentModelLevel.High,
+                ModelId = null,
+                TuiProfileId = profile.Id,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync();
+
+            await harness.Control.StartAsync(
+                agent.Id,
+                new StartAgentRequest(Fresh: true),
+                CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            adapter.Started.ShouldBeTrue();
+            adapter.StartedArgs.ShouldNotContain("--model");
+            adapter.StartedArgs.ShouldNotContain("grok-4.6");
         }
         finally
         {
@@ -1166,6 +1221,47 @@ public class AgentControlServiceIntegrationTests
             scope.ServiceProvider.GetRequiredService<AgentControlService>(),
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
             eventBus);
+    }
+
+    private static async Task<AgentTuiProfile> SeedBlankModelArgumentProfileAsync(
+        AppDbContext db, AgentKind kind)
+    {
+        var now = DateTime.UtcNow;
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = $"blank-arg-{kind}-{Guid.NewGuid():N}"[..40],
+            Kind = kind,
+            IsEnabled = true,
+            IsDefault = false,
+            Source = AgentTuiProfileSource.Operator,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+
+        var revision = new AgentTuiProfileRevision
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profile.Id,
+            RevisionNumber = 1,
+            Executable = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            ArgumentsJson = JsonSerializer.Serialize(new[] { "--always-approve" }),
+            DiscoveryArgumentsJson = "[]",
+            VersionArgumentsJson = "[]",
+            AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+            NonSecretEnvironmentJson = "{}",
+            SecretEnvironmentNamesJson = "[]",
+            ModelArgumentName = null,
+            Guidance = "CARD-0182 T6",
+            CreatedAt = now
+        };
+        db.AgentTuiProfileRevisions.Add(revision);
+        await db.SaveChangesAsync();
+        profile.ActiveRevisionId = revision.Id;
+        await db.SaveChangesAsync();
+        return profile;
     }
 
     private static async Task<Agent> SeedAgentAsync(

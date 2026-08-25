@@ -120,6 +120,50 @@ public sealed class PinnedProfileLaunchSpecTests
     }
 
     [Test]
+    public async Task T8b_blank_field_profile_passes_no_model_and_names_profile_ownership()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(schema.ConnectionString);
+        var exe = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var (profile, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.Grok,
+            sourceDefinitionName: "grok",
+            executable: exe,
+            arguments: ["--always-approve"],
+            modelArgumentName: null);
+        var (dispatcher, db) = DispatcherOf(provider);
+        var cwd = Directory.CreateTempSubdirectory("antiphon-t8b").FullName;
+        try
+        {
+            var (task, agent, session) = await SeedPinnedStandingAsync(
+                db, cwd, profile.Id, AgentKind.Grok, modelId: null, modelLevel: AgentModelLevel.High);
+            var program = new AgentTaskDispatcher.DelegateProgram(
+                AgentKind.Grok, "grok", profile.Id, ModelArgumentName: null);
+            var args = (await dispatcher.BuildLaunchSpecAsync(
+                task, agent, session, program, null, CancellationToken.None))
+                .Args.ToList();
+            args.ShouldNotContain("--model");
+            args.ShouldNotContain("grok-4.6");
+
+            var queued = await SeedQueuedPinnedAsync(
+                db, cwd, agent.Id, AgentKind.Grok, AgentModelLevel.High);
+            await dispatcher.TickAsync(CancellationToken.None);
+            var detail = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == queued.Id && e.Type == AgentTaskEventType.Dispatched)
+                .Select(e => e.Detail)
+                .SingleAsync();
+            detail.ShouldContain("none (profile owns the model)");
+            detail.ShouldNotContain("grok-4.6");
+        }
+        finally
+        {
+            try { Directory.Delete(cwd, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Test]
     public async Task T9_pool_and_profileless_standing_carve_outs_stay_on_the_registry()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -351,7 +395,8 @@ public sealed class PinnedProfileLaunchSpecTests
         string[] arguments,
         string[]? models = null,
         bool isDefault = false,
-        string? displayName = null)
+        string? displayName = null,
+        string? modelArgumentName = "--model")
     {
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -383,7 +428,7 @@ public sealed class PinnedProfileLaunchSpecTests
             AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
             NonSecretEnvironmentJson = "{}",
             SecretEnvironmentNamesJson = "[]",
-            ModelArgumentName = "--model",
+            ModelArgumentName = modelArgumentName,
             Guidance = "CARD-0140 S3",
             CreatedAt = now,
         };

@@ -112,6 +112,14 @@ public sealed class AgentRegistry
         var args = new List<string>(def.ArgsTemplate);
         if (options.ExtraArgs is not null)
             args.AddRange(options.ExtraArgs);
+        // CARD-0182 D2: the profile-less path (pool delegates, legacy fallback). Registry
+        // definitions are Antiphon's own and accept --model; a blank profile field never
+        // reaches here because there is no revision to read.
+        if (!string.IsNullOrWhiteSpace(options.TierModelAlias))
+        {
+            args.Add("--model");
+            args.Add(options.TierModelAlias.Trim());
+        }
 
         var env = new Dictionary<string, string>(def.Env, StringComparer.Ordinal);
         // Merge order (CARD-0106): definition env -> project default -> the AGENT's own launch env

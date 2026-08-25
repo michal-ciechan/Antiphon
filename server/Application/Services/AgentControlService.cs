@@ -196,6 +196,10 @@ public sealed class AgentControlService
         // as an agent and another way as a delegate.
         var isCodex = profileKind == AgentKind.Codex;
         var extraArgs = new List<string>();
+        // CARD-0182 D2: the alias is offered to the resolver/registry, never stuffed into ExtraArgs.
+        // A blank ModelArgumentName on the profile then drops it; ExtraArgs carrying --model would
+        // bypass that gate.
+        string? tierModelAlias = null;
         // Null until a composition actually happens, and the difference is load-bearing: it is what
         // the session row stores, and a null there means "no evidence" and can never raise a drift
         // badge. A launch that composes nothing must not claim it composed nothing.
@@ -210,14 +214,11 @@ public sealed class AgentControlService
             // the agent has no exact ModelId (migration compatibility).
             if (string.IsNullOrWhiteSpace(agent.ModelId))
             {
-                extraArgs.AddRange([
-                    "--model",
-                    isCodex
-                        ? ModelLevelAliases.ForCodex(agent.ModelLevel)
-                        : isGrok
-                            ? ModelLevelAliases.ForGrok(agent.ModelLevel)
-                            : ModelLevelAliases.ForClaude(agent.ModelLevel)
-                ]);
+                tierModelAlias = isCodex
+                    ? ModelLevelAliases.ForCodex(agent.ModelLevel)
+                    : isGrok
+                        ? ModelLevelAliases.ForGrok(agent.ModelLevel)
+                        : ModelLevelAliases.ForClaude(agent.ModelLevel);
             }
 
             // Codex's per-model default reasoning effort is `low` on the frontier slug and the
@@ -290,7 +291,8 @@ public sealed class AgentControlService
                 Rows: 30,
                 ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
                 ExtraEnv: extraEnv,
-                LaunchEnvOverride: launchEnvOverride),
+                LaunchEnvOverride: launchEnvOverride,
+                TierModelAlias: tierModelAlias),
             ct,
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
