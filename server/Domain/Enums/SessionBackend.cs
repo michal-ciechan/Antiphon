@@ -8,9 +8,10 @@ namespace Antiphon.Server.Domain.Enums;
 /// operator opts INTO — a visible, natively attachable pane in the operator's herdr instance —
 /// never something a migration does to a working agent.</para>
 ///
-/// <para>Hard constraints: only <c>ClaudeCode</c> is spiked (CARD-0187 owns the rest). The Kind
-/// refusal runs at create/PATCH, channel-bind, and launch-time. Never silently remapped to
-/// pty-host. CARD-0186 lifted the AlwaysOn and channel-bound refusals.</para>
+/// <para>Hard constraints: spiked for <c>ClaudeCode</c>, <c>Grok</c>, and <c>Codex</c>
+/// (CARD-0187). <c>OpenCode</c> / <c>Raw</c> are refused at create/PATCH, channel-bind, and
+/// launch-time. Never silently remapped to pty-host. CARD-0186 lifted the AlwaysOn and
+/// channel-bound refusals.</para>
 /// </summary>
 public enum SessionBackend
 {

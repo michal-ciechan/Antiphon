@@ -22,15 +22,18 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0186 S4: one integration smoke through <see cref="DirectSessionRunnerClient"/> +
-/// <see cref="FakeHerdrServer"/> covering AlwaysOn herdr + runner restart adopt (R1) + emptied
-/// pane (no false adopt) + supervisor resume into a new pane + channel inbound/reply. The PtyHost
-/// arm is the control: the same AlwaysOn + death + supervisor resume + channel story on the
-/// shared server path, so a regression there cannot hide behind a herdr-only test.
+/// CARD-0186 S4 + CARD-0187 S2: one integration smoke through
+/// <see cref="DirectSessionRunnerClient"/> + <see cref="FakeHerdrServer"/> covering AlwaysOn herdr
+/// + runner restart adopt (R1) + emptied pane (no false adopt) + supervisor resume into a new
+/// pane + channel inbound/reply. The PtyHost arm is the control: the same AlwaysOn + death +
+/// supervisor resume + channel story on the shared server path, so a regression there cannot hide
+/// behind a herdr-only test. CARD-0187 S2 adds a launch-definition arm parametrised over
+/// ClaudeCode / Grok / Codex.
 ///
 /// Ungrouped <see cref="NotInParallelAttribute"/>: the supervisor sweep is global on the shared
 /// test database (same lesson as <c>AgentSupervisionTests</c>).
@@ -40,6 +43,12 @@ namespace Antiphon.Tests.Application;
 public class HerdrAlwaysOnChannelParityTests
 {
     private static string Cmd => Path.Combine(Environment.SystemDirectory, "cmd.exe");
+
+    private static string FakeClaudeExe =>
+        Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
+
+    private static string FakeGrokExe =>
+        Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe");
 
     [Test]
     [Arguments(SessionBackend.Herdr)]
@@ -224,6 +233,113 @@ public class HerdrAlwaysOnChannelParityTests
         }
     }
 
+    /// <summary>
+    /// CARD-0187 S2: the herdr launch definition is parametrised over ClaudeCode / Grok / Codex.
+    /// Claude/Grok use the fake CLIs; Codex has none so it uses the same <c>cmd.exe</c> stub as
+    /// the CARD-0186 S4 test and asserts only launch / adopt / exit — not transcript content.
+    /// </summary>
+    [Test]
+    [Arguments(AgentKind.ClaudeCode)]
+    [Arguments(AgentKind.Grok)]
+    [Arguments(AgentKind.Codex)]
+    public async Task Herdr_launch_definition_starts_adopts_and_exits(AgentKind kind)
+    {
+        if (kind == AgentKind.ClaudeCode && !File.Exists(FakeClaudeExe))
+            throw new SkipTestException($"fakeclaude.exe not staged at {FakeClaudeExe} — build the solution first");
+        if (kind == AgentKind.Grok && !File.Exists(FakeGrokExe))
+            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-card0187-s2-{kind}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        FakeHerdrServer? fake = null;
+        try
+        {
+            fake = new FakeHerdrServer
+            {
+                EchoSendTextToScreen = true,
+                LaunchScriptAgentKind = kind switch
+                {
+                    AgentKind.Grok => HerdrAgentKinds.Grok,
+                    AgentKind.Codex => HerdrAgentKinds.Codex,
+                    _ => HerdrAgentKinds.Claude,
+                },
+            };
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+
+            await using var harness = BuildHarness(
+                tempRoot, SessionBackend.Herdr, fake, [], launchKind: kind);
+
+            var workspace = Path.Combine(tempRoot, "workspace");
+            Directory.CreateDirectory(workspace);
+            var agent = await harness.Agents.CreateAsync(
+                new CreateAgentRequest(
+                    $"CARD0187-{kind}",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr,
+                    AlwaysOn: true,
+                    RemoteControlEnabled: false),
+                CancellationToken.None);
+
+            if (kind != AgentKind.ClaudeCode)
+            {
+                agent = await harness.Agents.UpdateAsync(
+                    agent.Id,
+                    new UpdateAgentRequest(
+                        agent.Name,
+                        agent.WorkingDirectory,
+                        agent.Details,
+                        agent.DefaultWorkflowTemplateId,
+                        agent.AssignmentPolicy,
+                        BoardId: agent.BoardId,
+                        Kind: kind),
+                    CancellationToken.None);
+            }
+
+            agent.Kind.ShouldBe(kind);
+            agent.SessionBackend.ShouldBe(SessionBackend.Herdr);
+
+            await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false, Fresh: true), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+
+            var firstSessionId = await WaitForPersistentSessionAsync(harness, agent.Id);
+            await using (var verify = CreateContext())
+            {
+                var row = await verify.AgentSessions.SingleAsync(s => s.Id == firstSessionId);
+                row.Status.ShouldBe(SessionStatus.Running);
+                row.SessionBackend.ShouldBe(SessionBackend.Herdr);
+                row.AgentKind.ShouldBe(kind);
+            }
+
+            fake.ShouldNotBeNull();
+            harness.Runner.ShouldNotBeNull();
+            var firstPane = fake.RequireAgentPaneId();
+            firstPane.ShouldNotBeNull();
+
+            await harness.Runner.SimulateRunnerRestartAsync();
+            var adopted = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
+            adopted.Status.ShouldBe("Running", "R1: pane still lists the child");
+            adopted.Adopted.ShouldBeTrue();
+            adopted.Backend.ShouldBe(SessionBackends.Herdr);
+
+            fake.SetPaneProcessInfo(firstPane, shellPid: 1);
+            await harness.Runner.SimulateRunnerRestartAsync();
+            var afterEmpty = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
+            afterEmpty.Status.ShouldBe("Exited", "emptied pane must not stay Running");
+            afterEmpty.ExitReason.ShouldBe(AgentExitReason.HerdrRestartPresumedDead);
+            File.Exists(HerdrPaneSidecar.PathFor(
+                Path.Combine(tempRoot, "session-logs"), firstSessionId))
+                .ShouldBeFalse("R2 deletes the sidecar; nothing to false-adopt next restart");
+        }
+        finally
+        {
+            if (fake is not null)
+                await fake.DisposeAsync();
+            await CleanupAsync(tempRoot);
+        }
+    }
+
     private static int CountAgentPanes(FakeHerdrServer fake) =>
         fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes)).Count(p => p.Agent is not null);
 
@@ -253,7 +369,7 @@ public class HerdrAlwaysOnChannelParityTests
             await Task.Delay(40);
         }
 
-        throw new TimeoutException(
+        throw new System.TimeoutException(
             $"FakeHerdrServer never saw pane.send_text containing '{nonce}'.");
     }
 
@@ -321,7 +437,7 @@ public class HerdrAlwaysOnChannelParityTests
             await Task.Delay(100);
         }
 
-        throw new TimeoutException($"Agent {agentId} never reached a Running persistent session.");
+        throw new System.TimeoutException($"Agent {agentId} never reached a Running persistent session.");
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -330,7 +446,8 @@ public class HerdrAlwaysOnChannelParityTests
         string tempRoot,
         SessionBackend backend,
         FakeHerdrServer? fake,
-        IReadOnlyList<FakeAgentProtocolAdapter> ptyAdapters)
+        IReadOnlyList<FakeAgentProtocolAdapter> ptyAdapters,
+        AgentKind launchKind = AgentKind.ClaudeCode)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var services = new ServiceCollection();
@@ -385,7 +502,12 @@ public class HerdrAlwaysOnChannelParityTests
         services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
         var registrySettings = new AgentRegistrySettings
         {
-            DefaultDefinition = "claude",
+            DefaultDefinition = launchKind switch
+            {
+                AgentKind.Grok => "grok",
+                AgentKind.Codex => "codex",
+                _ => "claude",
+            },
             ClaudeReadyQuietPeriodMs = 150,
             ClaudeReadyMaxWaitMs = 5_000,
             ClaudeReadyMinTotalWaitMs = 0,
@@ -394,9 +516,26 @@ public class HerdrAlwaysOnChannelParityTests
             ClaudeInputProbeClearTimeoutMs = 1_000,
             ClaudeInputProbeRetypeIntervalMs = 2_000,
             ClaudeTrustPromptSettleMs = 200,
+            GrokReadyQuietPeriodMs = 150,
+            GrokReadyMaxWaitMs = 5_000,
+            GrokReadyMinTotalWaitMs = 0,
+            CodexReadyQuietPeriodMs = 150,
+            CodexReadyMaxWaitMs = 5_000,
             Definitions =
             {
-                ["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = Cmd },
+                ["claude"] = new AgentDefinition
+                {
+                    Kind = "ClaudeCode",
+                    Exe = launchKind == AgentKind.ClaudeCode && File.Exists(FakeClaudeExe)
+                        ? FakeClaudeExe
+                        : Cmd,
+                },
+                ["grok"] = new AgentDefinition
+                {
+                    Kind = "Grok",
+                    Exe = File.Exists(FakeGrokExe) ? FakeGrokExe : Cmd,
+                },
+                ["codex"] = new AgentDefinition { Kind = "Codex", Exe = Cmd },
             },
         };
         services.AddSingleton<IOptions<AgentRegistrySettings>>(Options.Create(registrySettings));

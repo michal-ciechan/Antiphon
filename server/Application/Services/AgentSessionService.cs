@@ -1086,6 +1086,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 : session.DefinitionName;
             herdr = await new HerdrLaunchContextResolver(_db)
                 .ResolveAsync(session, agent, paneTitle, ct);
+            // Session-row kind, the same value the tailer format is derived from — the two cannot
+            // disagree. Null AgentKind on the wire still means Claude (old-server compat).
+            if (HerdrAgentKindMap.TryMap(session.AgentKind, out var herdrKind))
+                herdr = herdr with { AgentKind = herdrKind };
         }
 
         var spec = launchSpec with
@@ -1116,41 +1120,33 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     /// <summary>
-    /// CARD-0160 / CARD-0186 launch-time backstop: Herdr AND Kind != ClaudeCode → ConflictException.
-    /// Defense in depth for drift between PATCH and launch. AlwaysOn / channel-bound arms lifted.
+    /// CARD-0160 / CARD-0187 launch-time backstop: Herdr AND Kind not in
+    /// {ClaudeCode, Grok, Codex} → ConflictException. Defense in depth for drift between PATCH
+    /// and launch. AlwaysOn / channel-bound arms lifted (CARD-0186).
     /// </summary>
     private void EnsureHerdrLaunchAllowed(AgentSession session, AgentLaunchSpec spec)
     {
         if (spec.Backend != SessionBackend.Herdr)
             return;
 
-        // Resolve owning agent synchronously from already-tracked state where possible; the check
-        // re-reads via the same DbContext for Kind (and still resolves AlwaysOn / channel so the
-        // pairing signature stays unchanged until CARD-0187).
         var agentId = session.Card?.AssignedAgentId;
-        // Card may not be loaded; fall through to a best-effort query below via Kind alone if needed.
         Agent? agent = null;
         if (agentId is Guid id)
             agent = _db.Agents.AsNoTracking().FirstOrDefault(a => a.Id == id);
 
-        // Also try PersistentSessionId reverse lookup for interactive sessions.
         agent ??= _db.Agents.AsNoTracking()
             .FirstOrDefault(a => a.PersistentSessionId == session.Id.ToString("D"));
 
-        var alwaysOn = agent?.AlwaysOn ?? false;
         var kind = agent?.Kind ?? session.AgentKind;
-        var channelBound = agent is not null
-            && _db.ChatChannels.AsNoTracking().Any(c => c.AgentId == agent.Id);
 
         try
         {
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn, kind, channelBound);
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, kind);
         }
         catch (ConflictException)
         {
             session.Status = SessionStatus.Failed;
-            session.FailureReason = "Herdr launch refused: non-Claude agent.";
+            session.FailureReason = $"Herdr launch refused: {kind} is not supported on herdr.";
             session.EndedAt = UtcNow();
             throw;
         }

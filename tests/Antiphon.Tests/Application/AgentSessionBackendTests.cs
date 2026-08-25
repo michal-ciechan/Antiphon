@@ -17,8 +17,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0160 / CARD-0186 — SessionBackend as a separate, defaulted dimension + the Kind refusal
-/// gate. AlwaysOn and channel-bound pairings are allowed.
+/// CARD-0160 / CARD-0186 / CARD-0187 — SessionBackend as a separate, defaulted dimension + the
+/// Kind gate (ClaudeCode/Grok/Codex allowed; OpenCode/Raw refused by name). AlwaysOn and
+/// channel-bound pairings are allowed.
 /// </summary>
 public class AgentSessionBackendTests
 {
@@ -44,46 +45,49 @@ public class AgentSessionBackendTests
     public void herdr_on_always_on_is_allowed_both_directions()
     {
         Should.NotThrow(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: true, AgentKind.ClaudeCode, channelBound: false));
-
-        // Mirrored: AlwaysOn requested while already Herdr — same pairing check.
-        Should.NotThrow(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: true, AgentKind.ClaudeCode, channelBound: false));
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, AgentKind.ClaudeCode));
     }
 
     [Test]
     public void herdr_while_channel_bound_is_allowed()
     {
         Should.NotThrow(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: false, AgentKind.ClaudeCode, channelBound: true));
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, AgentKind.ClaudeCode));
     }
 
     [Test]
-    public void herdr_on_non_claude_is_refused()
+    [Arguments(AgentKind.Grok)]
+    [Arguments(AgentKind.Codex)]
+    public void herdr_on_grok_and_codex_is_allowed(AgentKind kind)
     {
-        Should.Throw<ConflictException>(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: false, AgentKind.Grok, channelBound: false))
-            .Message.ShouldContain("Claude Code");
+        Should.NotThrow(() =>
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, kind));
+    }
+
+    [Test]
+    [Arguments(AgentKind.OpenCode)]
+    [Arguments(AgentKind.Raw)]
+    public void herdr_on_opencode_and_raw_is_refused_naming_the_kind(AgentKind kind)
+    {
+        var ex = Should.Throw<ConflictException>(() =>
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, kind));
+        ex.Code.ShouldBe("herdr_refused");
+        ex.Message.ShouldContain(kind.ToString());
+        ex.Message.ShouldContain("ClaudeCode, Grok, Codex");
     }
 
     [Test]
     public void pty_host_accepts_always_on_channel_bound_and_any_kind()
     {
         Should.NotThrow(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.PtyHost, alwaysOn: true, AgentKind.Grok, channelBound: true));
+            AgentService.ValidateSessionBackendPairing(SessionBackend.PtyHost, AgentKind.Grok));
     }
 
     [Test]
     public void herdr_on_claude_non_always_on_unbound_is_allowed()
     {
         Should.NotThrow(() =>
-            AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: false, AgentKind.ClaudeCode, channelBound: false));
+            AgentService.ValidateSessionBackendPairing(SessionBackend.Herdr, AgentKind.ClaudeCode));
     }
 
     [Test]
@@ -275,6 +279,78 @@ public class AgentSessionBackendTests
 
     [Test]
     [Category("Integration")]
+    public async Task patch_kind_to_raw_on_a_herdr_agent_is_refused()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db);
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                Unique("Herdr Then Raw"),
+                "D:/src/herdr-then-raw",
+                SessionBackend: SessionBackend.Herdr),
+            CancellationToken.None);
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            service.UpdateAsync(
+                created.Id,
+                new UpdateAgentRequest(
+                    created.Name,
+                    created.WorkingDirectory,
+                    created.Details,
+                    created.DefaultWorkflowTemplateId,
+                    created.AssignmentPolicy,
+                    BoardId: created.BoardId,
+                    Kind: AgentKind.Raw),
+                CancellationToken.None));
+        ex.Code.ShouldBe("herdr_refused");
+        ex.Message.ShouldContain("Raw");
+        ex.Message.ShouldContain("ClaudeCode, Grok, Codex");
+
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == created.Id)).Kind.ShouldBe(AgentKind.ClaudeCode);
+    }
+
+    [Test]
+    [Category("Integration")]
+    public async Task channel_bind_onto_a_grok_herdr_agent_is_allowed()
+    {
+        await using var db = CreateContext();
+        var agents = CreateService(db);
+        var grok = await SeedProfileAsync(db, AgentKind.Grok, "Grok");
+        var created = await agents.CreateAsync(
+            new CreateAgentRequest(
+                Unique("Grok Herdr Channel"),
+                "D:/src/grok-herdr-channel",
+                TuiProfileId: grok.Id,
+                SessionBackend: SessionBackend.Herdr),
+            CancellationToken.None);
+        created.Kind.ShouldBe(AgentKind.Grok);
+        created.SessionBackend.ShouldBe(SessionBackend.Herdr);
+
+        var channel = new ChatChannel
+        {
+            Id = Guid.NewGuid(),
+            Provider = "telegram",
+            ExternalId = $"chat-{Guid.NewGuid():N}",
+            Kind = ChatChannelKind.Group,
+            Title = "probe",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.ChatChannels.Add(channel);
+        await db.SaveChangesAsync();
+
+        var channels = new ChatChannelService(db, TimeProvider.System, new FakeAntiphonMessagingClient());
+        var bound = await channels.UpdateAsync(
+            channel.Id,
+            new UpdateChatChannelRequest(AgentId: created.Id),
+            CancellationToken.None);
+
+        bound.AgentId.ShouldBe(created.Id);
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task herdr_while_a_channel_names_the_agent_is_allowed()
     {
         await using var db = CreateContext();
@@ -424,6 +500,46 @@ public class AgentSessionBackendTests
             await AgentControlServiceIntegrationTests.CleanupProjectsByTempRootAsync(tempRoot);
             AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
         }
+    }
+
+    private static async Task<AgentTuiProfile> SeedProfileAsync(
+        AppDbContext db, AgentKind kind, string namePrefix)
+    {
+        var now = DateTime.UtcNow;
+        var profile = new AgentTuiProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = $"{namePrefix} {Guid.NewGuid():N}",
+            Kind = kind,
+            IsEnabled = true,
+            IsDefault = false,
+            Source = AgentTuiProfileSource.Operator,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentTuiProfiles.Add(profile);
+        await db.SaveChangesAsync();
+
+        var revision = new AgentTuiProfileRevision
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = profile.Id,
+            RevisionNumber = 1,
+            Executable = "synthetic-wrapper",
+            ArgumentsJson = "[]",
+            DiscoveryArgumentsJson = "[]",
+            VersionArgumentsJson = "[]",
+            AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
+            NonSecretEnvironmentJson = "{}",
+            SecretEnvironmentNamesJson = "[]",
+            Guidance = string.Empty,
+            CreatedAt = now,
+        };
+        db.AgentTuiProfileRevisions.Add(revision);
+        await db.SaveChangesAsync();
+        profile.ActiveRevisionId = revision.Id;
+        await db.SaveChangesAsync();
+        return profile;
     }
 
     private static AgentService CreateService(AppDbContext db) =>

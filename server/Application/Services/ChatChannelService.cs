@@ -55,10 +55,9 @@ public sealed class ChatChannelService
         {
             var agent = await _db.Agents.FirstOrDefaultAsync(a => a.Id == agentId, ct)
                 ?? throw new NotFoundException(nameof(Agent), agentId);
-            // Kind refusal still runs here so a herdr×non-Claude pair cannot be created by bind.
-            // AlwaysOn / channel-bound arms were lifted (CARD-0186).
-            AgentService.ValidateSessionBackendPairing(
-                agent.SessionBackend, agent.AlwaysOn, agent.Kind, channelBound: true);
+            // Kind refusal still runs here so a herdr×OpenCode/Raw pair cannot be created by bind.
+            // AlwaysOn / channel-bound arms were lifted (CARD-0186); Grok/Codex by CARD-0187.
+            AgentService.ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
 
             channel.AgentId = agent.Id;
             channel.Agent = agent;

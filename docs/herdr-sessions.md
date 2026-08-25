@@ -29,16 +29,25 @@ That is the whole benefit, and it is a real one. Everything else on this page is
 Choose herdr when you want to **watch and take over** a session by hand: a pane you can attach to
 in your own terminal, next to your other work.
 
+You **can** choose it for:
+
+| Kind | Why |
+|---|---|
+| **`ClaudeCode`** | spiked (CARD-0160); launch script (CARD-0187) |
+| **`Grok`** | spiked (CARD-0187 K1) — same launch script, Grok transcript tailer |
+| **`Codex`** | spiked (CARD-0187 K5) — through `codex.cmd`, never `agent.start` |
+
 You **cannot** choose it for:
 
 | Refused | Why |
 |---|---|
-| **Any kind except `ClaudeCode`** | Grok/Codex/OpenCode/Raw are un-spiked on this lane |
+| **`OpenCode` / `Raw`** | no structured transcript; screen-only lanes are not hosted |
 
-That is a **refusal, never a silent remap** — `409 herdr_refused`, with the reason. The Kind gate
-runs at create, PATCH (over the request-resolved final state, so a Kind change in the same PATCH
-is caught), channel bind, and launch time (`AgentSessionService`), which also marks the session
-`Failed` with `"Herdr launch refused: non-Claude agent."`
+That is a **refusal, never a silent remap** — `409 herdr_refused`, with the reason naming the
+kind and the supported list. The Kind gate runs at create, PATCH (over the request-resolved
+final state, so a Kind change in the same PATCH is caught), channel bind, and launch time
+(`AgentSessionService`), which also marks the session `Failed` with
+`"Herdr launch refused: {kind} is not supported on herdr."`
 
 Always-on and channel-bound agents are allowed on the lane (CARD-0186): a herdr restart does not
 survive, and an always-on agent is resumed into a new pane by supervision.
@@ -112,9 +121,14 @@ Antiphon tab that has fewer than 4 live Antiphon panes; if none has a free slot,
 **Operator tabs — tabs with no Antiphon panes — are never split into.** Gaps left by stopped panes
 are not reflowed; the next launch refills them.
 
-Launch sequence: ensure workspace → allocate pane → `pane.rename` → `pane.report_metadata` →
-`agent.start` (kind `claude`, name sanitised to `[a-z][a-z0-9_-]{0,31}`) → `pane.process_info` for
-the child pid → write the sidecar.
+Launch sequence: ensure workspace → allocate pane (`tab.create` / `pane.split`, env on both) →
+`pane.rename` → `pane.report_metadata` → check the pane shell is PowerShell → write
+`<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`) → type
+`& '<path>'` via `pane.send_text` + `pane.send_keys ["enter"]` → poll `pane.get` until
+`Agent` matches the expected kind (`claude` / `grok` / `codex`) → `pane.process_info` for the
+child pid → write the sidecar → delete the script. A wrong detected kind, a non-PowerShell
+shell, or a detection timeout fails the launch (existing catch kills then disposes); the script
+is left in place for diagnosis. **Never `agent.start`.**
 
 **Never call `tab.close`.** Herdr auto-removes empty tabs, and closing one ourselves was measured
 to be the wrong move (probe P3). `KillAsync` also refuses to close a pane that has *unexpected*
@@ -133,7 +147,12 @@ Herdr is **a different transport**, so it gets its own ceilings — not a `PtyBa
 
 86 400 bytes is the largest body measured **exact, byte-for-byte, with zero ESC bytes in the
 transcript record**, through one `pane.send_text` — single-write *and* paced (herdr 0.8.2 +
-Claude 2.1.241, 2026-08-23). It is the edge of the evidence, not a measured cliff.
+Claude 2.1.241, 2026-08-23). It is the edge of the evidence, not a measured cliff. The Grok
+join-safe rule (`PtyDeliveryCeilings.ForAgentKind`) already applies to whatever ceilings the
+dispatcher resolves — including herdr's — so Grok (and, by the CARD-0099 default-deny arm,
+Codex) briefs spill on herdr as on pty with no extra mapping. That 86 400 B envelope is
+**unmeasured for a Grok or Codex composer** through `pane.send_text`; until CARD-0187 S3
+probe D1 runs, the herdr reply ceiling and tripwire stay as they are for all three kinds.
 
 Two guards sit in front of that:
 
@@ -209,8 +228,11 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 
 | Symptom | What it is | What to do |
 |---|---|---|
-| `409 herdr_refused` on create/PATCH/bind | non-Claude agent on herdr | pick `PtyHost`, or a Claude Code kind |
+| `409 herdr_refused` on create/PATCH/bind | `OpenCode` / `Raw` (or any unmapped kind) on herdr | pick `PtyHost`, or ClaudeCode / Grok / Codex |
 | Session `Failed` with "Herdr launch refused…" | same Kind gate, hit at launch | the agent kind changed under the session; fix the pairing |
+| Launch fails: detected `{actual}` where `{expected}` was expected | profile exe and agent Kind disagree | fix the pairing; the pane is torn down, script left for diagnosis |
+| Launch fails: pane shell is not PowerShell | herdr default_shell is not `powershell`/`pwsh` | set herdr `default_shell`, or use PtyHost |
+| Launch fails: detection timeout | `pane.get.agent` never became the expected kind | check the pane / script left on disk; raise `LaunchDetectTimeoutMs` only after measuring |
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
 | Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; relaunch/resume from Antiphon |
 | Deliveries silently deferring | `agent_status == "blocked"` — an approval UI has the pane | answer it in the pane, or attach and clear it |
@@ -221,8 +243,7 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 ## 9. Deferred / out of scope
 
 `pane.report_agent` and the UI badges that would consume it are deferred (S4b). Pane/workspace/tab
-ids stay out of the database. Herdr for non-Claude kinds is not a configuration you can reach —
-it is a refusal (CARD-0187).
+ids stay out of the database.
 
 ## See also
 

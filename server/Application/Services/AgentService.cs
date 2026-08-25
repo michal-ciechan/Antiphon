@@ -285,11 +285,11 @@ public sealed class AgentService
         ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
 
-        // CARD-0160 / CARD-0186: refuse Herdr×non-Claude before the row exists. Channel-bind
+        // CARD-0160 / CARD-0187: refuse Herdr×unsupported-Kind before the row exists. Channel-bind
         // cannot apply yet (no AgentId); Kind is ClaudeCode until a TuiProfile is applied below —
         // ApplyTuiSelectionAsync may change it, so the Kind gate re-runs after that when needed.
         var createBackend = request.SessionBackend ?? SessionBackend.PtyHost;
-        ValidateSessionBackendPairing(createBackend, request.AlwaysOn, AgentKind.ClaudeCode, channelBound: false);
+        ValidateSessionBackendPairing(createBackend, AgentKind.ClaudeCode);
 
         var workingDirectory = request.WorkingDirectory.Trim();
 
@@ -342,8 +342,8 @@ public sealed class AgentService
                 request.ModelId,
                 profileRequired: false,
                 ct);
-            // Re-check after the profile may have changed Kind (Herdr is ClaudeCode-only).
-            ValidateSessionBackendPairing(agent.SessionBackend, agent.AlwaysOn, agent.Kind, channelBound: false);
+            // Re-check after the profile may have changed Kind (Herdr is Claude/Grok/Codex only).
+            ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
             _db.Agents.Add(agent);
 
             try
@@ -393,16 +393,11 @@ public sealed class AgentService
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
 
-        // CARD-0160 / CARD-0186: resolve the REQUEST's final SessionBackend / Kind BEFORE any field
-        // is applied so a Kind change in the same PATCH is checked against Herdr. alwaysOn and
-        // channelBound are still computed (callers keep resolving request-final state) but are
-        // no longer refusal arms.
-        var finalAlwaysOn = request.AlwaysOn ?? agent.AlwaysOn;
+        // CARD-0160 / CARD-0187: resolve the REQUEST's final SessionBackend / Kind BEFORE any field
+        // is applied so a Kind change in the same PATCH is checked against Herdr.
         var finalBackend = request.SessionBackend ?? agent.SessionBackend;
         var finalKind = await ResolveFinalKindAsync(agent, request, ct);
-        var channelBound = await _db.ChatChannels.AsNoTracking()
-            .AnyAsync(c => c.AgentId == agent.Id, ct);
-        ValidateSessionBackendPairing(finalBackend, finalAlwaysOn, finalKind, channelBound);
+        ValidateSessionBackendPairing(finalBackend, finalKind);
 
         agent.Name = request.Name.Trim();
         agent.Slug = await UniqueSlugAsync(Slugify(request.Name), agent.Id, ct);
@@ -1253,31 +1248,19 @@ public sealed class AgentService
     }
 
     /// <summary>
-    /// Builds the 409 for a failed save, logging the real error and keeping it attached.
-    /// A genuine concurrency conflict keeps the caller's wording; anything else appends what the
-    /// database actually said, because the two are not the same failure and used to be reported
-    /// identically.
+    /// CARD-0160 / CARD-0187: Herdr is spiked for ClaudeCode, Grok, and Codex. OpenCode/Raw (and
+    /// any future unmapped kind) are refused by name. AlwaysOn and channel-bound refusals were
+    /// lifted (CARD-0186). Refusal, never silent remap.
     /// </summary>
-    /// <summary>
-    /// CARD-0160 / CARD-0186: Herdr is only spiked for ClaudeCode. AlwaysOn and channel-bound
-    /// refusals were lifted (CARD-0186); the Kind refusal stands until CARD-0187. Refusal, never
-    /// silent remap. <paramref name="alwaysOn"/> and <paramref name="channelBound"/> stay in the
-    /// signature so every caller still resolves request-final state.
-    /// </summary>
-    internal static void ValidateSessionBackendPairing(
-        SessionBackend backend, bool alwaysOn, AgentKind kind, bool channelBound)
+    internal static void ValidateSessionBackendPairing(SessionBackend backend, AgentKind kind)
     {
         if (backend != SessionBackend.Herdr)
             return;
 
-        // Parameters retained (CARD-0186); deletion is CARD-0187 when this function is rewritten.
-        _ = alwaysOn;
-        _ = channelBound;
-
-        if (kind != AgentKind.ClaudeCode)
+        if (!HerdrAgentKindMap.TryMap(kind, out _))
         {
             throw new ConflictException(
-                "Herdr sessions are only available for Claude Code agents (other kinds are un-spiked).",
+                $"Herdr sessions are not available for {kind} agents (supported: ClaudeCode, Grok, Codex).",
                 "herdr_refused");
         }
     }
@@ -1303,6 +1286,12 @@ public sealed class AgentService
         return agent.Kind;
     }
 
+    /// <summary>
+    /// Builds the 409 for a failed save, logging the real error and keeping it attached.
+    /// A genuine concurrency conflict keeps the caller's wording; anything else appends what the
+    /// database actually said, because the two are not the same failure and used to be reported
+    /// identically.
+    /// </summary>
     private ConflictException ConflictFrom(string message, DbUpdateException ex)
     {
         if (ex is DbUpdateConcurrencyException)

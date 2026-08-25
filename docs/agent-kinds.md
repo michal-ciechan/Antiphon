@@ -31,13 +31,13 @@ guessing "no".
 
 `AgentKind` (`server/Domain/Enums/AgentKind.cs`) has five members:
 
-| Kind | Program | Delegatable? | Orchestrator? | Structured activity |
-|---|---|---|---|---|
-| `ClaudeCode` | `claude.exe` | yes | **yes — the only one** | transcript (JSONL) |
-| `Grok` | `grok.exe` (xAI Grok Build TUI) | yes, worker only | no | transcript (ACP `updates.jsonl`) |
-| `Codex` | `codex.cmd` (OpenAI codex-cli) | yes, worker only | no | transcript (rollout JSONL) |
-| `OpenCode` | `opencode` / a wrapper | no | no | quiet-time only |
-| `Raw` | any command (`pwsh.exe`, …) | no | no | quiet-time only |
+| Kind | Program | Delegatable? | Orchestrator? | Structured activity | herdr? |
+|---|---|---|---|---|---|
+| `ClaudeCode` | `claude.exe` | yes | **yes — the only one** | transcript (JSONL) | yes |
+| `Grok` | `grok.exe` (xAI Grok Build TUI) | yes, worker only | no | transcript (ACP `updates.jsonl`) | yes (CARD-0187) |
+| `Codex` | `codex.cmd` (OpenAI codex-cli) | yes, worker only | no | transcript (rollout JSONL) | yes (CARD-0187) |
+| `OpenCode` | `opencode` / a wrapper | no | no | quiet-time only | **no** — refused |
+| `Raw` | any command (`pwsh.exe`, …) | no | no | quiet-time only | **no** — refused |
 
 "Delegatable" is `AgentTaskService.DelegatableKinds` — `[ClaudeCode, Grok, Codex]`. A task asking
 for `OpenCode` or `Raw` is **refused with a 422 naming the reason**, never silently substituted.
