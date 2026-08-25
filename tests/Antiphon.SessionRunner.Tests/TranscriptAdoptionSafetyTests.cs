@@ -567,6 +567,65 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    /// <summary>
+    /// CARD-0190 S2: a restart clears C4's bounded evidence but the sidecar's first-input fact
+    /// keeps post-input Claude transcript refusals visible.
+    /// </summary>
+    [Test]
+    public async Task Input_delivered_before_a_restart_is_remembered_from_the_sidecar()
+    {
+        using var tree = new TranscriptTree("sidecar-first-input-refusal");
+        var stale = tree.NewTranscript();
+        await tree.AppendAsync(stale, UserLine("stale", tree.Cwd, "a prior session", DateTime.UtcNow.AddHours(-1)));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            firstInputUtc: DateTime.UtcNow.AddMinutes(-1),
+            childStartUtc: DateTime.UtcNow,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(300));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull("the sidecar fact must preserve post-restart refusal reporting");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0190 S2: an adopted Claude child that exits before a transcript appears still reports
+    /// missing input when the only surviving evidence is the sidecar timestamp.
+    /// </summary>
+    [Test]
+    public async Task Child_exit_with_input_delivered_before_restart_faults_from_the_sidecar()
+    {
+        using var tree = new TranscriptTree("sidecar-first-input-child-exit");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            firstInputUtc: DateTime.UtcNow.AddMinutes(-1),
+            childStartUtc: DateTime.UtcNow);
+        tailer.Start();
+        try
+        {
+            tailer.NotifyChildExited();
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(10));
+            fault.ShouldNotBeNull("the sidecar fact must preserve post-restart child-exit reporting");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     // ------------------------------------------------------------- §8.2 fork-follow and restart
 
     /// <summary>
@@ -787,6 +846,45 @@ public class TranscriptAdoptionSafetyTests
                 .ShouldBeTrue("a surviving session's transcript stays off-limits to everyone else");
             runtime.TranscriptClaims.TryClaim(transcriptPath, survivor).Claimed
                 .ShouldBeTrue("the owning session re-claims its own file (--resume reuses the id)");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public void FirstInputAtUtc_round_trips_and_legacy_sidecars_default_to_null()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"antiphon-sidecar-first-input-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            var firstInputAtUtc = DateTime.UtcNow.AddMinutes(-1);
+            var path = TranscriptSidecar.PathFor(root, sessionId);
+            new TranscriptSidecar
+            {
+                SessionId = sessionId,
+                FirstInputAtUtc = firstInputAtUtc,
+            }.SaveAtomic(path);
+
+            var roundTripped = TranscriptSidecar.TryLoad(path);
+            roundTripped.ShouldNotBeNull();
+            roundTripped!.FirstInputAtUtc.ShouldBe(firstInputAtUtc);
+
+            var legacySessionId = Guid.NewGuid();
+            var legacyPath = TranscriptSidecar.PathFor(root, legacySessionId);
+            File.WriteAllText(legacyPath, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                sessionId = legacySessionId,
+                updatedAtUtc = DateTime.UtcNow,
+            }));
+
+            var legacy = TranscriptSidecar.TryLoad(legacyPath);
+            legacy.ShouldNotBeNull("a pre-CARD-0190 sidecar has no firstInputAtUtc property");
+            legacy!.FirstInputAtUtc.ShouldBeNull();
         }
         finally
         {
@@ -1591,6 +1689,7 @@ public class TranscriptAdoptionSafetyTests
         TranscriptTree tree,
         SessionInputLog inputLog,
         DateTime? childStartUtc = null,
+        DateTime? firstInputUtc = null,
         string? agentName = null,
         bool resumeLaunch = false,
         TranscriptClaimRegistry? claims = null,
@@ -1610,6 +1709,7 @@ public class TranscriptAdoptionSafetyTests
             forkScanInterval: TimeSpan.FromMilliseconds(300),
             claims: claims,
             inputLog: inputLog,
+            firstInputUtc: firstInputUtc,
             childStartUtc: childStartUtc,
             agentName: agentName,
             resumeLaunch: resumeLaunch,

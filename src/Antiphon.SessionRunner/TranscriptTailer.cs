@@ -63,6 +63,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private readonly TimeSpan _refusalFaultRepeat;
     private readonly TranscriptClaimRegistry? _claims;
     private readonly SessionInputLog? _inputLog;
+    private readonly DateTime? _firstInputUtc;
     private readonly DateTime? _childStartUtc;
     private readonly string? _agentName;
     private readonly bool _resumeLaunch;
@@ -86,6 +87,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
     /// heuristic bind can ever be justified, which is the safe default for a session with no input record.</param>
+    /// <param name="firstInputUtc">Persisted first delivered-input time from the sidecar after runner adoption.</param>
     /// <param name="childStartUtc">Child process start, the epoch for rule C3.</param>
     /// <param name="agentName">Launch <c>--name</c>, for the C2b reject filter.</param>
     /// <param name="resumeLaunch">True for <c>--resume</c>/<c>--continue</c>: waives C3.</param>
@@ -102,6 +104,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         TimeSpan? forkScanInterval = null,
         TranscriptClaimRegistry? claims = null,
         SessionInputLog? inputLog = null,
+        DateTime? firstInputUtc = null,
         DateTime? childStartUtc = null,
         string? agentName = null,
         bool resumeLaunch = false,
@@ -121,6 +124,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _refusalFaultRepeat = refusalFaultRepeat ?? DefaultRefusalFaultRepeat;
         _claims = claims;
         _inputLog = inputLog;
+        _firstInputUtc = firstInputUtc;
         _childStartUtc = childStartUtc;
         _agentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName;
         _resumeLaunch = resumeLaunch;
@@ -140,8 +144,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <inheritdoc />
     public string? BindHow { get; private set; }
 
-    // S1 is intentionally in-memory only. S2 will also preserve this fact through sidecar restore.
-    private bool InputDelivered => _inputLog is { IsEmpty: false };
+    private bool InputDelivered => _firstInputUtc is not null || _inputLog is { IsEmpty: false };
 
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
 
@@ -874,7 +877,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     // session that was never typed at legitimately has no transcript to find.
     private void ReportMissingAfterChildExit()
     {
-        if (_inputLog is null || _inputLog.IsEmpty)
+        if (!InputDelivered)
             return;
 
         _logger.LogWarning(

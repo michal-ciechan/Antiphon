@@ -254,6 +254,64 @@ public class CodexTranscriptTailerTests
     }
 
     /// <summary>
+    /// CARD-0190 S2: after runner adoption C4's bounded input evidence is intentionally empty,
+    /// but the sidecar's first-input fact still makes stale rollout refusals visible.
+    /// </summary>
+    [Test]
+    public async Task Input_delivered_before_a_restart_is_remembered_from_the_sidecar()
+    {
+        using var tree = new CodexTree();
+        var stale = tree.Seed("codex-tui-turn.jsonl");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            firstInputUtc: DateTime.UtcNow.AddMinutes(-1),
+            childStartUtc: stale.FirstTimestamp.AddHours(1),
+            refusalFaultDelay: TimeSpan.FromMilliseconds(300));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull("the sidecar fact must preserve post-restart refusal reporting");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0190 S2: a dead child after runner adoption still faults when a prior delivered input
+    /// is known solely from the sidecar, even though the in-memory C4 evidence starts empty.
+    /// </summary>
+    [Test]
+    public async Task Child_exit_with_input_delivered_before_restart_faults_from_the_sidecar()
+    {
+        using var tree = new CodexTree();
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            firstInputUtc: DateTime.UtcNow.AddMinutes(-1),
+            childStartUtc: DateTime.UtcNow);
+        tailer.Start();
+        try
+        {
+            tailer.NotifyChildExited();
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(10));
+            fault.ShouldNotBeNull("the sidecar fact must preserve post-restart child-exit reporting");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// C3 is waived on a resume launch: <c>codex resume</c> replays a conversation whose records
     /// legitimately predate the relaunch, and refusing that would break resume re-adoption. C4 is
     /// NOT waived — the resumed conversation still has to contain text we sent.
@@ -506,6 +564,7 @@ public class CodexTranscriptTailerTests
         SessionInputLog? inputLog,
         string? cwd = null,
         DateTime? childStartUtc = null,
+        DateTime? firstInputUtc = null,
         bool resumeLaunch = false,
         TranscriptClaimRegistry? claims = null,
         string? knownTranscriptPath = null,
@@ -519,6 +578,7 @@ public class CodexTranscriptTailerTests
             locatePollInterval: TimeSpan.FromMilliseconds(50),
             claims: claims,
             inputLog: inputLog,
+            firstInputUtc: firstInputUtc,
             childStartUtc: childStartUtc,
             resumeLaunch: resumeLaunch,
             knownTranscriptPath: knownTranscriptPath,

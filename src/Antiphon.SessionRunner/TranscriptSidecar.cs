@@ -30,6 +30,9 @@ public sealed record TranscriptSidecar
     /// <summary>Child process start (rule C3's epoch). Survives runner restarts; the tailer's own start does not.</summary>
     public DateTime? ChildStartUtc { get; init; }
 
+    /// <summary>When input first reached this session's child. Survives runner restarts for unbound-fault reporting.</summary>
+    public DateTime? FirstInputAtUtc { get; init; }
+
     /// <summary>True when the launch was <c>--resume</c>/<c>--continue</c>: rule C3 is waived (copied history predates it).</summary>
     public bool ResumeLaunch { get; init; }
 

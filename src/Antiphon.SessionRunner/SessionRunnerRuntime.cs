@@ -1077,6 +1077,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _sessionId, request.Cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
+                    firstInputUtc: null,
                     childStartUtc: childStartUtc,
                     resumeLaunch: IsCodexResumeLaunch(request.Args),
                     sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
@@ -1103,6 +1104,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _sessionId, request.Cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
+                    firstInputUtc: null,
                     childStartUtc: childStartUtc,
                     agentName: agentName,
                     resumeLaunch: resumeLaunch,
@@ -1587,6 +1589,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _sessionId, cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
+                    firstInputUtc: sidecar!.FirstInputAtUtc,
                     childStartUtc: childStartUtc ?? sidecar!.ChildStartUtc,
                     resumeLaunch: sidecar!.ResumeLaunch,
                     knownTranscriptPath: sidecar.TranscriptPath,
@@ -1607,6 +1610,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _sessionId, cwd, _events, _logger,
                 claims: _transcriptClaims,
                 inputLog: _inputLog,
+                firstInputUtc: sidecar?.FirstInputAtUtc,
                 childStartUtc: childStartUtc ?? sidecar?.ChildStartUtc,
                 agentName: sidecar?.AgentName,
                 resumeLaunch: sidecar?.ResumeLaunch ?? false,
@@ -1746,6 +1750,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
             // the input log is always ahead of the transcript record that rule C4 matches it to.
             _inputLog.Append(input);
+            if (!_inputLog.IsEmpty && _sidecar?.FirstInputAtUtc is null)
+            {
+                var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
+                SaveSidecar(current with { FirstInputAtUtc = DateTime.UtcNow });
+            }
             if (_pendingReason is not null)
                 throw new HerdrBackendUnavailableException(
                     "Herdr is unreachable; session is pending adoption.");

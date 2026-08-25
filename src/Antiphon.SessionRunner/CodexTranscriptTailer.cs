@@ -80,6 +80,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private readonly TimeSpan _refusalFaultRepeat;
     private readonly TranscriptClaimRegistry? _claims;
     private readonly SessionInputLog? _inputLog;
+    private readonly DateTime? _firstInputUtc;
     private readonly DateTime? _childStartUtc;
     private readonly bool _resumeLaunch;
     private string? _knownTranscriptPath;
@@ -100,6 +101,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
     /// bind can ever be justified, which is the safe default for a session with no input record.</param>
+    /// <param name="firstInputUtc">Persisted first delivered-input time from the sidecar after runner adoption.</param>
     /// <param name="childStartUtc">Child process start, the epoch for rule C3.</param>
     /// <param name="resumeLaunch">True for <c>codex resume</c>/<c>fork</c>: waives C3.</param>
     /// <param name="knownTranscriptPath">Sidecar-recorded path (restart re-adopt): re-tailed directly, no discovery.</param>
@@ -114,6 +116,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         TimeSpan? locatePollInterval = null,
         TranscriptClaimRegistry? claims = null,
         SessionInputLog? inputLog = null,
+        DateTime? firstInputUtc = null,
         DateTime? childStartUtc = null,
         bool resumeLaunch = false,
         string? knownTranscriptPath = null,
@@ -133,6 +136,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         _refusalFaultRepeat = refusalFaultRepeat ?? DefaultRefusalFaultRepeat;
         _claims = claims;
         _inputLog = inputLog;
+        _firstInputUtc = firstInputUtc;
         _childStartUtc = childStartUtc;
         _resumeLaunch = resumeLaunch;
         _knownTranscriptPath = string.IsNullOrWhiteSpace(knownTranscriptPath) ? null : knownTranscriptPath;
@@ -147,8 +151,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     /// <inheritdoc />
     public string? BindHow { get; private set; }
 
-    // S1 is intentionally in-memory only. S2 will also preserve this fact through sidecar restore.
-    private bool InputDelivered => _inputLog is { IsEmpty: false };
+    private bool InputDelivered => _firstInputUtc is not null || _inputLog is { IsEmpty: false };
 
     /// <summary>
     /// Where Codex keeps its rollouts: <c>{CODEX_HOME}/sessions</c>, defaulting to
@@ -693,7 +696,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     // session that was never typed at legitimately never creates a rollout.
     private void ReportMissingAfterChildExit()
     {
-        if (_inputLog is null || _inputLog.IsEmpty)
+        if (!InputDelivered)
             return;
 
         _logger.LogWarning(
