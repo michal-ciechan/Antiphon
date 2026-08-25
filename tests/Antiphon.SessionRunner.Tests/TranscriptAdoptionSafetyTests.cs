@@ -1514,7 +1514,7 @@ public class TranscriptAdoptionSafetyTests
         var sessionId = Guid.NewGuid();
         var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-0180-dto-{Guid.NewGuid():N}");
         Directory.CreateDirectory(logRoot);
-        var settings = new SessionRunnerSettings { SessionLogPath = logRoot };
+        var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
         var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
         var request = new RunnerLaunchRequest(
             sessionId,
@@ -1530,6 +1530,7 @@ public class TranscriptAdoptionSafetyTests
             Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
         var locating = await runtimeA.StartAsync(request, CancellationToken.None);
         int? childPid = locating.Pid;
+        int? hostPid = locating.HostPid;
         try
         {
             for (var i = 0; i < 20 && locating.Status != "Running"; i++)
@@ -1565,18 +1566,34 @@ public class TranscriptAdoptionSafetyTests
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             (await runtimeB.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), cts.Token))
                 .ShouldBe(1);
-            var adopted = runtimeB.Get(sessionId);
-            adopted.TranscriptBound.ShouldBe(true);
+
+            // The sidecar re-tail runs on the tailer's own loop (TranscriptTailer.Start => Task.Run), which
+            // AdoptOrphanedHostsAsync does not wait for. Poll as the exact-id bind above does (CARD-0200).
+            RunnerSessionDto? adopted = null;
+            var adoptDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < adoptDeadline)
+            {
+                adopted = runtimeB.Get(sessionId);
+                if (adopted.TranscriptBound == true)
+                    break;
+                await Task.Delay(100);
+            }
+
+            adopted.ShouldNotBeNull();
+            adopted!.TranscriptBound.ShouldBe(true);
             adopted.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Sidecar);
 
             await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
         }
         finally
         {
-            if (childPid is int pid)
+            foreach (var pid in new[] { childPid, hostPid })
             {
-                try { Process.GetProcessById(pid).Kill(entireProcessTree: true); }
-                catch (ArgumentException) { /* already gone */ }
+                if (pid is int p)
+                {
+                    try { Process.GetProcessById(p).Kill(entireProcessTree: true); }
+                    catch (ArgumentException) { /* already gone */ }
+                }
             }
             try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
         }
