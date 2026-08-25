@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -53,6 +54,15 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
     private readonly string _workspacePath =
         Path.Combine(Path.GetTempPath(), "antiphon-waf", Guid.NewGuid().ToString("N"));
 
+    /// <summary>
+    /// CARD-0204: the session-runner this host talks to. It refuses every launch and records the
+    /// attempt, so a test can assert that booting the host started nothing anywhere. Replaces the
+    /// HTTP client that used to reach the always-on production runner on 17204 — through which
+    /// every boot of this factory launched a <c>cmd.exe</c> check interpreter that nothing ever
+    /// stopped (187 of them on 2026-08-25). See <see cref="ProductionRunnerGuard"/>.
+    /// </summary>
+    public RefusingSessionRunnerClient SessionRunner { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         Directory.CreateDirectory(_workspacePath);
@@ -76,6 +86,18 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
                 ["Agents:DefaultDefinition"] = "test-raw",
                 ["Agents:Definitions:test-raw:Kind"] = "Raw",
                 ["Agents:Definitions:test-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                // CARD-0204: this host must not be able to reach the production session-runner,
+                // and must not want to. The ProductionRunnerGuard env vars already say both for
+                // every Program boot in the assembly; these are the same facts stated where the
+                // factory's own definition lives, so removing the guard cannot silently re-arm
+                // the leak. The event pump is off because the runner it would stream from does
+                // not exist; the check interpreter is off because starting it is the launch that
+                // leaked; its directory is under this host's own scratch so a test that turns it
+                // back on still cannot land in C:\logs\antiphon\check-interpreter.
+                ["SessionRunner:BaseUrl"] = ProductionRunnerGuard.DeadRunnerBaseUrl,
+                ["SessionRunner:Enabled"] = "false",
+                ["Delegation:CheckInterpreterEnabled"] = "false",
+                ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
             });
         });
 
@@ -83,6 +105,11 @@ public class AntiphonWebAppFactory : WebApplicationFactory<Program>
         {
             // Health checks may probe external resources; not needed for API tests.
             services.Configure<HealthCheckServiceOptions>(o => o.Registrations.Clear());
+
+            // CARD-0204: structural, not just configured — no code path in this host can start a
+            // process on any runner, whatever the configuration says.
+            services.RemoveAll<ISessionRunnerClient>();
+            services.AddSingleton<ISessionRunnerClient>(SessionRunner);
 
             // Point EF at the shared testcontainer regardless of how the app wired it.
             var descriptor = services.SingleOrDefault(
