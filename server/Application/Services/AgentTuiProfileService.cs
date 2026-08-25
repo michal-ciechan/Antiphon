@@ -247,8 +247,9 @@ public sealed partial class AgentTuiProfileService
             .Get(profile.Kind, DeserializeArray(revision.ArgumentsJson))
             .Capabilities;
         var cachedCapabilities = DeserializeCapabilities(cached?.CapabilitiesJson);
+        var capabilities = cachedCapabilities is { Count: > 0 } ? cachedCapabilities : staticCapabilities;
         return new AgentTuiCapabilitySnapshotDto(
-            cachedCapabilities is { Count: > 0 } ? cachedCapabilities : staticCapabilities,
+            ApplyModelArgumentCapability(capabilities, revision.ModelArgumentName),
             cached?.RunnerVersion,
             cached?.CompletedAt ?? cached?.StartedAt ?? cached?.CreatedAt);
     }
@@ -2019,7 +2020,7 @@ public sealed partial class AgentTuiProfileService
                 revision.WorkingDirectory),
             secretNames,
             MergeModels(profile.Kind, profile.Models),
-            runner.Capabilities,
+            ApplyModelArgumentCapability(runner.Capabilities, revision.ModelArgumentName),
             validationSummary ?? new AgentTuiValidationSummaryDto(
                 AgentTuiValidationStatus.NeverRun,
                 null,
@@ -2452,6 +2453,45 @@ public sealed partial class AgentTuiProfileService
 
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>
+    /// CARD-0182 D4: a blank revision field is the profile declaring it passes no model argument.
+    /// Override the catalogue's modelArgument row so the profile page and agent picker share one
+    /// vocabulary instead of a new flag.
+    /// </summary>
+    internal static IReadOnlyList<AgentTuiCapabilityDto> ApplyModelArgumentCapability(
+        IReadOnlyList<AgentTuiCapabilityDto> capabilities,
+        string? modelArgumentName)
+    {
+        if (!string.IsNullOrWhiteSpace(modelArgumentName))
+            return capabilities;
+
+        const string name = "modelArgument";
+        const string reason = "The active revision declares no model argument.";
+        var found = false;
+        var result = new List<AgentTuiCapabilityDto>(capabilities.Count);
+        foreach (var capability in capabilities)
+        {
+            if (capability.Name == name)
+            {
+                found = true;
+                result.Add(capability with
+                {
+                    State = AgentTuiCapabilityState.Unsupported,
+                    Reason = reason
+                });
+            }
+            else
+            {
+                result.Add(capability);
+            }
+        }
+
+        if (!found)
+            result.Insert(0, new AgentTuiCapabilityDto(name, AgentTuiCapabilityState.Unsupported, reason));
+
+        return result;
+    }
 
     private static string[] DeserializeArray(string json) =>
         JsonSerializer.Deserialize<string[]>(json) ?? [];

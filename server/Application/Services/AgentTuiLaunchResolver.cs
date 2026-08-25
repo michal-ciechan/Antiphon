@@ -10,6 +10,8 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Tui;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -180,20 +182,23 @@ public sealed class AgentTuiLaunchResolver
     // therefore goes unresolved is caught by the tripwire in AgentSessionService.BuildRuntimeLaunchSpec
     // rather than reaching a child process. Production always registers it.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    private readonly ILogger<AgentTuiLaunchResolver> _logger;
 
     public AgentTuiLaunchResolver(
         AppDbContext db,
         IAgentTuiSecretProtector secretProtector,
         AgentTuiMetrics metrics,
         AgentTuiRunnerCatalog runnerCatalog,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        ILogger<AgentTuiLaunchResolver>? logger = null)
         : this(
             db,
             secretProtector,
             metrics,
             runnerCatalog,
             AgentEnvironmentVariableNames.ForCurrentPlatform(),
-            apiKeyEnvResolver)
+            apiKeyEnvResolver,
+            logger)
     {
     }
 
@@ -203,7 +208,8 @@ public sealed class AgentTuiLaunchResolver
         AgentTuiMetrics metrics,
         AgentTuiRunnerCatalog runnerCatalog,
         IEqualityComparer<string> environmentNameComparer,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        ILogger<AgentTuiLaunchResolver>? logger = null)
     {
         _db = db;
         _secretProtector = secretProtector;
@@ -211,6 +217,7 @@ public sealed class AgentTuiLaunchResolver
         _runnerCatalog = runnerCatalog;
         _environmentNameComparer = environmentNameComparer;
         _apiKeyEnvResolver = apiKeyEnvResolver;
+        _logger = logger ?? NullLogger<AgentTuiLaunchResolver>.Instance;
     }
 
     public async Task<ResolvedAgentTuiLaunch> ResolveForAgentAsync(
@@ -390,6 +397,16 @@ public sealed class AgentTuiLaunchResolver
         var subject = agent.Id == Guid.Empty
             ? $"the default launch on profile '{definitionName}'"
             : $"agent '{agent.Name}'";
+        if (modelArgument == LaunchModelArgument.ProfileOwned)
+        {
+            _logger.LogInformation(
+                "{Subject}: profile '{Profile}' rev {Rev} declares no model argument; tier {Level} ({Alias}) not passed",
+                subject,
+                profile.DisplayName,
+                revision.RevisionNumber,
+                agent.ModelLevel,
+                options.TierModelAlias?.Trim());
+        }
         if (_apiKeyEnvResolver is not null)
         {
             // The agent's board decides the project scope. No board (a pool delegate, the synthetic

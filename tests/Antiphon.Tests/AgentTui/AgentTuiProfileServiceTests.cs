@@ -862,6 +862,36 @@ public class AgentTuiProfileServiceTests
     }
 
     [Test]
+    public async Task T10_blank_model_argument_name_reports_modelArgument_unsupported()
+    {
+        var service = CreateService();
+        var blank = await service.CreateAsync(
+            NewRequest(UniqueName("Blank arg")) with
+            {
+                Kind = AgentKind.Grok,
+                ModelArgumentName = null
+            },
+            CancellationToken.None);
+        var blankCaps = await service.GetCapabilitiesAsync(blank.Id, CancellationToken.None);
+        var blankRow = blankCaps.Capabilities.Single(c => c.Name == "modelArgument");
+        blankRow.State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+        blankRow.Reason.ShouldBe("The active revision declares no model argument.");
+        blank.Capabilities.Single(c => c.Name == "modelArgument").State
+            .ShouldBe(AgentTuiCapabilityState.Unsupported);
+
+        var declared = await service.CreateAsync(
+            NewRequest(UniqueName("Declared arg")) with
+            {
+                Kind = AgentKind.Grok,
+                ModelArgumentName = "--model"
+            },
+            CancellationToken.None);
+        var declaredCaps = await service.GetCapabilitiesAsync(declared.Id, CancellationToken.None);
+        declaredCaps.Capabilities.Single(c => c.Name == "modelArgument").State
+            .ShouldBe(AgentTuiCapabilityState.Supported);
+    }
+
+    [Test]
     public async Task Import_is_two_pass_idempotent_and_preserves_exact_legacy_Claude_models()
     {
         var clock = new FakeTimeProvider(FixedNow);
