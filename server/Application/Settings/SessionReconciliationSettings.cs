@@ -86,6 +86,14 @@ public sealed class SessionReconciliationSettings
     public int PtyHostSurplusCriticalThreshold { get; set; } = 20;
 
     /// <summary>
+    /// CARD-0186 S3: how long a runner session may report <c>Pending=HerdrUnreachable</c> before
+    /// reconciliation raises a <c>HerdrUnreachable</c> incident. Warning; Critical when the agent
+    /// is channel-bound. The queue defers input with no attempt charged; this is the human-facing
+    /// backstop so a herdr outage is not silent.
+    /// </summary>
+    public int HerdrPendingAlertMinutes { get; set; } = 5;
+
+    /// <summary>
     /// How long the census alert stays quiet after raising, while the condition still holds. The
     /// sweep runs every <see cref="IntervalMs"/> (15s); without this the alert would write 240 rows
     /// an hour and mean nothing — CARD-0101's refusal fault managed 37 identical Warnings in three

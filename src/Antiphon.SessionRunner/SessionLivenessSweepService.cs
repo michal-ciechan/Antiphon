@@ -30,7 +30,7 @@ public sealed class SessionLivenessSweepService : BackgroundService
         {
             try
             {
-                _runtime.SweepVanishedSessions(_probe);
+                await _runtime.SweepVanishedSessionsAsync(_probe, stoppingToken);
             }
             catch (Exception ex)
             {

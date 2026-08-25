@@ -99,11 +99,10 @@ public sealed record RunnerSessionDto(
     string? TranscriptBindHow = null,
     // CARD-0186 S2: which lane hosts the child. Null on older runners. Values: SessionBackends.
     string? Backend = null,
-    // CARD-0186 S3: "HerdrUnreachable" while adoption is waiting on herdr. Null otherwise.
-    // S2 adds the field only; the runner does not stamp it until S3.
+    // CARD-0186 S3: HerdrPendingReasons.Unreachable while adoption is waiting on herdr. Null otherwise.
     string? Pending = null,
-    // CARD-0186 S3: single-session GET stamps this after VerifyHerdrLivenessAsync passes.
-    // S2 adds the field only; list/GET leave it null.
+    // CARD-0186 S3: single-session GET stamps this after a passing herdr liveness verify.
+    // The list endpoint is cheap (no herdr calls) and reports the last stamp.
     DateTime? HerdrVerifiedAtUtc = null);
 
 public sealed record RunnerBufferDto(
@@ -502,6 +501,31 @@ public static class HerdrExitReasons
     /// foreign process — the refusal is ours).
     /// </summary>
     public const string PaneLeftOpen = "HerdrPaneLeftOpen";
+}
+
+/// <summary>
+/// CARD-0186 S3: values for <see cref="RunnerSessionDto.Pending"/>. A pending session is listed
+/// as Starting + Adopted; the liveness sweep re-runs the adoption bar until it reaches a verdict.
+/// </summary>
+public static class HerdrPendingReasons
+{
+    /// <summary>
+    /// Runner restart (or mid-session herdr drop) could not reach herdr, and the sidecar's child
+    /// is still OS-alive. Input returns 503 <see cref="HerdrProblemTypes.Unreachable"/>.
+    /// </summary>
+    public const string Unreachable = "HerdrUnreachable";
+}
+
+/// <summary>
+/// CARD-0186 S3: RFC 9457 problem-details <c>type</c> values the runner emits on herdr faults.
+/// </summary>
+public static class HerdrProblemTypes
+{
+    /// <summary>
+    /// 503 on <c>/input</c>, <c>/kill</c>, <c>/resize</c>, <c>/snapshot</c> when herdr is
+    /// unreachable. The server maps this to a delivery deferral, never a kill.
+    /// </summary>
+    public const string Unreachable = "herdr_unreachable";
 }
 
 /// <summary>

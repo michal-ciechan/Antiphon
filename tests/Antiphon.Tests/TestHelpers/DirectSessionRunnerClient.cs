@@ -262,7 +262,10 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.AgentStatus,
             dto.AgentStatusSinceUtc,
             dto.TranscriptBound,
-            dto.TranscriptBindHow);
+            dto.TranscriptBindHow,
+            dto.Backend,
+            dto.Pending,
+            dto.HerdrVerifiedAtUtc);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

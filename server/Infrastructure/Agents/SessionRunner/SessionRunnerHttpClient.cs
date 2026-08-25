@@ -284,7 +284,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
 
     public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
-        var snapshot = await _httpClient.GetFromJsonAsync<RunnerSnapshotDto>($"sessions/{sessionId:D}/snapshot", JsonOptions, ct)
+        using var response = await _httpClient.GetAsync($"sessions/{sessionId:D}/snapshot", ct);
+        await EnsureRunnerSuccessAsync(response, ct);
+        var snapshot = await response.Content.ReadFromJsonAsync<RunnerSnapshotDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty snapshot response.");
         return new SessionRunnerSnapshotDto(
             snapshot.SessionId,
@@ -311,7 +313,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             new RunnerInputRequest(input),
             JsonOptions,
             ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureRunnerSuccessAsync(response, ct);
     }
 
     public async Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
@@ -327,13 +329,13 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             new RunnerResizeRequest(cols, rows),
             JsonOptions,
             ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureRunnerSuccessAsync(response, ct);
     }
 
     public async Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
     {
         var response = await _httpClient.PostAsync($"sessions/{sessionId:D}/kill", null, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureRunnerSuccessAsync(response, ct);
         return Map(await response.Content.ReadFromJsonAsync<RunnerSessionDto>(JsonOptions, ct)
             ?? throw new InvalidOperationException("Session runner returned an empty kill response."));
     }
@@ -519,6 +521,47 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             e.Model,
             e.ModelCalls);
 
+    /// <summary>
+    /// CARD-0186 S3: a 503 with problem-type <see cref="HerdrProblemTypes.Unreachable"/> (or a
+    /// bare 503 on these endpoints) is a deferral, never a 500-shaped transport failure.
+    /// </summary>
+    private static async Task EnsureRunnerSuccessAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        {
+            var type = await TryReadProblemTypeAsync(response, ct);
+            if (type is null
+                || string.Equals(type, HerdrProblemTypes.Unreachable, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ServiceUnavailableException(
+                    "Herdr is unreachable.", HerdrProblemTypes.Unreachable);
+            }
+        }
+
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<string?> TryReadProblemTypeAsync(
+        HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+            if (json.ValueKind == JsonValueKind.Object
+                && json.TryGetProperty("type", out var type)
+                && type.ValueKind == JsonValueKind.String)
+            {
+                return type.GetString();
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            // Body is not problem+json; treat as a bare 503.
+        }
+
+        return null;
+    }
+
     private static SessionRunnerSessionDto Map(RunnerSessionDto dto) =>
         new(
             dto.SessionId,
@@ -533,7 +576,10 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.AgentStatus,
             dto.AgentStatusSinceUtc,
             dto.TranscriptBound,
-            dto.TranscriptBindHow);
+            dto.TranscriptBindHow,
+            dto.Backend,
+            dto.Pending,
+            dto.HerdrVerifiedAtUtc);
 
     private static AgentExitReason MapExitReason(string reason) =>
         Enum.TryParse<AgentExitReason>(reason, ignoreCase: true, out var parsed)

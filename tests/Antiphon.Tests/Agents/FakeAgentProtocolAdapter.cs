@@ -73,6 +73,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     // concatenated bytes. Critical for the queue's two-write submit (body, then a separate "\r"):
     // SentInput alone can't distinguish one write of "body\r" from two writes "body" + "\r".
     public IReadOnlyList<string> Inputs => _inputs;
+
+    /// <summary>
+    /// CARD-0186 S3: throw this from <see cref="SendInputAsync"/> before any composer work —
+    /// models a 503 herdr_unreachable from the runner.
+    /// </summary>
+    public Exception? ThrowOnSend { get; set; }
     public string SentPrompt { get; private set; } = string.Empty;
     private readonly List<string> _prompts = [];
     // Every prompt sent, in order — lets tests assert the /rename + /remote-control sequence
@@ -190,6 +196,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
     public async Task SendInputAsync(string input, CancellationToken ct)
     {
+        if (ThrowOnSend is { } throwOnSend)
+            throw throwOnSend;
+
         SentInput += input;
         _inputs.Add(input);
         if (input == "\u001b")

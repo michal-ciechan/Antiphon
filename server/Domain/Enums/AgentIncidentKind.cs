@@ -356,7 +356,13 @@ public enum AgentIncidentKind
     /// </summary>
     DeliveryUnverified = 36,
 
-    // 37 reserved for HerdrUnreachable (CARD-0186 S3). Do not reuse.
+    /// <summary>
+    /// CARD-0186 S3: a herdr session has been Pending (runner cannot reach herdr) longer than
+    /// <c>SessionReconciliationSettings.HerdrPendingAlertMinutes</c>. Warning; Critical when the
+    /// agent is channel-bound. Deduped per session; never auto-kills (a kill while herdr is down
+    /// would relaunch-storm).
+    /// </summary>
+    HerdrUnreachable = 37,
 
     /// <summary>
     /// CARD-0186 S2: a herdr <c>KillAsync</c> refused <c>pane.close</c> because a foreign

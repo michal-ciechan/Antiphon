@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,7 @@ public sealed class SessionReconciliationService
     private readonly IAlertService _alerts;
     private readonly RunnerReachabilityState _reachability;
     private readonly SessionReAdoptionState _reAdoptions;
+    private readonly HerdrPendingAlertState _pendingAlerts;
     private readonly IPtyHostCensusProbe _census;
     private readonly PtyHostCensusAlertState _censusAlerts;
     private readonly SessionReconciliationSettings _settings;
@@ -54,6 +56,7 @@ public sealed class SessionReconciliationService
         IAlertService alerts,
         RunnerReachabilityState reachability,
         SessionReAdoptionState reAdoptions,
+        HerdrPendingAlertState pendingAlerts,
         IPtyHostCensusProbe census,
         PtyHostCensusAlertState censusAlerts,
         IOptions<SessionReconciliationSettings> settings,
@@ -66,6 +69,7 @@ public sealed class SessionReconciliationService
         _alerts = alerts;
         _reachability = reachability;
         _reAdoptions = reAdoptions;
+        _pendingAlerts = pendingAlerts;
         _census = census;
         _censusAlerts = censusAlerts;
         _settings = settings.Value;
@@ -89,6 +93,7 @@ public sealed class SessionReconciliationService
         if (runnerSessions is not null)
         {
             corrections += await ReconcileSessionsAsync(runnerSessions, now, ct);
+            await RaiseHerdrPendingIncidentsAsync(runnerSessions, now, ct);
             corrections += await ReconcileRunnerAliveSessionsAsync(runnerSessions, now, ct);
             // Pass 4 (CARD-0102): report what the three views of "what is running" add up to.
             // Returns no corrections on purpose - it changes nothing, ever.
@@ -218,6 +223,71 @@ public sealed class SessionReconciliationService
     }
 
     /// <summary>
+    /// Pass 1b (CARD-0186 S3): a runner session with <c>Pending != null</c> is Starting, so pass 1
+    /// correctly leaves it alone. After <see cref="SessionReconciliationSettings.HerdrPendingAlertMinutes"/>
+    /// raise <see cref="AgentIncidentKind.HerdrUnreachable"/> — Warning, Critical when channel-bound.
+    /// Dedup key <c>herdr:pending:{sessionId}</c>. Never kills.
+    /// </summary>
+    private async Task RaiseHerdrPendingIncidentsAsync(
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
+    {
+        var pending = runnerSessions
+            .Where(s => !string.IsNullOrEmpty(s.Pending))
+            .ToList();
+        _pendingAlerts.RetainOnly(pending.Select(s => s.SessionId).ToHashSet());
+
+        foreach (var runnerSession in pending)
+        {
+            var alertAfter = TimeSpan.FromMinutes(Math.Max(0, _settings.HerdrPendingAlertMinutes));
+            if (!_pendingAlerts.TryRaise(runnerSession.SessionId, now, alertAfter, alertAfter))
+                continue;
+
+            var agent = await FindOwningAgentAsync(runnerSession.SessionId, ct);
+            var channelBound = agent is not null
+                && await IsChannelBoundAsync(agent.Id, ct);
+            var severity = channelBound ? AlertSeverity.Critical : AlertSeverity.Warning;
+            var detail =
+                $"Herdr has been unreachable for session {runnerSession.SessionId} for at least "
+                + $"{_settings.HerdrPendingAlertMinutes} minute(s) (Pending={runnerSession.Pending}). "
+                + "Input is deferred with no delivery attempt charged; the session was not killed "
+                + "and will not be relaunched while herdr is down.";
+
+            if (agent is not null)
+            {
+                _db.AgentIncidents.Add(new AgentIncident
+                {
+                    Id = Guid.NewGuid(),
+                    AgentId = agent.Id,
+                    SessionId = runnerSession.SessionId,
+                    Kind = AgentIncidentKind.HerdrUnreachable,
+                    Severity = severity,
+                    Message = detail,
+                    FailureReason = runnerSession.Pending,
+                    CreatedAt = now,
+                });
+                await _db.SaveChangesAsync(ct);
+            }
+
+            await _alerts.RaiseAsync(
+                new AlertRaise(
+                    severity,
+                    Source: agent is null ? "reconciler" : "supervisor",
+                    Title: agent is null
+                        ? "Herdr unreachable (pending adoption)"
+                        : $"{AgentIncidentKind.HerdrUnreachable}: agent supervision",
+                    Detail: detail,
+                    DedupKey: $"herdr:pending:{runnerSession.SessionId}",
+                    AgentId: agent?.Id,
+                    SessionId: runnerSession.SessionId),
+                ct);
+        }
+
+    }
+
+    private Task<bool> IsChannelBoundAsync(Guid agentId, CancellationToken ct) =>
+        _db.ChatChannels.AsNoTracking().AnyAsync(c => c.AgentId == agentId, ct);
+
+    /// <summary>
     /// Pass 3 (CARD-0056) — the mirror of pass 1: the runner is still serving a session the DB has
     /// written off. Each arm is chosen by what the DB row says, and only one of them can end a
     /// process:
@@ -237,7 +307,8 @@ public sealed class SessionReconciliationService
         IReadOnlyList<SessionRunnerSessionDto> runnerSessions, DateTime now, CancellationToken ct)
     {
         var running = runnerSessions
-            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase)
+                        && string.IsNullOrEmpty(s.Pending))
             .ToList();
         if (running.Count == 0)
             return 0;
@@ -326,9 +397,29 @@ public sealed class SessionReconciliationService
 
         try
         {
-            // The probe: reading this session's buffer proves the detached pty-host's pipe is alive
-            // and serving, which "the runner listed it" alone does not.
-            await _runnerClient.GetBufferAsync(row.Id, ct);
+            if (string.Equals(runnerSession.Backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase))
+            {
+                // CARD-0186 S3: GetBuffer on herdr proves only that the runner is up (the ansi log
+                // is empty and always answers). Evidence is a GET whose HerdrVerifiedAtUtc is at
+                // least as fresh as this sweep's start.
+                var fresh = await _runnerClient.GetAsync(row.Id, ct);
+                if (fresh.HerdrVerifiedAtUtc is not { } verified || verified < now)
+                {
+                    await AlertAndIncidentAsync(
+                        AlertSeverity.Error, agent, row.Id,
+                        $"Session {row.Id} reads Failed and the session runner reports it Running on herdr, "
+                        + "but HerdrVerifiedAtUtc is absent or stale. Nothing was changed — unresponsive-but-"
+                        + "running is a state for a human.",
+                        "ReAdoptProbeFailed", ct);
+                    return 0;
+                }
+            }
+            else
+            {
+                // The probe: reading this session's buffer proves the detached pty-host's pipe is alive
+                // and serving, which "the runner listed it" alone does not.
+                await _runnerClient.GetBufferAsync(row.Id, ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -579,7 +670,8 @@ public sealed class SessionReconciliationService
             return;
 
         var running = runnerSessions
-            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            .Where(s => string.Equals(s.Status, "Running", StringComparison.OrdinalIgnoreCase)
+                        && string.IsNullOrEmpty(s.Pending))
             .ToList();
 
         var runningIds = running.Select(s => s.SessionId).ToList();

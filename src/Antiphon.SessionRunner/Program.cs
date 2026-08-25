@@ -95,6 +95,25 @@ app.Use(async (context, next) =>
     }
 });
 
+// CARD-0186 S3: /input, /kill, /resize, /snapshot map HerdrBackendUnavailableException to 503
+// with problem-type herdr_unreachable. Waiting on _clientReady would hold the queue's
+// per-session lock for the HTTP timeout; pending WriteAsync throws immediately instead.
+async ValueTask<object?> HerdrUnreachableFilter(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+{
+    try
+    {
+        return await next(context);
+    }
+    catch (HerdrBackendUnavailableException ex)
+    {
+        return Results.Problem(
+            title: "Herdr unreachable",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            type: HerdrProblemTypes.Unreachable);
+    }
+}
+
 // Say which pseudoconsole every session on this runner will get, once, at startup. A "modern"
 // request that fell back to the inbox conhost looks identical from everywhere else, and it silently
 // re-arms the 1 KB clipping the ceilings exist for.
@@ -166,7 +185,8 @@ app.MapGet("/sessions/{id:guid}/buffer", (Guid id, SessionRunnerRuntime runtime)
     Results.Ok(runtime.GetBuffer(id)));
 
 app.MapGet("/sessions/{id:guid}/snapshot", (Guid id, SessionRunnerRuntime runtime) =>
-    Results.Ok(runtime.GetSnapshot(id)));
+    Results.Ok(runtime.GetSnapshot(id)))
+    .AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
     Results.Ok(runtime.GetTranscript(id)));
@@ -179,7 +199,7 @@ app.MapPost("/sessions/{id:guid}/input", async (
 {
     await runtime.SendInputAsync(id, request.Input, cancellationToken);
     return Results.NoContent();
-});
+}).AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapPost("/sessions/{id:guid}/clear-live-buffer", async (
     Guid id,
@@ -198,7 +218,7 @@ app.MapPost("/sessions/{id:guid}/resize", async (
 {
     await runtime.ResizeAsync(id, request.Cols, request.Rows, cancellationToken);
     return Results.NoContent();
-});
+}).AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapPost("/sessions/kill-all", async (
     SessionRunnerRuntime runtime,
@@ -215,7 +235,7 @@ app.MapPost("/sessions/{id:guid}/kill", async (
 {
     var session = await runtime.KillAsync(id, TimeSpan.FromSeconds(5), cancellationToken);
     return Results.Ok(session);
-});
+}).AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapGet("/events", async (HttpContext context, SessionRunnerRuntime runtime, IConfiguration config) =>
 {

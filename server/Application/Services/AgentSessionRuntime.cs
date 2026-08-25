@@ -33,6 +33,8 @@ public sealed class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, IAgentProtocolAdapter> _testAdapters = new();
     // CARD-0164 test seam: herdr AgentStatus on in-process adapters (production reads it from the runner).
     private readonly ConcurrentDictionary<Guid, string?> _testAgentStatuses = new();
+    // CARD-0186 S3 test seam: runner Pending on in-process adapters.
+    private readonly ConcurrentDictionary<Guid, string?> _testPending = new();
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
     private readonly ISessionRunnerClient _runnerClient;
     private readonly IEventBus _eventBus;
@@ -775,7 +777,9 @@ public sealed class AgentSessionRuntime
         if (_testAdapters.ContainsKey(sessionId))
         {
             _testAgentStatuses.TryGetValue(sessionId, out var status);
-            metadata = new AgentSessionLiveMetadata(sessionId, GetDeltaSequenceOrDefault(sessionId), status);
+            _testPending.TryGetValue(sessionId, out var pending);
+            metadata = new AgentSessionLiveMetadata(
+                sessionId, GetDeltaSequenceOrDefault(sessionId), status, Pending: pending);
             return true;
         }
 
@@ -790,7 +794,7 @@ public sealed class AgentSessionRuntime
 
             metadata = new AgentSessionLiveMetadata(
                 sessionId, session.LastSequence, session.AgentStatus,
-                session.TranscriptBound, session.TranscriptBindHow);
+                session.TranscriptBound, session.TranscriptBindHow, session.Pending);
             return true;
         }
         catch
@@ -865,6 +869,13 @@ public sealed class AgentSessionRuntime
     public void SetTestAgentStatus(Guid sessionId, string? status) =>
         _testAgentStatuses[sessionId] = status;
 
+    /// <summary>
+    /// CARD-0186 S3 test seam: set the runner <c>Pending</c> reported by
+    /// <see cref="TryGetLiveMetadata"/> for an in-process test adapter.
+    /// </summary>
+    public void SetTestPending(Guid sessionId, string? pending) =>
+        _testPending[sessionId] = pending;
+
     public bool TryRemove(Guid sessionId, out IAgentProtocolAdapter? adapter)
     {
         _pendingInputs.TryRemove(sessionId, out _);
@@ -873,6 +884,7 @@ public sealed class AgentSessionRuntime
         _firstDeltas.TryRemove(sessionId, out _);
         _testBuffers.TryRemove(sessionId, out _);
         _testAgentStatuses.TryRemove(sessionId, out _);
+        _testPending.TryRemove(sessionId, out _);
         return _testAdapters.TryRemove(sessionId, out adapter);
     }
 
@@ -1272,7 +1284,8 @@ public sealed record AgentSessionLiveMetadata(
     long LastSequence,
     string? AgentStatus = null,
     bool? TranscriptBound = null,
-    string? TranscriptBindHow = null);
+    string? TranscriptBindHow = null,
+    string? Pending = null);
 
 public static class AgentSessionGroups
 {

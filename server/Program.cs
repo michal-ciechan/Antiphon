@@ -321,6 +321,7 @@ try
     // Singleton because SessionReconciliationService is scoped — a per-sweep flap counter would
     // reset every 15s and bound nothing (CARD-0056).
     builder.Services.AddSingleton<SessionReAdoptionState>();
+    builder.Services.AddSingleton<HerdrPendingAlertState>();
     // CARD-0102 / coverage plan P0-3: the pty-host census the reconciliation sweep reports on.
     // Singletons for the same reason SessionReAdoptionState is one - the dedup window is per
     // server uptime, and the probe holds no state at all.

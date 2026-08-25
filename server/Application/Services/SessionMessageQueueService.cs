@@ -182,6 +182,13 @@ public sealed class SessionMessageQueueService
                     throw new ConflictException(
                         $"Agent session '{sessionId}' is blocked in herdr (permission/approval UI); try again when idle.");
                 }
+
+                if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+                    && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
+                {
+                    throw new ConflictException(
+                        $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
+                }
             }
 
             var nowBody = await SpillQueueBodyAsync(
@@ -221,6 +228,11 @@ public sealed class SessionMessageQueueService
                     throw new ConflictException(
                         "Message delivery reached the transcript truncated "
                         + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
+                }
+                if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
+                {
+                    throw new ConflictException(
+                        $"Agent session '{sessionId}' cannot accept input because herdr is unreachable; try again when it is back.");
                 }
                 if (outcome.Verdict != DeliveryVerdict.Delivered)
                 {
@@ -833,6 +845,17 @@ public sealed class SessionMessageQueueService
             return FlushResult.Nothing;
         }
 
+        // CARD-0186 S3: herdr unreachable (pending adoption, or 503 herdr_unreachable) → defer.
+        // No attempt charged, nothing parked, never killed.
+        if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+            && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
+        {
+            _logger.LogDebug(
+                "Deferring delivery to herdr session {SessionId}: Pending={Pending}",
+                sessionId, pendingMeta.Pending);
+            return FlushResult.Nothing;
+        }
+
         // THE anti-duplicate keystone (CARD-0055 D3): nothing may re-type a message that has been
         // typed before without first asking the transcript whether it actually went in. A delivery
         // fails verification for two very different reasons — the body never reached Claude, or it
@@ -1032,6 +1055,27 @@ public sealed class SessionMessageQueueService
 
         if (outcome.Verdict == DeliveryVerdict.Delivered)
             return FlushResult.Delivered;
+
+        if (outcome.Verdict == DeliveryVerdict.BackendUnreachable)
+        {
+            // Stamped Sent + attempts++ before typing; refund so this is identical to the blocked
+            // gate (FlushResult.Nothing, zero attempts charged).
+            foreach (var m in run)
+            {
+                m.Status = QueuedMessageStatus.Pending;
+                m.SentAt = null;
+                if (m.DeliveryAttempts > 0)
+                    m.DeliveryAttempts--;
+                m.LastDeliveryStartedAt = null;
+                m.LastDeliveryBaselineSequence = null;
+            }
+
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Deferring delivery to session {SessionId}: herdr unreachable (no attempt charged)",
+                sessionId);
+            return FlushResult.Nothing;
+        }
 
         var ids = run.Select(m => m.Id).ToList();
         if (outcome.Verdict == DeliveryVerdict.ForbiddenBody)
@@ -1293,6 +1337,7 @@ public sealed class SessionMessageQueueService
         Truncated,
         ForbiddenBody,
         LocalCommandNotAccepted,
+        BackendUnreachable,
     }
 
     /// <summary>
@@ -1337,6 +1382,9 @@ public sealed class SessionMessageQueueService
         public int Handled => Confirmed + Truncated;
     }
 
+    private static bool IsHerdrUnreachable(Exception ex) =>
+        ex is ServiceUnavailableException { Code: HerdrProblemTypes.Unreachable };
+
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
         DeliveryVerdict.NoComposerEvidence => "the typed message never appeared in the composer",
@@ -1345,6 +1393,7 @@ public sealed class SessionMessageQueueService
         DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
         DeliveryVerdict.ForbiddenBody => "the body is forbidden for this agent kind",
         DeliveryVerdict.LocalCommandNotAccepted => "the local TUI command was not accepted by the composer",
+        DeliveryVerdict.BackendUnreachable => "herdr is unreachable",
         _ => "delivered",
     };
 
@@ -1538,7 +1587,14 @@ public sealed class SessionMessageQueueService
         }
 
         var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
-        await _runtime.SendInputAsync(sessionId, payload, ct);
+        try
+        {
+            await _runtime.SendInputAsync(sessionId, payload, ct);
+        }
+        catch (Exception ex) when (IsHerdrUnreachable(ex))
+        {
+            return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
+        }
 
         if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
         {
@@ -1579,7 +1635,14 @@ public sealed class SessionMessageQueueService
             sequenceBeforeSubmit = meta.LastSequence;
 
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
-        await _runtime.SendInputAsync(sessionId, "\r", ct);
+        try
+        {
+            await _runtime.SendInputAsync(sessionId, "\r", ct);
+        }
+        catch (Exception ex) when (IsHerdrUnreachable(ex))
+        {
+            return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
+        }
 
         if (confirmTranscript)
         {
@@ -1735,11 +1798,12 @@ public sealed class SessionMessageQueueService
                 // Shared by the unobservable loop by construction (CARD-0164 decision 11).
                 if (ceilings?.Backend == DeliveryBackend.HerdrPane
                     && _runtime.TryGetLiveMetadata(sessionId, out var live)
-                    && string.Equals(live.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
+                    && (string.Equals(live.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(live.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal)))
                 {
                     _logger.LogInformation(
-                        "Withholding confirm-loop Enter for herdr session {SessionId}: agent_status=blocked",
-                        sessionId);
+                        "Withholding confirm-loop Enter for herdr session {SessionId}: agent_status={Status} pending={Pending}",
+                        sessionId, live.AgentStatus, live.Pending);
                 }
                 else
                 {
@@ -1748,7 +1812,14 @@ public sealed class SessionMessageQueueService
                         + "(attempt {Attempt} of {Max}). This never re-types the body — if the first Enter did "
                         + "submit, the composer is empty and this is a no-op",
                         sessionId, entersSent + 1, _verification.SubmitAttempts);
-                    await _runtime.SendInputAsync(sessionId, "\r", ct);
+                    try
+                    {
+                        await _runtime.SendInputAsync(sessionId, "\r", ct);
+                    }
+                    catch (Exception ex) when (IsHerdrUnreachable(ex))
+                    {
+                        return DeliveryOutcome.Of(DeliveryVerdict.BackendUnreachable);
+                    }
                     entersSent++;
                     lastEnter = UtcNow();
                 }
@@ -2334,7 +2405,9 @@ public sealed class SessionMessageQueueService
             // relaunching straight back into the same race is CARD-0047's restart loop by another
             // route. The message stays Pending and the 60s stranded sweep retries it.
             var kill = agent is { AlwaysOn: true } && !working && !allSupervision && !preFirstTurn
-                && verdict is not (DeliveryVerdict.ForbiddenBody or DeliveryVerdict.LocalCommandNotAccepted);
+                && verdict is not (DeliveryVerdict.ForbiddenBody
+                    or DeliveryVerdict.LocalCommandNotAccepted
+                    or DeliveryVerdict.BackendUnreachable);
 
             if (allSupervision && canceledSupervision > 0)
             {

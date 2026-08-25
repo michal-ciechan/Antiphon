@@ -20,7 +20,13 @@ public sealed record SessionRunnerSessionDto(
     DateTime? AgentStatusSinceUtc = null,
     // CARD-0180 S4: runner transcript bind. Null on older runners / no tailer.
     bool? TranscriptBound = null,
-    string? TranscriptBindHow = null);
+    string? TranscriptBindHow = null,
+    // CARD-0186 S2/S3: which lane hosts the child. Null on older runners. Values: SessionBackends.
+    string? Backend = null,
+    // CARD-0186 S3: HerdrPendingReasons.Unreachable while adoption is waiting on herdr.
+    string? Pending = null,
+    // CARD-0186 S3: stamped by the single-session GET after a passing herdr liveness verify.
+    DateTime? HerdrVerifiedAtUtc = null);
 
 public sealed record SessionRunnerBufferDto(
     Guid SessionId,

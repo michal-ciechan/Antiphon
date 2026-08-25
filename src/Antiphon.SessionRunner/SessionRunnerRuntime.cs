@@ -230,11 +230,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     /// <summary>
     /// CARD-0161: for herdr sessions, refresh LastSequence + AgentStatus via one pane.get before
-    /// answering. List() stays cheap (no herdr calls).
+    /// answering. CARD-0186 S3: stamps <see cref="RunnerSessionDto.HerdrVerifiedAtUtc"/> after a
+    /// passing liveness verify. List() stays cheap (no herdr calls) and reports the last stamp.
     /// </summary>
     public async Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
     {
         var session = GetSession(sessionId);
+        if (_herdrClient is not null)
+            await session.TryStampHerdrVerifiedAsync(_herdrClient, ct);
         await session.RefreshHerdrSurfaceAsync(ct);
         return session.ToDto();
     }
@@ -393,7 +396,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         // CARD-0160: herdr adoption arm AFTER claims. Sidecar present + pane/pid/read evidence →
         // re-adopt; restored-but-empty or unknown pane → Exited(HerdrRestartPresumedDead);
-        // herdr unreachable → no verdict (alert + retry via liveness).
+        // herdr unreachable + OS-alive → Pending (S3); unreachable + OS-dead → ChildGone.
         if (_herdrClient is not null)
             await AdoptHerdrSessionsAsync(probe, ct);
 
@@ -457,7 +460,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <see cref="HerdrPaneSidecar"/>. Evidence order: socket, pane.get, ChildPid listed,
     /// then OS liveness before any PresumedDead/PaneClosed verdict. P7: Claude dies with
     /// herdr, so R2 (pane restored, pid not listed, OS-dead) is the live restart shape;
-    /// R3/R5 orphan (OS-alive) is defensive. R6 (unreachable + OS-alive pending) is S3.
+    /// R3/R5 orphan (OS-alive) is defensive. R6 (unreachable + OS-alive) is Pending.
     /// </summary>
     private async Task AdoptHerdrSessionsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
@@ -467,65 +470,122 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (_sessions.ContainsKey(sidecar.SessionId))
                 continue;
 
+            var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
+            switch (verdict)
+            {
+                case HerdrBarVerdict.Adopt:
+                    var session = new RunnerSession(
+                        sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+                    await session.AdoptHerdrAsync(sidecar, _herdrClient!, () => NotifyPaneSetChanged(), ct);
+                    _sessions.TryAdd(sidecar.SessionId, session);
+                    NotifyPaneSetChanged();
+                    _logger.LogInformation(
+                        "Adopted herdr pane {PaneId} for session {SessionId} (child pid {Pid})",
+                        sidecar.PaneId, sidecar.SessionId, sidecar.ChildPid);
+                    break;
+                case HerdrBarVerdict.RestartPresumedDead:
+                    RegisterHerdrExited(sidecar, HerdrExitReasons.RestartPresumedDead);
+                    break;
+                case HerdrBarVerdict.ChildGone:
+                    RegisterHerdrExited(sidecar, HerdrExitReasons.ChildGone);
+                    break;
+                case HerdrBarVerdict.Unreachable:
+                    var pending = RunnerSession.CreatePendingHerdr(
+                        sidecar, _settings, _events, _logger, _processLiveness);
+                    _sessions.TryAdd(sidecar.SessionId, pending);
+                    _logger.LogWarning(
+                        "Herdr unreachable while adopting session {SessionId}; registered Pending ({Reason}); sidecar retained",
+                        sidecar.SessionId, HerdrPendingReasons.Unreachable);
+                    break;
+            }
+        }
+    }
+
+    private enum HerdrBarVerdict { Adopt, RestartPresumedDead, ChildGone, Unreachable }
+
+    /// <summary>
+    /// CARD-0186 §5 bar. Socket, pane.get, ChildPid listed, then OS before any death verdict.
+    /// Orphan kills (R3/R5) run as a side effect of RestartPresumedDead.
+    /// </summary>
+    private async Task<HerdrBarVerdict> EvaluateHerdrBarAsync(
+        HerdrPaneSidecar sidecar, IProcessLivenessProbe probe, CancellationToken ct)
+    {
+        try
+        {
+            await _herdrClient!.ConnectAndValidateAsync(ct);
             try
             {
-                await _herdrClient!.ConnectAndValidateAsync(ct);
-                try
-                {
-                    _ = await _herdrClient.PaneGetAsync(sidecar.PaneId, ct);
-                }
-                catch (HerdrApiException)
-                {
-                    // R4/R5: unknown pane. OS-alive → orphan kill (R5); then RestartPresumedDead.
-                    TryKillOrphanedChild(sidecar, probe);
-                    RegisterHerdrExited(sidecar, HerdrExitReasons.RestartPresumedDead);
-                    continue;
-                }
+                _ = await _herdrClient.PaneGetAsync(sidecar.PaneId, ct);
+            }
+            catch (HerdrApiException)
+            {
+                // R4/R5: unknown pane. OS-alive → orphan kill (R5); then RestartPresumedDead.
+                TryKillOrphanedChild(sidecar, probe);
+                return HerdrBarVerdict.RestartPresumedDead;
+            }
 
-                var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
-                var childPresent = sidecar.ChildPid is int child
-                    && proc.ForegroundProcesses?.Any(p => p.Pid == child) == true;
-                if (!childPresent)
-                {
-                    // R2/R3: restored-but-empty (P7) or orphan. OS-alive → kill by pid (R3).
-                    TryKillOrphanedChild(sidecar, probe);
-                    RegisterHerdrExited(sidecar, HerdrExitReasons.RestartPresumedDead);
-                    continue;
-                }
+            var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
+            var childPresent = sidecar.ChildPid is int child
+                && proc.ForegroundProcesses?.Any(p => p.Pid == child) == true;
+            if (!childPresent)
+            {
+                // R2/R3: restored-but-empty (P7) or orphan. OS-alive → kill by pid (R3).
+                TryKillOrphanedChild(sidecar, probe);
+                return HerdrBarVerdict.RestartPresumedDead;
+            }
 
-                // R1: pid present — also require pane.read to answer.
-                _ = await _herdrClient.PaneReadAsync(sidecar.PaneId, "visible", stripAnsi: true, lines: 1, ct);
+            // R1: pid present — also require pane.read to answer.
+            _ = await _herdrClient.PaneReadAsync(sidecar.PaneId, "visible", stripAnsi: true, lines: 1, ct);
+            return HerdrBarVerdict.Adopt;
+        }
+        catch (HerdrBackendUnavailableException)
+        {
+            // R7: unreachable + OS-dead → ChildGone (needs no socket). R6: OS-alive → Pending.
+            return IsOsAlive(sidecar, probe) ? HerdrBarVerdict.Unreachable : HerdrBarVerdict.ChildGone;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Herdr adoption bar failed for session {SessionId}; treating as RestartPresumedDead",
+                sidecar.SessionId);
+            TryKillOrphanedChild(sidecar, probe);
+            return HerdrBarVerdict.RestartPresumedDead;
+        }
+    }
 
-                var session = new RunnerSession(
-                    sidecar.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
+    private async Task RetryPendingHerdrAsync(
+        RunnerSession session, IProcessLivenessProbe probe, CancellationToken ct)
+    {
+        var sidecar = session.PendingSidecar;
+        if (sidecar is null || _herdrClient is null)
+            return;
+
+        var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
+        switch (verdict)
+        {
+            case HerdrBarVerdict.Adopt:
                 await session.AdoptHerdrAsync(sidecar, _herdrClient, () => NotifyPaneSetChanged(), ct);
-                _sessions.TryAdd(sidecar.SessionId, session);
                 NotifyPaneSetChanged();
                 _logger.LogInformation(
-                    "Adopted herdr pane {PaneId} for session {SessionId} (child pid {Pid})",
-                    sidecar.PaneId, sidecar.SessionId, sidecar.ChildPid);
-            }
-            catch (HerdrBackendUnavailableException ex)
-            {
-                // R7: unreachable + OS-dead → ChildGone (needs no socket). R6 (OS-alive pending) is S3.
-                if (!IsOsAlive(sidecar, probe))
-                {
-                    RegisterHerdrExited(sidecar, HerdrExitReasons.ChildGone);
-                    continue;
-                }
-
-                _logger.LogWarning(ex,
-                    "Herdr unreachable while adopting session {SessionId}; leaving unadopted",
-                    sidecar.SessionId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Herdr adoption failed for session {SessionId}; registering Exited",
-                    sidecar.SessionId);
-                TryKillOrphanedChild(sidecar, probe);
-                RegisterHerdrExited(sidecar, HerdrExitReasons.RestartPresumedDead);
-            }
+                    "Pending herdr session {SessionId} adopted after herdr returned (pane {PaneId})",
+                    sidecar.SessionId, sidecar.PaneId);
+                break;
+            case HerdrBarVerdict.RestartPresumedDead:
+                session.CompletePendingAsExited(HerdrExitReasons.RestartPresumedDead);
+                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+                _logger.LogWarning(
+                    "Pending herdr session {SessionId} exited ({Reason}) once herdr answered",
+                    sidecar.SessionId, HerdrExitReasons.RestartPresumedDead);
+                break;
+            case HerdrBarVerdict.ChildGone:
+                session.CompletePendingAsExited(HerdrExitReasons.ChildGone);
+                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+                _logger.LogWarning(
+                    "Pending herdr session {SessionId} exited ({Reason}); child is OS-dead",
+                    sidecar.SessionId, HerdrExitReasons.ChildGone);
+                break;
+            case HerdrBarVerdict.Unreachable:
+                break;
         }
     }
 
@@ -635,6 +695,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// and publishes the missed SessionExited event. This is the liveness backstop for exits the
     /// normal observer never saw — a session once sat "Running" on a dead PID for a week, keeping
     /// its agent badged Working in the UI with no process behind it. Returns the ids it marked.
+    /// Pending herdr sessions are not Running; use
+    /// <see cref="SweepVanishedSessionsAsync"/> so the sweep can re-run the adoption bar.
     /// </summary>
     public IReadOnlyList<Guid> SweepVanishedSessions(IProcessLivenessProbe probe)
     {
@@ -648,6 +710,32 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId);
                 marked.Add(sessionId);
             }
+        }
+
+        return marked;
+    }
+
+    /// <summary>
+    /// CARD-0186 S3: the OS-pid vanish sweep plus the herdr pending arm. For each pending session,
+    /// re-run the §5 bar (R1 adopt in place + SessionAdopted; R2–R5 / R7 publish SessionExited).
+    /// Running herdr sessions keep the existing OS-pid check from S2.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> SweepVanishedSessionsAsync(
+        IProcessLivenessProbe probe, CancellationToken ct)
+    {
+        var marked = SweepVanishedSessions(probe).ToList();
+        if (_herdrClient is null)
+            return marked;
+
+        foreach (var (sessionId, session) in _sessions)
+        {
+            if (!session.IsPendingHerdr)
+                continue;
+
+            var before = session.ToDto().Status;
+            await RetryPendingHerdrAsync(session, probe, ct);
+            if (session.HasExited && before != "Exited")
+                marked.Add(sessionId);
         }
 
         return marked;
@@ -714,6 +802,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private string? _exitReasonOverride;
         private bool _adopted;
         private string _backend = SessionBackends.PtyHost;
+        private string? _pendingReason;
+        private HerdrPaneSidecar? _pendingSidecar;
+        private DateTime? _herdrVerifiedAtUtc;
 
         public RunnerSession(
             Guid sessionId,
@@ -738,6 +829,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         /// <summary>CARD-0162: pane id when this session is on the herdr lane.</summary>
         internal string? HerdrPaneId => (_herdrChild as HerdrPaneChild)?.PaneId;
+
+        /// <summary>CARD-0186 S3: adoption is waiting on herdr.</summary>
+        internal bool IsPendingHerdr => _pendingReason is not null;
+
+        /// <summary>CARD-0186 S3: sidecar retained while pending (herdr might come back).</summary>
+        internal HerdrPaneSidecar? PendingSidecar => _pendingSidecar;
 
         /// <summary>
         /// CARD-0161 / CARD-0164: fold pane.get revision AND the runner content-delta counter into
@@ -1395,6 +1492,98 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return session;
         }
 
+        /// <summary>
+        /// CARD-0186 S3 R6: herdr unreachable at runner restart and the sidecar's child is still
+        /// OS-alive. Listed as Starting + Adopted with Pending=HerdrUnreachable; sidecar retained.
+        /// </summary>
+        public static RunnerSession CreatePendingHerdr(
+            HerdrPaneSidecar sidecar,
+            SessionRunnerSettings settings,
+            SessionRunnerEventHub events,
+            ILogger logger,
+            IProcessLivenessProbe processLiveness)
+        {
+            return new RunnerSession(sidecar.SessionId, settings, events, logger, processLiveness: processLiveness)
+            {
+                _childPid = sidecar.ChildPid,
+                _startedAt = sidecar.LaunchedAtUtc,
+                _adopted = true,
+                _status = "Starting",
+                _backend = SessionBackends.Herdr,
+                _pendingReason = HerdrPendingReasons.Unreachable,
+                _pendingSidecar = sidecar,
+            };
+        }
+
+        /// <summary>
+        /// CARD-0186 S3: a pending session reached a death verdict (R2–R5 / R7). Sidecar deletion
+        /// is the caller's job so the bar's orphan-kill side effects stay in one place.
+        /// </summary>
+        internal void CompletePendingAsExited(string reason)
+        {
+            lock (_gate)
+            {
+                if (_status == "Exited")
+                    return;
+                _status = "Exited";
+                _exitCode = null;
+                _exitReason = reason;
+                _pendingReason = null;
+            }
+
+            _clientReady.TrySetResult(false);
+            _exited.TrySetResult();
+            _events.Publish(
+                SessionRunnerEventNames.SessionExited,
+                new RunnerSessionExitedEvent(_sessionId, null, reason, LastSequence: 0));
+        }
+
+        /// <summary>
+        /// CARD-0186 S3: stamp <see cref="RunnerSessionDto.HerdrVerifiedAtUtc"/> only on a
+        /// positive bar pass. Unreachable / pending / not-herdr never stamp — "I could not ask"
+        /// is not evidence of liveness.
+        /// </summary>
+        internal async Task<bool> TryStampHerdrVerifiedAsync(HerdrClient client, CancellationToken ct)
+        {
+            if (_pendingReason is not null)
+                return false;
+            if (_herdrChild is not HerdrPaneChild herdr || herdr.PaneId is null || herdr.Sidecar is null)
+                return false;
+
+            var sidecar = herdr.Sidecar;
+            try
+            {
+                try
+                {
+                    _ = await client.PaneGetAsync(sidecar.PaneId, ct);
+                }
+                catch (HerdrApiException)
+                {
+                    CloseHerdrAfterBarFailed(herdr, sidecar);
+                    return false;
+                }
+
+                if (sidecar.ChildPid is int childPid)
+                {
+                    var proc = await client.PaneProcessInfoAsync(sidecar.PaneId, ct);
+                    var childPresent = proc.ForegroundProcesses?.Any(p => p.Pid == childPid) == true;
+                    if (!childPresent)
+                    {
+                        CloseHerdrAfterBarFailed(herdr, sidecar);
+                        return false;
+                    }
+                }
+
+                lock (_gate)
+                    _herdrVerifiedAtUtc = DateTime.UtcNow;
+                return true;
+            }
+            catch (HerdrBackendUnavailableException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>Re-attach a surviving herdr pane after a runner restart (CARD-0160 §6A positive arm).</summary>
         public async Task AdoptHerdrAsync(
             HerdrPaneSidecar sidecar,
@@ -1404,6 +1593,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             _adopted = true;
             _backend = SessionBackends.Herdr;
+            _pendingReason = null;
+            _pendingSidecar = null;
             _childPid = sidecar.ChildPid;
             _startedAt = sidecar.LaunchedAtUtc;
             _onHerdrPaneSetChanged = onPaneSetChanged;
@@ -1515,8 +1706,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     TranscriptBound: _tailer is null ? null : boundPath is not null,
                     TranscriptBindHow: boundPath is not null ? _tailer!.BindHow : null,
                     Backend: _backend,
-                    Pending: null,
-                    HerdrVerifiedAtUtc: null);
+                    Pending: _pendingReason,
+                    HerdrVerifiedAtUtc: _herdrVerifiedAtUtc);
             }
         }
 
@@ -1530,6 +1721,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public RunnerSnapshotDto GetSnapshot()
         {
+            if (_pendingReason is not null)
+                throw new HerdrBackendUnavailableException(
+                    "Herdr is unreachable; session is pending adoption.");
+
             // Herdr has no push stream in S2 — serve an on-demand pane.read when asked.
             if (_herdrChild is { } herdr)
             {
@@ -1552,6 +1747,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                                 _startedAt);
                         }
                     }
+                }
+                catch (HerdrBackendUnavailableException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -1578,6 +1777,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
             // the input log is always ahead of the transcript record that rule C4 matches it to.
             _inputLog.Append(input);
+            if (_pendingReason is not null)
+                throw new HerdrBackendUnavailableException(
+                    "Herdr is unreachable; session is pending adoption.");
             if (_herdrChild is { } herdr)
             {
                 // Wait for LaunchAsync to finish (same _clientReady gate the pty path uses).
@@ -1601,6 +1803,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public async Task ResizeAsync(int cols, int rows, CancellationToken ct)
         {
+            if (_pendingReason is not null)
+                throw new HerdrBackendUnavailableException(
+                    "Herdr is unreachable; session is pending adoption.");
             if (_herdrChild is { } herdr)
             {
                 await herdr.ResizeAsync(cols, rows, ct);
@@ -1622,6 +1827,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _exitReasonOverride = exitReasonOverride;
             }
 
+            if (_pendingReason is not null)
+            {
+                KillPendingHerdr();
+                return;
+            }
+
             if (_herdrChild is { } herdr)
             {
                 await herdr.KillAsync(ct);
@@ -1636,6 +1847,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Parity with the old in-proc KillAsync: wait for the exit (with a grace margin for
             // the pipe round-trip); the liveness sweep is the backstop if it never arrives.
             await Task.WhenAny(_exited.Task, Task.Delay(timeout + TimeSpan.FromSeconds(2), ct));
+        }
+
+        /// <summary>
+        /// CARD-0186 S3: operator kill of a pending session. Delete the sidecar, kill the child
+        /// by pid if OS-alive (positive identity), Exited(PaneLeftOpen) — the pane, if it still
+        /// exists when herdr comes back, is not ours to close blind.
+        /// </summary>
+        private void KillPendingHerdr()
+        {
+            var sidecar = _pendingSidecar;
+            if (sidecar?.ChildPid is int pid && _processLiveness.IsAlive(pid, sidecar.LaunchedAtUtc))
+                KillPidBestEffort(pid);
+
+            HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+            CompletePendingAsExited(HerdrExitReasons.PaneLeftOpen);
         }
 
         /// <summary>

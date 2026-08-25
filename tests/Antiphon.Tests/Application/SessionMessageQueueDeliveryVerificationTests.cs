@@ -1962,6 +1962,62 @@ public class SessionMessageQueueDeliveryVerificationTests
             .ShouldBeFalse("NoComposerEvidence is not the screen-only fallback");
     }
 
+    [Test]
+    public async Task Herdr_unreachable_defers_with_zero_attempts_and_does_not_kill_always_on()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.ThrowOnSend = new ServiceUnavailableException(
+            "Herdr is unreachable.", HerdrProblemTypes.Unreachable);
+
+        var dto = await h.Queue.EnqueueAsync(
+            h.SessionId, "while herdr is down", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        dto.Messages.Count.ShouldBe(1);
+        dto.Messages[0].Status.ShouldBe(nameof(QueuedMessageStatus.Pending));
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(0, "BackendUnreachable charges no attempt");
+        message.SentAt.ShouldBeNull();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryVerificationFailed))
+            .ShouldBeFalse();
+        h.Adapter.Killed.ShouldBeFalse("a herdr-unreachable session must never be auto-killed");
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Herdr_unreachable_pending_metadata_defers_without_typing()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Runtime.SetTestPending(h.SessionId, HerdrPendingReasons.Unreachable);
+
+        await h.Queue.EnqueueAsync(
+            h.SessionId, "pending adoption", MessageSendMode.WhenIdle, CancellationToken.None);
+
+        await using var db = CreateContext();
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryAttempts.ShouldBe(0);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Mode_Now_herdr_unreachable_returns_409_without_killing()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.ThrowOnSend = new ServiceUnavailableException(
+            "Herdr is unreachable.", HerdrProblemTypes.Unreachable);
+
+        var ex = await Should.ThrowAsync<ConflictException>(() =>
+            h.Queue.EnqueueAsync(
+                h.SessionId, "send now while herdr is down", MessageSendMode.Now, CancellationToken.None));
+        ex.Message.ShouldContain("herdr is unreachable");
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
     private static async Task SetKindAsync(Guid sessionId, AgentKind kind)
     {
         await using var db = CreateContext();

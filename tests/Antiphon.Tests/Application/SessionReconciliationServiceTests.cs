@@ -5,10 +5,12 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -540,6 +542,160 @@ public class SessionReconciliationServiceTests
         }
     }
 
+    [Test]
+    public async Task Pending_herdr_session_is_not_failed_by_pass_1()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        Status: "Starting", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                        LastSequence: 0, Adopted: true, Backend: SessionBackends.Herdr,
+                        Pending: HerdrPendingReasons.Unreachable)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus());
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.Status.ShouldBe(SessionStatus.Running, "Pending is Starting, not Exited, not unknown");
+            dbSession.FailureReason.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task HerdrUnreachable_incident_fires_only_after_the_alert_minutes_threshold()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero));
+            var pendingState = new HerdrPendingAlertState();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: clock.GetUtcNow().UtcDateTime.AddHours(-1),
+                        Status: "Starting", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                        LastSequence: 0, Adopted: true, Backend: SessionBackends.Herdr,
+                        Pending: HerdrPendingReasons.Unreachable)
+                ]
+            };
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using (var early = CreateContext())
+            {
+                (await early.AgentIncidents.AnyAsync(
+                    i => i.AgentId == agentId && i.Kind == AgentIncidentKind.HerdrUnreachable))
+                    .ShouldBeFalse("first observation is not yet past the 5-minute threshold");
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(6));
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.AgentId == agentId && i.Kind == AgentIncidentKind.HerdrUnreachable);
+            incident.Severity.ShouldBe(AlertSeverity.Warning);
+            incident.SessionId.ShouldBe(sessionId);
+
+            clock.Advance(TimeSpan.FromMinutes(1));
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            (await verify.AgentIncidents.CountAsync(
+                i => i.AgentId == agentId && i.Kind == AgentIncidentKind.HerdrUnreachable))
+                .ShouldBe(1, "never re-raised inside the alert window");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task HerdrUnreachable_incident_is_critical_when_channel_bound()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+            await BindChannelAsync(agentId, marker);
+
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero));
+            var pendingState = new HerdrPendingAlertState();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: clock.GetUtcNow().UtcDateTime.AddHours(-1),
+                        Status: "Starting", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                        LastSequence: 0, Adopted: true, Backend: SessionBackends.Herdr,
+                        Pending: HerdrPendingReasons.Unreachable)
+                ]
+            };
+
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            clock.Advance(TimeSpan.FromMinutes(6));
+            await using (var db = CreateContext())
+            {
+                var service = BuildService(
+                    db, runner, new MockEventBus(), pendingAlerts: pendingState, time: clock);
+                await service.ScanAsync(CancellationToken.None);
+            }
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.AgentId == agentId && i.Kind == AgentIncidentKind.HerdrUnreachable);
+            incident.Severity.ShouldBe(AlertSeverity.Critical);
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
     // ---------- helpers ----------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -553,7 +709,10 @@ public class SessionReconciliationServiceTests
         bool reAdoptEnabled = true,
         IPtyHostCensusProbe? census = null,
         PtyHostCensusAlertState? censusAlerts = null,
-        bool censusAlertEnabled = true) =>
+        bool censusAlertEnabled = true,
+        HerdrPendingAlertState? pendingAlerts = null,
+        TimeProvider? time = null,
+        int herdrPendingAlertMinutes = 5) =>
         new(
             db,
             runnerClient,
@@ -561,6 +720,7 @@ public class SessionReconciliationServiceTests
             alerts ?? new NoOpAlertService(),
             new RunnerReachabilityState(),
             reAdoptions ?? new SessionReAdoptionState(),
+            pendingAlerts ?? new HerdrPendingAlertState(),
             // Default OFF for every pre-existing case: the census is global by nature and these
             // tests share a database, so a suite that had not thought about it must not start
             // raising census alerts as a side effect of other tests' rows.
@@ -573,8 +733,9 @@ public class SessionReconciliationServiceTests
                 AgentGraceMs = 120_000,
                 ReAdoptEnabled = reAdoptEnabled,
                 CensusAlertEnabled = censusAlertEnabled && census is not null,
+                HerdrPendingAlertMinutes = herdrPendingAlertMinutes,
             }),
-            TimeProvider.System,
+            time ?? TimeProvider.System,
             NullLogger<SessionReconciliationService>.Instance);
 
     /// <summary>A runner that reports one session Running, with a real process behind it.</summary>
@@ -686,6 +847,24 @@ public class SessionReconciliationServiceTests
         return agentId;
     }
 
+    private static async Task BindChannelAsync(Guid agentId, string marker)
+    {
+        await using var db = CreateContext();
+        db.ChatChannels.Add(new ChatChannel
+        {
+            Id = Guid.NewGuid(),
+            Provider = "telegram",
+            ExternalId = marker,
+            Kind = ChatChannelKind.Direct,
+            Title = "Bound channel (test)",
+            AgentId = agentId,
+            Enabled = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static async Task CleanupAsync(string marker)
     {
         await using var db = CreateContext();
@@ -694,9 +873,12 @@ public class SessionReconciliationServiceTests
             .Where(s => s.Cwd.EndsWith(marker))
             .Select(s => s.Id)
             .ToListAsync();
+        var agentIds = await db.Agents.Where(a => a.Name == marker).Select(a => a.Id).ToListAsync();
         await db.AgentIncidents.Where(i => i.SessionId != null && sessionIds.Contains(i.SessionId.Value))
             .ExecuteDeleteAsync();
         await db.Alerts.Where(a => a.SessionId != null && sessionIds.Contains(a.SessionId.Value))
+            .ExecuteDeleteAsync();
+        await db.ChatChannels.Where(c => c.ExternalId == marker || (c.AgentId != null && agentIds.Contains(c.AgentId.Value)))
             .ExecuteDeleteAsync();
         await db.Agents.Where(a => a.Name == marker).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => s.Cwd.EndsWith(marker)).ExecuteDeleteAsync();
@@ -718,8 +900,16 @@ public class SessionReconciliationServiceTests
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
-            throw new NotSupportedException();
+        public Func<Guid, SessionRunnerSessionDto>? GetOverride { get; set; }
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+        {
+            if (GetOverride is { } get)
+                return Task.FromResult(get(sessionId));
+            var match = Sessions.FirstOrDefault(s => s.SessionId == sessionId)
+                ?? throw new KeyNotFoundException($"session {sessionId} not in fake runner");
+            return Task.FromResult(match);
+        }
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
         {
