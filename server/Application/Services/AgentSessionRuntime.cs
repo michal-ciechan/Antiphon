@@ -156,6 +156,8 @@ public sealed class AgentSessionRuntime
             // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a
             // core after its turn completed — the non-zero exit code is just the kill's. It must
             // land as Stopped, not Failed, so the next message resumes the session by id.
+            // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open are
+            // never a clean stop — Stopped is operator intent and reconciliation's auto-kill key.
             var cleanStop = exitCode == 0 || exitReason == AgentExitReason.CpuSpinKilled;
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
@@ -177,6 +179,44 @@ public sealed class AgentSessionRuntime
                 agent.UpdatedAt = now;
                 changed = true;
                 changedAgentId = agent.Id;
+            }
+
+            if (exitReason == AgentExitReason.HerdrPaneLeftOpen)
+            {
+                var ownerId = agent?.Id ?? changedAgentId;
+                if (ownerId is Guid paneLeftOwner
+                    && !await db.AgentIncidents.AnyAsync(
+                        i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.HerdrPaneLeftOpen, ct))
+                {
+                    var supervisor = scope.ServiceProvider.GetService<AgentSupervisorService>();
+                    if (supervisor is not null)
+                    {
+                        await supervisor.RecordIncidentAsync(
+                            paneLeftOwner,
+                            sessionId,
+                            AgentIncidentKind.HerdrPaneLeftOpen,
+                            AlertSeverity.Warning,
+                            "Herdr kill left the pane open: a foreign process was in the foreground. Our child was killed by pid; tidy the pane by hand.",
+                            failureReason: AgentExitReason.HerdrPaneLeftOpen.ToString(),
+                            ct: ct);
+                    }
+                    else
+                    {
+                        db.AgentIncidents.Add(new AgentIncident
+                        {
+                            Id = Guid.NewGuid(),
+                            AgentId = paneLeftOwner,
+                            SessionId = sessionId,
+                            Kind = AgentIncidentKind.HerdrPaneLeftOpen,
+                            Severity = AlertSeverity.Warning,
+                            Message = "Herdr kill left the pane open: a foreign process was in the foreground. Our child was killed by pid; tidy the pane by hand.",
+                            FailureReason = AgentExitReason.HerdrPaneLeftOpen.ToString(),
+                            CreatedAt = now,
+                        });
+                    }
+
+                    changed = true;
+                }
             }
 
             if (changed)

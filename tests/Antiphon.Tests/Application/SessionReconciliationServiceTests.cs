@@ -97,6 +97,42 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Runner_reported_HerdrPaneClosed_exit_fails_the_session_not_a_clean_stop()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (_, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: true);
+
+            await using var db = CreateContext();
+            var runner = new FakeRunnerClient
+            {
+                Sessions =
+                [
+                    new SessionRunnerSessionDto(
+                        sessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddHours(-1),
+                        Status: "Exited", ExitCode: null, ExitReason: AgentExitReason.HerdrPaneClosed,
+                        LastSequence: 10)
+                ]
+            };
+            var service = BuildService(db, runner, new MockEventBus());
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.Status.ShouldBe(SessionStatus.Failed, "pane-closed must not slip in as Stopped");
+            dbSession.FailureReason.ShouldNotBeNull();
+            dbSession.FailureReason.ShouldContain("HerdrPaneClosed");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task Starting_session_within_grace_is_left_alone()
     {
         var marker = NewMarker();

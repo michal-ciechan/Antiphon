@@ -456,12 +456,39 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         return $"{{\"type\":\"pane_list\",\"panes\":[{string.Join(",", panes.Select(PaneJson))}]}}";
     }
 
+    /// <summary>
+    /// CARD-0186: script pane.process_info. Default (null override) is the historical
+    /// shell 4242 / claude 4243 pair that <see cref="HerdrClientTests"/> pins.
+    /// </summary>
+    public void SetPaneProcessInfo(string paneId, int? shellPid, params (int Pid, string Name)[] foreground)
+    {
+        var (_, _, pane) = RequirePane(paneId);
+        pane.ShellPidOverride = shellPid;
+        pane.ForegroundOverride = foreground.ToList();
+    }
+
     private string PaneProcessInfoJson(JsonElement parameters)
     {
         var paneId = parameters.GetProperty("pane_id").GetString()!;
-        RequirePane(paneId);
+        var (_, _, pane) = RequirePane(paneId);
+        int? shellPid;
+        string foregroundJson;
+        if (pane.ForegroundOverride is { } fg)
+        {
+            shellPid = pane.ShellPidOverride;
+            foregroundJson = string.Join(",", fg.Select(p =>
+                $"{{\"pid\":{p.Pid},\"name\":{JsonSerializer.Serialize(p.Name)},\"argv\":[{JsonSerializer.Serialize(p.Name)}],\"cwd\":\"C:\\\\src\"}}"));
+        }
+        else
+        {
+            shellPid = 4242;
+            foregroundJson =
+                """{"pid":4243,"name":"claude.exe","argv":["claude"],"cwd":"C:\\src"}""";
+        }
+
+        var shellJson = shellPid is int s ? s.ToString() : "null";
         return
-            $"{{\"type\":\"pane_process_info\",\"process_info\":{{\"pane_id\":\"{paneId}\",\"shell_pid\":4242,\"foreground_processes\":[{{\"pid\":4243,\"name\":\"claude.exe\",\"argv\":[\"claude\"],\"cwd\":\"C:\\\\src\"}}],\"tty\":null}}}}";
+            $"{{\"type\":\"pane_process_info\",\"process_info\":{{\"pane_id\":\"{paneId}\",\"shell_pid\":{shellJson},\"foreground_processes\":[{foregroundJson}],\"tty\":null}}}}";
     }
 
     private string PaneReadJson(JsonElement parameters)
@@ -715,6 +742,9 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public List<string>? ScreenTextQueue { get; set; }
         /// <summary>Sticky by default (CARD-0164) — only moves via <c>SetPaneRevision</c>.</summary>
         public long Revision { get; set; }
+        /// <summary>CARD-0186: null = default 4242/4243 pair; set via <c>SetPaneProcessInfo</c>.</summary>
+        public int? ShellPidOverride { get; set; }
+        public List<(int Pid, string Name)>? ForegroundOverride { get; set; }
     }
 
     internal sealed record AgentSessionState(string Source, string Agent, string Kind, string Value);

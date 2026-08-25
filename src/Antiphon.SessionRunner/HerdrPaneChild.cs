@@ -15,6 +15,7 @@ internal sealed class HerdrPaneChild : ISessionChild
     private readonly SessionRunnerSettings _settings;
     private readonly ILogger _logger;
     private readonly Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> _liveAntiphonPanes;
+    private readonly IProcessLivenessProbe _processLiveness;
 
     private Guid _sessionId;
     private string? _paneId;
@@ -33,12 +34,14 @@ internal sealed class HerdrPaneChild : ISessionChild
         HerdrClient client,
         SessionRunnerSettings settings,
         ILogger logger,
-        Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes)
+        Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
+        IProcessLivenessProbe processLiveness)
     {
         _client = client;
         _settings = settings;
         _logger = logger;
         _liveAntiphonPanes = liveAntiphonPanes;
+        _processLiveness = processLiveness;
     }
 
     public event Action<ChildExit>? Exited;
@@ -62,7 +65,7 @@ internal sealed class HerdrPaneChild : ISessionChild
     /// CARD-0162: raise Exited(<paramref name="reason"/>) once after verification fails. Deletes
     /// the sidecar. Idempotent against MarkVanishedIfDead and repeated close events.
     /// </summary>
-    public void RaiseVerifiedClosed(string reason = "HerdrPaneClosed")
+    public void RaiseVerifiedClosed(string reason = HerdrExitReasons.PaneClosed)
     {
         if (_exited) return;
         HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
@@ -196,11 +199,21 @@ internal sealed class HerdrPaneChild : ISessionChild
                 .ToList();
             if (unexpected is { Count: > 0 })
             {
+                var foreign = string.Join(",", unexpected.Select(p => p.Pid));
+                // P8: herdr itself succeeds and kills whatever is in the pane. The refusal is
+                // ours. Kill our named child by pid (positive identity) and leave the pane open.
+                if (_sidecar?.ChildPid is int child
+                    && _processLiveness.IsAlive(child, _sidecar.LaunchedAtUtc))
+                {
+                    KillPidBestEffort(child);
+                }
+
                 _logger.LogWarning(
-                    "Herdr pane {PaneId} has unexpected foreground process(es) {Pids} — leaving pane open.",
-                    _paneId, string.Join(",", unexpected.Select(p => p.Pid)));
-                RaiseExited("HerdrPaneClosed");
-                return false;
+                    "Herdr pane {PaneId} has unexpected foreground process(es) {Pids} — killed our child by pid and leaving pane open.",
+                    _paneId, foreign);
+                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+                RaiseExited(HerdrExitReasons.PaneLeftOpen);
+                return true;
             }
 
             await _client.PaneCloseAsync(_paneId, ct);
@@ -209,13 +222,25 @@ internal sealed class HerdrPaneChild : ISessionChild
         catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
         {
             _logger.LogWarning(ex, "Herdr pane.close failed for {PaneId}", _paneId);
-            RaiseExited("HerdrPaneClosed");
+            RaiseExited(HerdrExitReasons.PaneClosed);
             return false;
         }
 
         HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
-        RaiseExited("HerdrPaneClosed");
+        RaiseExited(HerdrExitReasons.PaneClosed);
         return true;
+    }
+
+    private static void KillPidBestEffort(int pid)
+    {
+        try
+        {
+            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Already gone.
+        }
     }
 
     public async Task<ChildScreen?> ReadScreenAsync(CancellationToken ct)

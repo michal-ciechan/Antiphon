@@ -775,6 +775,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         session.Status = memoryKilled
             ? SessionStatus.Failed
             : killed ? SessionStatus.Stopped : SessionStatus.Failed;
+
+        if (exitReason == AgentExitReason.HerdrPaneLeftOpen)
+            await RaiseHerdrPaneLeftOpenAsync(sessionId, ct);
         session.EndedAt = UtcNow();
         session.LastSeenAt = session.EndedAt.Value;
         session.FailureReason = memoryKilled
@@ -1360,6 +1363,50 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// degradation must never do what the degradation itself is no longer allowed to do — fail the
     /// launch. An incident needs an owning agent; a session nothing claims gets the log line only.
     /// </summary>
+    /// <summary>
+    /// CARD-0186 S2: KillAsync refused pane.close because a foreign process was in the pane; our
+    /// child is gone and the pane needs tidying. Warning, never Critical.
+    /// </summary>
+    private async Task RaiseHerdrPaneLeftOpenAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await db.AgentIncidents.AnyAsync(
+                    i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.HerdrPaneLeftOpen, ct))
+                return;
+
+            var owner = await db.Agents
+                .Where(a => a.PersistentSessionId == sessionId.ToString("D"))
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync(ct);
+            if (owner is not Guid ownerId)
+            {
+                _logger.LogWarning(
+                    "Herdr pane left open after kill for session {SessionId} but no agent claims it",
+                    sessionId);
+                return;
+            }
+
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(
+                ownerId,
+                sessionId,
+                AgentIncidentKind.HerdrPaneLeftOpen,
+                AlertSeverity.Warning,
+                "Herdr kill left the pane open: a foreign process was in the foreground. Our child was killed by pid; tidy the pane by hand.",
+                failureReason: AgentExitReason.HerdrPaneLeftOpen.ToString(),
+                ct: ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Recording HerdrPaneLeftOpen for session {SessionId} failed", sessionId);
+        }
+    }
+
     private async Task RaiseRemoteControlDegradedAsync(
         Guid sessionId, Guid? agentId, string message, string failureReason, CancellationToken ct)
     {

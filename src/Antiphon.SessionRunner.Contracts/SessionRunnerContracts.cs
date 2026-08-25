@@ -96,7 +96,15 @@ public sealed record RunnerSessionDto(
     // CARD-0180 S4 / CARD-0181: bind method (`exact`/`sidecar`/`discovery`/`fork`/`deterministic`),
     // or null while unbound. Claim strength (Exact/Heuristic) is derived at claim time and is
     // not this field.
-    string? TranscriptBindHow = null);
+    string? TranscriptBindHow = null,
+    // CARD-0186 S2: which lane hosts the child. Null on older runners. Values: SessionBackends.
+    string? Backend = null,
+    // CARD-0186 S3: "HerdrUnreachable" while adoption is waiting on herdr. Null otherwise.
+    // S2 adds the field only; the runner does not stamp it until S3.
+    string? Pending = null,
+    // CARD-0186 S3: single-session GET stamps this after VerifyHerdrLivenessAsync passes.
+    // S2 adds the field only; list/GET leave it null.
+    DateTime? HerdrVerifiedAtUtc = null);
 
 public sealed record RunnerBufferDto(
     Guid SessionId,
@@ -463,6 +471,37 @@ public static class RunnerExitReasons
     /// the server treats this as a clean stop and the session stays resumable.
     /// </summary>
     public const string CpuSpinKilled = "CpuSpinKilled";
+}
+
+/// <summary>
+/// Exit reason strings the herdr lane synthesises (CARD-0186 S2). The server maps these onto
+/// <c>AgentExitReason</c> by name — each constant here is the enum member's name. All four land
+/// as Failed (never Stopped): Stopped is operator intent and is reconciliation's only auto-kill
+/// arm. Replaces the four previously-unparsed literals that became <c>Unknown</c> on the wire.
+/// </summary>
+public static class HerdrExitReasons
+{
+    /// <summary>
+    /// Adoption-time (and orphan) verdict: pane missing or our child pid is gone from
+    /// <c>pane.process_info</c>. P7 measured this as the live herdr-restart shape (restored-empty
+    /// pane, Claude dead with herdr).
+    /// </summary>
+    public const string RestartPresumedDead = "HerdrRestartPresumedDead";
+
+    /// <summary>Runtime close: pump/liveness proved the pane is gone (child OS-dead).</summary>
+    public const string PaneClosed = "HerdrPaneClosed";
+
+    /// <summary>
+    /// Herdr unreachable at runner restart AND the sidecar's ChildPid is OS-dead. Needs no socket.
+    /// </summary>
+    public const string ChildGone = "HerdrChildGone";
+
+    /// <summary>
+    /// Kill refused to <c>pane.close</c> because a foreign foreground process was present; our
+    /// child was killed by pid and the pane left open (P8: herdr itself would have killed the
+    /// foreign process — the refusal is ours).
+    /// </summary>
+    public const string PaneLeftOpen = "HerdrPaneLeftOpen";
 }
 
 /// <summary>

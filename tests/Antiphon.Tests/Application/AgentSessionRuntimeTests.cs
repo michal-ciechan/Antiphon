@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -234,6 +235,113 @@ public class AgentSessionRuntimeTests
             await cleanup.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
             DeleteDirectoryBestEffort(logPath);
         }
+    }
+
+    [Test]
+    public async Task HerdrPaneClosed_exit_is_Failed_not_a_clean_stop()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneClosed, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Failed, "pane-closed is not operator Stopped");
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldContain("HerdrPaneClosed");
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Failed);
+        }
+        finally
+        {
+            await CleanupSessionAsync(sessionId, agentId);
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    [Test]
+    public async Task HerdrPaneLeftOpen_exit_is_Failed_and_records_the_warning_incident()
+    {
+        var (sessionId, agentId, logPath, runtime) = await SeedRunningSessionAsync();
+        try
+        {
+            await runtime.ObserveExitAsync(sessionId, null, AgentExitReason.HerdrPaneLeftOpen, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            var session = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            session.Status.ShouldBe(SessionStatus.Failed);
+            session.FailureReason.ShouldNotBeNull();
+            session.FailureReason.ShouldContain("HerdrPaneLeftOpen");
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.HerdrPaneLeftOpen);
+            incident.Severity.ShouldBe(AlertSeverity.Warning);
+            incident.AgentId.ShouldBe(agentId);
+        }
+        finally
+        {
+            await CleanupSessionAsync(sessionId, agentId);
+            DeleteDirectoryBestEffort(logPath);
+        }
+    }
+
+    private static async Task<(Guid SessionId, Guid AgentId, string LogPath, AgentSessionRuntime Runtime)> SeedRunningSessionAsync()
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+        {
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "claude",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = Path.GetTempPath(),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId,
+                Name = $"herdr-exit-{sessionId:N}"[..40],
+                Slug = $"herdr-exit-{sessionId:N}",
+                WorkingDirectory = Path.GetTempPath(),
+                Status = AgentStatus.Running,
+                PersistentSessionId = sessionId.ToString("D"),
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-herdr-exit-{Guid.NewGuid():N}");
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+        {
+            npgsql.MigrationsAssembly("Antiphon.Server");
+            npgsql.SetPostgresVersion(16, 0);
+        }));
+        var provider = services.BuildServiceProvider();
+        var runtime = new AgentSessionRuntime(
+            new MockEventBus(),
+            Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<AgentSessionRuntime>.Instance);
+        return (sessionId, agentId, logPath, runtime);
+    }
+
+    private static async Task CleanupSessionAsync(Guid sessionId, Guid agentId)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await db.AgentIncidents.Where(i => i.SessionId == sessionId || i.AgentId == agentId).ExecuteDeleteAsync();
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+        await db.Agents.Where(a => a.Id == agentId).ExecuteDeleteAsync();
+        await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
     }
 
     private static SessionRunnerTranscriptEvent TranscriptEvent(

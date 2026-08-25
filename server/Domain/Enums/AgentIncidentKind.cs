@@ -355,4 +355,14 @@ public enum AgentIncidentKind
     /// the agent is channel-bound. Deduped per session per 10 minutes.
     /// </summary>
     DeliveryUnverified = 36,
+
+    // 37 reserved for HerdrUnreachable (CARD-0186 S3). Do not reuse.
+
+    /// <summary>
+    /// CARD-0186 S2: a herdr <c>KillAsync</c> refused <c>pane.close</c> because a foreign
+    /// foreground process was present; our child was killed by pid and the pane left open for
+    /// the operator to tidy. Warning, never Critical — the session is Stopped as requested.
+    /// Kind 38 so S3 can take 37 for <c>HerdrUnreachable</c>.
+    /// </summary>
+    HerdrPaneLeftOpen = 38,
 }

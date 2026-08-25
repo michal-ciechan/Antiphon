@@ -13,5 +13,20 @@ public enum AgentExitReason
     /// clean stop, not a failure: the session stays resumable and a later message restarts it
     /// with --resume like any other stopped session.
     /// </summary>
-    CpuSpinKilled = 4
+    CpuSpinKilled = 4,
+
+    /// <summary>Herdr adoption: pane missing or child pid gone (CARD-0186). Failed, never Stopped.</summary>
+    HerdrRestartPresumedDead = 5,
+
+    /// <summary>Herdr runtime close after the pane was proved gone (CARD-0186). Failed, never Stopped.</summary>
+    HerdrPaneClosed = 6,
+
+    /// <summary>Herdr unreachable at restart and the sidecar's child is OS-dead (CARD-0186). Failed.</summary>
+    HerdrChildGone = 7,
+
+    /// <summary>
+    /// Herdr kill left the pane open because a foreign process was in it; our child was killed by
+    /// pid (CARD-0186). Failed on the unsolicited exit path; operator KillAsync still lands Stopped.
+    /// </summary>
+    HerdrPaneLeftOpen = 8
 }

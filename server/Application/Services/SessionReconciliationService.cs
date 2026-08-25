@@ -174,6 +174,8 @@ public sealed class SessionReconciliationService
             {
                 // Same mapping as AgentSessionRuntime.CloseSessionOnExitAsync: a CPU-spin watchdog
                 // kill is a clean, resumable stop despite the kill's non-zero exit code.
+                // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open are
+                // not clean stops (null/non-zero exit code already maps to Failed).
                 session.Status = runnerSession.ExitCode == 0 || runnerSession.ExitReason == AgentExitReason.CpuSpinKilled
                     ? SessionStatus.Stopped
                     : SessionStatus.Failed;
