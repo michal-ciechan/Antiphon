@@ -18,7 +18,8 @@ public sealed record ResolvedAgentTuiLaunch(
     Guid? ProfileId,
     Guid? ProfileRevisionId,
     string? EffectiveModelId,
-    AgentTuiLaunchActivityMode ActivityMode);
+    AgentTuiLaunchActivityMode ActivityMode,
+    LaunchModelArgument ModelArgument = LaunchModelArgument.None);
 
 /// <summary>
 /// Selects the managed-profile resolver when it is available, retaining the configured-file
@@ -150,7 +151,10 @@ internal static class AgentLaunchResolution
             ProfileId: null,
             ProfileRevisionId: null,
             EffectiveModelId: null,
-            ActivityMode: AgentTuiLaunchActivityMode.Unknown);
+            ActivityMode: AgentTuiLaunchActivityMode.Unknown,
+            ModelArgument: string.IsNullOrWhiteSpace(options.TierModelAlias)
+                ? LaunchModelArgument.None
+                : LaunchModelArgument.Tier);
     }
 }
 
@@ -361,17 +365,7 @@ public sealed class AgentTuiLaunchResolver
         if (options.ExtraArgs is not null)
             args.AddRange(options.ExtraArgs);
 
-        string? effectiveModelId = null;
-        if (!string.IsNullOrWhiteSpace(agent.ModelId))
-        {
-            effectiveModelId = agent.ModelId.Trim();
-            EnsureModelAllowed(profile, effectiveModelId);
-            var modelArgumentName = string.IsNullOrWhiteSpace(revision.ModelArgumentName)
-                ? "--model"
-                : revision.ModelArgumentName.Trim();
-            args.Add(modelArgumentName);
-            args.Add(effectiveModelId);
-        }
+        var (effectiveModelId, modelArgument) = ApplyModelArgument(profile, revision, agent, options, args);
 
         ApplyClaudeEnvironmentDefaults(profile.Kind, environment);
         ApplyGrokEnvironmentDefaults(profile.Kind, environment);
@@ -429,7 +423,61 @@ public sealed class AgentTuiLaunchResolver
             profile.Id,
             revision.Id,
             effectiveModelId,
-            ActivityModeFor(profile.Kind));
+            ActivityModeFor(profile.Kind),
+            modelArgument);
+    }
+
+    /// <summary>
+    /// CARD-0182 D1: the revision's <c>ModelArgumentName</c> is the single authority. Blank means
+    /// the program owns its model and nothing is appended, whatever the tier or exact ModelId
+    /// (D3 refuses an exact ModelId before we get here). Otherwise exact wins, then a supplied
+    /// tier alias, then nothing.
+    /// </summary>
+    private (string? EffectiveModelId, LaunchModelArgument Provenance) ApplyModelArgument(
+        AgentTuiProfile profile,
+        AgentTuiProfileRevision revision,
+        Agent agent,
+        AgentLaunchOptions options,
+        List<string> args)
+    {
+        var exactModelId = string.IsNullOrWhiteSpace(agent.ModelId) ? null : agent.ModelId.Trim();
+        var tierAlias = string.IsNullOrWhiteSpace(options.TierModelAlias)
+            ? null
+            : options.TierModelAlias.Trim();
+        var argumentName = string.IsNullOrWhiteSpace(revision.ModelArgumentName)
+            ? null
+            : revision.ModelArgumentName.Trim();
+
+        if (argumentName is null)
+        {
+            if (exactModelId is not null)
+            {
+                throw new ConflictException(
+                    "The selected runner profile passes no model argument; clear the exact model or set the profile's model argument name.",
+                    "model_argument_unsupported");
+            }
+
+            return (null, tierAlias is null
+                ? LaunchModelArgument.None
+                : LaunchModelArgument.ProfileOwned);
+        }
+
+        if (exactModelId is not null)
+        {
+            EnsureModelAllowed(profile, exactModelId);
+            args.Add(argumentName);
+            args.Add(exactModelId);
+            return (exactModelId, LaunchModelArgument.Exact);
+        }
+
+        if (tierAlias is not null)
+        {
+            args.Add(argumentName);
+            args.Add(tierAlias);
+            return (null, LaunchModelArgument.Tier);
+        }
+
+        return (null, LaunchModelArgument.None);
     }
 
     private async Task<AgentTuiProfile> LoadProfileAsync(

@@ -1071,7 +1071,19 @@ public sealed class AgentService
 
         var modelId = NormalizeModelId(requestedModelId);
         if (modelId is not null)
+        {
+            // CARD-0182 D3: an exact model on a profile that passes no model argument is a
+            // contradiction the operator wrote. Refuse it here (and again at launch) rather than
+            // silently dropping it or passing it under a default --model the profile never declared.
+            if (string.IsNullOrWhiteSpace(profile.ActiveRevision?.ModelArgumentName))
+            {
+                throw new ConflictException(
+                    "The selected runner profile passes no model argument; clear the exact model or set the profile's model argument name.",
+                    "model_argument_unsupported");
+            }
+
             EnsureModelInProfile(profile, modelId);
+        }
 
         agent.TuiProfileId = profile.Id;
         agent.ModelId = modelId;

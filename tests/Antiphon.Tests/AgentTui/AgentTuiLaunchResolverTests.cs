@@ -38,6 +38,7 @@ public sealed class AgentTuiLaunchResolverTests
 
         resolved.Spec.Args.ShouldNotContain("--model");
         resolved.EffectiveModelId.ShouldBeNull();
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.None);
         resolved.ProfileRevisionId.ShouldBe(revision.Id);
         resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.QuietTime);
     }
@@ -63,6 +64,7 @@ public sealed class AgentTuiLaunchResolverTests
 
         resolved.Spec.Args.TakeLast(2).ShouldBe(new[] { "--model", "llmgateway/grok-4-5" });
         resolved.EffectiveModelId.ShouldBe("llmgateway/grok-4-5");
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.Exact);
         resolved.ProfileRevisionId.ShouldBe(revision.Id);
     }
 
@@ -88,6 +90,7 @@ public sealed class AgentTuiLaunchResolverTests
         resolved.Spec.Kind.ShouldBe(AgentKind.Grok);
         resolved.Spec.Args.TakeLast(2).ShouldBe(new[] { "--model", "grok-4.6" });
         resolved.EffectiveModelId.ShouldBe("grok-4.6");
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.Exact);
         resolved.ActivityMode.ShouldBe(AgentTuiLaunchActivityMode.Structured);
         resolved.Spec.Env["GROK_TELEMETRY_ENABLED"].ShouldBe("0");
         resolved.ProfileRevisionId.ShouldBe(revision.Id);
@@ -168,6 +171,85 @@ public sealed class AgentTuiLaunchResolverTests
     }
 
     [Test]
+    public async Task T1_blank_model_argument_name_suppresses_the_tier_alias()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.Grok,
+            modelArgumentName: null);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "GKP",
+            TuiProfileId = profile.Id,
+            ModelId = null,
+            ModelLevel = AgentModelLevel.High
+        };
+
+        var resolved = await ResolveAsync(
+            provider,
+            agent,
+            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.6"));
+
+        resolved.Spec.Args.ShouldNotContain("--model");
+        resolved.Spec.Args.ShouldNotContain("grok-4.6");
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.ProfileOwned);
+        resolved.EffectiveModelId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task T2_declared_model_argument_appends_the_tier_alias_once()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, _) = await SeedProfileAsync(provider, AgentKind.Grok);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Grok-Tier",
+            TuiProfileId = profile.Id,
+            ModelId = null
+        };
+
+        var resolved = await ResolveAsync(
+            provider,
+            agent,
+            new AgentLaunchOptions(Cols: 120, Rows: 30, TierModelAlias: "grok-4.6"));
+
+        resolved.Spec.Args.Count(a => a == "--model").ShouldBe(1);
+        resolved.Spec.Args[resolved.Spec.Args.ToList().IndexOf("--model") + 1].ShouldBe("grok-4.6");
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.Tier);
+        resolved.EffectiveModelId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task T4_exact_model_on_a_blank_field_profile_is_model_argument_unsupported()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, _) = await SeedProfileAsync(
+            provider,
+            AgentKind.Grok,
+            modelArgumentName: null);
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "Pinned-GKP",
+            TuiProfileId = profile.Id,
+            ModelId = "maven-grok"
+        };
+
+        var error = await Should.ThrowAsync<ConflictException>(
+            () => ResolveAsync(provider, agent));
+
+        error.Code.ShouldBe("model_argument_unsupported");
+        error.StatusCode.ShouldBe(409);
+        error.Message.ShouldContain("passes no model argument");
+    }
+
+    [Test]
     public async Task Resolve_uses_installation_default_when_agent_has_no_profile()
     {
         await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -242,13 +324,14 @@ public sealed class AgentTuiLaunchResolverTests
 
     private static async Task<ResolvedAgentTuiLaunch> ResolveAsync(
         ServiceProvider provider,
-        Agent agent)
+        Agent agent,
+        AgentLaunchOptions? options = null)
     {
         await using var scope = provider.CreateAsyncScope();
         var resolver = scope.ServiceProvider.GetRequiredService<AgentTuiLaunchResolver>();
         return await resolver.ResolveForAgentAsync(
             agent,
-            new AgentLaunchOptions(Cols: 120, Rows: 30),
+            options ?? new AgentLaunchOptions(Cols: 120, Rows: 30),
             CancellationToken.None);
     }
 
@@ -286,7 +369,8 @@ public sealed class AgentTuiLaunchResolverTests
         AgentTuiAuthenticationMode authenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
         string[]? secretNames = null,
         string[]? models = null,
-        string canary = "canary-secret")
+        string canary = "canary-secret",
+        string? modelArgumentName = "--model")
     {
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -320,7 +404,7 @@ public sealed class AgentTuiLaunchResolverTests
             AuthenticationMode = authenticationMode,
             NonSecretEnvironmentJson = "{}",
             SecretEnvironmentNamesJson = JsonSerializer.Serialize(secretNames ?? []),
-            ModelArgumentName = "--model",
+            ModelArgumentName = modelArgumentName,
             Guidance = "Launch test",
             CreatedAt = now
         };

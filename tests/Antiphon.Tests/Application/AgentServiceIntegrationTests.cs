@@ -1058,8 +1058,52 @@ public class AgentServiceIntegrationTests
         await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
     }
 
+    [Test]
+    public async Task T5_exact_model_on_a_blank_field_profile_is_refused_and_clearing_succeeds()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var profile = await SeedProfileAsync(db, AgentKind.Grok, "GKP", modelArgumentName: null);
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("Blank Field Grok"),
+                "D:/src/gkp",
+                TuiProfileId: profile.Id),
+            CancellationToken.None);
+        created.ModelId.ShouldBeNull();
+
+        var error = await Should.ThrowAsync<ConflictException>(() =>
+            service.UpdateAsync(
+                created.Id,
+                new UpdateAgentRequest(
+                    created.Name,
+                    created.WorkingDirectory,
+                    created.Details,
+                    created.DefaultWorkflowTemplateId,
+                    created.AssignmentPolicy,
+                    TuiProfileId: profile.Id,
+                    ModelId: "grok-4.6"),
+                CancellationToken.None));
+        error.Code.ShouldBe("model_argument_unsupported");
+        error.StatusCode.ShouldBe(409);
+
+        var cleared = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                TuiProfileId: profile.Id,
+                ModelId: null),
+            CancellationToken.None);
+        cleared.ModelId.ShouldBeNull();
+        cleared.TuiProfileId.ShouldBe(profile.Id);
+    }
+
     private static async Task<AgentTuiProfile> SeedProfileAsync(
-        AppDbContext db, AgentKind kind, string namePrefix)
+        AppDbContext db, AgentKind kind, string namePrefix, string? modelArgumentName = null)
     {
         var now = DateTime.UtcNow;
         var profile = new AgentTuiProfile
@@ -1088,6 +1132,7 @@ public class AgentServiceIntegrationTests
             AuthenticationMode = AgentTuiAuthenticationMode.WrapperManaged,
             NonSecretEnvironmentJson = "{}",
             SecretEnvironmentNamesJson = "[]",
+            ModelArgumentName = modelArgumentName,
             Guidance = string.Empty,
             CreatedAt = now,
         };

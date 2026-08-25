@@ -31,7 +31,26 @@ public sealed record AgentLaunchOptions(
     IReadOnlyDictionary<string, string>? LaunchEnvOverride = null,
     // Project-level default env (CARD-0106 gap 2). Merged after definition/profile env and before
     // the agent's LaunchEnvJson. Null means "none" (no project identity, or not yet fetched).
-    IReadOnlyDictionary<string, string>? ProjectDefaultEnv = null);
+    IReadOnlyDictionary<string, string>? ProjectDefaultEnv = null,
+    // CARD-0182 D2: the tier alias the caller wants appended as a model argument. Null means "do
+    // not offer one" (card-spawn today, or an exact ModelId already won). The profile resolver
+    // honours a blank ModelArgumentName by dropping this; AgentRegistry.Resolve appends
+    // ["--model", alias] on the profile-less path. Callers must never put --model in ExtraArgs.
+    string? TierModelAlias = null);
+
+/// <summary>
+/// How the resolved launch treated the model argument (CARD-0182 D4).
+/// <see cref="None"/> is no alias and no exact model; <see cref="ProfileOwned"/> is D1 rule 1
+/// suppressing a supplied alias; <see cref="Exact"/> and <see cref="Tier"/> are the two append
+/// arms. <c>EffectiveModelId</c> stays the exact model or null — the drift badge depends on it.
+/// </summary>
+public enum LaunchModelArgument
+{
+    None = 0,
+    ProfileOwned = 1,
+    Exact = 2,
+    Tier = 3
+}
 
 /// <summary>
 /// Fully-resolved launch instruction passed to <c>IAgentProtocolAdapter.StartAsync</c>.
