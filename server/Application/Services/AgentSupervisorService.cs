@@ -290,9 +290,13 @@ public sealed class AgentSupervisorService
             SessionId = sessionId,
             Kind = kind,
             Severity = severity,
-            Message = message,
+            // Clipped at the shared writer (CARD-0205): callers compose these from transcript text,
+            // process output and exception messages, none of which is bounded, and an incident row
+            // that overflows its column takes the alert below down with it — they share this
+            // context's SaveChanges.
+            Message = ColumnText.Clip(message, AgentIncident.MessageMaxLength),
             ExitCode = exitCode,
-            FailureReason = failureReason,
+            FailureReason = ColumnText.ClipOrNull(failureReason, AgentIncident.FailureReasonMaxLength),
             CreatedAt = UtcNow(),
         });
 

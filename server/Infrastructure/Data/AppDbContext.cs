@@ -157,10 +157,10 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("Alerts");
             entity.HasKey(a => a.Id);
-            entity.Property(a => a.Source).IsRequired().HasMaxLength(50);
-            entity.Property(a => a.Title).IsRequired().HasMaxLength(500);
-            entity.Property(a => a.Detail).HasMaxLength(4000);
-            entity.Property(a => a.DedupKey).IsRequired().HasMaxLength(500);
+            entity.Property(a => a.Source).IsRequired().HasMaxLength(Alert.SourceMaxLength);
+            entity.Property(a => a.Title).IsRequired().HasMaxLength(Alert.TitleMaxLength);
+            entity.Property(a => a.Detail).HasMaxLength(Alert.DetailMaxLength);
+            entity.Property(a => a.DedupKey).IsRequired().HasMaxLength(Alert.DedupKeyMaxLength);
             entity.Property(a => a.CreatedAt).IsRequired();
 
             entity.HasIndex(a => a.CreatedAt).HasDatabaseName("IX_Alerts_CreatedAt");
@@ -171,8 +171,8 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("AgentIncidents");
             entity.HasKey(i => i.Id);
-            entity.Property(i => i.Message).IsRequired().HasMaxLength(4000);
-            entity.Property(i => i.FailureReason).HasMaxLength(4000);
+            entity.Property(i => i.Message).IsRequired().HasMaxLength(AgentIncident.MessageMaxLength);
+            entity.Property(i => i.FailureReason).HasMaxLength(AgentIncident.FailureReasonMaxLength);
             entity.Property(i => i.CreatedAt).IsRequired();
 
             entity.HasIndex(i => new { i.AgentId, i.CreatedAt })

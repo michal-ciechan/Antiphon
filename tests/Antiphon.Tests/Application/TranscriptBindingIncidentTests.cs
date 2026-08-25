@@ -698,9 +698,14 @@ public class TranscriptBindingIncidentTests
     /// <summary>
     /// CARD-0195, the backstop half: whatever else ever breaks the write, the log must name what
     /// the database said (AGENTS.md: "never report a DB failure without the DB's own message") and
-    /// the fault must still reach a surface. Forced here with an over-length message — the incident
-    /// row's <c>Message</c> is <c>varchar(4000)</c> and nothing truncates it — because that fails
-    /// deterministically on a real Postgres without needing the FK shape the fix above removed.
+    /// the fault must still reach a surface.
+    ///
+    /// <para>Still forced with an over-length message, because that fails deterministically on a
+    /// real Postgres without needing the FK shape the fix above removed — but forced BELOW the
+    /// service now. CARD-0205 clips <c>Message</c> on the way in, so an over-length detail no
+    /// longer breaks this write at all (which is the point of that card); the interceptor
+    /// re-inflates the row in the instant before Postgres sees it, so the error the backstop has
+    /// to describe is still a real 22001 from the database rather than a synthetic one.</para>
     /// </summary>
     [Test]
     public async Task A_fault_whose_incident_cannot_be_written_names_the_database_error_and_still_alerts()
@@ -714,6 +719,7 @@ public class TranscriptBindingIncidentTests
                 s.AddSingleton<TranscriptBindingIncidentService>();
                 s.AddSingleton<ILogger<TranscriptBindingIncidentService>>(new ListLogger<TranscriptBindingIncidentService>(logs));
             },
+            ConfigureDbContext = o => o.AddInterceptors(new UnwritableIncidentInterceptor()),
         });
 
         await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
@@ -721,7 +727,7 @@ public class TranscriptBindingIncidentTests
                 new SessionRunnerTranscriptFaultEvent(
                     harness.SessionId,
                     TranscriptFaultKinds.TranscriptMissing,
-                    new string('x', 5000),
+                    "the transcript this session should have been reading is not there",
                     CandidatePath: null),
                 CancellationToken.None);
 
@@ -741,6 +747,27 @@ public class TranscriptBindingIncidentTests
             a => a.DedupKey == TranscriptBindingIncidentService.WriteFailureDedupKey(harness.SessionId));
         alert.SessionId.ShouldBe(harness.SessionId);
         alert.AgentId.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Makes an <see cref="AgentIncident"/> insert unwritable at the last possible moment, past
+    /// every clip the application does, so the failure the backstop reports is Postgres's own.
+    /// </summary>
+    private sealed class UnwritableIncidentInterceptor : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData eventData,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            foreach (var entry in eventData.Context!.ChangeTracker.Entries<AgentIncident>()
+                         .Where(e => e.State == EntityState.Added))
+            {
+                entry.Entity.Message = new string('x', AgentIncident.MessageMaxLength + 1_000);
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     private static async Task<Guid> BindChannelAsync(Guid agentId)

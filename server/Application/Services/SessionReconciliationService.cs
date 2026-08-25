@@ -338,20 +338,39 @@ public sealed class SessionReconciliationService
 
         if (orphans.Count > 0)
         {
+            var named = DescribeOrphans(orphans);
             _logger.LogWarning(
                 "Session runner is serving {Count} session(s) with no DB row at all: {SessionIds}",
-                orphans.Count, string.Join(", ", orphans));
+                orphans.Count, named);
             await _alerts.RaiseAsync(
                 new AlertRaise(
                     AlertSeverity.Warning, "reconciler", "Runner session(s) with no database row",
                     Detail: $"{orphans.Count} running session(s) are unknown to the database: "
-                        + $"{string.Join(", ", orphans)}. They are left alone — nothing here knows what "
+                        + $"{named}. They are left alone — nothing here knows what "
                         + "they are, and a session nobody can name is still somebody's work.",
                     DedupKey: "reconciler:orphans"),
                 ct);
         }
 
         return corrections;
+    }
+
+    /// <summary>
+    /// The ids, bounded. CARD-0205: this list was unbounded, and on the day CARD-0204's leak peaked
+    /// it rendered 190 guids — 7.4 KB, which overflowed <c>Alerts.Detail</c>'s varchar(4000) and
+    /// killed the insert on every 15-second sweep for four days. The COUNT is the signal here and
+    /// it is stated exactly; the ids are a sample to start from, and the runner's own session list
+    /// is the place to get all of them. Bounding the log line too is not incidental tidying — it
+    /// was the same 7.4 KB, written every 15 seconds.
+    /// </summary>
+    private static string DescribeOrphans(IReadOnlyList<Guid> orphans)
+    {
+        const int shown = 20;
+        if (orphans.Count <= shown)
+            return string.Join(", ", orphans);
+
+        return string.Join(", ", orphans.Take(shown))
+            + $" (and {orphans.Count - shown} more)";
     }
 
     /// <summary>
@@ -550,8 +569,10 @@ public sealed class SessionReconciliationService
                 SessionId = sessionId,
                 Kind = AgentIncidentKind.SessionReAdopted,
                 Severity = severity,
-                Message = detail,
-                FailureReason = failureReason,
+                // Clipped for the same reason the alert is (CARD-0205): an incident that cannot be
+                // written records nothing, and this one shares AlertAndIncidentAsync's SaveChanges.
+                Message = ColumnText.Clip(detail, AgentIncident.MessageMaxLength),
+                FailureReason = ColumnText.Clip(failureReason, AgentIncident.FailureReasonMaxLength),
                 CreatedAt = _timeProvider.GetUtcNow().UtcDateTime,
             });
             await _db.SaveChangesAsync(ct);

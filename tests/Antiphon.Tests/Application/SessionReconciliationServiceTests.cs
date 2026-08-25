@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -1323,6 +1324,88 @@ public class SessionReconciliationServiceTests
 
         CensusAlerts(alerts).ShouldBeEmpty();
     }
+
+    /// <summary>
+    /// CARD-0205, the headline: force the exact 2026-08-25 divergence through the REAL
+    /// <see cref="AlertService"/> and real PostgreSQL, and require ROWS — not log lines.
+    ///
+    /// <para>Every other case in this file records alerts into an in-memory fake, which is why four
+    /// days of failed inserts were invisible: nothing had ever asked a column to hold the text. On
+    /// the live machine this sweep produced two log lines and zero rows — the orphan alert
+    /// overflowed <c>Alerts.Detail</c> with 190 guids, and the census alert behind it, whose own
+    /// detail was 617 legal characters, died on the poison row EF had left in the shared change
+    /// tracker.</para>
+    ///
+    /// <para>Scoped by CreatedAt, not by an isolated schema: both dedup keys here are fixed strings
+    /// this sweep owns, and the class is globally serial, so the window is enough — and a schema
+    /// per test leaves a pooled data source behind for the rest of the assembly run.</para>
+    /// </summary>
+    [Test]
+    public async Task A_forced_divergence_persists_its_alert_rows()
+    {
+        var since = DateTime.UtcNow;
+        try
+        {
+            await using var db = CreateContext();
+            var alerts = new AlertService(
+                db, new MockEventBus(), new NullAlertRouter(),
+                AlertScopes.GetRequiredService<IServiceScopeFactory>(),
+                TimeProvider.System, NullLogger<AlertService>.Instance);
+            var service = BuildService(
+                db, RunnerWithUnclaimed(190), new MockEventBus(), alerts,
+                census: Census(ptyHosts: 205, claude: 24));
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var rows = await verify.Alerts.Where(a => a.CreatedAt >= since).ToListAsync();
+
+            // The detector CARD-0204's leak was supposed to trip. This is the row that never existed.
+            var census = rows
+                .Where(a => a.DedupKey == $"reconciler:{AgentIncidentKind.PtyHostCensusDiverged}")
+                .ToList()
+                .ShouldHaveSingleItem();
+            census.Severity.ShouldBe(AlertSeverity.Critical);
+            census.Detail.ShouldNotBeNull();
+            census.Detail!.ShouldContain("unclaimed by the database: 190");
+
+            // And the alert that was actually oversized, now bounded: the count is exact, the ids
+            // are a sample, and the whole thing fits the column it has to live in.
+            var orphans = rows
+                .Where(a => a.DedupKey == "reconciler:orphans")
+                .ToList()
+                .ShouldHaveSingleItem();
+            orphans.Detail.ShouldNotBeNull();
+            orphans.Detail!.ShouldStartWith("190 running session(s) are unknown to the database");
+            orphans.Detail.ShouldContain("(and 170 more)");
+            orphans.Detail.Length.ShouldBeLessThanOrEqualTo(Alert.DetailMaxLength);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext();
+            await cleanup.Alerts
+                .Where(a => a.CreatedAt >= since
+                    && (a.DedupKey == "reconciler:orphans"
+                        || a.DedupKey == $"reconciler:{AgentIncidentKind.PtyHostCensusDiverged}"))
+                .ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
+    /// One provider for the class, over the SHARED connection string: it exists only so
+    /// <see cref="AlertService"/>'s out-of-band retry has a context of its own, and a distinct
+    /// connection string per test would leave a pooled Npgsql data source behind for the rest of
+    /// the assembly run.
+    /// </summary>
+    private static readonly ServiceProvider AlertScopes = new ServiceCollection()
+        .AddDbContext<AppDbContext>(options => options.UseNpgsql(
+            TestDbFixture.ConnectionString,
+            npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            }))
+        .BuildServiceProvider();
 
     // ---- census helpers --------------------------------------------------------------------------
 

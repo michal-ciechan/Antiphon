@@ -49,6 +49,14 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public Action<IServiceCollection>? ConfigureServices { get; init; }
 
         /// <summary>
+        /// Reaches the harness's own <see cref="AppDbContext"/> registration — the only place an EF
+        /// interceptor can be attached, since the options are built before
+        /// <see cref="ConfigureServices"/> runs. Used to make a write fail below the application's
+        /// own guards (CARD-0205 clipped the values that used to fail on their own).
+        /// </summary>
+        public Action<DbContextOptionsBuilder>? ConfigureDbContext { get; init; }
+
+        /// <summary>
         /// Adjusts the harness's default (test-compressed) delivery-verification settings without
         /// restating them. Ignored when <see cref="Supervision"/> is supplied whole.
         /// </summary>
@@ -65,11 +73,14 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(o =>
+        {
             o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
-            }));
+            });
+            options.ConfigureDbContext?.Invoke(o);
+        });
         var eventBus = new MockEventBus();
         var messaging = new FakeAntiphonMessagingClient();
         services.AddSingleton(eventBus);

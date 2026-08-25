@@ -9,6 +9,10 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class AgentIncident
 {
+    // See Alert: the ceilings live beside the properties so the model and the clip agree.
+    public const int MessageMaxLength = 4000;
+    public const int FailureReasonMaxLength = 4000;
+
     public Guid Id { get; set; }
     public Guid AgentId { get; set; }
     public Guid? SessionId { get; set; }

@@ -8,6 +8,15 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class Alert
 {
+    // The column ceilings, stated next to the properties they govern. AppDbContext's model and the
+    // write path's clip both read them, so schema and clip cannot drift apart. A varchar overflow
+    // here is not an exception somewhere harmless: it is the report of a problem dying of the size
+    // of the problem it was reporting (CARD-0195, and again CARD-0205).
+    public const int SourceMaxLength = 50;
+    public const int TitleMaxLength = 500;
+    public const int DetailMaxLength = 4000;
+    public const int DedupKeyMaxLength = 500;
+
     public Guid Id { get; set; }
     public AlertSeverity Severity { get; set; }
 
