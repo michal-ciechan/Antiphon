@@ -43,6 +43,7 @@ public sealed record HerdrPaneInfo(
     [property: JsonPropertyName("title")] string? Title = null,
     [property: JsonPropertyName("agent")] string? Agent = null,
     [property: JsonPropertyName("tokens")] IReadOnlyDictionary<string, string>? Tokens = null,
+    [property: JsonPropertyName("state_labels")] IReadOnlyDictionary<string, string>? StateLabels = null,
     [property: JsonPropertyName("agent_session")] HerdrAgentSessionInfo? AgentSession = null);
 
 public sealed record HerdrAgentSessionInfo(
@@ -155,7 +156,10 @@ public sealed record HerdrPaneReportMetadataParams(
     [property: JsonPropertyName("tokens"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string?>? Tokens = null,
     [property: JsonPropertyName("title"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Title = null,
     [property: JsonPropertyName("ttl_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? TtlMs = null,
-    [property: JsonPropertyName("seq"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? Seq = null);
+    [property: JsonPropertyName("seq"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? Seq = null,
+    [property: JsonPropertyName("state_labels"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? StateLabels = null,
+    [property: JsonPropertyName("clear_state_labels"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool ClearStateLabels = false,
+    [property: JsonPropertyName("applies_to_source"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AppliesToSource = null);
 
 public sealed record HerdrPaneReportAgentSessionParams(
     [property: JsonPropertyName("pane_id")] string PaneId,

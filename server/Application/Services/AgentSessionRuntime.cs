@@ -308,6 +308,19 @@ public sealed class AgentSessionRuntime
     /// </summary>
     public async Task ObserveAgentStatusAsync(SessionRunnerAgentStatusEvent evt, CancellationToken ct)
     {
+        // The board query overlays runner status on demand. Publish on every status change so the
+        // existing AgentChanged invalidation makes that overlay live; unclaimed sessions have no UI owner.
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var agentId = await db.Agents.AsNoTracking()
+                .Where(a => a.PersistentSessionId == evt.SessionId.ToString("D"))
+                .Select(a => (Guid?)a.Id)
+                .FirstOrDefaultAsync(ct);
+            if (agentId is Guid id)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(id), ct);
+        }
+
         if (!string.Equals(evt.PreviousAgentStatus, "blocked", StringComparison.Ordinal))
             return;
 

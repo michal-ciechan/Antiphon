@@ -1,4 +1,10 @@
 import type { TranscriptEntryDto } from '../../api/sessions'
+import type { HerdrAgentStatus } from '../../api/boards'
+
+/** Client hint mirror of HerdrStatusCorroborationService's matrix; grading remains server-side. */
+export function isHerdrDisagreement(status: HerdrAgentStatus, working: boolean): boolean {
+  return (status === 'working' || status === 'blocked') ? !working : (status === 'idle' || status === 'done') && working
+}
 
 // Pure transcript model: turn grouping, working/idle, per-turn metrics, merge and formatting.
 // Lives outside SessionTranscriptPanel.tsx so the component file only exports components

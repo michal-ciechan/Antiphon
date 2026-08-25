@@ -98,7 +98,11 @@ public sealed record AgentSessionSummaryDto(
     ContextFullnessState? ContextFullnessState = null,
     // CARD-0180 S4 / CARD-0190: "bound" | "unbound" | "awaiting-input" when the runner
     // answered; null = unknown (older runner / unreachable / no tailer).
-    string? TranscriptBinding = null);
+    string? TranscriptBinding = null,
+    // CARD-0163: Herdr's screen-derived status, overlaid from the runner. Null means no Herdr
+    // session or an older/unreachable runner; it is intentionally not guessed from transcript state.
+    string? HerdrAgentStatus = null,
+    DateTime? HerdrAgentStatusSinceUtc = null);
 
 public sealed record CreateBoardRequest(
     Guid ProjectId,

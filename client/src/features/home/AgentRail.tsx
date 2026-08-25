@@ -49,7 +49,9 @@ export function AgentRail({
           <Group gap={8} wrap="nowrap">
             <Tooltip
               label={
-                agent.liveSession?.status === 'Running' &&
+                agent.liveSession?.herdrAgentStatus === 'blocked'
+                  ? 'Terminal — live now · herdr: blocked'
+                  : agent.liveSession?.status === 'Running' &&
                 agent.liveSession.transcriptBinding === 'unbound'
                   ? 'Terminal live — no transcript bound'
                   : agent.liveSession?.status === 'Running' &&

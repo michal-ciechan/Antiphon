@@ -221,6 +221,12 @@ the full §6 adoption bar before recording any `Exited`.
 A `blocked` → not-blocked transition may only **nudge** `FlushIfIdleAsync`, which re-checks
 `IsWorkingAsync` and the blocked gate for itself.
 
+CARD-0163 also pushes the runner's file-ordered transcript verdict as display-only
+`pane.report_metadata`: all sidebar state labels read `<herdr> · antiphon: <verdict>`, with
+`antiphon-state` and `antiphon-as-of` tokens, TTL renewal, and an explicit exit clear. It never
+calls `pane.report_agent`, so this label cannot change herdr's `agent_status`, delivery gate,
+session state, or disagreement evidence.
+
 **`HerdrStatusDisagreement` (incident kind 34)** fires when herdr's `agent_status` disagrees with
 Antiphon's transcript-derived `IsWorkingAsync` for at least 10 minutes. It is **Warning, always** —
 timeline-only unless the agent is channel-bound, with a pull-before-raise and no re-raise inside
@@ -246,8 +252,10 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 
 ## 9. Deferred / out of scope
 
-`pane.report_agent` and the UI badges that would consume it are deferred (S4b). Pane/workspace/tab
-ids stay out of the database.
+S4b shipped display-only `pane.report_metadata` labels and client badges for herdr's existing
+screen-derived status. `pane.report_agent` remains explicitly rejected: its lifecycle-authority
+takeover would overwrite S3's blocked signal and turn S4 disagreement into a tautology. Pane/
+workspace/tab ids stay out of the database.
 
 ## See also
 

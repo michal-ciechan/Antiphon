@@ -16,6 +16,8 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 public static class TranscriptWorkingState
 {
+    public enum WorkingVerdict { Unknown, Working, Idle }
+
     /// <summary>
     /// True when the transcript proves the session is sitting idle at the prompt: at least one
     /// turn has ENDED (TurnEnd or interrupt marker), and nothing counting as activity has been
@@ -24,6 +26,13 @@ public static class TranscriptWorkingState
     /// as idle, or a legitimately hot session (startup, resume history load) could be killed.
     /// </summary>
     public static bool IsProvenIdle(IReadOnlyList<RunnerTranscriptEvent> entries)
+        => Classify(entries) == WorkingVerdict.Idle;
+
+    /// <summary>
+    /// CARD-0163: the Herdr label reads this same file-ordered judgement as the CPU watchdog.
+    /// Unknown is deliberate: absent evidence must never be presented as a confident idle state.
+    /// </summary>
+    public static WorkingVerdict Classify(IReadOnlyList<RunnerTranscriptEvent> entries)
     {
         long lastEnd = 0;
         long lastActivity = 0;
@@ -56,6 +65,8 @@ public static class TranscriptWorkingState
             lastActivity = Math.Max(lastActivity, entry.Sequence);
         }
 
-        return lastEnd > 0 && lastActivity <= lastEnd;
+        if (lastEnd == 0 && lastActivity == 0)
+            return WorkingVerdict.Unknown;
+        return lastEnd > 0 && lastActivity <= lastEnd ? WorkingVerdict.Idle : WorkingVerdict.Working;
     }
 }

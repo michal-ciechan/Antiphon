@@ -318,6 +318,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 "pane.split" => PaneSplitJson(parameters),
                 "pane.rename" => PaneRenameJson(parameters),
                 "pane.report_metadata" => ReportPaneMetadata(parameters),
+                // CARD-0163 safety pin: no production route may claim lifecycle authority.
+                "pane.report_agent" => throw new FakeHerdrApiException("forbidden_in_tests", "pane.report_agent is forbidden in tests"),
                 "pane.report_agent_session" => ReportPaneAgentSession(parameters),
                 "pane.get" => PaneGetJson(parameters),
                 "pane.list" => PaneListJson(parameters),
@@ -429,13 +431,31 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     {
         var (_, _, pane) = RequirePane(parameters.GetProperty("pane_id").GetString()!);
         RequireSourceAntiphon(parameters);
+        var seq = parameters.TryGetProperty("seq", out var suppliedSeq) && suppliedSeq.ValueKind == JsonValueKind.Number
+            ? suppliedSeq.GetUInt64() : (ulong?)null;
+        if (seq is ulong stale && stale <= pane.MetadataSeq)
+            return OkJson();
+        if (seq is ulong next)
+            pane.MetadataSeq = next;
         pane.Title = OptString(parameters, "title");
         if (parameters.TryGetProperty("tokens", out var tokens) && tokens.ValueKind == JsonValueKind.Object)
         {
             pane.Tokens ??= new Dictionary<string, string>();
             foreach (var prop in tokens.EnumerateObject())
-                pane.Tokens[prop.Name] = prop.Value.ValueKind == JsonValueKind.Null ? "" : prop.Value.GetString() ?? "";
+            {
+                if (prop.Value.ValueKind == JsonValueKind.Null)
+                    pane.Tokens.Remove(prop.Name);
+                else
+                    pane.Tokens[prop.Name] = prop.Value.GetString() ?? "";
+            }
         }
+        if (parameters.TryGetProperty("clear_state_labels", out var clear) && clear.GetBoolean())
+            pane.StateLabels = null;
+        if (parameters.TryGetProperty("state_labels", out var labels) && labels.ValueKind == JsonValueKind.Object)
+            pane.StateLabels = labels.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "");
+
+        // R6: metadata reports emit a dotted status event but do not change the effective status.
+        EnqueuePaneAgentStatusChanged(pane.PaneId, pane.WorkspaceId, "unknown");
 
         return OkJson();
     }
@@ -733,8 +753,11 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var agentSession = p.AgentSession is null
             ? "null"
             : $"{{\"source\":{JsonSerializer.Serialize(p.AgentSession.Source)},\"agent\":{JsonSerializer.Serialize(p.AgentSession.Agent)},\"kind\":{JsonSerializer.Serialize(p.AgentSession.Kind)},\"value\":{JsonSerializer.Serialize(p.AgentSession.Value)}}}";
+        var labels = p.StateLabels is null || p.StateLabels.Count == 0
+            ? "null"
+            : $"{{{string.Join(",", p.StateLabels.Select(kv => $"{JsonSerializer.Serialize(kv.Key)}:{JsonSerializer.Serialize(kv.Value)}"))}}}";
         return
-            $"{{\"pane_id\":\"{p.PaneId}\",\"tab_id\":\"{p.TabId}\",\"workspace_id\":\"{p.WorkspaceId}\",\"terminal_id\":\"{p.TerminalId}\",\"cwd\":{JsonSerializer.Serialize(p.Cwd)},\"revision\":{p.Revision},\"focused\":false,\"agent_status\":\"unknown\",\"label\":{JsonSerializer.Serialize(p.Label)},\"title\":{JsonSerializer.Serialize(p.Title)},\"agent\":{JsonSerializer.Serialize(p.Agent)},\"tokens\":{tokens},\"agent_session\":{agentSession}}}";
+            $"{{\"pane_id\":\"{p.PaneId}\",\"tab_id\":\"{p.TabId}\",\"workspace_id\":\"{p.WorkspaceId}\",\"terminal_id\":\"{p.TerminalId}\",\"cwd\":{JsonSerializer.Serialize(p.Cwd)},\"revision\":{p.Revision},\"focused\":false,\"agent_status\":\"unknown\",\"label\":{JsonSerializer.Serialize(p.Label)},\"title\":{JsonSerializer.Serialize(p.Title)},\"agent\":{JsonSerializer.Serialize(p.Agent)},\"tokens\":{tokens},\"state_labels\":{labels},\"agent_session\":{agentSession}}}";
     }
 
     private static string? OptString(JsonElement parameters, string name)
@@ -821,6 +844,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public string? Agent { get; set; } = agent;
         public Dictionary<string, string>? Env { get; } = env;
         public Dictionary<string, string>? Tokens { get; set; }
+        public Dictionary<string, string>? StateLabels { get; set; }
+        public ulong MetadataSeq { get; set; }
         public AgentSessionState? AgentSession { get; set; }
         public string? ScreenText { get; set; }
         /// <summary>CARD-0164: optional per-read text script; last entry sticks.</summary>

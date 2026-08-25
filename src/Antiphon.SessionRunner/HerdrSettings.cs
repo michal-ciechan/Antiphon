@@ -36,4 +36,16 @@ public sealed class HerdrSettings
     /// CARD-0195's Codex MCP boot is the outlier and is measured by S3/K9).
     /// </summary>
     public int LaunchDetectTimeoutMs { get; set; } = 60_000;
+
+    /// <summary>CARD-0163: display-only transcript-state labels pushed to live herdr panes.</summary>
+    public HerdrStatusPushSettings StatusPush { get; set; } = new();
+}
+
+public sealed class HerdrStatusPushSettings
+{
+    public bool Enabled { get; set; } = true;
+    public int DebounceMs { get; set; } = 500;
+    public int HeartbeatSeconds { get; set; } = 300;
+    public int TtlSeconds { get; set; } = 900;
+    public int ExitClearTimeoutMs { get; set; } = 2_000;
 }

@@ -203,6 +203,8 @@ public sealed class AgentService
                     s.EffectiveModelId,
                     null,
                     null,
+                    null,
+                    null,
                     null),
                 s.ComposedBundleStamp))
             .ToListAsync(ct);
@@ -229,7 +231,7 @@ public sealed class AgentService
                     },
                 };
             });
-        await AttachTranscriptBindingAsync(result, ct);
+        await AttachRunnerLiveStateAsync(result, ct);
         return result;
     }
 
@@ -237,7 +239,7 @@ public sealed class AgentService
     /// CARD-0180 S4: overlay runner bind state onto live session DTOs. A runner that does not
     /// answer leaves <c>TranscriptBinding</c> null (unknown) — never guessed as unbound.
     /// </summary>
-    private async Task AttachTranscriptBindingAsync(
+    private async Task AttachRunnerLiveStateAsync(
         Dictionary<Guid, LiveSession> liveSessions, CancellationToken ct)
     {
         if (_runnerClient is null || liveSessions.Count == 0)
@@ -250,7 +252,7 @@ public sealed class AgentService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Runner unreachable; transcriptBinding left unknown");
+            _logger.LogDebug(ex, "Runner unreachable; live runner state left unknown");
             return;
         }
 
@@ -265,11 +267,16 @@ public sealed class AgentService
                 false => "unbound",
                 _ => (string?)null,
             };
-            if (binding is null)
-                continue;
             liveSessions[runner.SessionId] = live with
             {
-                Dto = live.Dto with { TranscriptBinding = binding },
+                Dto = live.Dto with
+                {
+                    TranscriptBinding = binding ?? live.Dto.TranscriptBinding,
+                    HerdrAgentStatus = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
+                        ? runner.AgentStatus : null,
+                    HerdrAgentStatusSinceUtc = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
+                        ? runner.AgentStatusSinceUtc : null,
+                },
             };
         }
     }

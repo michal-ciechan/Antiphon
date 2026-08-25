@@ -15,6 +15,22 @@ namespace Antiphon.SessionRunner.Tests;
 public class TranscriptWorkingStateTests
 {
     [Test]
+    [Arguments(TranscriptWorkingState.WorkingVerdict.Unknown, 0)]
+    [Arguments(TranscriptWorkingState.WorkingVerdict.Working, 1)]
+    [Arguments(TranscriptWorkingState.WorkingVerdict.Idle, 2)]
+    public void Classify_makes_the_existing_tri_state_explicit(TranscriptWorkingState.WorkingVerdict expected, int scenario)
+    {
+        IReadOnlyList<RunnerTranscriptEvent> entries = scenario switch
+        {
+            0 => [],
+            1 => [Evt(1, TranscriptKinds.UserPrompt, "work")],
+            _ => [Evt(1, TranscriptKinds.UserPrompt, "work"), Evt(2, TranscriptKinds.TurnEnd)],
+        };
+        TranscriptWorkingState.Classify(entries).ShouldBe(expected);
+        TranscriptWorkingState.IsProvenIdle(entries).ShouldBe(expected == TranscriptWorkingState.WorkingVerdict.Idle);
+    }
+
+    [Test]
     public void Empty_transcript_is_not_proven_idle()
     {
         TranscriptWorkingState.IsProvenIdle([]).ShouldBeFalse();

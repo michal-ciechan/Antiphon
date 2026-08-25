@@ -8,6 +8,7 @@ import { SessionTerminal } from '../board/SessionTerminal'
 import { SessionMessageQueue } from './SessionMessageQueue'
 import { SessionContextBadge } from './SessionContextBadge'
 import { SessionWorkingBadge } from './SessionWorkingBadge'
+import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SmartComposer } from './SmartComposer'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
 
@@ -53,6 +54,7 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
             {source.name} terminal
           </Text>
           {liveSession && <SessionWorkingBadge sessionId={liveSession.id} />}
+          {liveSession && <HerdrStatusBadge session={liveSession} working={source.working} />}
           {liveSession?.agentKind === 'ClaudeCode' && (
             <SessionContextBadge
               fullness={liveSession.contextFullness}

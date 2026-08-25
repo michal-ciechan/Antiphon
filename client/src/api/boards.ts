@@ -173,7 +173,11 @@ export interface AgentSessionSummaryDto {
    * first-prompt wait; omitted/null = unknown (older server / unreachable).
    */
   transcriptBinding?: 'bound' | 'unbound' | 'awaiting-input' | null
+  herdrAgentStatus?: HerdrAgentStatus | null
+  herdrAgentStatusSinceUtc?: string | null
 }
+
+export type HerdrAgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown'
 
 export type ContextFullnessState =
   | 'Known'

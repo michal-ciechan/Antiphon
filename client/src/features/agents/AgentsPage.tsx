@@ -48,6 +48,7 @@ import {
 } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentActivityBadge } from './AgentActivityBadge'
+import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SessionContextBadge } from './SessionContextBadge'
 import { AgentAddWorkModal } from './AgentAddWorkModal'
 import { FilesReviewPanel } from './FilesReviewPanel'
@@ -149,6 +150,7 @@ export function AgentsPage() {
                           />
                         )}
                         <AgentActivityBadge agent={agent} />
+                        {agent.liveSession && <HerdrStatusBadge session={agent.liveSession} working={agent.working} size="xs" />}
                       </Group>
                     </Group>
                     <Text size="xs" c="dimmed" lineClamp={1}>
@@ -245,6 +247,7 @@ export function AgentsPage() {
                 <Group gap="xs">
                   <Title order={3}>{selected.data.name}</Title>
                   <AgentActivityBadge agent={selected.data} />
+                  {selected.data.liveSession && <HerdrStatusBadge session={selected.data.liveSession} working={selected.data.working} />}
                   {selected.data.liveSession?.agentKind === 'ClaudeCode' && (
                     <SessionContextBadge
                       fullness={selected.data.liveSession.contextFullness}

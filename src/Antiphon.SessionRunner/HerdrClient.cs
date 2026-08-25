@@ -202,6 +202,16 @@ public sealed class HerdrClient
             cancellationToken);
     }
 
+    /// <summary>Send display-only pane metadata. This must never take agent lifecycle authority.</summary>
+    public async Task PaneReportMetadataAsync(
+        HerdrPaneReportMetadataParams parameters,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentException.ThrowIfNullOrWhiteSpace(parameters.PaneId);
+        await SendRequestAsync("pane.report_metadata", parameters, cancellationToken);
+    }
+
     public async Task PaneReportAgentSessionAsync(
         string paneId,
         string agent,

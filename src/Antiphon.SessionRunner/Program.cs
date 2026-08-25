@@ -57,6 +57,8 @@ builder.Services.AddHostedService<SessionCpuWatchdogService>();
 // CARD-0162: herdr event pump — always registered; inert unless SessionRunner:Herdr:Enabled.
 // Holds a pipe only while ≥ 1 live herdr session exists. Events are verification triggers, never evidence.
 builder.Services.AddHostedService<HerdrEventPumpService>();
+// CARD-0163: display-only transcript state labels; inert unless the optional Herdr lane is enabled.
+builder.Services.AddHostedService<HerdrStatusPushService>();
 
 // The pty backend switch (CARD-0037), defaulting OFF. Exported into this process's environment so it
 // reaches the DETACHED pty-hosts for free: PtyHostLauncher starts them with UseShellExecute=false
