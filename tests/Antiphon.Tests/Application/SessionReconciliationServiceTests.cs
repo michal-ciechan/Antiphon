@@ -696,6 +696,115 @@ public class SessionReconciliationServiceTests
         }
     }
 
+    /// <summary>
+    /// CARD-0186 S4: pass 3 re-adopts a Failed herdr row only when the single-session GET's
+    /// <c>HerdrVerifiedAtUtc</c> is at least as fresh as this sweep's start. GetBuffer is not
+    /// evidence on herdr (the ansi log always answers).
+    /// </summary>
+    [Test]
+    public async Task Failed_herdr_session_with_fresh_HerdrVerifiedAtUtc_is_re_adopted()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true,
+                agentStatus: AgentStatus.Failed,
+                failureReason: "Process exited (HerdrRestartPresumedDead, code unknown).");
+
+            await using var db = CreateContext();
+            var alerts = new RecordingAlertService();
+            var eventBus = new MockEventBus();
+            var runner = RunnerRunningHerdr(sessionId, DateTime.UtcNow.AddMinutes(1));
+            var service = BuildService(db, runner, eventBus, alerts);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var dbSession = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            dbSession.Status.ShouldBe(SessionStatus.Running);
+            dbSession.EndedAt.ShouldBeNull();
+            dbSession.FailureReason.ShouldBeNull();
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Running);
+
+            var incident = await verify.AgentIncidents.SingleAsync(i => i.SessionId == sessionId);
+            incident.Kind.ShouldBe(AgentIncidentKind.SessionReAdopted);
+            incident.FailureReason.ShouldBe("SessionReAdopted");
+            runner.Probed.ShouldBeEmpty("herdr re-adopt must not use the pty-host buffer probe");
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Failed_herdr_session_with_stale_or_absent_HerdrVerifiedAtUtc_is_left_alone(bool stale)
+    {
+        var marker = NewMarker();
+        try
+        {
+            var (agentId, sessionId) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Failed, staleAgent: true, agentStatus: AgentStatus.Failed);
+
+            await using var db = CreateContext();
+            var alerts = new RecordingAlertService();
+            DateTime? verified = stale ? DateTime.UtcNow.AddHours(-1) : null;
+            var runner = RunnerRunningHerdr(sessionId, verified);
+            var service = BuildService(db, runner, new MockEventBus(), alerts);
+
+            await service.ScanAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
+                .ShouldBe(SessionStatus.Failed);
+            (await verify.Agents.SingleAsync(a => a.Id == agentId)).Status.ShouldBe(AgentStatus.Failed);
+            alerts.For(sessionId).ShouldContain(a => a.Severity == AlertSeverity.Error);
+            var incident = await verify.AgentIncidents.SingleAsync(i => i.SessionId == sessionId);
+            incident.FailureReason.ShouldBe("ReAdoptProbeFailed");
+            incident.Message.ShouldContain("HerdrVerifiedAtUtc");
+            runner.Probed.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0186 S4: a Pending herdr session is neither unclaimed nor surplus. The census used to
+    /// walk every Running runner session; Pending is Starting-shaped adoption, not a live child.
+    /// </summary>
+    [Test]
+    public async Task Pending_herdr_sessions_are_excluded_from_the_census_unclaimed_count()
+    {
+        await using var db = CreateContext();
+        var alerts = new RecordingAlertService();
+        var runner = new FakeRunnerClient
+        {
+            Sessions =
+            [
+                .. Enumerable.Range(0, 12).Select(i => new SessionRunnerSessionDto(
+                    Guid.NewGuid(), Pid: 5_000 + i, StartedAt: DateTime.UtcNow.AddHours(-3),
+                    Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                    LastSequence: 10, Adopted: true, Backend: SessionBackends.Herdr,
+                    Pending: HerdrPendingReasons.Unreachable))
+            ]
+        };
+        var service = BuildService(
+            db, runner, new MockEventBus(), alerts,
+            census: new StatedCensusProbe(PtyHostCensus.Unavailable));
+
+        await service.ScanAsync(CancellationToken.None);
+
+        CensusAlerts(alerts).ShouldBeEmpty(
+            "Pending sessions must not count as unclaimed Running children; an unavailable census "
+            + "also suppresses the surplus arm, so this sweep should be silent.");
+        runner.Killed.ShouldBeEmpty();
+    }
+
     // ---------- helpers ----------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -750,6 +859,28 @@ public class SessionReconciliationServiceTests
                     Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
                     LastSequence: 10, HostPid: hostPid)
             ]
+        };
+
+    /// <summary>
+    /// CARD-0186 S4: Running on herdr. <paramref name="verifiedAtUtc"/> is what the single-session
+    /// GET returns (pass 3's evidence); the list endpoint stays cheap and is not consulted.
+    /// </summary>
+    private static FakeRunnerClient RunnerRunningHerdr(Guid sessionId, DateTime? verifiedAtUtc) =>
+        new()
+        {
+            Sessions =
+            [
+                new SessionRunnerSessionDto(
+                    sessionId, Pid: 4243, StartedAt: DateTime.UtcNow.AddHours(-1),
+                    Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                    LastSequence: 10, Adopted: true, Backend: SessionBackends.Herdr,
+                    HerdrVerifiedAtUtc: verifiedAtUtc)
+            ],
+            GetOverride = _ => new SessionRunnerSessionDto(
+                sessionId, Pid: 4243, StartedAt: DateTime.UtcNow.AddHours(-1),
+                Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown,
+                LastSequence: 10, Adopted: true, Backend: SessionBackends.Herdr,
+                HerdrVerifiedAtUtc: verifiedAtUtc)
         };
 
     private sealed class NoOpAlertService : IAlertService

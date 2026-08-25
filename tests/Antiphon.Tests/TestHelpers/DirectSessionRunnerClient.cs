@@ -15,9 +15,17 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private readonly SessionRunnerRuntime _runtime;
+    private SessionRunnerRuntime _runtime;
+    private readonly Antiphon.SessionRunner.SessionRunnerSettings _runnerSettings;
+    private readonly HerdrClient? _herdrClient;
     private readonly bool _codexTranscript;
     private readonly bool _claudeTranscript;
+
+    /// <summary>
+    /// CARD-0186 S4: production runner teardown detaches without killing. Tests that simulate a
+    /// runner restart need that shape; the default still kills so a forgotten session cannot leak.
+    /// </summary>
+    public bool KillOnDispose { get; set; } = true;
 
     /// <param name="ptyBackend">
     /// Which pseudoconsole the detached pty-hosts this client spawns should use (<c>inbox</c> /
@@ -58,17 +66,37 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     {
         _codexTranscript = codexTranscript;
         _claudeTranscript = claudeTranscript;
-        _runtime = new SessionRunnerRuntime(
-            Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
-            {
-                SessionLogPath = sessionLogPath,
-                // Tests must not strand detached hosts for the production 24 h linger.
-                PtyHostLingerHours = 0.02,
-                PtyBackend = ptyBackend,
-            }),
-            NullLogger<SessionRunnerRuntime>.Instance,
-            herdrClient);
+        _herdrClient = herdrClient;
+        _runnerSettings = new Antiphon.SessionRunner.SessionRunnerSettings
+        {
+            SessionLogPath = sessionLogPath,
+            // Tests must not strand detached hosts for the production 24 h linger.
+            PtyHostLingerHours = 0.02,
+            PtyBackend = ptyBackend,
+        };
+        _runtime = BuildRuntime();
     }
+
+    /// <summary>
+    /// CARD-0186 S4: drop the in-proc runtime without killing children (the production runner
+    /// restart shape) and re-adopt from sidecars / pty-host manifests.
+    /// </summary>
+    public async Task SimulateRunnerRestartAsync(CancellationToken ct = default)
+    {
+        KillOnDispose = false;
+        await _runtime.DisposeAsync();
+        _runtime = BuildRuntime();
+        await _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct);
+    }
+
+    public Task AdoptOrphanedHostsAsync(CancellationToken ct = default) =>
+        _runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), ct);
+
+    private SessionRunnerRuntime BuildRuntime() =>
+        new(
+            Options.Create(_runnerSettings),
+            NullLogger<SessionRunnerRuntime>.Instance,
+            _herdrClient);
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {
@@ -178,11 +206,25 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var session in _runtime.List())
+        if (KillOnDispose)
         {
-            if (session.Status is "Running" or "Starting")
-                await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+            foreach (var session in _runtime.List())
+            {
+                if (session.Status is "Running" or "Starting")
+                {
+                    try
+                    {
+                        await _runtime.KillAsync(session.SessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Teardown must not mask the test's own failure.
+                    }
+                }
+            }
         }
+
+        await _runtime.DisposeAsync();
     }
 
     private static SessionRunnerEvent? ParseEvent(string eventName, string json)

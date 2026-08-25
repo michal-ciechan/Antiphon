@@ -40,6 +40,13 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// </summary>
     public string? RejectSubscribePaneId { get; set; }
 
+    /// <summary>
+    /// CARD-0186 S4: when true, <c>pane.send_text</c> updates <see cref="PaneState.ScreenText"/> so
+    /// a composer-evidence poll (ready probe, queue delivery) can see what was typed. Ctrl+U
+    /// (<c>\\x15</c>) clears it. Default off — existing tests script the screen themselves.
+    /// </summary>
+    public bool EchoSendTextToScreen { get; set; }
+
     public FakeHerdrServer(string? session = null)
     {
         _session = session ?? $"antiphon-herdr-test-{Guid.NewGuid():N}";
@@ -300,7 +307,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 "pane.list" => PaneListJson(parameters),
                 "pane.process_info" => PaneProcessInfoJson(parameters),
                 "pane.read" => PaneReadJson(parameters),
-                "pane.send_text" => OkJson(),
+                "pane.send_text" => PaneSendTextJson(parameters),
                 "pane.send_keys" => OkJson(),
                 "pane.close" => PaneCloseJson(parameters),
                 "agent.start" => AgentStartJson(parameters),
@@ -489,6 +496,21 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var shellJson = shellPid is int s ? s.ToString() : "null";
         return
             $"{{\"type\":\"pane_process_info\",\"process_info\":{{\"pane_id\":\"{paneId}\",\"shell_pid\":{shellJson},\"foreground_processes\":[{foregroundJson}],\"tty\":null}}}}";
+    }
+
+    private string PaneSendTextJson(JsonElement parameters)
+    {
+        if (EchoSendTextToScreen)
+        {
+            var paneId = parameters.GetProperty("pane_id").GetString()!;
+            var text = parameters.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+            var (_, _, pane) = RequirePane(paneId);
+            // Ctrl+U kill-line — ComposerInputProbe.KillLine. Anything else replaces the visible
+            // composer the way a typed body does.
+            pane.ScreenText = text == "\u0015" ? "" : text;
+        }
+
+        return OkJson();
     }
 
     private string PaneReadJson(JsonElement parameters)

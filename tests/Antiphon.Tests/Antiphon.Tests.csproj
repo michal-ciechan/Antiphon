@@ -23,6 +23,10 @@
   <ItemGroup>
     <!-- Pinned real-Claude record shapes (captured by headed canaries; e.g. compact-boundary.jsonl). -->
     <Content Include="Agents\Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- CARD-0186 S4: the named-pipe herdr fake lives with the runner tests; compile it here so
+         DirectSessionRunnerClient can talk to it without a test-project reference. -->
+    <Compile Include="..\Antiphon.SessionRunner.Tests\FakeHerdrServer.cs"
+             Link="TestHelpers\FakeHerdrServer.cs" />
   </ItemGroup>
 
   <ItemGroup>
