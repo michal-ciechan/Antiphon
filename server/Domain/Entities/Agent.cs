@@ -52,8 +52,8 @@ public class Agent
     /// <summary>
     /// Which lane hosts this agent's interactive child (CARD-0160 / herdr S2). Default
     /// <see cref="SessionBackend.PtyHost"/> — herdr is opt-in and dark unless explicitly selected.
-    /// AlwaysOn and channel-bound agents are refused the herdr lane (herdr sessions do not survive
-    /// a herdr restart); only <see cref="AgentKind.ClaudeCode"/> is spiked.
+    /// Only <see cref="AgentKind.ClaudeCode"/> is spiked (CARD-0187); AlwaysOn and channel-bound
+    /// refusals were lifted (CARD-0186).
     /// </summary>
     public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
 

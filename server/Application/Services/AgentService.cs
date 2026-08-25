@@ -285,7 +285,7 @@ public sealed class AgentService
         ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
 
-        // CARD-0160: refuse Herdr×AlwaysOn and Herdr×non-Claude before the row exists. Channel-bind
+        // CARD-0160 / CARD-0186: refuse Herdr×non-Claude before the row exists. Channel-bind
         // cannot apply yet (no AgentId); Kind is ClaudeCode until a TuiProfile is applied below —
         // ApplyTuiSelectionAsync may change it, so the Kind gate re-runs after that when needed.
         var createBackend = request.SessionBackend ?? SessionBackend.PtyHost;
@@ -393,9 +393,10 @@ public sealed class AgentService
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
 
-        // CARD-0160: resolve the REQUEST's final AlwaysOn / SessionBackend / Kind BEFORE any field
-        // is applied, covering both directions (Herdr-on-AlwaysOn and AlwaysOn-on-Herdr) and the
-        // combined one-request state. Channel-bound and Kind gates run over the same final state.
+        // CARD-0160 / CARD-0186: resolve the REQUEST's final SessionBackend / Kind BEFORE any field
+        // is applied so a Kind change in the same PATCH is checked against Herdr. alwaysOn and
+        // channelBound are still computed (callers keep resolving request-final state) but are
+        // no longer refusal arms.
         var finalAlwaysOn = request.AlwaysOn ?? agent.AlwaysOn;
         var finalBackend = request.SessionBackend ?? agent.SessionBackend;
         var finalKind = await ResolveFinalKindAsync(agent, request, ct);
@@ -1258,10 +1259,10 @@ public sealed class AgentService
     /// identically.
     /// </summary>
     /// <summary>
-    /// CARD-0160: Herdr is mutually exclusive with AlwaysOn and with channel-binding, and only
-    /// spiked for ClaudeCode. Refusal, never silent remap. Runs over the request-resolved final
-    /// state so both directions (Herdr-on-AlwaysOn and AlwaysOn-on-Herdr) and combined one-request
-    /// state are covered before any field is applied.
+    /// CARD-0160 / CARD-0186: Herdr is only spiked for ClaudeCode. AlwaysOn and channel-bound
+    /// refusals were lifted (CARD-0186); the Kind refusal stands until CARD-0187. Refusal, never
+    /// silent remap. <paramref name="alwaysOn"/> and <paramref name="channelBound"/> stay in the
+    /// signature so every caller still resolves request-final state.
     /// </summary>
     internal static void ValidateSessionBackendPairing(
         SessionBackend backend, bool alwaysOn, AgentKind kind, bool channelBound)
@@ -1269,19 +1270,9 @@ public sealed class AgentService
         if (backend != SessionBackend.Herdr)
             return;
 
-        if (alwaysOn)
-        {
-            throw new ConflictException(
-                "Always-on agents stay on pty-hosts (herdr sessions do not survive a herdr restart).",
-                "herdr_refused");
-        }
-
-        if (channelBound)
-        {
-            throw new ConflictException(
-                "Channel-bound agents stay on pty-hosts (herdr sessions do not survive a herdr restart).",
-                "herdr_refused");
-        }
+        // Parameters retained (CARD-0186); deletion is CARD-0187 when this function is rewritten.
+        _ = alwaysOn;
+        _ = channelBound;
 
         if (kind != AgentKind.ClaudeCode)
         {

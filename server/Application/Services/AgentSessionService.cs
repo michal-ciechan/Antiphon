@@ -1070,8 +1070,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             ? BuildSessionIdentityArgs(launchSpec.Args, session.Id, resumeMode)
             : launchSpec.Args;
 
-        // CARD-0160: read the SESSION snapshot, never the agent's live value — resume-after-PATCH
-        // must keep launching the way THIS session was stamped.
+        // Read the SESSION snapshot, never the agent's live value — ceilings follow the lane
+        // this process was actually launched on. A resume restamps the snapshot from the agent
+        // first (CARD-0186), so a PATCH takes effect on the next crash-restart.
         var backend = session.SessionBackend;
         HerdrLaunchOptions? herdr = null;
         if (backend == SessionBackend.Herdr)
@@ -1112,8 +1113,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     /// <summary>
-    /// CARD-0160 launch-time backstop: Herdr AND (AlwaysOn / channel-bound / Kind != ClaudeCode)
-    /// → ConflictException. Defense in depth for drift between PATCH and launch.
+    /// CARD-0160 / CARD-0186 launch-time backstop: Herdr AND Kind != ClaudeCode → ConflictException.
+    /// Defense in depth for drift between PATCH and launch. AlwaysOn / channel-bound arms lifted.
     /// </summary>
     private void EnsureHerdrLaunchAllowed(AgentSession session, AgentLaunchSpec spec)
     {
@@ -1121,7 +1122,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return;
 
         // Resolve owning agent synchronously from already-tracked state where possible; the check
-        // re-reads via the same DbContext for AlwaysOn / channel / Kind.
+        // re-reads via the same DbContext for Kind (and still resolves AlwaysOn / channel so the
+        // pairing signature stays unchanged until CARD-0187).
         var agentId = session.Card?.AssignedAgentId;
         // Card may not be loaded; fall through to a best-effort query below via Kind alone if needed.
         Agent? agent = null;
@@ -1145,7 +1147,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (ConflictException)
         {
             session.Status = SessionStatus.Failed;
-            session.FailureReason = "Herdr launch refused: AlwaysOn, channel-bound, or non-Claude agent.";
+            session.FailureReason = "Herdr launch refused: non-Claude agent.";
             session.EndedAt = UtcNow();
             throw;
         }

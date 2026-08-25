@@ -17,8 +17,9 @@ public class AgentSession
 
     /// <summary>
     /// Snapshot of the owning agent's <see cref="Agent.SessionBackend"/> at session-row creation
-    /// (CARD-0160). Reconciliation and relaunch must know how THIS session was launched even if the
-    /// agent setting changes later — same rationale as <see cref="AgentKind"/>.
+    /// (CARD-0160). A resume restamps it from the agent's current setting (CARD-0186) so a PATCH
+    /// takes effect on the next crash-restart. The live row still governs ceilings for the session
+    /// that is actually running.
     /// </summary>
     public SessionBackend SessionBackend { get; set; } = SessionBackend.PtyHost;
 

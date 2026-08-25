@@ -1119,7 +1119,7 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
-    private static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
+    internal static async Task MarkSessionEndedAsync(string sessionId, SessionStatus status)
     {
         await using var db = CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id.ToString() == sessionId);
@@ -1131,7 +1131,7 @@ public class AgentControlServiceIntegrationTests
     private static AppDbContext CreateContext(string? connectionString = null) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
 
-    private static Harness BuildHarness(
+    internal static Harness BuildHarness(
         string tempRoot,
         IReadOnlyList<IAgentProtocolAdapter> adapters,
         string defaultKind = "Raw",
@@ -1349,10 +1349,10 @@ public class AgentControlServiceIntegrationTests
         };
     }
 
-    private static string NewTempRoot() =>
+    internal static string NewTempRoot() =>
         Path.Combine(Path.GetTempPath(), $"antiphon-agent-control-tests-{Guid.NewGuid():N}");
 
-    private static async Task CleanupProjectsByTempRootAsync(string tempRoot)
+    internal static async Task CleanupProjectsByTempRootAsync(string tempRoot)
     {
         await using var db = CreateContext();
         var workflowTemplateIds = await db.WorkflowTemplates
@@ -1445,7 +1445,7 @@ public class AgentControlServiceIntegrationTests
         await db.WorkflowTemplates.Where(t => workflowTemplateIds.Contains(t.Id)).ExecuteDeleteAsync();
     }
 
-    private static void DeleteDirectoryBestEffort(string path)
+    internal static void DeleteDirectoryBestEffort(string path)
     {
         try
         {
@@ -1463,7 +1463,7 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
-    private sealed record Harness(
+    internal sealed record Harness(
         ServiceProvider Provider,
         IServiceScope Scope,
         BoardService BoardService,

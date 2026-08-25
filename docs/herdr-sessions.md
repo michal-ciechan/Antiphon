@@ -16,7 +16,7 @@ That is the whole benefit, and it is a real one. Everything else on this page is
 | Fact | Owner |
 |---|---|
 | The lane, its constraints, why `PtyHost` is `0` | `server/Domain/Enums/SessionBackend.cs` |
-| The refusal gate (create / PATCH / channel-bind / launch) | `AgentService.ValidateSessionBackendPairing` |
+| The Kind refusal gate (create / PATCH / channel-bind / launch) | `AgentService.ValidateSessionBackendPairing` |
 | Pane placement | `src/Antiphon.SessionRunner/HerdrPaneAllocator.cs` |
 | Launch, input, kill, status refresh | `src/Antiphon.SessionRunner/HerdrPaneChild.cs` |
 | Restart adoption bar | `SessionRunnerRuntime.AdoptHerdrSessionsAsync` |
@@ -33,21 +33,15 @@ You **cannot** choose it for:
 
 | Refused | Why |
 |---|---|
-| **Always-on agents** | herdr sessions do not survive a herdr restart; an always-on agent whose lane vanishes is the exact thing always-on exists to prevent |
-| **Channel-bound agents** | same reason, and a dead lane on a channel-bound agent is a human waiting on a dead line |
 | **Any kind except `ClaudeCode`** | Grok/Codex/OpenCode/Raw are un-spiked on this lane |
 
-All three are **refusals, never silent remaps** — `409 herdr_refused`, with the reason. The gate
-runs at four places, because each of them can create the forbidden pair on its own:
+That is a **refusal, never a silent remap** — `409 herdr_refused`, with the reason. The Kind gate
+runs at create, PATCH (over the request-resolved final state, so a Kind change in the same PATCH
+is caught), channel bind, and launch time (`AgentSessionService`), which also marks the session
+`Failed` with `"Herdr launch refused: non-Claude agent."`
 
-- `POST /api/agents` (create)
-- `PATCH /api/agents/{id}` — over the request-*resolved* final state, so `alwaysOn: true` on a
-  herdr agent and `sessionBackend: Herdr` on an always-on agent are both caught, as is a `Kind`
-  change in the same PATCH
-- channel bind (`ChatChannelService`) — otherwise a bind would create the pair with neither write
-  having been refused
-- launch time (`AgentSessionService`) — which also marks the session `Failed` with
-  `"Herdr launch refused: AlwaysOn, channel-bound, or non-Claude agent."`
+Always-on and channel-bound agents are allowed on the lane (CARD-0186): a herdr restart does not
+survive, and an always-on agent is resumed into a new pane by supervision.
 
 ## 2. Turning it on
 
@@ -171,7 +165,7 @@ refreshes both via `pane.get` + `pane.read`; without that refresh a screen-only 
 ## 6. Restarts — the constraint that shapes everything
 
 **A herdr session does not survive a herdr restart.** Antiphon's own `--resume` path owns
-repopulation. This is why always-on and channel-bound agents are refused the lane.
+repopulation. An always-on agent is resumed into a new pane by supervision (CARD-0186).
 
 **A *runner* restart is different** — the pane is still there, and adoption re-binds it, but only
 on positive evidence. The bar (CARD-0056 transposed) is:
@@ -215,8 +209,8 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 
 | Symptom | What it is | What to do |
 |---|---|---|
-| `409 herdr_refused` on create/PATCH/bind | AlwaysOn, channel-bound, or non-Claude | pick `PtyHost`, or drop the other attribute |
-| Session `Failed` with "Herdr launch refused…" | same gate, hit at launch | the agent changed under the session; fix the pairing |
+| `409 herdr_refused` on create/PATCH/bind | non-Claude agent on herdr | pick `PtyHost`, or a Claude Code kind |
+| Session `Failed` with "Herdr launch refused…" | same Kind gate, hit at launch | the agent kind changed under the session; fix the pairing |
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
 | Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; relaunch/resume from Antiphon |
 | Deliveries silently deferring | `agent_status == "blocked"` — an approval UI has the pane | answer it in the pane, or attach and clear it |
@@ -227,8 +221,8 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 ## 9. Deferred / out of scope
 
 `pane.report_agent` and the UI badges that would consume it are deferred (S4b). Pane/workspace/tab
-ids stay out of the database. Herdr for non-Claude kinds, for always-on agents, and for
-channel-bound agents is not a configuration you can reach — it is a refusal.
+ids stay out of the database. Herdr for non-Claude kinds is not a configuration you can reach —
+it is a refusal (CARD-0187).
 
 ## See also
 

@@ -235,7 +235,7 @@ public sealed record UpdateAgentRequest(
     // Null = leave unchanged (CARD-0060), so an older caller cannot reset a chosen style to Normal.
     AgentReplyStyle? ReplyStyle = null,
     // CARD-0160. Null = leave unchanged, so an older caller cannot silently reset a chosen backend
-    // to PtyHost. Applied only after the AlwaysOn / channel-bound / Kind refusal checks.
+    // to PtyHost. Applied only after the Kind refusal check (CARD-0186 lifted AlwaysOn / channel-bound).
     SessionBackend? SessionBackend = null,
     // The bundles this agent carries on top of what its role implies (CARD-0058 slice 6). Null =
     // leave unchanged, same reason as ReplyStyle: an older caller must not silently detach

@@ -8,10 +8,9 @@ namespace Antiphon.Server.Domain.Enums;
 /// operator opts INTO — a visible, natively attachable pane in the operator's herdr instance —
 /// never something a migration does to a working agent.</para>
 ///
-/// <para>Hard constraints (CARD-0111 §6 / CARD-0160 plan §7): AlwaysOn and channel-bound agents
-/// stay on pty-hosts (herdr sessions do not survive a herdr restart); only <c>ClaudeCode</c> is
-/// spiked; the lane is refused at create/PATCH, channel-bind, and launch-time. Never silently
-/// remapped to pty-host.</para>
+/// <para>Hard constraints: only <c>ClaudeCode</c> is spiked (CARD-0187 owns the rest). The Kind
+/// refusal runs at create/PATCH, channel-bind, and launch-time. Never silently remapped to
+/// pty-host. CARD-0186 lifted the AlwaysOn and channel-bound refusals.</para>
 /// </summary>
 public enum SessionBackend
 {

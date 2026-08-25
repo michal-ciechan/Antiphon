@@ -264,13 +264,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           label="Always on"
           description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."
           checked={alwaysOn}
-          onChange={(event) => {
-            const next = event.currentTarget.checked
-            setAlwaysOn(next)
-            // Herdr × AlwaysOn is mutually exclusive (CARD-0160); flipping AlwaysOn on forces the
-            // backend back to Pty host so the save cannot create the forbidden pair.
-            if (next && sessionBackend === 'Herdr') setSessionBackend('PtyHost')
-          }}
+          onChange={(event) => setAlwaysOn(event.currentTarget.checked)}
         />
         <Switch
           label="Remote control"
@@ -282,9 +276,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         <Input.Wrapper
           label="Session backend"
           description={
-            alwaysOn
-              ? 'Herdr: session runs in a pane of the operator\'s herdr instance — visible and natively attachable, but it does not survive a herdr restart; not available for always-on or channel-bound agents.'
-              : (SESSION_BACKEND_OPTIONS.find((option) => option.value === sessionBackend)?.description ?? '')
+            SESSION_BACKEND_OPTIONS.find((option) => option.value === sessionBackend)?.description ?? ''
           }
         >
           <SegmentedControl
@@ -293,7 +285,6 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
             data={SESSION_BACKEND_OPTIONS.map(({ value, label }) => ({ value, label }))}
             value={sessionBackend}
             onChange={(value) => setSessionBackend(value as SessionBackend)}
-            disabled={alwaysOn}
           />
         </Input.Wrapper>
 

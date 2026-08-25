@@ -6,8 +6,10 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
@@ -15,7 +17,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0160 — SessionBackend as a separate, defaulted dimension + the three refusal gates.
+/// CARD-0160 / CARD-0186 — SessionBackend as a separate, defaulted dimension + the Kind refusal
+/// gate. AlwaysOn and channel-bound pairings are allowed.
 /// </summary>
 public class AgentSessionBackendTests
 {
@@ -38,26 +41,24 @@ public class AgentSessionBackendTests
     }
 
     [Test]
-    public void herdr_on_always_on_is_refused_both_directions()
+    public void herdr_on_always_on_is_allowed_both_directions()
     {
-        Should.Throw<ConflictException>(() =>
+        Should.NotThrow(() =>
             AgentService.ValidateSessionBackendPairing(
                 SessionBackend.Herdr, alwaysOn: true, AgentKind.ClaudeCode, channelBound: false));
 
         // Mirrored: AlwaysOn requested while already Herdr — same pairing check.
-        Should.Throw<ConflictException>(() =>
+        Should.NotThrow(() =>
             AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: true, AgentKind.ClaudeCode, channelBound: false))
-            .Code.ShouldBe("herdr_refused");
+                SessionBackend.Herdr, alwaysOn: true, AgentKind.ClaudeCode, channelBound: false));
     }
 
     [Test]
-    public void herdr_while_channel_bound_is_refused()
+    public void herdr_while_channel_bound_is_allowed()
     {
-        Should.Throw<ConflictException>(() =>
+        Should.NotThrow(() =>
             AgentService.ValidateSessionBackendPairing(
-                SessionBackend.Herdr, alwaysOn: false, AgentKind.ClaudeCode, channelBound: true))
-            .Message.ShouldContain("Channel-bound");
+                SessionBackend.Herdr, alwaysOn: false, AgentKind.ClaudeCode, channelBound: true));
     }
 
     [Test]
@@ -120,22 +121,21 @@ public class AgentSessionBackendTests
 
     [Test]
     [Category("Integration")]
-    public async Task create_herdr_with_always_on_is_refused()
+    public async Task create_herdr_with_always_on_is_allowed()
     {
         await using var db = CreateContext();
         var service = CreateService(db);
 
-        var ex = await Should.ThrowAsync<ConflictException>(() =>
-            service.CreateAsync(
-                new CreateAgentRequest(
-                    Unique("Herdr AlwaysOn"),
-                    "D:/src/herdr-ao",
-                    SessionBackend: SessionBackend.Herdr,
-                    AlwaysOn: true),
-                CancellationToken.None));
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                Unique("Herdr AlwaysOn"),
+                "D:/src/herdr-ao",
+                SessionBackend: SessionBackend.Herdr,
+                AlwaysOn: true),
+            CancellationToken.None);
 
-        ex.Code.ShouldBe("herdr_refused");
-        (await db.Agents.CountAsync(a => a.Name.StartsWith("Herdr AlwaysOn"))).ShouldBe(0);
+        created.SessionBackend.ShouldBe(SessionBackend.Herdr);
+        created.AlwaysOn.ShouldBeTrue();
     }
 
     [Test]
@@ -177,7 +177,7 @@ public class AgentSessionBackendTests
 
     [Test]
     [Category("Integration")]
-    public async Task patch_always_on_onto_herdr_agent_is_refused()
+    public async Task patch_always_on_onto_herdr_agent_is_allowed()
     {
         await using var db = CreateContext();
         var service = CreateService(db);
@@ -188,30 +188,30 @@ public class AgentSessionBackendTests
                 SessionBackend: SessionBackend.Herdr),
             CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<ConflictException>(() =>
-            service.UpdateAsync(
-                created.Id,
-                new UpdateAgentRequest(
-                    created.Name,
-                    created.WorkingDirectory,
-                    created.Details,
-                    created.DefaultWorkflowTemplateId,
-                    created.AssignmentPolicy,
-                    BoardId: created.BoardId,
-                    AlwaysOn: true),
-                CancellationToken.None));
+        var updated = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                BoardId: created.BoardId,
+                AlwaysOn: true),
+            CancellationToken.None);
 
-        ex.Code.ShouldBe("herdr_refused");
+        updated.AlwaysOn.ShouldBeTrue();
+        updated.SessionBackend.ShouldBe(SessionBackend.Herdr);
 
         await using var verify = CreateContext();
         var stored = await verify.Agents.SingleAsync(a => a.Id == created.Id);
-        stored.AlwaysOn.ShouldBeFalse();
+        stored.AlwaysOn.ShouldBeTrue();
         stored.SessionBackend.ShouldBe(SessionBackend.Herdr);
     }
 
     [Test]
     [Category("Integration")]
-    public async Task patch_herdr_onto_always_on_agent_is_refused()
+    public async Task patch_herdr_onto_always_on_agent_is_allowed()
     {
         await using var db = CreateContext();
         var service = CreateService(db);
@@ -222,25 +222,25 @@ public class AgentSessionBackendTests
                 AlwaysOn: true),
             CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<ConflictException>(() =>
-            service.UpdateAsync(
-                created.Id,
-                new UpdateAgentRequest(
-                    created.Name,
-                    created.WorkingDirectory,
-                    created.Details,
-                    created.DefaultWorkflowTemplateId,
-                    created.AssignmentPolicy,
-                    BoardId: created.BoardId,
-                    SessionBackend: SessionBackend.Herdr),
-                CancellationToken.None));
+        var updated = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                BoardId: created.BoardId,
+                SessionBackend: SessionBackend.Herdr),
+            CancellationToken.None);
 
-        ex.Code.ShouldBe("herdr_refused");
+        updated.SessionBackend.ShouldBe(SessionBackend.Herdr);
+        updated.AlwaysOn.ShouldBeTrue();
     }
 
     [Test]
     [Category("Integration")]
-    public async Task channel_bind_onto_herdr_agent_is_refused()
+    public async Task channel_bind_onto_herdr_agent_is_allowed()
     {
         await using var db = CreateContext();
         var agents = CreateService(db);
@@ -265,19 +265,17 @@ public class AgentSessionBackendTests
         await db.SaveChangesAsync();
 
         var channels = new ChatChannelService(db, TimeProvider.System, new FakeAntiphonMessagingClient());
-        var ex = await Should.ThrowAsync<ConflictException>(() =>
-            channels.UpdateAsync(
-                channel.Id,
-                new UpdateChatChannelRequest(AgentId: created.Id),
-                CancellationToken.None));
+        var bound = await channels.UpdateAsync(
+            channel.Id,
+            new UpdateChatChannelRequest(AgentId: created.Id),
+            CancellationToken.None);
 
-        ex.Code.ShouldBe("herdr_refused");
-        ex.Message.ShouldContain("Bind refused");
+        bound.AgentId.ShouldBe(created.Id);
     }
 
     [Test]
     [Category("Integration")]
-    public async Task herdr_while_a_channel_names_the_agent_is_refused()
+    public async Task herdr_while_a_channel_names_the_agent_is_allowed()
     {
         await using var db = CreateContext();
         var service = CreateService(db);
@@ -298,20 +296,19 @@ public class AgentSessionBackendTests
         });
         await db.SaveChangesAsync();
 
-        var ex = await Should.ThrowAsync<ConflictException>(() =>
-            service.UpdateAsync(
-                created.Id,
-                new UpdateAgentRequest(
-                    created.Name,
-                    created.WorkingDirectory,
-                    created.Details,
-                    created.DefaultWorkflowTemplateId,
-                    created.AssignmentPolicy,
-                    BoardId: created.BoardId,
-                    SessionBackend: SessionBackend.Herdr),
-                CancellationToken.None));
+        var updated = await service.UpdateAsync(
+            created.Id,
+            new UpdateAgentRequest(
+                created.Name,
+                created.WorkingDirectory,
+                created.Details,
+                created.DefaultWorkflowTemplateId,
+                created.AssignmentPolicy,
+                BoardId: created.BoardId,
+                SessionBackend: SessionBackend.Herdr),
+            CancellationToken.None);
 
-        ex.Code.ShouldBe("herdr_refused");
+        updated.SessionBackend.ShouldBe(SessionBackend.Herdr);
     }
 
     [Test]
@@ -361,6 +358,72 @@ public class AgentSessionBackendTests
             "a PATCH after launch must not change the live session's snapshot");
         (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id))
             .SessionBackend.ShouldBe(SessionBackend.PtyHost);
+    }
+
+    [Test]
+    [Category("Integration")]
+    [NotInParallel("AgentControl")]
+    public async Task resume_restamps_session_backend_from_the_agent()
+    {
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "restamp-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(Unique("Restamp Backend"), workspace),
+                CancellationToken.None);
+            agent.SessionBackend.ShouldBe(SessionBackend.PtyHost);
+
+            var first = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.PersistentSessionId.ShouldNotBeNull();
+
+            await using (var launched = CreateContext())
+            {
+                var row = await launched.AgentSessions.SingleAsync(
+                    s => s.Id.ToString() == first.PersistentSessionId);
+                row.SessionBackend.ShouldBe(SessionBackend.PtyHost);
+            }
+
+            await AgentControlServiceIntegrationTests.MarkSessionEndedAsync(
+                first.PersistentSessionId!, SessionStatus.Failed);
+
+            using var scope = harness.Provider.CreateScope();
+            var agents = scope.ServiceProvider.GetRequiredService<AgentService>();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            await agents.UpdateAsync(
+                agent.Id,
+                new UpdateAgentRequest(
+                    agent.Name,
+                    agent.WorkingDirectory,
+                    agent.Details,
+                    agent.DefaultWorkflowTemplateId,
+                    agent.AssignmentPolicy,
+                    BoardId: agent.BoardId,
+                    SessionBackend: SessionBackend.Herdr),
+                CancellationToken.None);
+
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+            await using var verify = CreateContext();
+            var resumed = await verify.AgentSessions.SingleAsync(
+                s => s.Id.ToString() == first.PersistentSessionId);
+            resumed.SessionBackend.ShouldBe(SessionBackend.Herdr);
+        }
+        finally
+        {
+            await AgentControlServiceIntegrationTests.CleanupProjectsByTempRootAsync(tempRoot);
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
     }
 
     private static AgentService CreateService(AppDbContext db) =>

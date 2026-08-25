@@ -340,6 +340,9 @@ public sealed class AgentControlService
                 // carries whatever the repo says today. Restamping is what keeps the badge honest:
                 // leaving the old stamp would keep flagging drift the resume just resolved.
                 previous.ComposedBundleStamp = composedStamp;
+                // CARD-0186: a PATCH that changed the agent's lane takes effect on the next
+                // crash-restart rather than being silently ignored for the life of this row.
+                previous.SessionBackend = agent.SessionBackend;
                 await _db.SaveChangesAsync(ct);
 
                 _launchQueue.EnqueueInteractiveSession(

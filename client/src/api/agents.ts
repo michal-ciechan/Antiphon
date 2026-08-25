@@ -25,7 +25,7 @@ export type AgentReplyStyle = 'Normal' | 'Terse' | 'Caveman' | 'Explanatory'
 
 /**
  * Which lane hosts the interactive child (CARD-0160). `PtyHost` is the default — Herdr is opt-in
- * and unavailable for always-on or channel-bound agents.
+ * and Claude-only until CARD-0187.
  */
 export type SessionBackend = 'PtyHost' | 'Herdr'
 
@@ -43,7 +43,7 @@ export const SESSION_BACKEND_OPTIONS: Array<{
     value: 'Herdr',
     label: 'Herdr',
     description:
-      "Session runs in a pane of the operator's herdr instance — visible and natively attachable, but it does not survive a herdr restart; not available for always-on or channel-bound agents.",
+      "Session runs in a pane of the operator's herdr instance — visible and natively attachable, but it does not survive a herdr restart; an always-on agent is resumed into a new pane by supervision.",
   },
 ]
 
