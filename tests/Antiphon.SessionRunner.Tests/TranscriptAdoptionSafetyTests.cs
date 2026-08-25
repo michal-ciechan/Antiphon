@@ -493,6 +493,80 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
+    /// <summary>
+    /// Existing transcripts from the same cwd are no more alarming than an empty root until input
+    /// has actually reached this child.
+    /// </summary>
+    [Test]
+    public async Task Stale_same_cwd_transcripts_without_delivered_input_stay_silent()
+    {
+        using var tree = new TranscriptTree("stale-no-input");
+        var childStart = DateTime.UtcNow;
+        var first = tree.NewTranscript();
+        await tree.AppendAsync(first, UserLine("s1", tree.Cwd, "a prior session", childStart.AddHours(-1)));
+        var second = tree.NewTranscript();
+        await tree.AppendAsync(second, UserLine("s2", tree.Cwd, "another prior session", childStart.AddHours(-1)));
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            childStartUtc: childStart,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(200));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(800));
+
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0,
+                "stale candidates before the first delivered input are a normal first-prompt wait");
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// As with Codex, the refusal grace period starts at the first delivered input rather than at
+    /// the process start time.
+    /// </summary>
+    [Test]
+    public async Task First_input_starts_the_refusal_clock_from_the_input_not_the_child_start()
+    {
+        using var tree = new TranscriptTree("stale-first-input-clock");
+        var childStart = DateTime.UtcNow;
+        var first = tree.NewTranscript();
+        await tree.AppendAsync(first, UserLine("s1", tree.Cwd, "a prior session", childStart.AddHours(-1)));
+        var second = tree.NewTranscript();
+        await tree.AppendAsync(second, UserLine("s2", tree.Cwd, "another prior session", childStart.AddHours(-1)));
+
+        var input = new SessionInputLog();
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: childStart,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1300));
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
+
+            input.Append("The first prompt delivered after this session waited for Claude");
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
+
+            fault.ShouldNotBeNull();
+            var unboundSeconds = fault!.RootElement.GetProperty("UnboundSeconds").GetDouble();
+            unboundSeconds.ShouldBeInRange(0.3, 1.5,
+                "the refusal clock starts when input is delivered, not when the child started");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
     // ------------------------------------------------------------- §8.2 fork-follow and restart
 
     /// <summary>
@@ -626,7 +700,8 @@ public class TranscriptAdoptionSafetyTests
     [Test]
     public async Task Restart_without_sidecar_uses_migration_shim_only_for_unique_candidate()
     {
-        // Two active candidates: refuse.
+        // Two active candidates: neither is an identification, but before any delivered input this
+        // is the normal first-prompt wait and must stay quiet.
         using (var tree = new TranscriptTree("shim-ambiguous"))
         {
             var a = tree.NewTranscript();
@@ -644,8 +719,7 @@ public class TranscriptAdoptionSafetyTests
             {
                 await Task.Delay(RefusalWindow);
                 tailer.BoundTranscriptPath.ShouldBeNull("two candidates is a coin toss, not an identification");
-                (await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5)))
-                    .ShouldNotBeNull();
+                hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
             }
             finally
             {
@@ -653,7 +727,8 @@ public class TranscriptAdoptionSafetyTests
             }
         }
 
-        // Exactly one active candidate: stays unbound (shim deleted). Reports rather than guessing.
+        // Exactly one active candidate: stays unbound (shim deleted), and remains silent until
+        // input gives C4 evidence rather than turning the first-prompt wait into an incident.
         using (var tree = new TranscriptTree("shim-unique"))
         {
             var only = tree.NewTranscript();
@@ -670,8 +745,7 @@ public class TranscriptAdoptionSafetyTests
                 await Task.Delay(RefusalWindow);
                 tailer.BoundTranscriptPath.ShouldBeNull(
                     "a restart-adopted never-bound session stays unbound until new input satisfies C4");
-                (await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5)))
-                    .ShouldNotBeNull();
+                hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
             }
             finally
             {
@@ -1374,6 +1448,45 @@ public class TranscriptAdoptionSafetyTests
         await using var hub = new HubEvents();
         var tailer = NewTailer(
             hub, tree, input,
+            childStartUtc: DateTime.UtcNow.AddMinutes(-1),
+            claims: claims,
+            sessionId: victim,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400),
+            refusalFaultRepeat: TimeSpan.FromMilliseconds(200));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(8));
+            fault.ShouldNotBeNull();
+            var detail = fault!.RootElement.GetProperty("Detail").GetString() ?? "";
+            detail.ShouldContain(holder.ToString("D"));
+            detail.ShouldContain("exact file held by", Case.Insensitive);
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// An exact file named for this session but held by another claimant is a genuine ownership
+    /// conflict, even before the first prompt is delivered.
+    /// </summary>
+    [Test]
+    public async Task Exact_file_held_by_another_claim_is_reported_even_before_input()
+    {
+        using var tree = new TranscriptTree("0181-exact-loss-no-input");
+        var victim = Guid.NewGuid();
+        var holder = Guid.NewGuid();
+        var file = tree.ExactTranscript(victim);
+        await tree.AppendAsync(file, UserLine("v1", tree.Cwd, "victim prompt", DateTime.UtcNow));
+
+        var claims = new TranscriptClaimRegistry();
+        claims.ForceClaimForTests(file, holder, ClaimStrength.Exact);
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
             childStartUtc: DateTime.UtcNow.AddMinutes(-1),
             claims: claims,
             sessionId: victim,

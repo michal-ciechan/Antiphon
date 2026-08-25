@@ -147,6 +147,9 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     /// <inheritdoc />
     public string? BindHow { get; private set; }
 
+    // S1 is intentionally in-memory only. S2 will also preserve this fact through sidecar restore.
+    private bool InputDelivered => _inputLog is { IsEmpty: false };
+
     /// <summary>
     /// Where Codex keeps its rollouts: <c>{CODEX_HOME}/sessions</c>, defaulting to
     /// <c>~/.codex/sessions</c>. CODEX_HOME resolves from the launch env first — that is the
@@ -380,10 +383,15 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                         return winner;
                     }
 
-                    refusingSince = verdict.Refusals.Count > 0 ? refusingSince ?? DateTime.UtcNow : null;
+                    var inputDelivered = InputDelivered;
+                    refusingSince = inputDelivered && verdict.Refusals.Count > 0
+                        ? refusingSince ?? DateTime.UtcNow
+                        : null;
                     MaybeReportRefusal(verdict, ref refusingSince, ref lastFault, ref faultRepeat);
 
-                    emptySince = IsEmptyCensus(verdict) ? emptySince ?? DateTime.UtcNow : null;
+                    emptySince = inputDelivered && IsEmptyCensus(verdict)
+                        ? emptySince ?? DateTime.UtcNow
+                        : null;
                     MaybeReportNoCandidates(verdict, ref emptySince, ref lastFault, ref faultRepeat);
 
                     // The repeat counter belongs to the EPISODE, not the session: once neither
@@ -674,7 +682,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         verdict.Winner is null
         && verdict.Refusals.Count == 0
         && verdict.CwdMatched == 0
-        && _inputLog is { IsEmpty: false }
+        && InputDelivered
         && _childExitedAtUtc is null;
 
     private static string FormatCensus(CandidateVerdict verdict) =>

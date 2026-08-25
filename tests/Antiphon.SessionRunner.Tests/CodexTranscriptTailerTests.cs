@@ -186,6 +186,74 @@ public class CodexTranscriptTailerTests
     }
 
     /// <summary>
+    /// A session that has not received its first input is legitimately waiting for Codex to create
+    /// its rollout. Stale same-cwd rollouts must not turn that wait into refusal incidents.
+    /// </summary>
+    [Test]
+    public async Task Stale_same_cwd_rollouts_with_no_input_delivered_stay_silent_indefinitely()
+    {
+        using var tree = new CodexTree();
+        var first = tree.Seed("codex-tui-turn.jsonl");
+        tree.Seed("codex-tui-turn.jsonl");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, new SessionInputLog(),
+            childStartUtc: first.FirstTimestamp.AddHours(1),
+            refusalFaultDelay: TimeSpan.FromMilliseconds(200));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(800));
+
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0,
+                "stale candidates before the first delivered input are a normal first-prompt wait");
+            tailer.BoundTranscriptPath.ShouldBeNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// The refusal grace period belongs to the delivered input, not to the child process that may
+    /// have been waiting for a prompt for much longer.
+    /// </summary>
+    [Test]
+    public async Task First_input_starts_the_refusal_clock_from_the_input_not_the_child_start()
+    {
+        using var tree = new CodexTree();
+        var first = tree.Seed("codex-tui-turn.jsonl");
+        tree.Seed("codex-tui-turn.jsonl");
+
+        var input = new SessionInputLog();
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: first.FirstTimestamp.AddHours(1),
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1300));
+            hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
+
+            input.Append("The first prompt delivered after this session waited for Codex");
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
+
+            fault.ShouldNotBeNull();
+            var unboundSeconds = fault!.RootElement.GetProperty("UnboundSeconds").GetDouble();
+            unboundSeconds.ShouldBeInRange(0.3, 1.5,
+                "the refusal clock starts when input is delivered, not when the child started");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// C3 is waived on a resume launch: <c>codex resume</c> replays a conversation whose records
     /// legitimately predate the relaunch, and refusing that would break resume re-adoption. C4 is
     /// NOT waived — the resumed conversation still has to contain text we sent.

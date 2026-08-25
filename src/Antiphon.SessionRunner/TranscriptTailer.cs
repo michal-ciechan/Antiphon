@@ -140,6 +140,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     /// <inheritdoc />
     public string? BindHow { get; private set; }
 
+    // S1 is intentionally in-memory only. S2 will also preserve this fact through sidecar restore.
+    private bool InputDelivered => _inputLog is { IsEmpty: false };
+
     public void Start() => _loop = Task.Run(() => RunAsync(_cts.Token));
 
     /// <summary>
@@ -404,7 +407,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                             return winner;
                         }
 
-                        refusingSince = verdict.Refusals.Count > 0 || verdict.ExactFileHeldBy is not null
+                        var inputDelivered = InputDelivered;
+                        refusingSince = verdict.ExactFileHeldBy is not null
+                            || (inputDelivered && verdict.Refusals.Count > 0)
                             ? refusingSince ?? DateTime.UtcNow
                             : null;
                         MaybeReportRefusal(verdict, ref refusingSince, ref lastRefusalFault, ref refusalRepeat);
@@ -413,7 +418,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                         // refusal path stays silent. A live child that has already been typed at
                         // and still has zero cwd-matching candidates is the 10e30ff7 shape — it
                         // must not run unbound forever with nothing on the wire.
-                        emptySince = IsEmptyCensus(verdict) ? emptySince ?? DateTime.UtcNow : null;
+                        emptySince = inputDelivered && IsEmptyCensus(verdict)
+                            ? emptySince ?? DateTime.UtcNow
+                            : null;
                         MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault, ref refusalRepeat);
 
                         // The repeat counter belongs to the EPISODE, not the session: once neither
@@ -848,7 +855,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         && verdict.Refusals.Count == 0
         && verdict.CwdMatched == 0
         && verdict.ExactFileHeldBy is null
-        && _inputLog is { IsEmpty: false }
+        && InputDelivered
         && _childExitedAtUtc is null;
 
     private static string FormatCensus(CandidateVerdict verdict)
