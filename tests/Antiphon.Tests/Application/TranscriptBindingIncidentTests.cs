@@ -599,6 +599,150 @@ public class TranscriptBindingIncidentTests
             .ShouldBe(1);
     }
 
+    /// <summary>
+    /// CARD-0195. A settled delegate task keeps its <c>AgentId</c> after the agent row is deleted —
+    /// <c>AgentTasks.AgentId</c> has no foreign key, deliberately, so retiring an agent does not
+    /// cascade the delegation history away. Measured 2026-08-25: 447 of the 539 task rows carrying
+    /// an <c>AgentId</c> pointed at an agent that no longer existed, so this is the ordinary end
+    /// state, not a race.
+    ///
+    /// <para>The old lookup handed that dead id back, the insert died 23503 on
+    /// <c>FK_AgentIncidents_Agents_AgentId</c>, and the catch logged "Recording a transcript fault
+    /// for session X failed" with no cause and no surface — seven times across two days, the last
+    /// of them the CARD-0194 casualty (session <c>8be1afc5</c>). The fault is real either way, so
+    /// it must degrade to the unowned branch's standalone alert rather than vanish.</para>
+    /// </summary>
+    [Test]
+    public async Task Fault_for_a_task_whose_agent_row_is_gone_alerts_instead_of_swallowing_a_foreign_key_error()
+    {
+        var logs = new List<string>();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<TranscriptBindingIncidentService>();
+                s.AddSingleton<ILogger<TranscriptBindingIncidentService>>(new ListLogger<TranscriptBindingIncidentService>(logs));
+            },
+        });
+
+        var delegateSessionId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var deletedAgentId = Guid.NewGuid(); // never inserted: the reaped delegate agent
+        await using (var db = BridgeQueueHarness.CreateContext())
+        {
+            var now = DateTime.UtcNow;
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = delegateSessionId,
+                DefinitionName = "fake",
+                AgentKind = AgentKind.Codex,
+                Status = SessionStatus.Running,
+                Cwd = Path.Combine(harness.TempRoot, "reaped-cwd"),
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = now,
+                StartedAt = now,
+                LastSeenAt = now,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "reaped delegate",
+                Goal = "reaped delegate",
+                WorkingDirectory = Path.Combine(harness.TempRoot, "reaped-cwd"),
+                AgentId = deletedAgentId,
+                AgentSessionId = delegateSessionId,
+                AgentName = "task-delegate",
+                Status = AgentTaskStatus.Failed,
+                Ephemeral = true,
+                CreatedAt = now,
+                DispatchedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        try
+        {
+            await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+                .OnTranscriptFaultAsync(
+                    new SessionRunnerTranscriptFaultEvent(
+                        delegateSessionId,
+                        TranscriptFaultKinds.TranscriptMissing,
+                        "the child exited without ever producing a Codex rollout we could identify",
+                        CandidatePath: null),
+                    CancellationToken.None);
+
+            await using var db = BridgeQueueHarness.CreateContext();
+            (await db.AgentIncidents.AnyAsync(i => i.SessionId == delegateSessionId))
+                .ShouldBeFalse("there is no agent row left to hang an incident on");
+
+            logs.ShouldNotContain(
+                l => l.Contains("Recording a transcript fault", StringComparison.Ordinal),
+                "the dead id must never reach SaveChanges, so nothing should have been caught");
+
+            var alert = await db.Alerts.SingleAsync(
+                a => a.DedupKey == TranscriptBindingIncidentService.UnownedFaultDedupKey(delegateSessionId));
+            alert.Severity.ShouldBe(AlertSeverity.Warning);
+            alert.SessionId.ShouldBe(delegateSessionId);
+            alert.AgentId.ShouldBeNull();
+        }
+        finally
+        {
+            await using var cleanup = BridgeQueueHarness.CreateContext();
+            await cleanup.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0195, the backstop half: whatever else ever breaks the write, the log must name what
+    /// the database said (AGENTS.md: "never report a DB failure without the DB's own message") and
+    /// the fault must still reach a surface. Forced here with an over-length message — the incident
+    /// row's <c>Message</c> is <c>varchar(4000)</c> and nothing truncates it — because that fails
+    /// deterministically on a real Postgres without needing the FK shape the fix above removed.
+    /// </summary>
+    [Test]
+    public async Task A_fault_whose_incident_cannot_be_written_names_the_database_error_and_still_alerts()
+    {
+        var logs = new List<string>();
+        await using var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = false,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<TranscriptBindingIncidentService>();
+                s.AddSingleton<ILogger<TranscriptBindingIncidentService>>(new ListLogger<TranscriptBindingIncidentService>(logs));
+            },
+        });
+
+        await harness.Provider.GetRequiredService<TranscriptBindingIncidentService>()
+            .OnTranscriptFaultAsync(
+                new SessionRunnerTranscriptFaultEvent(
+                    harness.SessionId,
+                    TranscriptFaultKinds.TranscriptMissing,
+                    new string('x', 5000),
+                    CandidatePath: null),
+                CancellationToken.None);
+
+        await using var db = BridgeQueueHarness.CreateContext();
+        (await db.AgentIncidents.AnyAsync(
+            i => i.AgentId == harness.AgentId && i.Kind == AgentIncidentKind.TranscriptBindFailed))
+            .ShouldBeFalse("the row is what failed to write");
+
+        logs.ShouldContain(
+            l => l.Contains("[Error]", StringComparison.Ordinal)
+                && l.Contains(harness.SessionId.ToString("D"), StringComparison.OrdinalIgnoreCase)
+                && l.Contains("22001", StringComparison.Ordinal),
+            customMessage: "the log must carry Postgres's own error, not just \"failed\". Saw:\n"
+                + string.Join('\n', logs));
+
+        var alert = await db.Alerts.SingleAsync(
+            a => a.DedupKey == TranscriptBindingIncidentService.WriteFailureDedupKey(harness.SessionId));
+        alert.SessionId.ShouldBe(harness.SessionId);
+        alert.AgentId.ShouldBeNull();
+    }
+
     private static async Task<Guid> BindChannelAsync(Guid agentId)
     {
         await using var db = BridgeQueueHarness.CreateContext();

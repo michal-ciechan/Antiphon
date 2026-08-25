@@ -62,7 +62,9 @@ public sealed class TranscriptBindingIncidentService
                 // AutoCompactFailed / ChannelReplyLost: notify nobody in particular, but never swallow).
                 _logger.LogError(
                     "Session {SessionId} has no transcript ({Kind}: {Detail}, unbound {Unbound:F0}s, "
-                    + "report #{Repeat}). No agent owns the session, so the fault was raised as a "
+                    + "report #{Repeat}). No agent owns the session — either nothing ever claimed it, "
+                    + "or its delegate agent has since been deleted and AgentTasks.AgentId keeps no "
+                    + "foreign key to notice (CARD-0195) — so the fault was raised as a "
                     + "standalone alert rather than an incident.",
                     fault.SessionId, fault.Kind, fault.Detail, fault.UnboundSeconds, fault.Repeat);
 
@@ -123,7 +125,71 @@ public sealed class TranscriptBindingIncidentService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Recording a transcript fault for session {SessionId} failed", fault.SessionId);
+            await ReportWriteFailureAsync(fault, ex, ct);
+        }
+    }
+
+    /// <summary>
+    /// CARD-0195: this catch used to be a bare <c>LogWarning</c> whose message named neither the
+    /// cause nor the consequence — "Recording a transcript fault for session X failed" — and it
+    /// fired seven times across two days on a failure with a perfectly nameable cause (Postgres
+    /// 23503 on <c>FK_AgentIncidents_Agents_AgentId</c>: the delegate's agent row was already
+    /// gone). Two things are wrong with swallowing it, and both are fixed here.
+    ///
+    /// <para>First, the cause: AGENTS.md's own rule is never to report a DB failure without the
+    /// DB's own message, so a <see cref="DbUpdateException"/> is described through
+    /// <see cref="AgentService.DescribeDbFailure"/> — the same naming CARD-0056 gave
+    /// <c>ConflictException</c> — and logged at Error, because an unrecorded fault is exactly the
+    /// "zero new incidents therefore solved" blind spot CARD-0101 exists to prevent.</para>
+    ///
+    /// <para>Second, the consequence: the fault itself is real whether or not a row could be
+    /// written for it, so it degrades to the same standalone alert the unowned branch raises
+    /// rather than disappearing. The alert is raised in a FRESH scope — the scope that threw may
+    /// be holding a poisoned change tracker — and its own failure is swallowed, since a backstop
+    /// that can throw is not a backstop.</para>
+    /// </summary>
+    private async Task ReportWriteFailureAsync(
+        SessionRunnerTranscriptFaultEvent fault, Exception ex, CancellationToken ct)
+    {
+        var cause = ex is DbUpdateException dbEx
+            ? AgentService.DescribeDbFailure(dbEx)
+            : ex.GetBaseException().Message;
+
+        _logger.LogError(
+            ex,
+            "Recording a transcript fault for session {SessionId} failed ({Cause}). The session still "
+            + "has no transcript ({Kind}: {Detail}); raising it as a standalone alert so the fault is "
+            + "not lost with the write.",
+            fault.SessionId, cause, fault.Kind, fault.Detail);
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            if (scope.ServiceProvider.GetService<IAlertService>() is not { } alerts)
+                return;
+
+            await alerts.RaiseAsync(
+                new AlertRaise(
+                    IsStuck(fault) ? AlertSeverity.Critical : AlertSeverity.Warning,
+                    Source: "supervisor",
+                    Title: $"{AgentIncidentKind.TranscriptBindFailed}: incident could not be recorded",
+                    // Clipped: Alerts.Detail is varchar(4000) too, and a backstop that dies on the
+                    // same oversize value that broke the incident is not a backstop.
+                    Detail: Clip(
+                        $"Session {fault.SessionId:D} is running with no transcript and the incident "
+                        + $"row could not be written ({cause}). {fault.Kind}: {fault.Detail}",
+                        3900),
+                    DedupKey: WriteFailureDedupKey(fault.SessionId),
+                    AgentId: null,
+                    SessionId: fault.SessionId),
+                ct);
+        }
+        catch (Exception alertEx) when (alertEx is not OperationCanceledException)
+        {
+            _logger.LogError(
+                alertEx,
+                "The standalone alert for session {SessionId}'s unrecordable transcript fault also failed",
+                fault.SessionId);
         }
     }
 
@@ -193,6 +259,16 @@ public sealed class TranscriptBindingIncidentService
     internal static string UnownedFaultDedupKey(Guid sessionId) =>
         $"supervisor:{AgentIncidentKind.TranscriptBindFailed}:unclaimed:{sessionId:D}";
 
+    private static string Clip(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
+
+    /// <summary>
+    /// Kept distinct from <see cref="UnownedFaultDedupKey"/> so "nobody owns this session" and
+    /// "the write itself broke" never dedup each other away — they need different fixes.
+    /// </summary>
+    internal static string WriteFailureDedupKey(Guid sessionId) =>
+        $"supervisor:{AgentIncidentKind.TranscriptBindFailed}:unwritable:{sessionId:D}";
+
     private static string Describe(TimeSpan span) =>
         span.TotalHours >= 1 ? $"{span.TotalHours:0.#}h"
         : span.TotalMinutes >= 1 ? $"{span.TotalMinutes:0}m"
@@ -233,7 +309,16 @@ public sealed class TranscriptBindingIncidentService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Recording a heuristic transcript bind for session {SessionId} failed", bound.SessionId);
+            // Same CARD-0195 rule, one severity down: this row is an Info timeline entry with no
+            // alert of its own, so losing it degrades the record rather than hiding a live fault.
+            // It still says what the database said instead of only "failed".
+            var cause = ex is DbUpdateException dbEx
+                ? AgentService.DescribeDbFailure(dbEx)
+                : ex.GetBaseException().Message;
+            _logger.LogWarning(
+                ex,
+                "Recording a heuristic transcript bind for session {SessionId} failed ({Cause})",
+                bound.SessionId, cause);
         }
     }
 
