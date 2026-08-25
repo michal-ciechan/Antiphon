@@ -317,6 +317,61 @@ public class TrackerBidirectionalSyncTests
     }
 
     [Test]
+    public async Task Same_pass_status_label_rewrite_does_not_swallow_out_reopen()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            var closedAt = clock.GetUtcNow().UtcDateTime;
+            graph.Card.ExternalIssueRef!.LastKnownExternalState = "closed";
+            graph.Card.ExternalIssueRef.LastOutboundSyncedAt = closedAt;
+            await db.SaveChangesAsync();
+
+            clock.Advance(TimeSpan.FromMinutes(1));
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RevisionNumber = ++graph.Card.RevisionCount,
+                Kind = CardRevisionKind.Reopen,
+                Reason = "continue work",
+                EditedBy = "operator",
+                CreatedAt = clock.GetUtcNow().UtcDateTime,
+                Card = graph.Card
+            });
+            await db.SaveChangesAsync();
+
+            // Production shape: the reopen revision is older than this pass's utcNow.
+            clock.Advance(TimeSpan.FromMinutes(1));
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "closed", "Title", "Body", ["status:done"])]
+            };
+            var sut = NewSut(db, fake, clock);
+            var result = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+
+            // Both must fire in this pass. Labels-first stamps LastOutboundSyncedAt = utcNow and
+            // the reopen gate (CreatedAt > LastOutboundSyncedAt) then fails; asserting both
+            // pins the state-before-labels order.
+            result.StateChanges.ShouldBe(1);
+            result.LabelsChanged.ShouldBeGreaterThanOrEqualTo(1);
+            result.Changes.ShouldContain(c => c.Kind == TrackerSyncChangeKind.ReopenedOnGitHub);
+            result.Changes.ShouldContain(c => c.Kind == TrackerSyncChangeKind.LabelsChanged);
+            fake.SetStateCalls.ShouldHaveSingleItem();
+            fake.SetStateCalls[0].State.ShouldBe("open");
+            fake.SetStateCalls[0].StateReason.ShouldBe("reopened");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Default_mode_reopen_lands_in_backlog_not_active()
     {
         await using var db = CreateContext();

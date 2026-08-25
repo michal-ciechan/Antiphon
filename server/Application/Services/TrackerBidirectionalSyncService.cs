@@ -338,10 +338,14 @@ public sealed class TrackerBidirectionalSyncService
             commentsOut += await PushDiscussionCommentsAsync(tracker, config, issueRef, utcNow, changes, ct);
             commentsOut += await PushContentEditCommentsAsync(tracker, config, issueRef, utcNow, changes, ct);
 
+            // CARD-0198: state before labels. SyncLabelsAsync stamps LastOutboundSyncedAt = utcNow
+            // on any label write, and leaving a terminal column always rewrites status:* — so
+            // labels-first makes SyncStateAsync's reopen.CreatedAt > LastOutboundSyncedAt
+            // (reopen.CreatedAt > utcNow) always false and swallows the OUT-reopen.
+            stateChanges += await SyncStateAsync(tracker, config, issueRef, utcNow, changes, ct);
+
             if (issuesByExternalId.TryGetValue(issueRef.ExternalId, out var current))
                 labelsChanged += await SyncLabelsAsync(tracker, config, issueRef, current, utcNow, changes, ct);
-
-            stateChanges += await SyncStateAsync(tracker, config, issueRef, utcNow, changes, ct);
 
             if (issueRef.Origin == ExternalIssueOrigin.AntiphonExport
                 && (issueRef.LastOutboundSyncedAt is null || card.UpdatedAt > issueRef.LastOutboundSyncedAt)
