@@ -44,7 +44,7 @@ export function AgentTuiSelection({
   }))
 
   const modelOptions = [
-    { value: '', label: 'Use runner default (no exact model)' },
+    { value: '', label: "Use the agent's tier (no exact model)" },
     ...(models ?? []).map((model) => ({
       value: model.identifier,
       label: modelLabel(model),
@@ -52,6 +52,10 @@ export function AgentTuiSelection({
   ]
 
   const selectedProfile = enabledProfiles.find((profile) => profile.id === tuiProfileId)
+  const modelArgumentCapability = selectedProfile?.capabilities.find(
+    (capability) => capability.name === 'modelArgument',
+  )
+  const modelArgumentUnsupported = modelArgumentCapability?.state === 'Unsupported'
 
   return (
     <Stack gap="sm">
@@ -71,12 +75,16 @@ export function AgentTuiSelection({
 
       <Select
         label="Exact model"
-        description="Optional. Leave as runner default to omit the model argument."
+        description={
+          modelArgumentUnsupported
+            ? modelArgumentCapability?.reason
+            : "Optional. Leave empty and the agent's tier chooses the model; on a profile that passes no model argument, nothing is passed."
+        }
         data={modelOptions}
         value={modelId ?? ''}
         onChange={(value) => onModelChange(value && value.length > 0 ? value : null)}
         searchable
-        disabled={!tuiProfileId}
+        disabled={!tuiProfileId || modelArgumentUnsupported}
         nothingFoundMessage={modelsLoading ? 'Loading…' : 'No models'}
       />
 

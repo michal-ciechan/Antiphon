@@ -95,7 +95,7 @@ export function AgentTuiProfileModal({
       setAuthenticationMode(profile.revisionDetails.authenticationMode)
       setEnvText(envToText(profile.revisionDetails.nonSecretEnvironment))
       setSecretNamesText(profile.revisionDetails.secretEnvironmentNames.join('\n'))
-      setModelArgumentName(profile.revisionDetails.modelArgumentName ?? '--model')
+      setModelArgumentName(profile.revisionDetails.modelArgumentName ?? '')
       setGuidance(profile.revisionDetails.guidance)
       setSecretValues({})
     } else {
@@ -331,6 +331,7 @@ export function AgentTuiProfileModal({
 
         <TextInput
           label="Model argument name"
+          description="Blank means the program owns its model: Antiphon never passes one, for the tier or for an exact model."
           value={modelArgumentName}
           onChange={(event) => setModelArgumentName(event.currentTarget.value)}
         />

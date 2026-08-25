@@ -21,7 +21,7 @@ Configure terminal AI runners (Claude Code, Codex, OpenCode, Grok Build TUI) thr
 | **Revision** | Immutable snapshot of a profile. Running sessions keep their revision; edits affect the next session only |
 | **Wrapper-managed auth** | Wrapper script owns keys/proxy. Antiphon stores no credential |
 | **Managed secrets** | Write-only env values encrypted with ASP.NET Data Protection. Keys live outside the database |
-| **Exact model** | Opaque runner model id passed as separate `--model` + value args, or omitted for runner default |
+| **Exact model** | Opaque runner model id passed as separate `--model` + value args, or omitted, in which case the agent's tier picks the model for Claude/Grok/Codex ([agent-kinds.md](agent-kinds.md)), and a profile whose model argument is blank passes none at all |
 
 ## UI
 
@@ -46,7 +46,7 @@ On this machine, create **OpenCode Gateway** as wrapper-managed:
 
 Do **not** copy API keys or proxy values out of `ocg.ps1`.
 
-Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model`; pick an exact identifier from the profile's discovery catalogue. On this local `ocg.ps1` wrapper, the runnable Grok 4.5 selection is the discovered `maven/grok-4.5` identifier. Do not rewrite a selected identifier to a wrapper default.
+Assign Atlas (or any agent) to that profile. Leave model empty to omit `--model` (OpenCode; Claude/Grok/Codex agents receive their tier's alias instead); pick an exact identifier from the profile's discovery catalogue. On this local `ocg.ps1` wrapper, the runnable Grok 4.5 selection is the discovered `maven/grok-4.5` identifier. Do not rewrite a selected identifier to a wrapper default.
 
 ## Local Grok Build TUI profile
 
@@ -72,6 +72,27 @@ it needs none of Claude's claim machinery.
 
 Note that the level ladder resolves **every** tier to `grok-4.6` (CARD-0169); `grok-4.5` remains
 selectable as an explicit profile model but is not what a `Low`/`Medium` dispatch will pick.
+
+## Local llm-key-proxy (gkp) Grok profile
+
+`gkp` accepts exactly one model and pins it itself. A profile that still passes `--model` (the
+pre-CARD-0182 default) contradicts that and the wrapper exits 1. Create **Grok (gkp)** as
+wrapper-managed:
+
+| Field | Value |
+|---|---|
+| Runner type | Grok |
+| Executable | `pwsh.exe` |
+| Launch args | `-NoProfile`, `-ExecutionPolicy`, `Bypass`, `-File`, `C:\Users\mike.ciechan\.local\bin\gkp.ps1` (plus whatever `gk-common.ps1` already takes) |
+| Auth | WrapperManaged |
+| **Model arg** | **blank** |
+| Models list | `maven-grok` optional |
+
+Leave the model argument blank and leave every agent's exact model empty. Pinning `maven-grok` on
+the agent also works and is what a profile saved before CARD-0182 does (the backfill writes
+`--model` into those revisions so the workaround stays byte-identical on deploy). Blanking the
+field on a new revision is what then activates "no argument". An exact model on a blank-field
+profile is 409 `model_argument_unsupported`.
 
 ## Key custody
 

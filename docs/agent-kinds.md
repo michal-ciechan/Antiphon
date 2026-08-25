@@ -56,12 +56,21 @@ A session's command line is built in layers, and no single file holds the whole 
 1. **Definition or profile** — `Agents:Definitions:<name>` in `server/appsettings.json`, or a
    managed TUI profile revision (`AgentTuiLaunchResolver`). Supplies `Exe`, `ArgsTemplate`, `Env`,
    working directory.
-2. **Model argument** — `--model <id>`, from one of two places and never both. A launch that
-   resolves a *tier* (`AgentControlService`, `AgentTaskDispatcher`) appends the tier's alias
-   itself; a pinned agent carrying an exact `ModelId` suppresses that and lets
-   `AgentTuiLaunchResolver` add it instead, so the command line gets one `--model`, not two
-   (CARD-0140 D4). No tier and no `ModelId` means no `--model` and the runner's own default.
-   The argument name is per-revision; `--model` is the default for every kind.
+2. **Model argument** — one appender per path, never two, and never from ExtraArgs
+   (CARD-0182 D2). Callers that have a tier offer it as `AgentLaunchOptions.TierModelAlias`;
+   `AgentTuiLaunchResolver` (profile path) or `AgentRegistry.Resolve` (no-profile path) is the
+   only place that may write the flag. For a profile revision the four-step rule is:
+
+   1. `ModelArgumentName` blank ⇒ append nothing (the program owns its model). An exact
+      `ModelId` on that profile is 409 `model_argument_unsupported`, never dropped or rewritten.
+   2. Else `agent.ModelId` set ⇒ `[<argName>, <ModelId>]`, catalogue-checked.
+   3. Else a tier alias supplied ⇒ `[<argName>, <alias>]`.
+   4. Else nothing (card-spawn today).
+
+   There is always a tier (`Agent.ModelLevel` is non-nullable and defaults to High). A blank
+   *agent* model on Claude/Grok/Codex therefore fills in the tier alias unless the *profile*
+   field is blank. Raw's catalogue default is already null. The argument name is per-revision;
+   `--model` is the default for every kind that takes one.
 3. **Standing instructions** — the channel differs per kind, and it is branched explicitly at each
    launch site (`AgentControlService`, `AgentTaskDispatcher`):
 
