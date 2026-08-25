@@ -52,6 +52,9 @@ export function AgentRail({
                 agent.liveSession?.status === 'Running' &&
                 agent.liveSession.transcriptBinding === 'unbound'
                   ? 'Terminal live — no transcript bound'
+                  : agent.liveSession?.status === 'Running' &&
+                      agent.liveSession.transcriptBinding === 'awaiting-input'
+                    ? 'Terminal live — no transcript yet (nothing sent since start)'
                   : agent.liveSession?.status === 'Running'
                     ? 'Terminal — live now'
                     : agent.liveSession
@@ -63,6 +66,7 @@ export function AgentRail({
             >
               <Box
                 component="span"
+                data-testid={`rail-terminal-${agent.id}`}
                 style={{ display: 'inline-flex', flexShrink: 0, position: 'relative' }}
                 c={
                   agent.liveSession?.status === 'Running'

@@ -97,6 +97,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
+    private DateTime? _firstInputObservedUtc;
+    private string? _unboundReason;
 
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
@@ -143,6 +145,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         _sessionsRoot = string.IsNullOrWhiteSpace(sessionsRoot) ? ResolveSessionsRoot(null) : sessionsRoot!;
         _onBound = onBound;
         _onUnbound = onUnbound;
+        _firstInputObservedUtc = firstInputUtc;
+        _unboundReason = InputDelivered ? "locating" : "awaiting-input";
     }
 
     /// <summary>The rollout currently being tailed, or null while unbound (tests/diagnostics).</summary>
@@ -150,6 +154,11 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
 
     /// <inheritdoc />
     public string? BindHow { get; private set; }
+
+    /// <inheritdoc />
+    public string? UnboundReason => BoundTranscriptPath is null
+        ? (!InputDelivered ? "awaiting-input" : _unboundReason == "awaiting-input" ? "locating" : _unboundReason)
+        : null;
 
     private bool InputDelivered => _firstInputUtc is not null || _inputLog is { IsEmpty: false };
 
@@ -396,6 +405,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                         ? emptySince ?? DateTime.UtcNow
                         : null;
                     MaybeReportNoCandidates(verdict, ref emptySince, ref lastFault, ref faultRepeat);
+                    UpdateUnboundReason(verdict);
 
                     // The repeat counter belongs to the EPISODE, not the session: once neither
                     // shape is live any more the next fault starts again at 1.
@@ -411,6 +421,7 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
                     // Codex session on this machine ever writes a rollout.
                     emptySince = null;
                     refusingSince = null;
+                    UpdateUnboundReason(null);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -464,6 +475,24 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
         }
 
         return true;
+    }
+
+    private void UpdateUnboundReason(CandidateVerdict? verdict)
+    {
+        if (!InputDelivered)
+        {
+            _unboundReason = "awaiting-input";
+            return;
+        }
+
+        var firstInput = _firstInputObservedUtc ??= _firstInputUtc ?? DateTime.UtcNow;
+        if (DateTime.UtcNow - firstInput < _refusalFaultDelay)
+        {
+            _unboundReason = "locating";
+            return;
+        }
+
+        _unboundReason = verdict is { PostStartCandidates: > 0 } ? "refused" : "missing";
     }
 
     private readonly record struct CandidateRefusal(string Detail, bool IsC3, DateTime LastWriteUtc);
@@ -724,6 +753,8 @@ internal sealed class CodexTranscriptTailer : ITranscriptTailer
     {
         if (!InputDelivered)
             return;
+
+        _unboundReason = "missing";
 
         _logger.LogWarning(
             "Session {SessionId}: the child exited without ever producing a Codex rollout we could "

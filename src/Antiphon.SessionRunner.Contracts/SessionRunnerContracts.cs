@@ -100,6 +100,9 @@ public sealed record RunnerSessionDto(
     // or null while unbound. Claim strength (Exact/Heuristic) is derived at claim time and is
     // not this field.
     string? TranscriptBindHow = null,
+    // CARD-0190: why an unbound transcript has no path. Null when bound, on older runners, or
+    // for deterministic tailers. Values: awaiting-input, locating, refused, missing.
+    string? TranscriptUnboundReason = null,
     // CARD-0186 S2: which lane hosts the child. Null on older runners. Values: SessionBackends.
     string? Backend = null,
     // CARD-0186 S3: HerdrPendingReasons.Unreachable while adoption is waiting on herdr. Null otherwise.

@@ -1163,19 +1163,31 @@ public class AgentServiceIntegrationTests
         var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
         try
         {
-            var runner = new BindingRunnerClient(sessionId, transcriptBound: false);
+            var runner = new BindingRunnerClient(sessionId, transcriptBound: false, transcriptUnboundReason: "awaiting-input");
             await using var db = CreateContext();
             var detail = await CreateService(db, new MockEventBus(), runnerClient: runner)
                 .GetByIdAsync(agentId, CancellationToken.None);
 
             detail.LiveSession.ShouldNotBeNull();
-            detail.LiveSession!.TranscriptBinding.ShouldBe("unbound");
+            detail.LiveSession!.TranscriptBinding.ShouldBe("awaiting-input");
+
+            var refusedRunner = new BindingRunnerClient(sessionId, transcriptBound: false, transcriptUnboundReason: "refused");
+            await using var refusedDb = CreateContext();
+            var refused = await CreateService(refusedDb, new MockEventBus(), runnerClient: refusedRunner)
+                .GetByIdAsync(agentId, CancellationToken.None);
+            refused.LiveSession!.TranscriptBinding.ShouldBe("unbound");
 
             var boundRunner = new BindingRunnerClient(sessionId, transcriptBound: true);
             await using var db2 = CreateContext();
             var bound = await CreateService(db2, new MockEventBus(), runnerClient: boundRunner)
                 .GetByIdAsync(agentId, CancellationToken.None);
             bound.LiveSession!.TranscriptBinding.ShouldBe("bound");
+
+            var oldRunner = new BindingRunnerClient(sessionId, transcriptBound: null);
+            await using var oldDb = CreateContext();
+            var old = await CreateService(oldDb, new MockEventBus(), runnerClient: oldRunner)
+                .GetByIdAsync(agentId, CancellationToken.None);
+            old.LiveSession!.TranscriptBinding.ShouldBeNull();
         }
         finally
         {
@@ -1203,7 +1215,7 @@ public class AgentServiceIntegrationTests
     {
         private readonly SessionRunnerSessionDto _session;
 
-        public BindingRunnerClient(Guid sessionId, bool transcriptBound)
+        public BindingRunnerClient(Guid sessionId, bool? transcriptBound, string? transcriptUnboundReason = null)
         {
             _session = new SessionRunnerSessionDto(
                 sessionId,
@@ -1214,7 +1226,8 @@ public class AgentServiceIntegrationTests
                 ExitReason: AgentExitReason.Unknown,
                 LastSequence: 0,
                 TranscriptBound: transcriptBound,
-                TranscriptBindHow: transcriptBound ? TranscriptBindMethods.Exact : null);
+                TranscriptBindHow: transcriptBound == true ? TranscriptBindMethods.Exact : null,
+                TranscriptUnboundReason: transcriptUnboundReason);
         }
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>

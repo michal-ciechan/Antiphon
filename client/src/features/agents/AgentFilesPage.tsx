@@ -129,6 +129,7 @@ export function AgentFilesPage() {
               fitHeight
               transcriptBinding={agent.data?.liveSession?.transcriptBinding}
               liveStatus={agent.data?.liveSession?.status}
+              startedAt={agent.data?.liveSession?.startedAt}
               agentId={id}
             />
           ) : (

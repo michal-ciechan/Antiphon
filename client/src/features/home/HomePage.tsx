@@ -279,6 +279,7 @@ function DesktopHomePage() {
                   fitHeight
                   transcriptBinding={agent?.liveSession?.transcriptBinding}
                   liveStatus={agent?.liveSession?.status}
+                  startedAt={agent?.liveSession?.startedAt}
                   agentId={agent?.id}
                 />
               ) : (

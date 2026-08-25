@@ -89,6 +89,7 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
               sessionId={liveSession.id}
               transcriptBinding={liveSession.transcriptBinding}
               liveStatus={liveSession.status}
+              startedAt={liveSession.startedAt}
               agentId={source.id}
             />
           </Tabs.Panel>

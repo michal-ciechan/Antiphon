@@ -96,8 +96,8 @@ public sealed record AgentSessionSummaryDto(
     double? ContextFullness = null,
     // Why ContextFullness is a number or null (CARD-0178). Additive; older servers omit it.
     ContextFullnessState? ContextFullnessState = null,
-    // CARD-0180 S4: "bound" | "unbound" when the runner answered; null = unknown (older runner
-    // / unreachable / no tailer).
+    // CARD-0180 S4 / CARD-0190: "bound" | "unbound" | "awaiting-input" when the runner
+    // answered; null = unknown (older runner / unreachable / no tailer).
     string? TranscriptBinding = null);
 
 public sealed record CreateBoardRequest(

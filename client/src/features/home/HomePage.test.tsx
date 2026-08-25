@@ -212,6 +212,23 @@ describe('HomePage', () => {
     await waitFor(() => expect(screen.getByTestId('rail-unbound-dot-a2')).toBeInTheDocument())
   })
 
+  it('keeps an awaiting-input session off the unbound rail alarm path', async () => {
+    seed({
+      agents: [
+        agent({
+          id: 'a2',
+          name: 'pool-1',
+          liveSession: { id: 's2', status: 'Running', transcriptBinding: 'awaiting-input' },
+        }),
+      ],
+    })
+    renderWithProviders(<HomePage />)
+    await screen.findByRole('button', { name: 'Select agent pool-1' })
+    expect(screen.queryByTestId('rail-unbound-dot-a2')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('rail-terminal-a2'))
+    expect(await screen.findByText('Terminal live — no transcript yet (nothing sent since start)')).toBeInTheDocument()
+  })
+
   it('selecting an agent in the rail redirects the files pane and the chat dock', async () => {
     seed({
       agents: [

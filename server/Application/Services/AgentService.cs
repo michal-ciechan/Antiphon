@@ -261,6 +261,7 @@ public sealed class AgentService
             var binding = runner.TranscriptBound switch
             {
                 true => "bound",
+                false when runner.TranscriptUnboundReason == "awaiting-input" => "awaiting-input",
                 false => "unbound",
                 _ => (string?)null,
             };

@@ -74,6 +74,9 @@ internal sealed class GrokTranscriptTailer : ITranscriptTailer
     /// <inheritdoc />
     public string? BindHow { get; private set; }
 
+    /// <inheritdoc />
+    public string? UnboundReason => null;
+
     /// <summary>
     /// Where grok will write this session's update stream:
     /// <c>{GROK_HOME}/sessions/{Uri.EscapeDataString(full-cwd)}/{sessionId:D}/updates.jsonl</c>

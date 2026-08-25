@@ -577,6 +577,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             dto.AgentStatusSinceUtc,
             dto.TranscriptBound,
             dto.TranscriptBindHow,
+            dto.TranscriptUnboundReason,
             dto.Backend,
             dto.Pending,
             dto.HerdrVerifiedAtUtc);

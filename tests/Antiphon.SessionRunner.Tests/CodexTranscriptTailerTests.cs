@@ -101,6 +101,7 @@ public class CodexTranscriptTailerTests
             detail.ShouldContain("codex-tui");
 
             tailer.BoundTranscriptPath.ShouldBeNull("a stranger's conversation must never be adopted");
+            tailer.UnboundReason.ShouldBe("refused");
             await Assert.That(tailer.Snapshot().Entries).IsEmpty();
         }
         finally
@@ -196,7 +197,12 @@ public class CodexTranscriptTailerTests
         using var tree = new CodexTree();
         var stale = Enumerable.Range(0, 6).Select(_ => tree.Seed("codex-tui-turn.jsonl")).ToArray();
         var childStart = stale[0].FirstTimestamp.AddHours(1);
+        // The diagnostic promises newest-first ordering within C3 refusals. Make that order
+        // explicit instead of relying on NTFS's timing granularity for a burst of fixture writes.
+        foreach (var (rollout, index) in stale.Select((rollout, index) => (rollout, index)))
+            File.SetLastWriteTimeUtc(rollout.Path, childStart.AddMinutes(-6 + index));
         var postStart = tree.Seed("codex-tui-turn.jsonl", childStart.AddSeconds(1));
+        File.SetLastWriteTimeUtc(postStart.Path, childStart.AddMinutes(1));
 
         var input = new SessionInputLog();
         input.Append("A prompt unique to this session, not present in any rollout");
@@ -249,6 +255,7 @@ public class CodexTranscriptTailerTests
             hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0,
                 "stale candidates before the first delivered input are a normal first-prompt wait");
             tailer.BoundTranscriptPath.ShouldBeNull();
+            tailer.UnboundReason.ShouldBe("awaiting-input");
         }
         finally
         {
@@ -280,12 +287,14 @@ public class CodexTranscriptTailerTests
             hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
 
             input.Append("The first prompt delivered after this session waited for Codex");
+            tailer.UnboundReason.ShouldBe("locating");
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
 
             fault.ShouldNotBeNull();
             var unboundSeconds = fault!.RootElement.GetProperty("UnboundSeconds").GetDouble();
             unboundSeconds.ShouldBeInRange(0.3, 1.5,
                 "the refusal clock starts when input is delivered, not when the child started");
+            tailer.UnboundReason.ShouldBe("missing");
         }
         finally
         {

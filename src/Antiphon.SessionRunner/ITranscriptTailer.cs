@@ -37,4 +37,10 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <c>deterministic</c>).
     /// </summary>
     string? BindHow { get; }
+
+    /// <summary>
+    /// CARD-0190: why no transcript is currently bound. Null once bound and for deterministic
+    /// tailers; otherwise one of awaiting-input, locating, refused, or missing.
+    /// </summary>
+    string? UnboundReason { get; }
 }

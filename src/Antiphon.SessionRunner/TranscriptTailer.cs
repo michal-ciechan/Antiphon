@@ -83,6 +83,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private Task? _loop;
     private long _seq;
     private DateTime? _childExitedAtUtc;
+    private DateTime? _firstInputObservedUtc;
+    private string? _unboundReason;
 
     /// <param name="claims">Process-wide "who is tailing what" registry (rule C1). Null disables the check.</param>
     /// <param name="inputLog">What this session was sent — the evidence for rule C4. Null means no
@@ -133,6 +135,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         _onUnbound = onUnbound;
         _knownSessions = knownSessions;
         ForkScanInterval = forkScanInterval ?? DefaultForkScanInterval;
+        _firstInputObservedUtc = firstInputUtc;
+        _unboundReason = InputDelivered ? "locating" : "awaiting-input";
     }
 
     /// <summary>How often the tailer looks for a mid-session conversation fork (see RunAsync).</summary>
@@ -143,6 +147,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
     /// <inheritdoc />
     public string? BindHow { get; private set; }
+
+    /// <inheritdoc />
+    public string? UnboundReason => BoundTranscriptPath is null
+        ? (!InputDelivered ? "awaiting-input" : _unboundReason == "awaiting-input" ? "locating" : _unboundReason)
+        : null;
 
     private bool InputDelivered => _firstInputUtc is not null || _inputLog is { IsEmpty: false };
 
@@ -425,6 +434,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                             ? emptySince ?? DateTime.UtcNow
                             : null;
                         MaybeReportNoCandidates(verdict, ref emptySince, ref lastRefusalFault, ref refusalRepeat);
+                        UpdateUnboundReason(verdict);
 
                         // The repeat counter belongs to the EPISODE, not the session: once neither
                         // shape is live any more the next fault starts again at 1, so an escalation
@@ -770,6 +780,26 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 null));
     }
 
+    private void UpdateUnboundReason(CandidateVerdict verdict)
+    {
+        if (!InputDelivered)
+        {
+            _unboundReason = "awaiting-input";
+            return;
+        }
+
+        var firstInput = _firstInputObservedUtc ??= _firstInputUtc ?? DateTime.UtcNow;
+        if (DateTime.UtcNow - firstInput < _refusalFaultDelay)
+        {
+            _unboundReason = "locating";
+            return;
+        }
+
+        _unboundReason = verdict.PostStartCandidates > 0 || verdict.ExactFileHeldBy is not null
+            ? "refused"
+            : "missing";
+    }
+
     /// <summary>
     /// Candidates exist in this cwd but none of them proved to belong to this session. That is the
     /// SAFE outcome — the alternative is reading a stranger's conversation — but it is never
@@ -904,6 +934,8 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     {
         if (!InputDelivered)
             return;
+
+        _unboundReason = "missing";
 
         _logger.LogWarning(
             "Session {SessionId}: the child exited without ever producing a transcript we could identify, "

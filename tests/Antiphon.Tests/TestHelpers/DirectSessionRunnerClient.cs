@@ -313,6 +313,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             dto.AgentStatusSinceUtc,
             dto.TranscriptBound,
             dto.TranscriptBindHow,
+            dto.TranscriptUnboundReason,
             dto.Backend,
             dto.Pending,
             dto.HerdrVerifiedAtUtc);

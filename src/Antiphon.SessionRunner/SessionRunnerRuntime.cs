@@ -1678,6 +1678,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _herdrAgentStatusSinceUtc,
                     TranscriptBound: _tailer is null ? null : boundPath is not null,
                     TranscriptBindHow: boundPath is not null ? _tailer!.BindHow : null,
+                    TranscriptUnboundReason: boundPath is null ? _tailer?.UnboundReason : null,
                     Backend: _backend,
                     Pending: _pendingReason,
                     HerdrVerifiedAtUtc: _herdrVerifiedAtUtc);

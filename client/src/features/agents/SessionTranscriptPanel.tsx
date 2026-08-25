@@ -157,6 +157,7 @@ export function SessionTranscriptPanel({
   initialEntries = null,
   transcriptBinding = null,
   liveStatus = null,
+  startedAt = null,
   agentId = null,
 }: {
   sessionId: string
@@ -168,9 +169,11 @@ export function SessionTranscriptPanel({
   fitHeight?: boolean
   /** Storybook/screenshot hook: render these entries statically — no HTTP fetch, no SignalR. */
   initialEntries?: TranscriptEntryDto[] | null
-  /** CARD-0180 S4: runner bind from the live session DTO. */
-  transcriptBinding?: 'bound' | 'unbound' | null
+  /** CARD-0180 S4 / CARD-0190: runner bind from the live session DTO. */
+  transcriptBinding?: 'bound' | 'unbound' | 'awaiting-input' | null
   liveStatus?: string | null
+  /** The live session's existing start timestamp, used only for the neutral waiting copy. */
+  startedAt?: string | null
   agentId?: string | null
 }) {
   const [entries, setEntries] = useState<TranscriptEntryDto[]>(initialEntries ?? [])
@@ -308,10 +311,19 @@ export function SessionTranscriptPanel({
 
   const unboundLive =
     entries.length === 0 && transcriptBinding === 'unbound' && liveStatus === 'Running'
+  const awaitingInput =
+    entries.length === 0 && transcriptBinding === 'awaiting-input' && liveStatus === 'Running'
+  const awaitingInputAge = startedAt && !Number.isNaN(Date.parse(startedAt))
+    ? formatDuration(Math.max(0, Date.now() - Date.parse(startedAt)))
+    : null
 
   const statusBadge = unboundLive ? (
     <Badge color="orange" variant="light" style={{ flexShrink: 0 }} data-testid="unbound-badge">
       Unbound
+    </Badge>
+  ) : awaitingInput ? (
+    <Badge color="gray" variant="light" style={{ flexShrink: 0 }} data-testid="awaiting-input-badge">
+      Idle · no transcript yet
     </Badge>
   ) : (
     <Badge
@@ -376,6 +388,11 @@ export function SessionTranscriptPanel({
               'See incidents.'
             )}
           </Alert>
+        ) : entries.length === 0 && awaitingInput ? (
+          <Text size="sm" c="dimmed" ta="center" py="xl" data-testid="awaiting-input-message">
+            Nothing has been sent to this session since it started{awaitingInputAge ? ` (${awaitingInputAge} ago)` : ''}.
+            {' '}Codex creates its transcript at the first prompt — send one and it will bind.
+          </Text>
         ) : entries.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="xl">
             No transcript yet. Send the agent a prompt and the structured turn-by-turn flow appears here.

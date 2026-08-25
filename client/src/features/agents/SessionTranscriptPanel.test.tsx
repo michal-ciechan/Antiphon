@@ -61,6 +61,28 @@ describe('SessionTranscriptPanel', () => {
     expect(screen.queryByText(/No transcript yet/)).not.toBeInTheDocument()
     expect(screen.queryByText('Idle')).not.toBeInTheDocument()
   })
+
+  it('awaiting input stays neutral and explains the first-prompt wait', () => {
+    renderWithProviders(
+      <SessionTranscriptPanel
+        sessionId="s1"
+        initialEntries={[]}
+        transcriptBinding="awaiting-input"
+        liveStatus="Running"
+        startedAt="2026-07-30T09:58:00Z"
+        agentId="a1"
+      />,
+    )
+    expect(screen.getByTestId('awaiting-input-badge')).toHaveTextContent('Idle · no transcript yet')
+    expect(screen.getByTestId('awaiting-input-message')).toHaveTextContent(
+      'Nothing has been sent to this session since it started',
+    )
+    expect(screen.getByTestId('awaiting-input-message')).toHaveTextContent(
+      'Codex creates its transcript at the first prompt',
+    )
+    expect(screen.queryByTestId('unbound-badge')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('unbound-banner')).not.toBeInTheDocument()
+  })
 })
 
 describe('isWorking', () => {

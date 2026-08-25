@@ -119,6 +119,7 @@ public class TranscriptAdoptionSafetyTests
                 "the post-start C4 refusal must lead the diagnostic detail");
             detail.Contains(stale[0], StringComparison.Ordinal).ShouldBeFalse(
                 "the capped detail must prioritize post-start C4 refusals over stale C3 candidates");
+            tailer.UnboundReason.ShouldBe("refused");
         }
         finally
         {
@@ -528,6 +529,7 @@ public class TranscriptAdoptionSafetyTests
             await Task.Delay(TimeSpan.FromSeconds(2));
             hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
             tailer.BoundTranscriptPath.ShouldBeNull();
+            tailer.UnboundReason.ShouldBe("awaiting-input");
         }
         finally
         {
@@ -596,12 +598,14 @@ public class TranscriptAdoptionSafetyTests
             hub.Count(SessionRunnerEventNames.SessionTranscriptFault).ShouldBe(0);
 
             input.Append("The first prompt delivered after this session waited for Claude");
+            tailer.UnboundReason.ShouldBe("locating");
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
 
             fault.ShouldNotBeNull();
             var unboundSeconds = fault!.RootElement.GetProperty("UnboundSeconds").GetDouble();
             unboundSeconds.ShouldBeInRange(0.3, 1.5,
                 "the refusal clock starts when input is delivered, not when the child started");
+            tailer.UnboundReason.ShouldBe("missing");
         }
         finally
         {
@@ -1796,6 +1800,7 @@ public class TranscriptAdoptionSafetyTests
 
             locating.TranscriptBound.ShouldBe(false);
             locating.TranscriptBindHow.ShouldBeNull();
+            locating.TranscriptUnboundReason.ShouldBe("awaiting-input");
 
             var file = tree.ExactTranscript(sessionId);
             await tree.AppendAsync(file, UserLine("u1", tree.Cwd, "hello", DateTime.UtcNow));
@@ -1813,6 +1818,7 @@ public class TranscriptAdoptionSafetyTests
             bound.ShouldNotBeNull();
             bound!.TranscriptBound.ShouldBe(true);
             bound.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Exact);
+            bound.TranscriptUnboundReason.ShouldBeNull();
 
             await runtimeA.DisposeAsync();
 
@@ -1837,6 +1843,7 @@ public class TranscriptAdoptionSafetyTests
             adopted.ShouldNotBeNull();
             adopted!.TranscriptBound.ShouldBe(true);
             adopted.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Sidecar);
+            adopted.TranscriptUnboundReason.ShouldBeNull();
 
             await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
         }

@@ -169,10 +169,10 @@ export interface AgentSessionSummaryDto {
    */
   contextFullnessState?: ContextFullnessState | null
   /**
-   * CARD-0180 S4: runner transcript bind. `"bound"` | `"unbound"` when the runner answered;
-   * omitted/null = unknown (older server / unreachable).
+   * CARD-0180 S4 / CARD-0190: runner transcript bind. `"awaiting-input"` is a neutral
+   * first-prompt wait; omitted/null = unknown (older server / unreachable).
    */
-  transcriptBinding?: 'bound' | 'unbound' | null
+  transcriptBinding?: 'bound' | 'unbound' | 'awaiting-input' | null
 }
 
 export type ContextFullnessState =
