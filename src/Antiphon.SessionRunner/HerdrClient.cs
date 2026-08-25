@@ -523,8 +523,9 @@ public sealed record HerdrSubscription(
 public sealed record HerdrEvent(string Name, JsonElement Data);
 
 /// <summary>
-/// Subscribe TYPE (dotted) ↔ wire EVENT name (underscored) pairs measured against herdr 0.8.2
-/// (CARD-0162 E7). Consumers must use these constants — never ad-hoc string matches.
+/// Subscribe TYPE (dotted) ↔ wire EVENT name pairs measured against herdr 0.8.2.
+/// Status events are also dotted on the live stream (CARD-0163 R9, 2026-08-26), despite the
+/// schema's underscored event type. Consumers must use these constants — never ad-hoc string matches.
 /// </summary>
 public static class HerdrEventTypes
 {
@@ -535,7 +536,10 @@ public static class HerdrEventTypes
     public const string PaneExitedWire = "pane_exited";
 
     public const string PaneAgentStatusChangedSubscribe = "pane.agent_status_changed";
+    /// <summary>Schema spelling retained for compatibility with older herdr implementations.</summary>
     public const string PaneAgentStatusChangedWire = "pane_agent_status_changed";
+    /// <summary>Measured live-stream spelling (herdr 0.8.2, CARD-0163 R9).</summary>
+    public const string PaneAgentStatusChangedWireDotted = "pane.agent_status_changed";
 }
 
 public class HerdrProtocolException : Exception

@@ -93,6 +93,11 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
     }
 
+    /// <summary>Emit the dotted live status event measured from herdr 0.8.2 (CARD-0163 R9).</summary>
+    public void EnqueuePaneAgentStatusChanged(string paneId, string workspaceId, string agentStatus) =>
+        EnqueueEvent(HerdrEventTypes.PaneAgentStatusChangedWireDotted,
+            new { pane_id = paneId, workspace_id = workspaceId, agent_status = agentStatus });
+
     /// <summary>Record a historical <c>pane_closed</c> that every future subscriber will replay.</summary>
     public void AddReplayPaneClosed(string paneId, string workspaceId)
     {

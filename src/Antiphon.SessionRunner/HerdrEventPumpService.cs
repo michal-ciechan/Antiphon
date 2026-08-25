@@ -162,7 +162,8 @@ public sealed class HerdrEventPumpService : BackgroundService
             return;
         }
 
-        if (string.Equals(evt.Name, HerdrEventTypes.PaneAgentStatusChangedWire, StringComparison.Ordinal))
+        if (string.Equals(evt.Name, HerdrEventTypes.PaneAgentStatusChangedWire, StringComparison.Ordinal)
+            || string.Equals(evt.Name, HerdrEventTypes.PaneAgentStatusChangedWireDotted, StringComparison.Ordinal))
         {
             var status = JsonSerializer.Deserialize<HerdrPaneStatusEventData>(evt.Data.GetRawText());
             if (status is null || !byPane.TryGetValue(status.PaneId, out var tracked))

@@ -210,6 +210,8 @@ inside the sweep that must finish before the runner's HTTP API starts listening.
 
 `HerdrEventPumpService` holds a long-lived `events.subscribe` stream (registered always, inert
 unless `Enabled`; reconnects with 1→30 s backoff; recycles when the live pane set changes).
+The measured `pane.agent_status_changed` stream event is **dotted** (CARD-0163 R9, 2026-08-26);
+the pump also accepts the schema's legacy `pane_agent_status_changed` spelling.
 
 **Every herdr event is a verification TRIGGER, never evidence.** Herdr **replays historical
 `pane_closed` events to every new subscriber** (measured, probe E5), so a pump that trusted the
