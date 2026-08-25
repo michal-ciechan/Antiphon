@@ -129,6 +129,52 @@ public class PtyHostLauncherTests
     }
 
     /// <summary>
+    /// CARD-0206: a failed exit-manifest write used to fault the unobserved exit task before it
+    /// armed linger, leaving the detached host (and its conhost) alive forever.
+    /// </summary>
+    [Test]
+    public async Task A_host_whose_exit_manifest_cannot_be_saved_still_exits_on_its_linger_TTL()
+    {
+        SkipIfNotWindows();
+
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-exit-manifest-failure", Guid.NewGuid().ToString("N"));
+        var manifestDir = Path.Combine(root, "manifests");
+        Directory.CreateDirectory(root);
+        var sessionId = Guid.NewGuid();
+        var pipeName = $"antiphon-exit-manifest-failure-{sessionId:N}";
+        var launcher = new PtyHostLauncher(new ShadowCopyStore(Path.Combine(root, "bin")), AppContext.BaseDirectory);
+        var hostPid = 0;
+        var childPid = 0;
+        try
+        {
+            hostPid = await launcher.LaunchDetachedAsync(
+                sessionId, manifestDir, Path.Combine(root, "host.log"), pipeName,
+                launchTimeout: TimeSpan.FromSeconds(30), lingerTtl: TimeSpan.FromHours(0.001));
+            await using var client = await PipeTestClient.ConnectWithRetryAsync(pipeName, TimeSpan.FromSeconds(15));
+            await client.SendAsync(new HelloMessage(PtyHostProtocol.Version));
+            await client.ExpectAsync<HelloAckMessage>();
+            await client.SendAsync(new LaunchMessage(
+                Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                ["/d", "/q", "/k", "@echo off & prompt $G"], new Dictionary<string, string>(), root,
+                120, 30, 0, false, Path.Combine(root, "session.ansi.log")));
+            childPid = (await client.ExpectAsync<LaunchedMessage>()).ChildPid;
+
+            // Launch wrote the initial manifest. Make the exit-time CreateDirectory fail reliably.
+            Directory.Delete(manifestDir, recursive: true);
+            File.WriteAllText(manifestDir, "block manifest directory creation");
+            Process.GetProcessById(childPid).Kill(entireProcessTree: true);
+
+            await WaitForProcessExitAsync(hostPid, TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            TryKill(childPid);
+            TryKill(hostPid);
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
     /// CARD-0086: Process.Start is not cancellation-gated, so an already-cancelled token still
     /// spawns the detached host and then throws on ReadToEndAsync(ct). The host must not leak.
     /// Bound well under the 30s launch-timeout backstop — passing by waiting that out would hide

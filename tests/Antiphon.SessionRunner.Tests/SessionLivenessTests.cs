@@ -136,7 +136,7 @@ public class SessionLivenessTests
 
     private static (SessionRunnerRuntime Runtime, string LogRoot) BuildRuntime()
     {
-        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-liveness-tests-{Guid.NewGuid():N}");
+        var logRoot = TestSessionLogRoot.Create("liveness-tests");
         var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings
             {

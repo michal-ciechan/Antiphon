@@ -124,7 +124,7 @@ public class PtyBackendSeamTests
     {
         var settings = new SessionRunnerSettings
         {
-            SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-backend-seam-{Guid.NewGuid():N}"),
+            SessionLogPath = TestSessionLogRoot.Create("backend-seam"),
             PtyHostLingerHours = 0.02,
             PtyBackend = declared,
         };
@@ -133,6 +133,7 @@ public class PtyBackendSeamTests
         var runtime = new SessionRunnerRuntime(
             Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
         int? childPid = null;
+        int? hostPid = null;
         try
         {
             var request = new RunnerLaunchRequest(
@@ -145,6 +146,7 @@ public class PtyBackendSeamTests
                 Rows: 25);
             var dto = await runtime.StartAsync(request, CancellationToken.None);
             childPid = dto.Pid;
+            hostPid = dto.HostPid;
 
             var logPath = Path.Combine(settings.PtyHostLogDir, $"{sessionId:N}.log");
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
@@ -162,7 +164,7 @@ public class PtyBackendSeamTests
         {
             try
             {
-                await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+                await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, hostPid);
             }
             catch
             {

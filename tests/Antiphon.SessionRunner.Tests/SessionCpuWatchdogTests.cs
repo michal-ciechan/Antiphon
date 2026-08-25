@@ -105,7 +105,7 @@ public class SessionCpuWatchdogTests
     private static async Task<WatchdogFixture> StartSessionWithTranscriptAsync(
         Func<Guid, string, string[]> transcriptLines, int expectedEntries, int minUptimeSeconds)
     {
-        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-cpu-watchdog-tests-{Guid.NewGuid():N}");
+        var logRoot = TestSessionLogRoot.Create("cpu-watchdog-tests");
         var configDir = Path.Combine(logRoot, "claude-config");
         var projectDir = Path.Combine(configDir, "projects", "some-encoded-cwd");
         var cwd = Path.Combine(logRoot, "agent-cwd");
@@ -168,6 +168,7 @@ public class SessionCpuWatchdogTests
         catch
         {
             Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            await runtime.KillAllAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
             await runtime.DisposeAsync();
             throw;
         }
@@ -178,7 +179,7 @@ public class SessionCpuWatchdogTests
             runtime, probe, Options.Create(settings), time,
             NullLogger<SessionCpuWatchdogService>.Instance);
 
-        return new WatchdogFixture(runtime, watchdog, probe, time, sessionId, dto.Pid, logRoot);
+        return new WatchdogFixture(runtime, watchdog, probe, time, sessionId, dto.Pid, dto.HostPid, logRoot);
     }
 
     private sealed class WatchdogFixture(
@@ -188,6 +189,7 @@ public class SessionCpuWatchdogTests
         FakeTime time,
         Guid sessionId,
         int? childPid,
+        int? hostPid,
         string logRoot) : IAsyncDisposable
     {
         public SessionRunnerRuntime Runtime => runtime;
@@ -204,6 +206,8 @@ public class SessionCpuWatchdogTests
         public async ValueTask DisposeAsync()
         {
             Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", null);
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, hostPid);
+            await runtime.DisposeAsync();
             if (childPid is int pid)
             {
                 try
@@ -217,7 +221,6 @@ public class SessionCpuWatchdogTests
                 }
             }
 
-            await runtime.DisposeAsync();
             try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
         }
     }

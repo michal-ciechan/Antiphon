@@ -289,6 +289,14 @@ public sealed class HostSession : IAsyncDisposable
             lastSeq = _lastSeq;
         }
 
+        // Arm this before touching the manifest: a fixture or external cleanup can remove its
+        // directory between child exit and SaveAtomic, but that must never make this host immortal.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(_options.LingerTtl);
+            RequestExit("linger TTL expired without runner ack");
+        });
+
         if (_manifest is not null)
         {
             _manifest = _manifest with
@@ -297,7 +305,8 @@ public sealed class HostSession : IAsyncDisposable
                 ExitReason = exitReason,
                 ExitedAtUtc = DateTime.UtcNow,
             };
-            _manifest.SaveAtomic(_options.ManifestPath);
+            try { _manifest.SaveAtomic(_options.ManifestPath); }
+            catch (Exception ex) { _log.Error("exit manifest save failed; lingering anyway", ex); }
         }
 
         _log.Info($"Child exited (code {exitCode}, reason {exitReason}); lingering for runner ack");
@@ -306,12 +315,6 @@ public sealed class HostSession : IAsyncDisposable
             _sink?.TryWrite(new ExitedMessage(exitCode, exitReason, lastSeq));
         }
 
-        // Linger so a restarted runner can collect the exit; TTL bounds orphan lifetime.
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(_options.LingerTtl);
-            RequestExit("linger TTL expired without runner ack");
-        });
     }
 
     private void RequestExit(string reason) => _exitRequested.TrySetResult(reason);

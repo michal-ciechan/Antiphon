@@ -66,7 +66,7 @@ public class SessionBufferBoundsTests
             raw.ShouldContain("NEWEST-MARKER");
             raw.ShouldNotContain("filler-1-0123456789");
 
-            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto.HostPid);
             await runtime.DisposeAsync();
         }
         finally
@@ -105,7 +105,7 @@ public class SessionBufferBoundsTests
             buffer.ShouldContain("NEWEST-MARKER");
             buffer.ShouldNotContain("filler-1-0123456789");
 
-            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto.HostPid);
             await runtime.DisposeAsync();
         }
         finally
@@ -118,7 +118,7 @@ public class SessionBufferBoundsTests
 
     private static SessionRunnerSettings BuildSettings() => new()
     {
-        SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-bufbounds-tests-{Guid.NewGuid():N}"),
+        SessionLogPath = TestSessionLogRoot.Create("bufbounds-tests"),
         ReplayBufferMaxChars = Cap,
         PtyHostLingerHours = 0.02,
     };

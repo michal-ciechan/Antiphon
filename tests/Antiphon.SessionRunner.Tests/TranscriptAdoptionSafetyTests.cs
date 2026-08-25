@@ -1771,7 +1771,7 @@ public class TranscriptAdoptionSafetyTests
     {
         using var tree = new TranscriptTree("0180-todto");
         var sessionId = Guid.NewGuid();
-        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-0180-dto-{Guid.NewGuid():N}");
+        var logRoot = TestSessionLogRoot.Create("0180-dto");
         Directory.CreateDirectory(logRoot);
         var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
         var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -1845,7 +1845,7 @@ public class TranscriptAdoptionSafetyTests
             adopted.TranscriptBindHow.ShouldBe(TranscriptBindMethods.Sidecar);
             adopted.TranscriptUnboundReason.ShouldBeNull();
 
-            await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtimeB, sessionId, hostPid);
         }
         finally
         {

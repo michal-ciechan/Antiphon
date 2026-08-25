@@ -21,7 +21,7 @@ public class FirstWriteRaceTests
     [Test]
     public async Task input_racing_a_cold_launch_waits_for_the_host_and_delivers()
     {
-        var logRoot = Path.Combine(Path.GetTempPath(), $"antiphon-first-write-race-{Guid.NewGuid():N}");
+        var logRoot = TestSessionLogRoot.Create("first-write-race");
         var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings
             {
@@ -31,6 +31,7 @@ public class FirstWriteRaceTests
             NullLogger<SessionRunnerRuntime>.Instance);
 
         var sessionId = Guid.NewGuid();
+        RunnerSessionDto? dto = null;
         try
         {
             // Start the launch but do NOT await it: StartAsync registers the session synchronously
@@ -50,7 +51,7 @@ public class FirstWriteRaceTests
             // ("Session has no live pty-host connection") immediately.
             var input = runtime.SendInputAsync(sessionId, "echo RACE-MARKER-OK\r", CancellationToken.None);
 
-            await launch;
+            dto = await launch;
             await input;
 
             // The write must have LANDED, not merely not-thrown: the echo's output shows up in
@@ -70,7 +71,7 @@ public class FirstWriteRaceTests
         {
             try
             {
-                await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+                await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto?.HostPid);
             }
             catch
             {

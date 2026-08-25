@@ -77,7 +77,9 @@ public class PtyHostAdoptionTests
             seqs.ShouldAllBe(seq => seq > lastSeqBeforeRestart);
             seqs.ShouldBeInOrder();
 
-            var killed = await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+            var hostPid = PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId))?.HostPid;
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtimeB, sessionId, hostPid);
+            var killed = runtimeB.Get(sessionId);
             killed.Status.ShouldBe("Exited");
             await runtimeB.DisposeAsync();
         }
@@ -98,7 +100,7 @@ public class PtyHostAdoptionTests
         {
             dto.TranscriptBound.ShouldBeNull("cmd.exe launches have no transcript tailer");
             dto.TranscriptBindHow.ShouldBeNull();
-            await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, dto.HostPid);
         }
         finally
         {
@@ -260,7 +262,7 @@ public class PtyHostAdoptionTests
     /// </param>
     private static SessionRunnerSettings BuildSettings(string? ptyBackend = null) => new()
     {
-        SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-adoption-tests-{Guid.NewGuid():N}"),
+        SessionLogPath = TestSessionLogRoot.Create("adoption-tests"),
         PtyHostLingerHours = 0.02,
         PtyBackend = ptyBackend,
     };
