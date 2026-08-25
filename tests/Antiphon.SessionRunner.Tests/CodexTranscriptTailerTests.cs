@@ -172,12 +172,52 @@ public class CodexTranscriptTailerTests
         {
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(10));
             fault.ShouldNotBeNull();
-            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
             fault.RootElement.GetProperty("Detail").GetString()
                 .ShouldNotBeNull()
-                .ShouldContain("predates the child start");
+                .ShouldContain("1 cwd-matched rollout(s) older than the child were refused (C3)");
 
             await Assert.That(tailer.BoundTranscriptPath).IsNull();
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0190 S3: stale C3 refusals say that this session has not written a rollout; a newer
+    /// same-cwd stranger says that a rollout appeared but could not be adopted. The latter must
+    /// remain AdoptionRefused and lead the capped diagnostic detail.
+    /// </summary>
+    [Test]
+    public async Task Post_start_stranger_rollout_reports_AdoptionRefused_before_stale_C3_candidates()
+    {
+        using var tree = new CodexTree();
+        var stale = Enumerable.Range(0, 6).Select(_ => tree.Seed("codex-tui-turn.jsonl")).ToArray();
+        var childStart = stale[0].FirstTimestamp.AddHours(1);
+        var postStart = tree.Seed("codex-tui-turn.jsonl", childStart.AddSeconds(1));
+
+        var input = new SessionInputLog();
+        input.Append("A prompt unique to this session, not present in any rollout");
+
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(
+            hub, tree, input,
+            childStartUtc: childStart,
+            refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(10));
+            fault.ShouldNotBeNull();
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            var detail = fault.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            detail.ShouldContain(postStart.Path);
+            detail.StartsWith(postStart.Path, StringComparison.Ordinal).ShouldBeTrue(
+                "the post-start C4 refusal must lead the diagnostic detail");
+            detail.Contains(stale[0].Path, StringComparison.Ordinal).ShouldBeFalse(
+                "the capped detail must prioritize post-start C4 refusals over stale C3 candidates");
         }
         finally
         {
@@ -274,7 +314,7 @@ public class CodexTranscriptTailerTests
         {
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
             fault.ShouldNotBeNull("the sidecar fact must preserve post-restart refusal reporting");
-            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
             tailer.BoundTranscriptPath.ShouldBeNull();
         }
         finally
@@ -623,13 +663,24 @@ public class CodexTranscriptTailerTests
 
         public string SessionsRoot { get; }
 
-        public SeededRollout Seed(string fixture)
+        public SeededRollout Seed(string fixture, DateTimeOffset? firstTimestamp = null)
         {
             var dir = Path.Combine(SessionsRoot, "2026", "08", "20");
             Directory.CreateDirectory(dir);
             var target = Path.Combine(dir, $"rollout-2026-08-20T16-16-28-{Guid.NewGuid():D}.jsonl");
-            File.Copy(CodexTranscriptNormalizerTests.FixturePath(fixture), target);
-            return new SeededRollout(target, FixtureFirstTimestamp(fixture));
+            if (firstTimestamp is null)
+            {
+                File.Copy(CodexTranscriptNormalizerTests.FixturePath(fixture), target);
+                return new SeededRollout(target, FixtureFirstTimestamp(fixture));
+            }
+
+            var source = File.ReadAllText(CodexTranscriptNormalizerTests.FixturePath(fixture));
+            var original = JsonDocument.Parse(CodexTranscriptNormalizerTests.ReadFixtureLines(fixture)[0])
+                .RootElement.GetProperty("timestamp").GetString()!;
+            File.WriteAllText(
+                target,
+                source.Replace($"\"timestamp\":\"{original}\"", $"\"timestamp\":\"{firstTimestamp:O}\"", StringComparison.Ordinal));
+            return new SeededRollout(target, firstTimestamp.Value.UtcDateTime);
         }
 
         /// <summary>The cwd the fixture's own <c>session_meta</c> records — the C2 needle.</summary>

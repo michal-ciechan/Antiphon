@@ -511,12 +511,15 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         return true;
     }
 
+    private readonly record struct CandidateRefusal(string Detail, bool IsC3, DateTime LastWriteUtc);
+
     private readonly record struct CandidateVerdict(
         string? Winner,
         string How,
-        IReadOnlyList<string> Refusals,
+        IReadOnlyList<CandidateRefusal> Refusals,
         int FilesUnderRoot,
         int CwdMatched,
+        int PostStartCandidates,
         string? ExactFileHeldBy = null);
 
     /// <summary>
@@ -527,10 +530,11 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private CandidateVerdict EvaluateCandidates(string projectsRoot)
     {
         var qualified = new List<(string Path, DateTime Mtime)>();
-        var refusals = new List<string>();
+        var refusals = new List<CandidateRefusal>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var filesUnderRoot = 0;
         var cwdMatched = 0;
+        var postStartCandidates = 0;
 
         foreach (var file in Directory.EnumerateFiles(projectsRoot, "*.jsonl", SearchOption.AllDirectories))
         {
@@ -549,7 +553,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 && namesake != _sessionId
                 && _knownSessions?.Exists(namesake) == true)
             {
-                refusals.Add($"{file}: named for session {namesake:D}, which this runner launched");
+                refusals.Add(new($"{file}: named for session {namesake:D}, which this runner launched", IsC3: false, DateTime.MinValue));
                 continue;
             }
 
@@ -573,22 +577,26 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 && probe.AgentName is { } candidateName
                 && !string.Equals(candidateName, _agentName, StringComparison.OrdinalIgnoreCase))
             {
-                refusals.Add($"{file}: agent-name '{candidateName}' is not '{_agentName}'");
+                refusals.Add(new($"{file}: agent-name '{candidateName}' is not '{_agentName}'", IsC3: false, mtime));
                 continue;
             }
 
             // C3 — a transcript for this session cannot have started before the session did.
             if (!EpochOk(probe.FirstTimestamp))
             {
-                refusals.Add(
-                    $"{file}: first timestamped record {probe.FirstTimestamp:O} predates the child start {_childStartUtc:O}");
+                refusals.Add(new(
+                    $"{file}: first timestamped record {probe.FirstTimestamp:O} predates the child start {_childStartUtc:O}",
+                    IsC3: true,
+                    mtime));
                 continue;
             }
+
+            postStartCandidates++;
 
             // C4 — the only positive identification: text WE sent, recorded as a prompt in there.
             if (!probe.ContentMatched)
             {
-                refusals.Add($"{file}: no prompt in it matches input delivered to this session");
+                refusals.Add(new($"{file}: no prompt in it matches input delivered to this session", IsC3: false, mtime));
                 continue;
             }
 
@@ -605,11 +613,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                 refusals,
                 filesUnderRoot,
                 cwdMatched,
+                postStartCandidates,
                 ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
         }
 
         return new CandidateVerdict(
-            null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched,
+            null, TranscriptBindMethods.Discovery, refusals, filesUnderRoot, cwdMatched, postStartCandidates,
             ExactFileHeldBy: FormatHolder(_lastExactLossHolder));
     }
 
@@ -786,23 +795,39 @@ internal sealed class TranscriptTailer : ITranscriptTailer
         lastRefusalFault = now;
         var unbound = (now - since).TotalSeconds;
         var repeat = ++refusalRepeat;
-        var detail = $"{string.Join("; ", verdict.Refusals.Take(5))} ({FormatCensus(verdict)})";
+        var refusals = OrderRefusals(verdict);
+        var missing = verdict.PostStartCandidates == 0
+            && verdict.ExactFileHeldBy is null
+            && verdict.Refusals.Count > 0
+            && verdict.Refusals.All(r => r.IsC3);
+        var detail = missing
+            ? $"No Claude transcript has been written for this session in the {unbound:F0}s since input was delivered; "
+                + $"{verdict.Refusals.Count(r => r.IsC3)} cwd-matched transcript(s) older than the child were refused (C3) "
+                + $"({FormatCensus(verdict)})"
+            : $"{string.Join("; ", refusals.Take(5).Select(r => r.Detail))} ({FormatCensus(verdict)})";
         _logger.LogWarning(
-            "Session {SessionId}: refusing every transcript candidate in {Cwd} after {Seconds:F0}s "
+            "Session {SessionId}: {Fault} in {Cwd} after {Seconds:F0}s "
             + "(report #{Repeat}) — {Detail}. "
             + "Running WITHOUT a transcript rather than binding to a conversation that may not be ours.",
-            _sessionId, _cwd, unbound, repeat, detail);
+            _sessionId, missing ? "no Claude transcript was written" : "refusing every transcript candidate",
+            _cwd, unbound, repeat, detail);
 
         _events.Publish(
             SessionRunnerEventNames.SessionTranscriptFault,
             new RunnerTranscriptFaultEvent(
                 _sessionId,
-                TranscriptFaultKinds.AdoptionRefused,
+                missing ? TranscriptFaultKinds.TranscriptMissing : TranscriptFaultKinds.AdoptionRefused,
                 detail,
-                verdict.Refusals.Count == 1 ? verdict.Refusals[0] : null,
+                !missing && refusals.Count == 1 ? refusals[0].Detail : null,
                 unbound,
                 repeat));
     }
+
+    private static IReadOnlyList<CandidateRefusal> OrderRefusals(CandidateVerdict verdict) =>
+        verdict.Refusals
+            .OrderBy(r => r.IsC3)
+            .ThenByDescending(r => r.LastWriteUtc)
+            .ToArray();
 
     /// <summary>
     /// C2 found nothing at all — not "candidates existed and all were refused", which

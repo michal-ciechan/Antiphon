@@ -73,10 +73,52 @@ public class TranscriptAdoptionSafetyTests
             // reached the old 30-second re-adoption window yet.
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(5));
             fault.ShouldNotBeNull("refusing every candidate must be reported, not silent");
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
+            var detail = fault.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
+            detail.ShouldContain("1 cwd-matched transcript(s) older than the child were refused (C3)");
+        }
+        finally
+        {
+            await tailer.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-0190 S3: a post-start stranger is an adoption refusal, not the stale-only shape in
+    /// which this child has written nothing. It also takes precedence in the capped detail.
+    /// </summary>
+    [Test]
+    public async Task Post_start_stranger_transcript_reports_AdoptionRefused_before_stale_C3_candidates()
+    {
+        using var tree = new TranscriptTree("0190-post-start-stranger");
+        var childStart = DateTime.UtcNow;
+        var stale = new List<string>();
+        for (var i = 0; i < 6; i++)
+        {
+            var file = tree.NewTranscript();
+            await tree.AppendAsync(file, UserLine($"stale-{i}", tree.Cwd, "a prior session", childStart.AddHours(-1)));
+            stale.Add(file);
+        }
+
+        var postStart = tree.NewTranscript();
+        await tree.AppendAsync(postStart, UserLine("post-start", tree.Cwd, "another session's prompt", childStart.AddSeconds(1)));
+
+        var input = new SessionInputLog();
+        input.Append("A prompt unique to this session, not present in any transcript");
+        await using var hub = new HubEvents();
+        var tailer = NewTailer(hub, tree, input, childStartUtc: childStart, refusalFaultDelay: TimeSpan.FromMilliseconds(400));
+        tailer.Start();
+        try
+        {
+            var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
+            fault.ShouldNotBeNull();
             fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
             var detail = fault.RootElement.GetProperty("Detail").GetString().ShouldNotBeNull();
-            detail.ShouldContain(operatorFile);
-            detail.ShouldContain("predates the child start", Case.Insensitive);
+            detail.ShouldContain(postStart);
+            detail.StartsWith(postStart, StringComparison.Ordinal).ShouldBeTrue(
+                "the post-start C4 refusal must lead the diagnostic detail");
+            detail.Contains(stale[0], StringComparison.Ordinal).ShouldBeFalse(
+                "the capped detail must prioritize post-start C4 refusals over stale C3 candidates");
         }
         finally
         {
@@ -313,7 +355,7 @@ public class TranscriptAdoptionSafetyTests
         {
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
             fault.ShouldNotBeNull();
-            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
 
             var real = tree.NewTranscript();
             await tree.AppendAsync(real, UserLine("r1", tree.Cwd, prompt, DateTime.UtcNow));
@@ -589,7 +631,7 @@ public class TranscriptAdoptionSafetyTests
         {
             var fault = await hub.WaitForAsync(SessionRunnerEventNames.SessionTranscriptFault, TimeSpan.FromSeconds(6));
             fault.ShouldNotBeNull("the sidecar fact must preserve post-restart refusal reporting");
-            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.AdoptionRefused);
+            fault!.RootElement.GetProperty("Kind").GetString().ShouldBe(TranscriptFaultKinds.TranscriptMissing);
             tailer.BoundTranscriptPath.ShouldBeNull();
         }
         finally
