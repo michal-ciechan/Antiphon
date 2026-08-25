@@ -391,7 +391,7 @@ export function SessionTranscriptPanel({
         ) : entries.length === 0 && awaitingInput ? (
           <Text size="sm" c="dimmed" ta="center" py="xl" data-testid="awaiting-input-message">
             Nothing has been sent to this session since it started{awaitingInputAge ? ` (${awaitingInputAge} ago)` : ''}.
-            {' '}Codex creates its transcript at the first prompt — send one and it will bind.
+            {' '}The transcript is created at the first prompt — send one and it will bind.
           </Text>
         ) : entries.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="xl">

@@ -78,7 +78,7 @@ describe('SessionTranscriptPanel', () => {
       'Nothing has been sent to this session since it started',
     )
     expect(screen.getByTestId('awaiting-input-message')).toHaveTextContent(
-      'Codex creates its transcript at the first prompt',
+      'The transcript is created at the first prompt',
     )
     expect(screen.queryByTestId('unbound-badge')).not.toBeInTheDocument()
     expect(screen.queryByTestId('unbound-banner')).not.toBeInTheDocument()
