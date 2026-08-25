@@ -4,8 +4,9 @@ using Microsoft.Extensions.Logging;
 namespace Antiphon.SessionRunner;
 
 /// <summary>
-/// Herdr-lane <see cref="ISessionChild"/> (CARD-0160). Creates/ensures a workspace, allocates a
-/// quad-tab pane, starts claude via <c>agent.start</c>, and persists ids in <see cref="HerdrPaneSidecar"/>.
+/// Herdr-lane <see cref="ISessionChild"/> (CARD-0160 / CARD-0187). Creates/ensures a workspace,
+/// allocates a quad-tab pane, types a launch script (never <c>agent.start</c>), polls
+/// <c>pane.get.agent</c> for the expected kind, and persists ids in <see cref="HerdrPaneSidecar"/>.
 /// Input passthrough: Enter → <c>pane.send_keys</c>; everything else → <c>pane.send_text</c>.
 /// P3: never calls <c>tab.close</c> — herdr auto-removes empty tabs.
 /// </summary>
@@ -79,14 +80,9 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         _sessionId = request.SessionId;
         var opts = request.Herdr;
-
-        if (!string.Equals(Path.GetFileNameWithoutExtension(request.Exe), "claude", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(request.Exe, "claude", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning(
-                "Herdr lane: request.Exe={Exe} is not the stock claude launcher; herdr's agent manifest resolves the command (TUI-profile exe pinning does not carry into this lane).",
-                request.Exe);
-        }
+        var expectedKind = string.IsNullOrEmpty(opts.AgentKind)
+            ? HerdrAgentKinds.Claude
+            : opts.AgentKind;
 
         if (request.Cols != 120 || request.Rows != 30 || request.MemoryLimitMb != 0)
         {
@@ -107,30 +103,30 @@ internal sealed class HerdrPaneChild : ISessionChild
             title: opts.PaneTitle,
             ct);
 
-        // agent.start name must match [a-z][a-z0-9_-]{0,31}
-        var agentName = SanitizeAgentName(opts.PaneTitle);
-        await _client.AgentStartAsync(
-            agentName,
-            HerdrAgentKinds.Claude,
-            paneId,
-            request.Args,
-            timeoutMs: null,
-            ct);
+        var shellPid = await RequirePowerShellShellAsync(paneId, ct);
+
+        var scriptPath = HerdrLaunchScript.PathFor(_settings.SessionLogPath, request.SessionId);
+        HerdrLaunchScript.Write(scriptPath, request.Exe, request.Args);
+
+        var typed = HerdrLaunchScript.TypedCommand(scriptPath);
+        await _client.PaneSendTextAsync(paneId, typed, ct);
+        await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
+
+        await WaitForExpectedAgentAsync(paneId, expectedKind, ct);
 
         var launchedAt = DateTime.UtcNow;
         int? childPid = null;
-        int? shellPid = null;
         try
         {
             var proc = await _client.PaneProcessInfoAsync(paneId, ct);
-            shellPid = proc.ShellPid;
+            shellPid = proc.ShellPid ?? shellPid;
             childPid = proc.ForegroundProcesses?
                 .Select(p => (int?)p.Pid)
                 .FirstOrDefault();
         }
         catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
         {
-            _logger.LogWarning(ex, "Herdr pane.process_info failed after agent.start for session {SessionId}", request.SessionId);
+            _logger.LogWarning(ex, "Herdr pane.process_info failed after launch for session {SessionId}", request.SessionId);
         }
 
         _sidecar = new HerdrPaneSidecar
@@ -144,9 +140,12 @@ internal sealed class HerdrPaneChild : ISessionChild
             ShellPid = shellPid,
             LaunchedAtUtc = launchedAt,
             Cwd = request.Cwd,
+            AgentKind = expectedKind,
             UpdatedAtUtc = launchedAt,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+
+        TryDeleteLaunchScript(scriptPath);
 
         return new ChildStarted(childPid, HostPid: null, launchedAt);
     }
@@ -193,10 +192,12 @@ internal sealed class HerdrPaneChild : ISessionChild
         try
         {
             var proc = await _client.PaneProcessInfoAsync(_paneId, ct);
-            var unexpected = proc.ForegroundProcesses?
-                .Where(p => _sidecar?.ChildPid is not int child || p.Pid != child)
-                .Where(p => _sidecar?.ShellPid is not int shell || p.Pid != shell)
-                .ToList();
+            var unexpected = _sidecar is null
+                ? null
+                : proc.ForegroundProcesses?
+                    .Where(p => _sidecar.ChildPid is not int child || p.Pid != child)
+                    .Where(p => _sidecar.ShellPid is not int shell || p.Pid != shell)
+                    .ToList();
             if (unexpected is { Count: > 0 })
             {
                 var foreign = string.Join(",", unexpected.Select(p => p.Pid));
@@ -280,6 +281,86 @@ internal sealed class HerdrPaneChild : ISessionChild
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private async Task<int?> RequirePowerShellShellAsync(string paneId, CancellationToken ct)
+    {
+        HerdrPaneProcessInfo proc;
+        try
+        {
+            proc = await _client.PaneProcessInfoAsync(paneId, ct);
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            throw new HerdrLaunchException(
+                $"pane shell could not be read ({ex.Message}); set herdr default_shell or use PtyHost");
+        }
+
+        if (proc.ShellPid is not int shellPid || shellPid <= 0)
+        {
+            throw new HerdrLaunchException(
+                "pane shell is missing; set herdr default_shell or use PtyHost");
+        }
+
+        var name = _processLiveness.TryGetProcessName(shellPid);
+        if (!IsPowerShellProcessName(name))
+        {
+            throw new HerdrLaunchException(
+                $"pane shell '{name ?? $"pid {shellPid}"}' is not PowerShell; set herdr default_shell or use PtyHost");
+        }
+
+        return shellPid;
+    }
+
+    internal static bool IsPowerShellProcessName(string? name) =>
+        string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(name, "pwsh", StringComparison.OrdinalIgnoreCase);
+
+    private async Task WaitForExpectedAgentAsync(string paneId, string expectedKind, CancellationToken ct)
+    {
+        var timeoutMs = Math.Max(1, _client.Settings.LaunchDetectTimeoutMs);
+        var poll = TimeSpan.FromMilliseconds(250);
+        var started = DateTime.UtcNow;
+        string? detected = null;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var pane = await _client.PaneGetAsync(paneId, ct);
+            detected = pane.Agent;
+            if (string.Equals(detected, expectedKind, StringComparison.Ordinal))
+                return;
+            if (!string.IsNullOrEmpty(detected))
+            {
+                throw new HerdrLaunchException(
+                    $"herdr detected '{detected}' where '{expectedKind}' was expected");
+            }
+
+            var elapsed = DateTime.UtcNow - started;
+            if (elapsed.TotalMilliseconds >= timeoutMs)
+            {
+                throw new HerdrLaunchException(
+                    $"herdr did not detect agent kind '{expectedKind}' within {timeoutMs}ms (last observed: none)");
+            }
+
+            var remaining = TimeSpan.FromMilliseconds(timeoutMs) - elapsed;
+            var delay = remaining < poll ? remaining : poll;
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, ct);
+        }
+    }
+
+    private void TryDeleteLaunchScript(string scriptPath)
+    {
+        try
+        {
+            if (File.Exists(scriptPath))
+                File.Delete(scriptPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not delete herdr launch script {Path}", scriptPath);
+        }
+    }
 
     private async Task<string> EnsureWorkspaceAsync(HerdrLaunchOptions opts, CancellationToken ct)
     {

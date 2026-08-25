@@ -18,6 +18,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     private SessionRunnerRuntime _runtime;
     private readonly Antiphon.SessionRunner.SessionRunnerSettings _runnerSettings;
     private readonly HerdrClient? _herdrClient;
+    private readonly IProcessLivenessProbe? _processLiveness;
     private readonly bool _codexTranscript;
     private readonly bool _claudeTranscript;
 
@@ -57,16 +58,22 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// CARD-0168 S5: when non-null, herdr-backend launches on this in-proc runtime talk to this
     /// client (live herdr or FakeHerdrServer). Null keeps the pre-herdr pty-host-only runtime.
     /// </param>
+    /// <param name="processLiveness">
+    /// CARD-0187: FakeHerdrServer's shell_pid is not a real process — tests against the fake
+    /// pass a probe that names it PowerShell. Live herdr keeps the system probe (real pid).
+    /// </param>
     public DirectSessionRunnerClient(
         string sessionLogPath,
         string? ptyBackend = null,
         bool codexTranscript = false,
         bool claudeTranscript = false,
-        HerdrClient? herdrClient = null)
+        HerdrClient? herdrClient = null,
+        IProcessLivenessProbe? processLiveness = null)
     {
         _codexTranscript = codexTranscript;
         _claudeTranscript = claudeTranscript;
         _herdrClient = herdrClient;
+        _processLiveness = processLiveness;
         _runnerSettings = new Antiphon.SessionRunner.SessionRunnerSettings
         {
             SessionLogPath = sessionLogPath,
@@ -96,7 +103,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         new(
             Options.Create(_runnerSettings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            _herdrClient);
+            _herdrClient,
+            _processLiveness);
 
     public async Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
     {

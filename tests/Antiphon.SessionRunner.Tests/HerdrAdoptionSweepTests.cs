@@ -48,6 +48,43 @@ public class HerdrAdoptionSweepTests
     }
 
     [Test]
+    [Arguments(TranscriptFormats.Grok, HerdrAgentKinds.Grok)]
+    [Arguments(TranscriptFormats.Codex, HerdrAgentKinds.Codex)]
+    public async Task R1_readopt_restores_the_sidecars_format(string format, string herdrKind)
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = herdrKind;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using (var runtimeA = BuildRuntime(settings, fake))
+        {
+            await StartHerdrSessionAsync(
+                runtimeA, sessionId, settings.SessionLogPath,
+                transcriptEnabled: true, transcriptFormat: format, agentKind: herdrKind);
+        }
+
+        var before = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, sessionId));
+        before.ShouldNotBeNull();
+        before!.Format.ShouldBe(format);
+
+        await using var runtimeB = BuildRuntime(settings, fake);
+        await runtimeB.AdoptOrphanedHostsAsync(new StubProbe(alive: true), CancellationToken.None);
+
+        var dto = runtimeB.Get(sessionId);
+        dto.Status.ShouldBe("Running");
+        dto.Adopted.ShouldBeTrue();
+        var after = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, sessionId));
+        after.ShouldNotBeNull();
+        after!.Format.ShouldBe(format);
+
+        await runtimeB.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
     public async Task R2_restored_empty_pane_with_os_dead_is_RestartPresumedDead()
     {
         // P7: this is the measured herdr-restart shape — pane id answers, new shell, Claude dead.
@@ -419,7 +456,8 @@ public class HerdrAdoptionSweepTests
         new(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
 
     private static SessionRunnerSettings BuildSettings() => new()
     {
@@ -428,24 +466,31 @@ public class HerdrAdoptionSweepTests
     };
 
     private static async Task StartHerdrSessionAsync(
-        SessionRunnerRuntime runtime, Guid sessionId, string cwd)
+        SessionRunnerRuntime runtime,
+        Guid sessionId,
+        string cwd,
+        bool transcriptEnabled = false,
+        string? transcriptFormat = null,
+        string? agentKind = null)
     {
         var dto = await runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
-                "claude",
+                agentKind ?? "claude",
                 ["--dangerously-skip-permissions"],
                 new Dictionary<string, string>(),
                 cwd,
                 Cols: 120,
                 Rows: 30,
-                TranscriptEnabled: false,
+                TranscriptEnabled: transcriptEnabled,
+                TranscriptFormat: transcriptFormat,
                 Backend: SessionBackends.Herdr,
                 Herdr: new HerdrLaunchOptions(
                     WorkspaceKey: $"test-{sessionId:N}"[..32],
                     WorkspaceLabel: "card0186-adopt",
                     WorkspaceCwd: cwd,
-                    PaneTitle: "card0186-adopt")),
+                    PaneTitle: "card0186-adopt",
+                    AgentKind: agentKind)),
             CancellationToken.None);
         dto.Status.ShouldBe("Running");
     }
@@ -548,8 +593,9 @@ public class HerdrAdoptionSweepTests
         }
     }
 
-    private sealed class StubProbe(bool alive) : IProcessLivenessProbe
+    private sealed class StubProbe(bool alive, string processName = "powershell") : IProcessLivenessProbe
     {
         public bool IsAlive(int pid, DateTime startedAt) => alive;
+        public string? TryGetProcessName(int pid) => processName;
     }
 }

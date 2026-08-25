@@ -11,6 +11,12 @@ public interface IProcessLivenessProbe
     /// <param name="pid">The session's recorded process id.</param>
     /// <param name="startedAt">When the session's process was started (UTC), used to detect PID reuse.</param>
     bool IsAlive(int pid, DateTime startedAt);
+
+    /// <summary>
+    /// CARD-0187: process name without extension (<c>powershell</c> / <c>pwsh</c> / <c>cmd</c>),
+    /// or <see langword="null"/> if the pid is gone or unreadable.
+    /// </summary>
+    string? TryGetProcessName(int pid);
 }
 
 public sealed class SystemProcessLivenessProbe : IProcessLivenessProbe
@@ -43,6 +49,30 @@ public sealed class SystemProcessLivenessProbe : IProcessLivenessProbe
         catch (Exception)
         {
             return true; // access denied etc. — assume alive rather than kill state on a guess
+        }
+    }
+
+    public string? TryGetProcessName(int pid)
+    {
+        if (pid <= 0)
+            return null;
+
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.HasExited ? null : process.ProcessName;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 }

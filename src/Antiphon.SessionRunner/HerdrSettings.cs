@@ -29,4 +29,11 @@ public sealed class HerdrSettings
 
     /// <summary>CARD-0162: upper bound (seconds) for the event-pump reconnect backoff.</summary>
     public int EventsReconnectMaxSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// CARD-0187: bound on polling <c>pane.get.agent</c> after typing the launch script, until
+    /// herdr's passive detection reports the expected kind. Default 60 s (K1 4.4 s, K5 under 10 s;
+    /// CARD-0195's Codex MCP boot is the outlier and is measured by S3/K9).
+    /// </summary>
+    public int LaunchDetectTimeoutMs { get; set; } = 60_000;
 }

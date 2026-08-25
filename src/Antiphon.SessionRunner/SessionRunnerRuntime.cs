@@ -124,6 +124,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (useHerdr && _herdrClient is null)
             throw new HerdrBackendUnavailableException(
                 "Herdr backend is not available in this runner process (HerdrClient was not registered).");
+        if (useHerdr && !HerdrAgentKinds.IsSupported(request.Herdr!.AgentKind))
+        {
+            throw new ArgumentException(
+                $"Unsupported herdr agent kind '{request.Herdr.AgentKind}'. Supported: {string.Join(", ", HerdrAgentKinds.Supported)}.",
+                nameof(request));
+        }
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
         if (!_sessions.TryAdd(request.SessionId, session))
@@ -998,8 +1004,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     SessionRunnerEventNames.SessionStarted,
                     new RunnerSessionStartedEvent(_sessionId, _childPid, _startedAt));
 
-                // Same transcript binding as pty — S1 proved herdr-launched Claude writes cwd-keyed JSONL.
-                StartTranscriptTailer(request, started.ChildStartUtc);
+                // Same transcript binding as pty — format selected from request.TranscriptFormat
+                // (CARD-0187: herdr no longer forces Claude).
+                StartTailerFor(request, started.ChildStartUtc);
             }
             catch
             {
@@ -1016,37 +1023,94 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
         }
 
-        private void StartTranscriptTailer(RunnerLaunchRequest request, DateTime childStartUtc)
+        /// <summary>
+        /// CARD-0187: same tailer selection the pty lane uses, now shared with herdr so a Grok/Codex
+        /// herdr launch does not force <see cref="TranscriptFormats.Claude"/>.
+        /// </summary>
+        private void StartTailerFor(RunnerLaunchRequest request, DateTime childStartUtc)
         {
             if (!request.TranscriptEnabled)
                 return;
 
-            // Herdr S2 only spikes Claude (plan §7). Other formats stay on the pty-host lane.
-            var agentName = FindArgValue(request.Args, "--name");
-            var resumeLaunch = IsResumeLaunch(request.Args);
-            SaveSidecar(new TranscriptSidecar
+            var transcriptTailer = request.TranscriptFormat is { } requestedFormat
+                ? TryResolveTranscriptTailer(requestedFormat, out var resolvedTailer)
+                    ? resolvedTailer
+                    : throw new UnsupportedTranscriptFormatException(requestedFormat, SupportedTranscriptFormats)
+                : TranscriptTailerKind.Claude;
+            if (transcriptTailer == TranscriptTailerKind.Grok)
             {
-                SessionId = _sessionId,
-                Cwd = request.Cwd,
-                AgentName = agentName,
-                ChildStartUtc = childStartUtc,
-                ResumeLaunch = resumeLaunch,
-                TranscriptPath = null,
-                How = null,
-                Format = TranscriptFormats.Claude,
-            });
+                // Grok's transcript path is DETERMINISTIC (we pass --session-id and grok
+                // honours it — measured 1.0.5, CARD-0080 S1; CARD-0187 K1: the dir exists on
+                // herdr before the first prompt), so the sidecar records the bound path up
+                // front and none of the Claude discovery/claim machinery runs.
+                var updatesPath = GrokTranscriptTailer.ResolveUpdatesPath(
+                    request.Env, request.Cwd, _sessionId);
+                SaveSidecar(new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = request.Cwd,
+                    ChildStartUtc = childStartUtc,
+                    ResumeLaunch = IsResumeLaunch(request.Args),
+                    TranscriptPath = updatesPath,
+                    How = TranscriptBindMethods.Deterministic,
+                    Format = TranscriptFormats.Grok,
+                });
 
-            _tailer = new TranscriptTailer(
-                _sessionId, request.Cwd, _events, _logger,
-                claims: _transcriptClaims,
-                inputLog: _inputLog,
-                childStartUtc: childStartUtc,
-                agentName: agentName,
-                resumeLaunch: resumeLaunch,
-                onBound: RecordTranscriptBinding,
-                onUnbound: RecordTranscriptUnbinding,
-                knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
-            _tailer.Start();
+                _tailer = new GrokTranscriptTailer(
+                    _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
+                _tailer.Start();
+            }
+            else if (transcriptTailer == TranscriptTailerKind.Codex)
+            {
+                SaveSidecar(new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = request.Cwd,
+                    ChildStartUtc = childStartUtc,
+                    ResumeLaunch = IsCodexResumeLaunch(request.Args),
+                    TranscriptPath = null,
+                    How = null,
+                    Format = TranscriptFormats.Codex,
+                });
+
+                _tailer = new CodexTranscriptTailer(
+                    _sessionId, request.Cwd, _events, _logger,
+                    claims: _transcriptClaims,
+                    inputLog: _inputLog,
+                    childStartUtc: childStartUtc,
+                    resumeLaunch: IsCodexResumeLaunch(request.Args),
+                    sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
+                    onBound: RecordTranscriptBinding,
+                    onUnbound: RecordTranscriptUnbinding);
+                _tailer.Start();
+            }
+            else
+            {
+                var agentName = FindArgValue(request.Args, "--name");
+                var resumeLaunch = IsResumeLaunch(request.Args);
+                SaveSidecar(new TranscriptSidecar
+                {
+                    SessionId = _sessionId,
+                    Cwd = request.Cwd,
+                    AgentName = agentName,
+                    ChildStartUtc = childStartUtc,
+                    ResumeLaunch = resumeLaunch,
+                    TranscriptPath = null,
+                    How = null,
+                });
+
+                _tailer = new TranscriptTailer(
+                    _sessionId, request.Cwd, _events, _logger,
+                    claims: _transcriptClaims,
+                    inputLog: _inputLog,
+                    childStartUtc: childStartUtc,
+                    agentName: agentName,
+                    resumeLaunch: resumeLaunch,
+                    onBound: RecordTranscriptBinding,
+                    onUnbound: RecordTranscriptUnbinding,
+                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
+                _tailer.Start();
+            }
         }
 
         public async Task StartAsync(RunnerLaunchRequest request, PtyHostLauncher launcher, CancellationToken ct)
@@ -1118,93 +1182,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     await _client.AttachAsync(resync.LastSeq, ct);
                 }
 
-                var transcriptTailer = request.TranscriptFormat is { } requestedFormat
-                    ? TryResolveTranscriptTailer(requestedFormat, out var resolvedTailer)
-                        ? resolvedTailer
-                        : throw new UnsupportedTranscriptFormatException(requestedFormat, SupportedTranscriptFormats)
-                    : TranscriptTailerKind.Claude;
-                if (request.TranscriptEnabled && transcriptTailer == TranscriptTailerKind.Grok)
-                {
-                    // Grok's transcript path is DETERMINISTIC (we pass --session-id and grok
-                    // honours it — measured 1.0.5, CARD-0080 S1), so the sidecar records the bound
-                    // path up front and none of the Claude discovery/claim machinery runs. A
-                    // restart re-tails this exact file via the sidecar's Format + TranscriptPath.
-                    var updatesPath = GrokTranscriptTailer.ResolveUpdatesPath(
-                        request.Env, request.Cwd, _sessionId);
-                    SaveSidecar(new TranscriptSidecar
-                    {
-                        SessionId = _sessionId,
-                        Cwd = request.Cwd,
-                        ChildStartUtc = _startedAt,
-                        ResumeLaunch = IsResumeLaunch(request.Args),
-                        TranscriptPath = updatesPath,
-                        How = TranscriptBindMethods.Deterministic,
-                        Format = TranscriptFormats.Grok,
-                    });
-
-                    _tailer = new GrokTranscriptTailer(
-                        _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
-                    _tailer.Start();
-                }
-                else if (request.TranscriptEnabled && transcriptTailer == TranscriptTailerKind.Codex)
-                {
-                    // Codex's rollout path is NOT deterministic — there is no --session-id flag and
-                    // the TUI never prints its id (CARD-0099 S1) — so this runs the same CARD-0006
-                    // discovery Claude does, over CODEX_HOME/sessions instead. The sidecar records
-                    // the facts a restart needs to judge candidates, and TranscriptPath is filled in
-                    // by the onBound callback once a rollout is positively identified.
-                    SaveSidecar(new TranscriptSidecar
-                    {
-                        SessionId = _sessionId,
-                        Cwd = request.Cwd,
-                        ChildStartUtc = _startedAt,
-                        ResumeLaunch = IsCodexResumeLaunch(request.Args),
-                        TranscriptPath = null,
-                        How = null,
-                        Format = TranscriptFormats.Codex,
-                    });
-
-                    _tailer = new CodexTranscriptTailer(
-                        _sessionId, request.Cwd, _events, _logger,
-                        claims: _transcriptClaims,
-                        inputLog: _inputLog,
-                        childStartUtc: _startedAt,
-                        resumeLaunch: IsCodexResumeLaunch(request.Args),
-                        sessionsRoot: CodexTranscriptTailer.ResolveSessionsRoot(request.Env),
-                        onBound: RecordTranscriptBinding,
-                        onUnbound: RecordTranscriptUnbinding);
-                    _tailer.Start();
-                }
-                else if (request.TranscriptEnabled)
-                {
-                    // The sidecar is written BEFORE the tailer runs, so even a session that never
-                    // binds a transcript leaves behind the facts (cwd, agent name, child start) a
-                    // restart needs to judge candidates.
-                    var agentName = FindArgValue(request.Args, "--name");
-                    var resumeLaunch = IsResumeLaunch(request.Args);
-                    SaveSidecar(new TranscriptSidecar
-                    {
-                        SessionId = _sessionId,
-                        Cwd = request.Cwd,
-                        AgentName = agentName,
-                        ChildStartUtc = _startedAt,
-                        ResumeLaunch = resumeLaunch,
-                        TranscriptPath = null,
-                        How = null,
-                    });
-
-                    _tailer = new TranscriptTailer(
-                        _sessionId, request.Cwd, _events, _logger,
-                        claims: _transcriptClaims,
-                        inputLog: _inputLog,
-                        childStartUtc: _startedAt,
-                        agentName: agentName,
-                        resumeLaunch: resumeLaunch,
-                        onBound: RecordTranscriptBinding,
-                        onUnbound: RecordTranscriptUnbinding,
-                        knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
-                    _tailer.Start();
-                }
+                StartTailerFor(request, _startedAt);
             }
             catch
             {
@@ -1310,63 +1288,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 var sidecar = TranscriptSidecar.TryLoad(
                     TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
                 var cwd = manifest.Cwd ?? sidecar?.Cwd ?? "";
-
-                // A Grok sidecar re-tails the same deterministic file — no discovery, no shim. The
-                // sidecar always exists for a Grok session (written before the tailer at launch);
-                // a missing TranscriptPath (hand-edited sidecar) recomputes it from cwd + id, with
-                // this process's GROK_HOME standing in for the launch env the manifest never keeps.
-                if (string.Equals(sidecar?.Format, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
-                {
-                    _sidecar = sidecar;
-                    var updatesPath = sidecar!.TranscriptPath
-                        ?? GrokTranscriptTailer.ResolveUpdatesPath(null, cwd, _sessionId);
-                    _tailer = new GrokTranscriptTailer(
-                        _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
-                    _tailer.Start();
-                    return true;
-                }
-
-                // A Codex sidecar re-tails the recorded rollout directly. If the session never
-                // bound one before the restart, discovery runs again — and correctly finds nothing,
-                // because the input log is empty after a restart so C4 cannot be satisfied until
-                // new input arrives. That is the same conservative outcome the Claude path has:
-                // running unbound is a fault to report, never a reason to relax the rules.
-                if (string.Equals(sidecar?.Format, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
-                {
-                    _sidecar = sidecar;
-                    _tailer = new CodexTranscriptTailer(
-                        _sessionId, cwd, _events, _logger,
-                        claims: _transcriptClaims,
-                        inputLog: _inputLog,
-                        childStartUtc: manifest.ChildStartTimeUtc ?? sidecar!.ChildStartUtc,
-                        resumeLaunch: sidecar!.ResumeLaunch,
-                        knownTranscriptPath: sidecar.TranscriptPath,
-                        onBound: RecordTranscriptBinding,
-                        onUnbound: RecordTranscriptUnbinding);
-                    _tailer.Start();
-                    return true;
-                }
-                // A session that predates sidecars has none to load; seed one from the manifest so
-                // this restart is the last one that has to fall back to the migration shim.
-                _sidecar = sidecar ?? new TranscriptSidecar
-                {
-                    SessionId = _sessionId,
-                    Cwd = cwd,
-                    ChildStartUtc = manifest.ChildStartTimeUtc,
-                };
-
-                _tailer = new TranscriptTailer(
-                    _sessionId, cwd, _events, _logger,
-                    claims: _transcriptClaims,
-                    inputLog: _inputLog,
-                    childStartUtc: manifest.ChildStartTimeUtc ?? sidecar?.ChildStartUtc,
-                    agentName: sidecar?.AgentName,
-                    resumeLaunch: sidecar?.ResumeLaunch ?? false,
-                    knownTranscriptPath: sidecar?.TranscriptPath,
-                    onBound: RecordTranscriptBinding,
-                    onUnbound: RecordTranscriptUnbinding,
-                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
-                _tailer.Start();
+                RestoreTailerFromSidecar(sidecar, cwd, manifest.ChildStartTimeUtc ?? sidecar?.ChildStartUtc);
             }
 
             return true;
@@ -1630,22 +1552,69 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 SessionRunnerEventNames.SessionAdopted,
                 new RunnerSessionAdoptedEvent(_sessionId, _childPid, _startedAt, LastSequence: 0));
 
-            // Re-tail via existing TranscriptSidecar if present.
+            // Re-tail via existing TranscriptSidecar if present — format from the sidecar, not Claude.
             var transcript = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(_settings.SessionLogPath, _sessionId));
-            if (transcript?.TranscriptPath is { } path)
+            if (transcript is not null)
             {
-                _tailer = new TranscriptTailer(
-                    _sessionId, transcript.Cwd ?? sidecar.Cwd ?? "", _events, _logger,
+                RestoreTailerFromSidecar(
+                    transcript,
+                    transcript.Cwd ?? sidecar.Cwd ?? "",
+                    transcript.ChildStartUtc ?? sidecar.LaunchedAtUtc);
+            }
+        }
+
+        /// <summary>
+        /// CARD-0187: the pty adopt switch, extracted so herdr re-adopt restores Grok/Codex too.
+        /// No sidecar / no path ⇒ Claude discovery under sidecar rules (same as pty).
+        /// </summary>
+        private void RestoreTailerFromSidecar(TranscriptSidecar? sidecar, string cwd, DateTime? childStartUtc)
+        {
+            if (string.Equals(sidecar?.Format, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
+            {
+                _sidecar = sidecar;
+                var updatesPath = sidecar!.TranscriptPath
+                    ?? GrokTranscriptTailer.ResolveUpdatesPath(null, cwd, _sessionId);
+                _tailer = new GrokTranscriptTailer(
+                    _sessionId, updatesPath, _events, _logger, inputLog: _inputLog);
+                _tailer.Start();
+                return;
+            }
+
+            if (string.Equals(sidecar?.Format, TranscriptFormats.Codex, StringComparison.OrdinalIgnoreCase))
+            {
+                _sidecar = sidecar;
+                _tailer = new CodexTranscriptTailer(
+                    _sessionId, cwd, _events, _logger,
                     claims: _transcriptClaims,
                     inputLog: _inputLog,
-                    childStartUtc: transcript.ChildStartUtc ?? sidecar.LaunchedAtUtc,
-                    agentName: transcript.AgentName,
-                    resumeLaunch: transcript.ResumeLaunch,
+                    childStartUtc: childStartUtc ?? sidecar!.ChildStartUtc,
+                    resumeLaunch: sidecar!.ResumeLaunch,
+                    knownTranscriptPath: sidecar.TranscriptPath,
                     onBound: RecordTranscriptBinding,
-                    onUnbound: RecordTranscriptUnbinding,
-                    knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
+                    onUnbound: RecordTranscriptUnbinding);
                 _tailer.Start();
+                return;
             }
+
+            _sidecar = sidecar ?? new TranscriptSidecar
+            {
+                SessionId = _sessionId,
+                Cwd = cwd,
+                ChildStartUtc = childStartUtc,
+            };
+
+            _tailer = new TranscriptTailer(
+                _sessionId, cwd, _events, _logger,
+                claims: _transcriptClaims,
+                inputLog: _inputLog,
+                childStartUtc: childStartUtc ?? sidecar?.ChildStartUtc,
+                agentName: sidecar?.AgentName,
+                resumeLaunch: sidecar?.ResumeLaunch ?? false,
+                knownTranscriptPath: sidecar?.TranscriptPath,
+                onBound: RecordTranscriptBinding,
+                onUnbound: RecordTranscriptUnbinding,
+                knownSessions: new SidecarKnownSessionProbe(_settings.SessionLogPath));
+            _tailer.Start();
         }
 
         private void RebuildInterpretationFromAnsiLog(long lastSeq)

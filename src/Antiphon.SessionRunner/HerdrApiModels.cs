@@ -10,12 +10,6 @@ public static class HerdrSources
     public const string Antiphon = "antiphon";
 }
 
-/// <summary>Agent-manifest kind string for Claude Code (live probe P4).</summary>
-public static class HerdrAgentKinds
-{
-    public const string Claude = "claude";
-}
-
 public sealed record HerdrWorkspaceInfo(
     [property: JsonPropertyName("workspace_id")] string WorkspaceId,
     [property: JsonPropertyName("label")] string Label,

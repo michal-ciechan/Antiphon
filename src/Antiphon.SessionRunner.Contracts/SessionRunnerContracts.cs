@@ -42,7 +42,10 @@ public sealed record HerdrLaunchOptions(
     // workspace.create cwd — project.LocalRepositoryPath; null for the catch-all workspace.
     string? WorkspaceCwd,
     // pane.rename label — the agent/definition name the operator should see on the pane.
-    string PaneTitle);
+    string PaneTitle,
+    // Herdr agent-manifest kind (see <see cref="HerdrAgentKinds"/>). Null keeps the pre-CARD-0187
+    // meaning of "claude" so a new runner in front of an old server behaves exactly as today.
+    string? AgentKind = null);
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
 public static class TranscriptFormats

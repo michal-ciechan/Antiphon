@@ -27,6 +27,8 @@ public sealed class HerdrClient
         _settings = settings;
     }
 
+    internal HerdrSettings Settings => _settings;
+
     /// <summary>Resolves Herdr's documented session/socket precedence to the Windows pipe name.</summary>
     public string ResolveSocketPath()
     {
@@ -560,4 +562,10 @@ public sealed class HerdrApiException : Exception
 public sealed class HerdrBackendUnavailableException : Exception
 {
     public HerdrBackendUnavailableException(string message, Exception? innerException = null) : base(message, innerException) { }
+}
+
+/// <summary>CARD-0187: herdr-lane launch failed (wrong kind, detection timeout, non-PowerShell shell).</summary>
+public sealed class HerdrLaunchException : Exception
+{
+    public HerdrLaunchException(string message) : base(message) { }
 }

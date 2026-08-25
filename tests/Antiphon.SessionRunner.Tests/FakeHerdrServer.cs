@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 
 namespace Antiphon.SessionRunner.Tests;
@@ -46,6 +47,16 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// (<c>\\x15</c>) clears it. Default off — existing tests script the screen themselves.
     /// </summary>
     public bool EchoSendTextToScreen { get; set; }
+
+    /// <summary>
+    /// CARD-0187: kind <c>pane.send_text</c> of <c>&amp; '&lt;x&gt;.launch.ps1'</c> stamps on the pane
+    /// after <see cref="LaunchScriptDetectDelayMs"/>. Null = never detect (timeout seam). Default
+    /// claude so existing CARD-0160/0164/0186 tests keep passing.
+    /// </summary>
+    public string? LaunchScriptAgentKind { get; set; } = HerdrAgentKinds.Claude;
+
+    /// <summary>CARD-0187: delay before the launch-script send_text is reflected in pane.agent.</summary>
+    public int LaunchScriptDetectDelayMs { get; set; }
 
     public FakeHerdrServer(string? session = null)
     {
@@ -442,6 +453,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private string PaneGetJson(JsonElement parameters)
     {
         var (_, _, pane) = RequirePane(parameters.GetProperty("pane_id").GetString()!);
+        ApplyLaunchDetection(pane);
         return $"{{\"type\":\"pane_info\",\"pane\":{PaneJson(pane)}}}";
     }
 
@@ -478,6 +490,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     {
         var paneId = parameters.GetProperty("pane_id").GetString()!;
         var (_, _, pane) = RequirePane(paneId);
+        ApplyLaunchDetection(pane);
         int? shellPid;
         string foregroundJson;
         if (pane.ForegroundOverride is { } fg)
@@ -486,11 +499,19 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             foregroundJson = string.Join(",", fg.Select(p =>
                 $"{{\"pid\":{p.Pid},\"name\":{JsonSerializer.Serialize(p.Name)},\"argv\":[{JsonSerializer.Serialize(p.Name)}],\"cwd\":\"C:\\\\src\"}}"));
         }
+        else if (pane.Agent is not null)
+        {
+            // Probe K5/K6/K7: after detection the foreground list is the child (leaf under a
+            // wrapper, cmd.exe for a .cmd launcher). Empty before detection (K8).
+            shellPid = pane.ShellPidOverride ?? 4242;
+            var childName = pane.Agent + ".exe";
+            foregroundJson =
+                $"{{\"pid\":4243,\"name\":{JsonSerializer.Serialize(childName)},\"argv\":[{JsonSerializer.Serialize(pane.Agent)}],\"cwd\":\"C:\\\\src\"}}";
+        }
         else
         {
-            shellPid = 4242;
-            foregroundJson =
-                """{"pid":4243,"name":"claude.exe","argv":["claude"],"cwd":"C:\\src"}""";
+            shellPid = pane.ShellPidOverride ?? 4242;
+            foregroundJson = "";
         }
 
         var shellJson = shellPid is int s ? s.ToString() : "null";
@@ -500,17 +521,54 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
     private string PaneSendTextJson(JsonElement parameters)
     {
+        var paneId = parameters.GetProperty("pane_id").GetString()!;
+        var text = parameters.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+        var (_, _, pane) = RequirePane(paneId);
+        if (IsLaunchScriptInvocation(text))
+        {
+            pane.LaunchDetectKind = LaunchScriptAgentKind;
+            pane.LaunchDetectAtUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(0, LaunchScriptDetectDelayMs));
+            ApplyLaunchDetection(pane);
+        }
+
         if (EchoSendTextToScreen)
         {
-            var paneId = parameters.GetProperty("pane_id").GetString()!;
-            var text = parameters.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-            var (_, _, pane) = RequirePane(paneId);
             // Ctrl+U kill-line — ComposerInputProbe.KillLine. Anything else replaces the visible
             // composer the way a typed body does.
             pane.ScreenText = text == "\u0015" ? "" : text;
         }
 
         return OkJson();
+    }
+
+    /// <summary>
+    /// CARD-0187: detect the typed launch line without referencing internal
+    /// <c>HerdrLaunchScript</c> (this file is also compiled into Antiphon.Tests).
+    /// </summary>
+    private static bool IsLaunchScriptInvocation(string text)
+    {
+        const string prefix = "& '";
+        if (text.Length < prefix.Length + 1
+            || !text.StartsWith(prefix, StringComparison.Ordinal)
+            || text[^1] != '\'')
+            return false;
+        var inner = text[prefix.Length..^1].Replace("''", "'", StringComparison.Ordinal);
+        return inner.EndsWith(".launch.ps1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ApplyLaunchDetection(PaneState pane)
+    {
+        if (pane.Agent is not null)
+            return;
+        if (pane.LaunchDetectAtUtc is not DateTime at)
+            return;
+        if (DateTime.UtcNow < at)
+            return;
+        if (pane.LaunchDetectKind is not { } kind)
+            return;
+
+        pane.Agent = kind;
+        pane.ScreenText ??= $"agent:{kind} env={FormatEnv(pane.Env)}";
     }
 
     private string PaneReadJson(JsonElement parameters)
@@ -764,9 +822,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public List<string>? ScreenTextQueue { get; set; }
         /// <summary>Sticky by default (CARD-0164) — only moves via <c>SetPaneRevision</c>.</summary>
         public long Revision { get; set; }
-        /// <summary>CARD-0186: null = default 4242/4243 pair; set via <c>SetPaneProcessInfo</c>.</summary>
+        /// <summary>CARD-0186: null = default 4242 (+ child after agent detect); set via <c>SetPaneProcessInfo</c>.</summary>
         public int? ShellPidOverride { get; set; }
         public List<(int Pid, string Name)>? ForegroundOverride { get; set; }
+        /// <summary>CARD-0187: kind the launch-script send_text will stamp, once due.</summary>
+        public string? LaunchDetectKind { get; set; }
+        public DateTime? LaunchDetectAtUtc { get; set; }
     }
 
     internal sealed record AgentSessionState(string Source, string Agent, string Kind, string Value);

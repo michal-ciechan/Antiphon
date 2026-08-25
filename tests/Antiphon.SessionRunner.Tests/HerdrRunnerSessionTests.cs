@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -24,7 +25,8 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
         await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
@@ -61,7 +63,8 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
         await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
@@ -90,7 +93,8 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
         await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
@@ -135,7 +139,8 @@ public class HerdrRunnerSessionTests
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(settings),
             NullLogger<SessionRunnerRuntime>.Instance,
-            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }));
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
 
         var sessionId = Guid.NewGuid();
         await StartHerdrSessionAsync(runtime, sessionId, settings.SessionLogPath);
@@ -192,6 +197,106 @@ public class HerdrRunnerSessionTests
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), CancellationToken.None);
     }
 
+    [Test]
+    public async Task Grok_request_starts_GrokTranscriptTailer_with_deterministic_sidecar()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Grok;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+
+        var settings = BuildSettings();
+        var grokHome = Path.Combine(settings.SessionLogPath, "grok-home");
+        Directory.CreateDirectory(grokHome);
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(settings),
+            NullLogger<SessionRunnerRuntime>.Instance,
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
+
+        var sessionId = Guid.NewGuid();
+        var cwd = settings.SessionLogPath;
+        var dto = await runtime.StartAsync(
+            new RunnerLaunchRequest(
+                sessionId,
+                "grok",
+                ["--no-alt-screen", "--always-approve", "--session-id", sessionId.ToString("D")],
+                new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
+                cwd,
+                Cols: 120,
+                Rows: 30,
+                TranscriptEnabled: true,
+                TranscriptFormat: TranscriptFormats.Grok,
+                Backend: SessionBackends.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    WorkspaceKey: $"test-{sessionId:N}"[..32],
+                    WorkspaceLabel: "card0187-grok",
+                    WorkspaceCwd: cwd,
+                    PaneTitle: "card0187-grok",
+                    AgentKind: HerdrAgentKinds.Grok)),
+            CancellationToken.None);
+        dto.Status.ShouldBe("Running");
+
+        var sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, sessionId));
+        sidecar.ShouldNotBeNull();
+        sidecar!.Format.ShouldBe(TranscriptFormats.Grok);
+        sidecar.How.ShouldBe(TranscriptBindMethods.Deterministic);
+        sidecar.TranscriptPath.ShouldBe(
+            GrokTranscriptTailer.ResolveUpdatesPath(
+                new Dictionary<string, string> { ["GROK_HOME"] = grokHome }, cwd, sessionId));
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        TryDeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Codex_request_starts_CodexTranscriptTailer()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Codex;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+
+        var settings = BuildSettings();
+        var sessionsRoot = Path.Combine(settings.SessionLogPath, "codex-home", "sessions");
+        Directory.CreateDirectory(sessionsRoot);
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(settings),
+            NullLogger<SessionRunnerRuntime>.Instance,
+            new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session }),
+            new PowershellProcessProbe());
+
+        var sessionId = Guid.NewGuid();
+        var cwd = settings.SessionLogPath;
+        var dto = await runtime.StartAsync(
+            new RunnerLaunchRequest(
+                sessionId,
+                "codex.cmd",
+                ["--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox"],
+                new Dictionary<string, string> { ["CODEX_HOME"] = Path.Combine(settings.SessionLogPath, "codex-home") },
+                cwd,
+                Cols: 120,
+                Rows: 30,
+                TranscriptEnabled: true,
+                TranscriptFormat: TranscriptFormats.Codex,
+                Backend: SessionBackends.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    WorkspaceKey: $"test-{sessionId:N}"[..32],
+                    WorkspaceLabel: "card0187-codex",
+                    WorkspaceCwd: cwd,
+                    PaneTitle: "card0187-codex",
+                    AgentKind: HerdrAgentKinds.Codex)),
+            CancellationToken.None);
+        dto.Status.ShouldBe("Running");
+
+        var sidecar = TranscriptSidecar.TryLoad(TranscriptSidecar.PathFor(settings.SessionLogPath, sessionId));
+        sidecar.ShouldNotBeNull();
+        sidecar!.Format.ShouldBe(TranscriptFormats.Codex);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        TryDeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static SessionRunnerSettings BuildSettings() => new()
     {
         SessionLogPath = Path.Combine(Path.GetTempPath(), $"antiphon-herdr-runner-tests-{Guid.NewGuid():N}"),
@@ -219,5 +324,18 @@ public class HerdrRunnerSessionTests
                     PaneTitle: "card0164-test")),
             CancellationToken.None);
         dto.Status.ShouldBe("Running");
+    }
+
+    private static void TryDeleteLogRoot(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // Best-effort.
+        }
     }
 }

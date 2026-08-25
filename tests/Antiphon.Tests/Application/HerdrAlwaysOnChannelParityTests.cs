@@ -423,7 +423,8 @@ public class HerdrAlwaysOnChannelParityTests
             }));
             runner = new DirectSessionRunnerClient(
                 Path.Combine(tempRoot, "session-logs"),
-                herdrClient: herdrClient);
+                herdrClient: herdrClient,
+                processLiveness: new FakeHerdrPowershellProbe());
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<IAgentProtocolAdapterFactory>(sp =>
                 new AgentProtocolAdapterFactory(
@@ -543,6 +544,12 @@ public class HerdrAlwaysOnChannelParityTests
             Scope.Dispose();
             await Provider.DisposeAsync();
         }
+    }
+
+    private sealed class FakeHerdrPowershellProbe : IProcessLivenessProbe
+    {
+        public bool IsAlive(int pid, DateTime startedAt) => true;
+        public string? TryGetProcessName(int pid) => "powershell";
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider

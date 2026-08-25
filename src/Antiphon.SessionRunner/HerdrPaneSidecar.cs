@@ -20,13 +20,15 @@ public sealed record HerdrPaneSidecar
     public required string WorkspaceId { get; init; }
     public required string TabId { get; init; }
     public required string PaneId { get; init; }
-    /// <summary>Claude's pid from pane.process_info after agent.start.</summary>
+    /// <summary>The agent child's pid from pane.process_info after launch (leaf under a wrapper, <c>cmd.exe</c> for a <c>.cmd</c> launcher).</summary>
     public int? ChildPid { get; init; }
     /// <summary>The pane's shell pid, if herdr wraps one.</summary>
     public int? ShellPid { get; init; }
-    /// <summary>C3 epoch and staleness judge — runner UTC at agent.start success.</summary>
+    /// <summary>C3 epoch and staleness judge — runner UTC at launch success.</summary>
     public DateTime LaunchedAtUtc { get; init; }
     public string? Cwd { get; init; }
+    /// <summary>Herdr-detected kind at launch (claude/grok/codex); optional, operator/S3 only.</summary>
+    public string? AgentKind { get; init; }
     public DateTime UpdatedAtUtc { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)

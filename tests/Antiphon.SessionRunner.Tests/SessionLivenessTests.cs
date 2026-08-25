@@ -194,5 +194,6 @@ public class SessionLivenessTests
     private sealed class StubProbe(bool alive) : IProcessLivenessProbe
     {
         public bool IsAlive(int pid, DateTime startedAt) => alive;
+        public string? TryGetProcessName(int pid) => "powershell";
     }
 }
