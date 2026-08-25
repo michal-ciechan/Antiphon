@@ -33,6 +33,16 @@ public class SessionMessageQueueDeliveryVerificationTests
     private static Task<BridgeQueueHarness> CreateHarnessAsync(bool alwaysOn) =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions { AlwaysOn = alwaysOn });
 
+    // "No incident" assertions go through this so a failure names the incident instead of
+    // reading "True should be False" (CARD-0201 spent a build cycle learning it was kind 36).
+    private static async Task<List<string>> IncidentsOfAsync(AppDbContext db, Guid agentId) =>
+        (await db.AgentIncidents
+            .Where(i => i.AgentId == agentId)
+            .Select(i => new { i.Kind, i.Severity, i.Message })
+            .ToListAsync())
+        .Select(i => $"{i.Kind}:{i.Severity}:{i.Message}")
+        .ToList();
+
     [Test]
     public async Task Verified_delivery_types_body_then_submits_and_leaves_no_incident()
     {
@@ -45,7 +55,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.Inputs.ShouldBe(["verified hello", "\r"]);
         h.Adapter.SubmittedBodies.ShouldBe(["verified hello"]);
         await using var db = CreateContext();
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
         h.Adapter.Killed.ShouldBeFalse();
     }
 
@@ -83,7 +93,11 @@ public class SessionMessageQueueDeliveryVerificationTests
     public async Task Swallowed_submit_reverts_message_and_restarts_always_on_agent()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        h.Adapter.SubmitAck = ""; // Enter lands but produces no output: submit swallowed
+        // Enter lands but produces no output AND submits nothing. Both knobs: SubmitAck alone
+        // still records the prompt in the fake, and a recorded (stamped) prompt IS a confirmed
+        // delivery whatever the screen did (CARD-0201) — the swallow is what this test is about.
+        h.Adapter.SubmitAck = "";
+        h.Adapter.SwallowSubmits = 99;
 
         await h.Queue.EnqueueAsync(
             h.SessionId, "swallowed submit", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -441,7 +455,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
         h.Adapter.Killed.ShouldBeFalse();
     }
 
@@ -557,6 +571,44 @@ public class SessionMessageQueueDeliveryVerificationTests
             i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.DeliveryUnverified);
         unverified.ShouldNotBeNull();
         unverified.Severity.ShouldBe(AlertSeverity.Warning);
+        unverified.Message.ShouldNotContain("Send-now", Case.Sensitive,
+            "CARD-0201: this was a WhenIdle queue delivery; the observation must not name Mode:Now");
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // CARD-0201: the mirror of the test above, and the distinction it turns on. The same
+    // pre-first-turn session (zero transcript rows, so CARD-0164's unobservable-baseline loop),
+    // but the submitted prompt DOES land as a TIMESTAMPED UserPrompt row — the shape a bound
+    // transcript produces. That confirms through the transcript-first arm the moment the row
+    // exists: no deadline, no screen-only fallback, and therefore no DeliveryUnverified
+    // observation, because nothing was left unverified. Two "leaves no incident" tests in this
+    // class rode the fallback for a day after CARD-0180 S3 made it an incident, because the
+    // harness stamped no timestamp and the loop treats a null stamp as no evidence — this pins
+    // the boundary with a deadline long enough that falling back cannot pass unnoticed.
+    [Test]
+    public async Task A_pre_first_turn_delivery_whose_record_is_timestamped_confirms_by_transcript_not_the_fallback()
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            // The fallback fires only AT the deadline; make reaching it unmistakable in the timing.
+            ConfigureDeliveryVerification = v => v.TranscriptConfirmTimeoutSeconds = 20,
+        });
+        const string body = "the launch note, before any transcript exists, confirmed by its row";
+        var started = DateTime.UtcNow;
+
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None);
+
+        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(10),
+            "a transcript-confirmed delivery returns as soon as the row lands; only the fallback waits out the 20s deadline");
+        h.Adapter.Inputs.ShouldBe([body, "\r"], "confirmed on the first Enter — no re-press");
+        h.Adapter.SubmittedBodies.ShouldBe([body]);
+
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
+        (await IncidentsOfAsync(db, h.AgentId))
+            .ShouldBeEmpty("nothing was left unverified, so there is nothing to observe");
         h.Adapter.Killed.ShouldBeFalse();
     }
 
@@ -648,7 +700,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
         message.Status.ShouldBe(QueuedMessageStatus.Sent);
         message.SentAt.ShouldNotBeNull();
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
     }
 
     [Test]
@@ -984,7 +1036,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
     }
 
     [Test]
@@ -1220,7 +1272,10 @@ public class SessionMessageQueueDeliveryVerificationTests
     public async Task A_pre_first_turn_swallowed_submit_still_charges_the_attempt()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
-        h.Adapter.SubmitAck = ""; // Enter lands, produces no output: NoSubmitOutput, not NoComposerEvidence
+        // Enter lands, produces no output, submits nothing: NoSubmitOutput, not NoComposerEvidence.
+        // SwallowSubmits is required — a recorded prompt would confirm the delivery (CARD-0201).
+        h.Adapter.SubmitAck = "";
+        h.Adapter.SwallowSubmits = 99;
 
         await h.Queue.EnqueueAsync(
             h.SessionId, "a body whose enter went out", MessageSendMode.WhenIdle, CancellationToken.None);
@@ -1366,7 +1421,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
     }
 
     [Test]
@@ -1422,7 +1477,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
     }
 
     // ---- CARD-0137 S5/S6: overlay recovery (reactive) and proactive detector -----------------
@@ -1601,7 +1656,7 @@ public class SessionMessageQueueDeliveryVerificationTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        (await IncidentsOfAsync(db, h.AgentId)).ShouldBeEmpty();
     }
 
     [Test]

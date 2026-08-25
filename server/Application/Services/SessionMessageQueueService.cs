@@ -1249,7 +1249,9 @@ public sealed class SessionMessageQueueService
     /// <summary>
     /// CARD-0180 S3: the screen-only fallback proved a redraw, not a UserPrompt. Observation
     /// only — no kill, no re-type, no change to the Delivered verdict. Deduped per session
-    /// per 10 minutes.
+    /// per 10 minutes. Reached from EVERY delivery path that ends in the fallback — a queued
+    /// WhenIdle body on a pre-first-turn session as much as a Mode:Now send (CARD-0201) — so the
+    /// message must not name one of them.
     /// </summary>
     private async Task RecordDeliveryUnverifiedAsync(Guid sessionId, CancellationToken ct)
     {
@@ -1278,7 +1280,7 @@ public sealed class SessionMessageQueueService
                 sessionId,
                 AgentIncidentKind.DeliveryUnverified,
                 severity,
-                "Send-now was typed but could not be confirmed: this session has no transcript bound "
+                "A message was typed but could not be confirmed: this session has no transcript bound "
                 + "(or has not written one yet). The terminal redrew, so the text probably landed — "
                 + "nothing can verify it.",
                 ct: ct);

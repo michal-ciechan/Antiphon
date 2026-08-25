@@ -47,6 +47,12 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public ChannelBridgeSettings? Bridge { get; init; }
         public DelegationSettings? Delegation { get; init; }
         public Action<IServiceCollection>? ConfigureServices { get; init; }
+
+        /// <summary>
+        /// Adjusts the harness's default (test-compressed) delivery-verification settings without
+        /// restating them. Ignored when <see cref="Supervision"/> is supplied whole.
+        /// </summary>
+        public Action<DeliveryVerificationSettings>? ConfigureDeliveryVerification { get; init; }
     }
 
     public static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -72,31 +78,30 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<IAntiphonMessagingProducer>(messaging);
         services.AddSingleton<IAntiphonMessagingConsumer>(messaging);
         services.AddSingleton(options.TimeProvider ?? TimeProvider.System);
+        var verification = new DeliveryVerificationSettings
+        {
+            Enabled = true,
+            EvidenceTimeoutSeconds = 1, // fast wedge verdicts in tests
+            PollIntervalMs = 50,
+            PostSubmitAdvanceTimeoutSeconds = 1,
+            StrandedAgeSeconds = 0,
+            // Same shape as production, compressed: one re-press window inside the deadline
+            // so a swallowed Enter recovers and a never-recorded body still fails fast.
+            TranscriptConfirmTimeoutSeconds = 3,
+            ReEnterIntervalSeconds = 1,
+            // Compressed too: long enough for a record that lands just past the deadline,
+            // short enough that the genuine-failure suites do not pay for it.
+            PostFailureConfirmGraceSeconds = 3,
+            // CARD-0164: wall-clock floor for unobservable/null-baseline confirm. Keep the
+            // production default — tests that need an "old" row stamp it explicitly.
+            UnobservableBaselineConfirmClockToleranceSeconds = 30,
+            // Production attempt COUNT (the retry is what CARD-0056 slice 3 is about) with
+            // the pause between attempts compressed away.
+            BootPromptRetryDelaySeconds = 0,
+        };
+        options.ConfigureDeliveryVerification?.Invoke(verification);
         services.AddSingleton<IOptions<SupervisionSettings>>(Options.Create(
-            options.Supervision ?? new SupervisionSettings
-            {
-                DeliveryVerification = new DeliveryVerificationSettings
-                {
-                    Enabled = true,
-                    EvidenceTimeoutSeconds = 1, // fast wedge verdicts in tests
-                    PollIntervalMs = 50,
-                    PostSubmitAdvanceTimeoutSeconds = 1,
-                    StrandedAgeSeconds = 0,
-                    // Same shape as production, compressed: one re-press window inside the deadline
-                    // so a swallowed Enter recovers and a never-recorded body still fails fast.
-                    TranscriptConfirmTimeoutSeconds = 3,
-                    ReEnterIntervalSeconds = 1,
-                    // Compressed too: long enough for a record that lands just past the deadline,
-                    // short enough that the genuine-failure suites do not pay for it.
-                    PostFailureConfirmGraceSeconds = 3,
-                    // CARD-0164: wall-clock floor for unobservable/null-baseline confirm. Keep the
-                    // production default — tests that need an "old" row stamp it explicitly.
-                    UnobservableBaselineConfirmClockToleranceSeconds = 30,
-                    // Production attempt COUNT (the retry is what CARD-0056 slice 3 is about) with
-                    // the pause between attempts compressed away.
-                    BootPromptRetryDelaySeconds = 0,
-                },
-            }));
+            options.Supervision ?? new SupervisionSettings { DeliveryVerification = verification }));
         services.AddSingleton(Options.Create(options.Bridge ?? new ChannelBridgeSettings { Enabled = true }));
         services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(
             options.Delegation ?? new DelegationSettings()));
@@ -200,12 +205,22 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         // measuring the working rule rather than this addition.
         adapter.OnSubmitted = async submitted =>
         {
-            // Timestamp left null by default: production rows carry the JSONL stamp, and CARD-0164's
-            // unobservable wall-clock floor rejects null timestamps. Tests that need the
-            // unobservable confirm path insert explicitly with Timestamp = UtcNow (or override
-            // OnSubmitted). Leaving null here keeps existing pre-first-turn screen-fallback tests
-            // byte-identical — they confirm via sequence advance at the deadline, not via these rows.
-            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted);
+            // The UserPrompt row is STAMPED, the way a real row carries its JSONL timestamp. This
+            // decides which confirm path a fresh harness takes: every harness session starts with
+            // zero transcript rows, so its first delivery is CARD-0164's "unobservable baseline",
+            // and that loop treats a null timestamp as no evidence at all. Null here (the CARD-0164
+            // default, kept then to leave older tests byte-identical) sent every pre-first-turn
+            // delivery to the 3s deadline and the screen-only fallback — harmless until CARD-0180
+            // S3 made that fallback record a DeliveryUnverified incident, at which point two
+            // "leaves no incident" tests failed deterministically (CARD-0201). A test that is ABOUT
+            // the fallback asks for it outright: `OnSubmitted = _ => Task.CompletedTask` (no row)
+            // or `SwallowSubmits` (no submit) — never by leaving the timestamp off.
+            //
+            // The TurnEnd stays unstamped on purpose: the working rule's timestamp override needs
+            // BOTH sides stamped to fire, and the other insert helpers here stamp nothing, so a
+            // stamped end could outrank a later unstamped MarkWorkingAsync and read a busy session
+            // idle. Sequence alone already puts this end above its prompt.
+            await InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
             await InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
         };
         runtime.Register(sessionId, adapter);
@@ -243,7 +258,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         InsertEntryAsync(sessionId ?? SessionId, kind, text, stopReason, timestamp,
             isApiError, apiErrorClass, apiErrorStatus);
 
-    private static async Task<long> InsertEntryAsync(
+    internal static async Task<long> InsertEntryAsync(
         Guid sessionId, string kind, string? text = null, string? stopReason = null,
         DateTime? timestamp = null, bool? isApiError = null, string? apiErrorClass = null,
         int? apiErrorStatus = null)

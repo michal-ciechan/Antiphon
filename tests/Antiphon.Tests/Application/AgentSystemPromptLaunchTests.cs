@@ -549,6 +549,20 @@ public class AgentSystemPromptLaunchTests
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
             var adapter = new FakeAgentProtocolAdapter { RegisterOnStart = runtime };
+            // Model the whole round trip, as the harness does for its own adapter: a real Claude
+            // records the submitted bootstrap in its JSONL (stamped) and the tailer turns it into
+            // the UserPrompt row the delivery is confirmed against. Without it the bootstrap's
+            // delivery has no record, waits out the confirm deadline, and takes the screen-only
+            // fallback — which CARD-0180 S3 records as a DeliveryUnverified incident, failing
+            // every "leaves no incident" assertion in this suite (CARD-0201).
+            adapter.OnSubmitted = async submitted =>
+            {
+                if (adapter.StartedSessionId is not Guid sessionId)
+                    return;
+                await BridgeQueueHarness.InsertEntryAsync(
+                    sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
+                await BridgeQueueHarness.InsertEntryAsync(sessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            };
             if (ConfigureNext.Count > 0)
                 ConfigureNext.Dequeue()(adapter);
             Created.Add(adapter);
