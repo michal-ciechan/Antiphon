@@ -109,10 +109,14 @@ the tracked `server/appsettings.json`.
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-Brings up `antiphon-postgres` on **17280** and Redpanda on **19092**. Only
-Postgres is required for "done". Channel bridge stays `Enabled: false` in
-the tracked file (AppHost forces it on). Telegram / Kafka is not part of
-`/health` — [telegram-bot-ops.md](telegram-bot-ops.md).
+Brings up `antiphon-postgres` on **17280** and Redpanda on **19092**. A
+fresh machine is on that local Redpanda and needs nothing — the AppHost
+only forwards a live broker when `AntiphonMessaging:BootstrapServers` is
+set in the AppHost's own user-secrets (or gitignored
+`Antiphon.AppHost/appsettings.Development.json`). Only Postgres is
+required for "done". Channel bridge stays `Enabled: false` in the tracked
+file (AppHost forces it on). Telegram / Kafka is not part of `/health` —
+[telegram-bot-ops.md](telegram-bot-ops.md).
 
 ### 5. First build
 
@@ -208,6 +212,7 @@ Never print a secret value. Config keys stay empty in the tracked file.
 | Agent TUI wrapper auth | `~/.claude` (Claude), `~/.grok/auth.json` (Grok). | Log the TUI in as the Windows user. |
 | Agent TUI managed secrets + Data Protection ring | DB ciphertext + `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`. | Fresh ring is expected; re-enter managed secrets. On a migration, back up the ring *with* the `dev-backup.ps1` output ([ai-agent-tui-configuration.md](ai-agent-tui-configuration.md)). |
 | Telegram bot token | Bitwarden item **Telegram Bot Tokens (Antiphon / School Revision)** (type: Secure Note). Fields include `antiphon_assistant_bot`, `school_revision_bot`, `antiphon_test_bot`, `school_revision_test_bot`. Stand-up is [telegram-bot-ops.md](telegram-bot-ops.md). | Only if standing up channels. Env / user-secrets on the *gateway*, not the desktop `appsettings.json`. |
+| `AntiphonMessaging:BootstrapServers` | This machine: `server2:19092` via `aspire-antiphon-apphost` user-secrets (`dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost`). | Leave unset. Fresh clone uses `localhost:19092` from `server/appsettings.json`. |
 
 User-secrets against the server project:
 

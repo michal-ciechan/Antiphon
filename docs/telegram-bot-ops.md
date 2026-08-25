@@ -26,9 +26,19 @@ accurate one):
 | Postgres | its own **`am-postgres`**, db `antiphon_messaging` | its own `schoolrevision-postgres-1` |
 
 The two share **nothing** — not the image, not the broker, not the database. The main Antiphon
-server reaches the family broker over Tailscale: the AppHost sets
-`AntiphonMessaging__BootstrapServers=server2:19092` (`Antiphon.AppHost/Program.cs`), which is why
-the local `antiphon-redpanda` container is only ever used by the offline fake-gateway path.
+server reaches the family broker over Tailscale only as a per-machine opt-in (CARD-0185) — never
+from a hostname in `Antiphon.AppHost/Program.cs`:
+
+```
+dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost
+```
+
+Accepted alternative: a gitignored `Antiphon.AppHost/appsettings.Development.json` with the same
+key. The AppHost forwards that value to the server as `AntiphonMessaging__BootstrapServers`.
+Without it, the server stays on `localhost:19092` (the local `antiphon-redpanda` + fake gateway).
+It is one broker or the other: while live, `POST :17208/inbound` does not reach the server. To
+go local for a smoke, `dotnet user-secrets remove "AntiphonMessaging:BootstrapServers" --project
+Antiphon.AppHost` and restart the AppHost; to return, set the secret again and restart.
 
 Secrets are **not** inline in the compose file: it interpolates `${TELEGRAM_TOKEN}` (and, since
 CARD-0107, `${SLACK_BOT_TOKEN}` / `${SLACK_APP_TOKEN}`) from a mode-600 `.env` beside it.

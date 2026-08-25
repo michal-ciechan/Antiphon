@@ -1,4 +1,6 @@
 using Antiphon.AppHost.Supervisor;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -43,6 +45,18 @@ builder.AddDaemonProcess("fake-gateway", new DaemonProcessConfig(
     HealthPath:       "/health",
     BuildProjectDir:  fakeGatewayDir));
 
+// ── Messaging broker (CARD-0185) ──────────────────────────────────────────────────────────
+// Default: whatever server/appsettings.json says — localhost:19092, the docker-compose.dev.yml
+// Redpanda that the fake gateway (:17208) also uses. A LIVE broker (this machine: am-redpanda on
+// server2 over Tailscale, which the real Family Telegram gateway produces to) is a per-machine
+// opt-in that never appears in source:
+//   dotnet user-secrets set "AntiphonMessaging:BootstrapServers" "server2:19092" --project Antiphon.AppHost
+// or the gitignored Antiphon.AppHost/appsettings.Development.json. Forwarded verbatim as the
+// server's AntiphonMessaging__BootstrapServers; the fake gateway is deliberately NOT forwarded
+// (a fake inbound on the live broker would be answered through the real bot), so while live,
+// POST :17208/inbound does not reach the server. It is one broker or the other.
+var liveBroker = builder.Configuration["AntiphonMessaging:BootstrapServers"];
+
 // ── .NET API server ───────────────────────────────────────────────────────────
 var server = builder
     .AddProject<Projects.Antiphon_Server>("server", options => options.ExcludeLaunchProfile = true)
@@ -60,13 +74,10 @@ var server = builder
     // where the redistributable is missing falls back to the inbox conhost with the old ceilings
     // rather than typing 43 KB into a pty that clips at 1 KB.
     .WithEnvironment("ANTIPHON_PTY_BACKEND", "modern")
-    // LIVE Telegram bridge (2026-07-23): consume the deployed am-redpanda on server2 (Tailscale)
-    // that the @antiphon_assistant_bot gateway (am-service) produces to — the Family agent talks
-    // to the real "Antiphon-Family" group. Comment this line out to fall back to the LOCAL broker
-    // (localhost:19092) + fake gateway for offline smoke tests; it's one broker or the other, so
-    // while live, POST :17208/inbound no longer reaches the server.
-    .WithEnvironment("AntiphonMessaging__BootstrapServers", "server2:19092")
     .WithHttpEndpoint(port: 17202, env: "ASPNETCORE_HTTP_PORTS");
+
+if (!string.IsNullOrWhiteSpace(liveBroker))
+    server.WithEnvironment("AntiphonMessaging__BootstrapServers", liveBroker.Trim());
 
 // ── React / Vite client ───────────────────────────────────────────────────────
 builder.AddNpmApp("client", "../client", "dev")
@@ -82,4 +93,21 @@ builder.AddNpmApp("storybook", "../client", "storybook")
     .WithEnvironment("BROWSER", "none")
     .WithHttpEndpoint(port: 17209, isProxied: false);
 
-builder.Build().Run();
+var app = builder.Build();
+var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Antiphon.AppHost");
+if (!string.IsNullOrWhiteSpace(liveBroker))
+{
+    logger.LogInformation(
+        "Messaging broker for server: {Broker} ({Source}); fake-gateway stays on localhost:19092 and will not reach the server while the live broker is selected",
+        liveBroker.Trim(),
+        "AppHost configuration (per-machine opt-in)");
+}
+else
+{
+    logger.LogInformation(
+        "Messaging broker for server: {Broker} ({Source})",
+        "localhost:19092",
+        "default (server/appsettings.json)");
+}
+
+app.Run();

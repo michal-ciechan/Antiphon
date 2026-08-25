@@ -231,7 +231,10 @@ is in the same Gateway package. Observe produced inbound (the Kafka key is
 17208) is itself a complete adapter: `POST /inbound` injects a message,
 `GET /deliveries` asserts the reply. Use it as the 4-step smoke
 (fake broker + fake gateway + Antiphon server) when you need the full
-catalog → agent → outbound path.
+catalog → agent → outbound path. The AppHost defaults to the local
+broker; if this machine has opted into a live broker, remove the
+`AntiphonMessaging:BootstrapServers` AppHost user-secret for the
+duration of a local smoke.
 
 **EchoGateway against the local broker.** With Redpanda on `localhost:19092`
 and Antiphon running, `dotnet run --project samples/EchoGateway`, type a

@@ -35,7 +35,7 @@ public sealed class KafkaAntiphonMessagingConsumer : IAntiphonMessagingConsumer
 
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(_options.InboundTopic);
-        _logger.LogInformation("[antiphon] consuming {Topic} as {Group}", _options.InboundTopic, _options.ConsumerGroup);
+        _logger.LogInformation("[antiphon] consuming {Topic} as {Group} from {BootstrapServers}", _options.InboundTopic, _options.ConsumerGroup, _options.BootstrapServers);
 
         try
         {
