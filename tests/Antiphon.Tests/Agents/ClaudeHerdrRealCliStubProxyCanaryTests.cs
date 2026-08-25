@@ -17,7 +17,8 @@ namespace Antiphon.Tests.Agents;
 /// CARD-0168 S5 B-herdr Claude against a LIVE herdr instance. Composed gate:
 /// <c>ANTIPHON_REAL_CLI_STUB_TESTS=1</c> + herdr pipe answering. Herdr absent ⇒ skip, not fail.
 ///
-/// N/A cells (CARD-0160 refusal, do not write tests): Grok × Herdr, Codex × Herdr.
+/// CARD-0187 S3 added Grok × Herdr and Codex × Herdr canaries (see
+/// <c>GrokHerdrRealCliStubProxyCanaryTests</c> / <c>CodexHerdrRealCliStubProxyCanaryTests</c>).
 ///
 /// Delivery confirms via the CARD-0164 transcript-first path, never herdr's sticky revision.
 /// </summary>

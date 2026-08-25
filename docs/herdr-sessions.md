@@ -147,12 +147,14 @@ Herdr is **a different transport**, so it gets its own ceilings — not a `PtyBa
 
 86 400 bytes is the largest body measured **exact, byte-for-byte, with zero ESC bytes in the
 transcript record**, through one `pane.send_text` — single-write *and* paced (herdr 0.8.2 +
-Claude 2.1.241, 2026-08-23). It is the edge of the evidence, not a measured cliff. The Grok
-join-safe rule (`PtyDeliveryCeilings.ForAgentKind`) already applies to whatever ceilings the
-dispatcher resolves — including herdr's — so Grok (and, by the CARD-0099 default-deny arm,
-Codex) briefs spill on herdr as on pty with no extra mapping. That 86 400 B envelope is
-**unmeasured for a Grok or Codex composer** through `pane.send_text`; until CARD-0187 S3
-probe D1 runs, the herdr reply ceiling and tripwire stay as they are for all three kinds.
+Claude 2.1.241, 2026-08-23). It is the edge of the evidence, not a measured cliff. CARD-0187
+S3 probe D1 (2026-08-25) sent the same 43 200 B multi-line body into a **Grok** composer on
+this lane: the UserPrompt record was **complete** (whitespace-free match), **joined newlines**
+(CARD-0084: 43 200 sent, 42 666 recorded, zero ESC bytes), so the herdr numbers stay as they
+are and `ForAgentKind` already zeroes Grok/Codex briefs. 86 400 B on Grok produced no record
+within 60 s after that turn (inconclusive, not a measured lower cliff). Codex D1 did not run
+this pass (CARD-0195 boot-prompt swallow after a 3.5 s launch-detect). No per-kind herdr
+ceiling.
 
 Two guards sit in front of that:
 
