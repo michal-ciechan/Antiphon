@@ -44,6 +44,15 @@ internal static class AgentLaunchResolution
         {
             AgentEnv = options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent)
         };
+        // CARD-0193: the agent's tier, attached HERE for the same reason AgentEnv is — two of this
+        // funnel's five call sites (CardService.SpawnAsync, OrchestratorService.ResolveDispatchLaunchAsync)
+        // cannot compute an alias, and so forgot the tier entirely. An exact ModelId outranks the tier,
+        // so a pinned agent offers none; the appenders enforce that ordering again anyway.
+        options = options with
+        {
+            ModelTier = options.ModelTier
+                ?? (string.IsNullOrWhiteSpace(agent.ModelId) ? agent.ModelLevel : null)
+        };
         options = await AttachProjectContextAsync(
             options, agent.BoardId, apiKeyEnvResolver, cancellationToken);
 
@@ -154,7 +163,7 @@ internal static class AgentLaunchResolution
             ProfileRevisionId: null,
             EffectiveModelId: null,
             ActivityMode: AgentTuiLaunchActivityMode.Unknown,
-            ModelArgument: string.IsNullOrWhiteSpace(options.TierModelAlias)
+            ModelArgument: string.IsNullOrWhiteSpace(options.TierModelAlias) && options.ModelTier is null
                 ? LaunchModelArgument.None
                 : LaunchModelArgument.Tier);
     }
@@ -459,7 +468,7 @@ public sealed class AgentTuiLaunchResolver
     {
         var exactModelId = string.IsNullOrWhiteSpace(agent.ModelId) ? null : agent.ModelId.Trim();
         var tierAlias = string.IsNullOrWhiteSpace(options.TierModelAlias)
-            ? null
+            ? (options.ModelTier is { } level ? ModelLevelAliases.ForLaunch(profile.Kind, level) : null)
             : options.TierModelAlias.Trim();
         var argumentName = string.IsNullOrWhiteSpace(revision.ModelArgumentName)
             ? null
@@ -474,7 +483,7 @@ public sealed class AgentTuiLaunchResolver
                     "model_argument_unsupported");
             }
 
-            return (null, tierAlias is null
+            return (null, tierAlias is null && options.ModelTier is null
                 ? LaunchModelArgument.None
                 : LaunchModelArgument.ProfileOwned);
         }

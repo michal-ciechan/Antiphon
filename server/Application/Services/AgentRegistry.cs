@@ -115,10 +115,13 @@ public sealed class AgentRegistry
         // CARD-0182 D2: the profile-less path (pool delegates, legacy fallback). Registry
         // definitions are Antiphon's own and accept --model; a blank profile field never
         // reaches here because there is no revision to read.
-        if (!string.IsNullOrWhiteSpace(options.TierModelAlias))
+        var alias = string.IsNullOrWhiteSpace(options.TierModelAlias)
+            ? (options.ModelTier is { } level ? ModelLevelAliases.ForLaunch(kind, level) : null)
+            : options.TierModelAlias.Trim();
+        if (alias is not null)
         {
             args.Add("--model");
-            args.Add(options.TierModelAlias.Trim());
+            args.Add(alias);
         }
 
         var env = new Dictionary<string, string>(def.Env, StringComparer.Ordinal);

@@ -32,6 +32,43 @@ namespace Antiphon.Tests.Application;
 public class OrchestratorServiceIntegrationTests
 {
     [Test]
+    public async Task Orchestrator_dispatch_of_an_assigned_agent_derives_its_model_tier()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot);
+            var now = DateTime.UtcNow;
+            var agent = new Agent
+            {
+                Id = Guid.NewGuid(), Name = "Tiered dispatcher", Slug = $"tiered-{Guid.NewGuid():N}"[..20],
+                WorkingDirectory = Path.Combine(tempRoot, "agent"), Details = string.Empty, Status = AgentStatus.Idle,
+                Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.High, CreatedAt = now, UpdatedAt = now
+            };
+            Directory.CreateDirectory(agent.WorkingDirectory);
+            graph.Card.AssignedAgentId = agent.Id;
+            db.Add(graph.Project);
+            db.Agents.Add(agent);
+            await db.SaveChangesAsync();
+
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "TIERED_OK" };
+            await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
+            await harness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            var modelIndex = adapter.StartedArgs.ToList().IndexOf("--model");
+            modelIndex.ShouldBeGreaterThanOrEqualTo(0);
+            adapter.StartedArgs[modelIndex + 1].ShouldBe("opus");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Orchestrator_dispatches_eligible_card_through_agent_session_service()
     {
         await using var db = CreateContext();
@@ -1169,7 +1206,8 @@ public class OrchestratorServiceIntegrationTests
         string tempRoot,
         IReadOnlyList<IAgentProtocolAdapter> adapters,
         int pollIntervalSeconds = 30,
-        IReadOnlyList<IIssueTracker>? issueTrackers = null)
+        IReadOnlyList<IIssueTracker>? issueTrackers = null,
+        string defaultKind = "Raw")
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
@@ -1201,7 +1239,7 @@ public class OrchestratorServiceIntegrationTests
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
-            Definitions = { ["fake"] = new AgentDefinition { Kind = "Raw", Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
+            Definitions = { ["fake"] = new AgentDefinition { Kind = defaultKind, Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe") } }
         }));
         services.AddSingleton<AgentRegistry>();
         foreach (var issueTracker in issueTrackers ?? [])

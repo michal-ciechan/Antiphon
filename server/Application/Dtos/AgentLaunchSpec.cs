@@ -36,7 +36,13 @@ public sealed record AgentLaunchOptions(
     // not offer one" (card-spawn today, or an exact ModelId already won). The profile resolver
     // honours a blank ModelArgumentName by dropping this; AgentRegistry.Resolve appends
     // ["--model", alias] on the profile-less path. Callers must never put --model in ExtraArgs.
-    string? TierModelAlias = null);
+    string? TierModelAlias = null,
+    // CARD-0193: the agent's TIER, for a caller that cannot compute an alias because it learns the
+    // kind as an OUTPUT of resolution. The appenders map it against the kind they resolve. Null =
+    // no tier on offer. A pre-computed TierModelAlias still wins where a caller supplies one,
+    // because it may be keyed on a kind this launch does not resolve to (the dispatcher keys on
+    // session.AgentKind, not profile.Kind).
+    AgentModelLevel? ModelTier = null);
 
 /// <summary>
 /// How the resolved launch treated the model argument (CARD-0182 D4).

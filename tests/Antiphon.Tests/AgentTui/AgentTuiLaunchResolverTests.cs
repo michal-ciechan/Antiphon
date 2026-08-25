@@ -225,6 +225,42 @@ public sealed class AgentTuiLaunchResolverTests
     }
 
     [Test]
+    public async Task ModelTier_maps_against_the_resolved_profile_kind_and_omits_raw()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (grok, _) = await SeedProfileAsync(provider, AgentKind.Grok);
+        var (codex, _) = await SeedProfileAsync(provider, AgentKind.Codex);
+        var (raw, _) = await SeedProfileAsync(provider, AgentKind.Raw);
+
+        var grokLaunch = await ResolveAsync(provider, new Agent { Id = Guid.NewGuid(), Name = "Grok", TuiProfileId = grok.Id },
+            new AgentLaunchOptions(ModelTier: AgentModelLevel.High));
+        var codexLaunch = await ResolveAsync(provider, new Agent { Id = Guid.NewGuid(), Name = "Codex", TuiProfileId = codex.Id },
+            new AgentLaunchOptions(ModelTier: AgentModelLevel.High));
+        var rawLaunch = await ResolveAsync(provider, new Agent { Id = Guid.NewGuid(), Name = "Raw", TuiProfileId = raw.Id },
+            new AgentLaunchOptions(ModelTier: AgentModelLevel.High));
+
+        grokLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "grok-4.6"]);
+        codexLaunch.Spec.Args.TakeLast(2).ShouldBe(["--model", "gpt-5.6-terra"]);
+        rawLaunch.Spec.Args.ShouldNotContain("--model");
+        rawLaunch.ModelArgument.ShouldBe(LaunchModelArgument.None);
+    }
+
+    [Test]
+    public async Task Explicit_TierModelAlias_wins_over_ModelTier()
+    {
+        await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildProvider(isolatedSchema.ConnectionString);
+        var (profile, _) = await SeedProfileAsync(provider, AgentKind.Grok);
+
+        var resolved = await ResolveAsync(provider, new Agent { Id = Guid.NewGuid(), Name = "Grok", TuiProfileId = profile.Id },
+            new AgentLaunchOptions(TierModelAlias: "explicit-alias", ModelTier: AgentModelLevel.High));
+
+        resolved.Spec.Args.TakeLast(2).ShouldBe(["--model", "explicit-alias"]);
+        resolved.ModelArgument.ShouldBe(LaunchModelArgument.Tier);
+    }
+
+    [Test]
     public async Task T4_exact_model_on_a_blank_field_profile_is_model_argument_unsupported()
     {
         await using var isolatedSchema = await TestDbFixture.CreateIsolatedSchemaAsync();

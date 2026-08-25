@@ -69,14 +69,26 @@ public static class ModelLevelAliases
     /// admits exactly the kinds that DO have an arm; a fourth delegatable kind must add its arm HERE
     /// at the same time, or its tasks will silently read as Claude. Codex is the case that proves the
     /// contract is real rather than decorative (CARD-0099 S3): it was admitted and given its arm in
-    /// one commit. Launch arguments deliberately do NOT come through here — they branch explicitly at
-    /// the sites that build them (CARD-0084 S3, CARD-0099 S3), because a wrong alias there is a wrong
-    /// process, not a wrong word.</para>
+    /// one commit. Launch arguments deliberately do NOT come through here — use <see cref="ForLaunch"/>,
+    /// whose null arm prevents an unsupported runner kind from receiving a wrong process argument.</para>
     /// </summary>
     public static string For(AgentKind kind, AgentModelLevel level) => kind switch
     {
         AgentKind.Grok => ForGrok(level),
         AgentKind.Codex => ForCodex(level),
         _ => ForClaude(level),
+    };
+
+    /// <summary>
+    /// Maps a level for a process launch. Unlike <see cref="For"/>, this has no Claude fallback:
+    /// display and interpreter text can preserve historical wording, but an unsupported runner kind
+    /// must not receive a Claude model argument (CARD-0193).
+    /// </summary>
+    public static string? ForLaunch(AgentKind kind, AgentModelLevel level) => kind switch
+    {
+        AgentKind.Codex => ForCodex(level),
+        AgentKind.Grok => ForGrok(level),
+        AgentKind.ClaudeCode => ForClaude(level),
+        _ => null,
     };
 }
