@@ -36,7 +36,8 @@ Microsoft Testing Platform 2.2.2, .NET 9.0.16).
 | D4 | Evidence bar for the build pass: **≥ 15 consecutive clean full-class runs** (unpatched base rate ≈ 33 % ⇒ P(15 clean by luck) ≈ 0.25 %) plus the rest of the assembly green once | Already achieved by the experiment (0/15 patched vs 3/9 unpatched, §1.6); the build pass reproduces it on its own commit |
 
 Net diff: ~12 lines inside one test method (or ~20 if the two identical polls are hoisted into a
-helper). **Risk: nil** — it is a test-only change that makes a wait explicit; it cannot make a
+helper), plus ~4 lines in the same method so it stops leaking a 24-hour pty-host per run — a
+separate defect in the same test, found during cleanup (§1.7, §2.1b). **Risk: nil** — it is a test-only change that makes a wait explicit; it cannot make a
 genuinely broken bind pass, because the bar (`TranscriptBound == true` **and**
 `TranscriptBindHow == Sidecar`) is unchanged.
 
@@ -174,6 +175,26 @@ The §2 poll was applied locally to `:1568-1570` only (no other change), the ass
 unpatched on the same build host, same session, same alternate output path, immediately before.
 The patch was then reverted (`git checkout -- …`; working tree clean before the plan commit).
 
+### 1.7 Found on the way: the same test leaks one pty-host per run, for 24 hours
+
+Not the flake's cause, but the same test and the same build pass. Cleaning up after the runs above
+found **47 lingering `Antiphon.PtyHost.exe` processes**, every one launched from
+`%TEMP%\antiphon-0180-dto-<guid>\pty-hosts\bin\…` — this test's `logRoot` (`:1514`) — 39 from this
+pass's 39 runs (pass and fail alike) and 8 from earlier verifiers' runs of the same test. No other
+test in the class or assembly had left one.
+
+Mechanism: the test builds `new SessionRunnerSettings { SessionLogPath = logRoot }` (`:1517`) and so
+inherits `PtyHostLingerHours = 24` (`SessionRunnerSettings.cs:73`). `runtimeB.KillAsync` (`:1572`)
+and the `finally`'s `Process.GetProcessById(childPid).Kill(entireProcessTree: true)` (`:1578`) kill
+the **child** (`cmd.exe`); the **host** is the child's parent, not its descendant, and by design
+lingers for the TTL after its child exits (`HostSession.cs:312`) so a restarted runner can collect
+the exit. Two knock-ons: the host's cwd is the test process's cwd, so it pins the test **output
+directory** (`bin/` or `bin-<name>/`) against deletion; and its exe lives under `logRoot`, so the
+`Directory.Delete(logRoot)` at `:1581` silently fails and the temp tree stays too. Every other
+host-spawning class in the assembly sets `PtyHostLingerHours = 0.02` (72 s) and kills the host pid
+from the manifest/DTO in teardown (`PtyHostAdoptionTests.cs:207`, `SessionBufferBoundsTests.cs:222`,
+`SessionLivenessTests.cs:186`, …); this test does neither.
+
 ---
 
 ## 2. Design (the fix the build pass implements)
@@ -234,6 +255,38 @@ TimeSpan.FromSeconds(10))` at `:611`, `:1465`, and elsewhere), it is a ceiling n
 bind lands in milliseconds; a passing test costs nothing extra), and a shorter one would
 re-introduce exactly the timing assumption being removed.
 
+### 2.1b Same test, same pass: stop leaking the host (§1.7)
+
+Two lines of the shape every sibling already uses:
+
+```csharp
+var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };  // :1517
+…
+int? childPid = locating.Pid;
+int? hostPid = locating.HostPid;                    // RunnerSessionDto.HostPid, SessionRunnerContracts.cs:87
+…
+finally
+{
+    foreach (var pid in new[] { childPid, hostPid })
+    {
+        if (pid is int p)
+        {
+            try { Process.GetProcessById(p).Kill(entireProcessTree: true); }
+            catch (ArgumentException) { /* already gone */ }
+        }
+    }
+    try { Directory.Delete(logRoot, recursive: true); } catch { /* best effort */ }
+}
+```
+
+`ToDto` populates it (`SessionRunnerRuntime.cs:1671`, `_hostPid > 0 ? _hostPid : null`); if it were ever null, read it from the
+manifest as `PtyHostAdoptionTests.cs:155` does:
+`PtyHostManifest.TryLoad(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId))!.HostPid`.
+Kill the host **after** `runtimeB.KillAsync` has done its job (it is in `finally`, so it is) — the
+test's re-adoption half needs the host alive until then. The linger value alone would also clear
+the leak, 72 s later; the explicit kill is what lets `Directory.Delete(logRoot)` succeed inside the
+test.
+
 ### 2.2 What does not change
 
 - `[NotInParallel("ClaudeConfigDirEnv")]` stays as is. It is doing the job its comment says.
@@ -282,7 +335,12 @@ Base rate to beat is ~33 % per full-class run, so single green runs prove nothin
 5. **Negative check that the bar still bites:** temporarily change the final assertion to
    `ShouldBe(TranscriptBindMethods.Exact)` and confirm it fails (re-adoption must re-tail, not
    re-discover); revert. One run is enough — this is deterministic.
-6. Delete every `bin-c0200/` directory afterwards (`Get-ChildItem -Recurse -Depth 2 -Directory
+6. **Leak check (§1.7 / §2.1b):** after the loop,
+   `Get-Process Antiphon.PtyHost | Where-Object Path -like '*antiphon-0180-dto*'` returns
+   **nothing** and `Get-ChildItem $env:TEMP -Directory -Filter 'antiphon-0180-dto-*'` is empty.
+   Before this fix each full-class run left exactly one of each. (This pass killed the 47 it
+   found — all from this test — before writing the plan; do not count pre-existing ones.)
+7. Delete every `bin-c0200/` directory afterwards (`Get-ChildItem -Recurse -Depth 2 -Directory
    -Filter bin-c0200 | Remove-Item -Recurse -Force`) — ~12 of them, one per project in the graph.
 
 Commit message should carry the counts (e.g. `15/15 full-class runs green, was 3/9`), per this
