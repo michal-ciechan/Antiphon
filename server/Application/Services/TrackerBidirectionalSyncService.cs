@@ -283,6 +283,12 @@ public sealed class TrackerBidirectionalSyncService
                 // Unknown marker → fail-open to visible External import below.
             }
 
+            if (TrackerSyncMarkers.TryReadTrailingSystemCommentMarker(comment.Body, out var cardId)
+                && cardId == issueRef.CardId)
+            {
+                continue; // card-state echo — zero synthetic CardComment rows
+            }
+
             var exists = await _db.CardComments
                 .AnyAsync(c => c.ExternalCommentId == comment.ExternalCommentId, ct);
             if (exists)
@@ -536,10 +542,10 @@ public sealed class TrackerBidirectionalSyncService
         if (terminal && !string.Equals(cursor, "closed", StringComparison.OrdinalIgnoreCase))
         {
             var reason = card.Status == CardStatus.Canceled ? "not_planned" : "completed";
-            var closeBody = TrackerSyncMarkers.AppendCommentMarker(
+            var closeBody = TrackerSyncMarkers.AppendSystemCommentMarker(
                 $"Card {card.Identifier} reached terminal status **{card.Status}**"
                 + (string.IsNullOrWhiteSpace(card.TerminalReason) ? "" : $": {card.TerminalReason}"),
-                Guid.NewGuid());
+                card.Id);
             try
             {
                 await tracker.PostCommentAsync(config, issueRef.ExternalId, closeBody, ct);
@@ -569,10 +575,10 @@ public sealed class TrackerBidirectionalSyncService
             if (reopen is not null
                 && (issueRef.LastOutboundSyncedAt is null || reopen.CreatedAt > issueRef.LastOutboundSyncedAt))
             {
-                var body = TrackerSyncMarkers.AppendCommentMarker(
+                var body = TrackerSyncMarkers.AppendSystemCommentMarker(
                     $"Card {card.Identifier} was reopened on Antiphon"
                     + (string.IsNullOrWhiteSpace(reopen.Reason) ? "" : $": {reopen.Reason}"),
-                    Guid.NewGuid());
+                    card.Id);
                 try
                 {
                     await tracker.PostCommentAsync(config, issueRef.ExternalId, body, ct);

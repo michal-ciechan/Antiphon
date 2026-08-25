@@ -253,6 +253,70 @@ public class TrackerBidirectionalSyncTests
     }
 
     [Test]
+    public async Task Terminal_close_and_reopen_comment_echoes_create_zero_External_CardComments()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        try
+        {
+            var graph = await SeedLinkedBoardAsync(db, tempRoot, clock);
+            graph.Card.BoardColumnId = graph.DoneColumn.Id;
+            graph.Card.BoardColumn = graph.DoneColumn;
+            graph.Card.Status = CardStatus.Done;
+            graph.Card.CompletedAt = clock.GetUtcNow().UtcDateTime;
+            await db.SaveChangesAsync();
+
+            var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+            {
+                Candidates = [Issue("acme/app#1", "open", "Title", "Body", [])],
+                EchoPostedComments = true
+            };
+            var sut = NewSut(db, fake, clock);
+
+            var close = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            close.StateChanges.ShouldBe(1);
+            fake.PostCommentCalls.Single().Body.ShouldContain(
+                $"<!-- antiphon:system-comment={graph.Card.Id:N} -->");
+
+            var closeEcho = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            closeEcho.CommentsIn.ShouldBe(0);
+
+            clock.Advance(TimeSpan.FromMinutes(1));
+            graph.Card.BoardColumnId = graph.BacklogColumn.Id;
+            graph.Card.BoardColumn = graph.BacklogColumn;
+            graph.Card.Status = CardStatus.Backlog;
+            graph.Card.CompletedAt = null;
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RevisionNumber = ++graph.Card.RevisionCount,
+                Kind = CardRevisionKind.Reopen,
+                Reason = "continue work",
+                EditedBy = "operator",
+                CreatedAt = clock.GetUtcNow().UtcDateTime,
+                Card = graph.Card
+            });
+            await db.SaveChangesAsync();
+
+            fake.ClearWriteCounters();
+            var reopen = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            reopen.StateChanges.ShouldBe(1);
+            fake.PostCommentCalls.Single().Body.ShouldContain(
+                $"<!-- antiphon:system-comment={graph.Card.Id:N} -->");
+
+            var reopenEcho = (await sut.RunAsync(graph.Board.Id, CancellationToken.None)).Boards.Single();
+            reopenEcho.CommentsIn.ShouldBe(0);
+            (await db.CardComments.CountAsync(c => c.CardId == graph.Card.Id)).ShouldBe(0);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Default_mode_reopen_lands_in_backlog_not_active()
     {
         await using var db = CreateContext();

@@ -6,10 +6,18 @@ namespace Antiphon.Server.Application.Services;
 public static partial class TrackerSyncMarkers
 {
     public const string CommentPrefix = "<!-- antiphon:comment=";
+    public const string SystemCommentPrefix = "<!-- antiphon:system-comment=";
     public const string CardPrefix = "<!-- antiphon:card=";
 
     public static string AppendCommentMarker(string body, Guid commentId) =>
         $"{body.TrimEnd()}\n\n{CommentPrefix}{commentId:N} -->";
+
+    /// <summary>
+    /// Marks a tracker comment generated from card state rather than a <see cref="Domain.Entities.CardComment"/>.
+    /// The card is its durable identity, so an echo can be discarded without creating a synthetic comment row.
+    /// </summary>
+    public static string AppendSystemCommentMarker(string body, Guid cardId) =>
+        $"{body.TrimEnd()}\n\n{SystemCommentPrefix}{cardId:N} -->";
 
     public static string AppendCardMarkerFooter(string description, Guid cardId, string identifier, string? boardLink)
     {
@@ -28,6 +36,19 @@ public static partial class TrackerSyncMarkers
             return false;
 
         return Guid.TryParseExact(match.Groups[1].Value, "N", out commentId);
+    }
+
+    public static bool TryReadTrailingSystemCommentMarker(string body, out Guid cardId)
+    {
+        cardId = Guid.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+            return false;
+
+        var match = TrailingSystemCommentMarkerRegex().Match(body);
+        if (!match.Success)
+            return false;
+
+        return Guid.TryParseExact(match.Groups[1].Value, "N", out cardId);
     }
 
     public static bool TryReadCardMarker(string body, out Guid cardId)
@@ -74,6 +95,9 @@ public static partial class TrackerSyncMarkers
 
     [GeneratedRegex(@"<!--\s*antiphon:comment=([0-9a-fA-F]{32})\s*-->\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex TrailingCommentMarkerRegex();
+
+    [GeneratedRegex(@"<!--\s*antiphon:system-comment=([0-9a-fA-F]{32})\s*-->\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingSystemCommentMarkerRegex();
 
     [GeneratedRegex(@"<!--\s*antiphon:card=([0-9a-fA-F]{32})\s*-->", RegexOptions.CultureInvariant)]
     private static partial Regex CardMarkerRegex();
