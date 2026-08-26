@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Report (default) or delete clearly attributable Codex test residue. The state_5.sqlite reader
-    is immutable/read-only; the only mutation path is `codex delete --force <thread-id>`.
+    is read-only; the only mutation path is `codex delete --force <thread-id>`.
 
     Recurring cleanup is a Windmill schedule on server2
     (u/lndcobra/antiphon_codex_residue_cleanup), Monday 09:30 Europe/London. It is report-only
@@ -167,25 +167,27 @@ function Get-ThreadRows {
     }
 
     if (-not (Test-Path -LiteralPath $StateDbPath)) { throw "state_5.sqlite not found: $StateDbPath" }
-    # immutable=1 is intentional: the enumerator must never acquire a write lock or create a WAL.
+    # mode=ro prevents writes while still observing current WAL-committed changes.
     $python = @'
 import json, pathlib, sqlite3, sys
 path = pathlib.Path(sys.argv[1]).resolve()
-uri = path.as_uri() + "?mode=ro&immutable=1"
+uri = path.as_uri() + '?mode=ro'
 con = sqlite3.connect(uri, uri=True)
 try:
-    columns = {r[1] for r in con.execute("PRAGMA table_info(threads)")}
-    wanted = ["id", "cwd", "source", "model_provider", "created_at", "rollout_path", "archived", "is_pinned", "first_user_message"]
-    select = [c if c in columns else "NULL AS " + c for c in wanted]
-    rows = [dict(zip(wanted, row)) for row in con.execute("SELECT " + ", ".join(select) + " FROM threads")]
+    columns = {r[1] for r in con.execute('PRAGMA table_info(threads)')}
+    wanted = ['id', 'cwd', 'source', 'model_provider', 'created_at', 'rollout_path', 'archived', 'is_pinned', 'first_user_message']
+    select = [c if c in columns else 'NULL AS ' + c for c in wanted]
+    rows = [dict(zip(wanted, row)) for row in con.execute('SELECT ' + ', '.join(select) + ' FROM threads')]
     print(json.dumps(rows))
 finally:
     con.close()
 '@
     $rawJson = & python -c $python $StateDbPath
-    if ($LASTEXITCODE -ne 0) { throw 'Python could not read state_5.sqlite with immutable=1.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Python could not read state_5.sqlite read-only.' }
     if (-not $rawJson) { return @() }
-    return @($rawJson -join "`n" | ConvertFrom-Json)
+    $rawJsonText = $rawJson -join "`n"
+    if ([string]::IsNullOrWhiteSpace($rawJsonText) -or $rawJsonText.Trim() -eq '[]') { return @() }
+    return @($rawJsonText | ConvertFrom-Json)
 }
 
 function Get-LiveCodexCwds {

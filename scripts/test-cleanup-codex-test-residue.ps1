@@ -68,8 +68,50 @@ try {
     Assert-Eq $json.unattributed.Count 4 'T10 report has a separate unattributed section'
     Assert-Eq $json.candidates.Count 5 'T10 report has allow-listed candidates'
 
+    # Keep the writer connected after deleting the row so the deletion remains in the WAL. A
+    # read-only SQLite connection must observe the WAL rather than return the stale base database.
+    $db = Join-Path $work 'state_5.sqlite'
+    $ready = Join-Path $work 'sqlite-writer-ready'
+    $release = Join-Path $work 'sqlite-writer-release'
+    $writer = Join-Path $work 'hold-wal-writer.py'
+    $walCwd = $temp + '\antiphon-codex-canary-wal-regression'
+    @'
+import pathlib, sqlite3, sys, time
+db, ready, release, cwd = sys.argv[1:]
+con = sqlite3.connect(db)
+try:
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE threads (id TEXT, cwd TEXT, source TEXT, model_provider TEXT, created_at TEXT, rollout_path TEXT, archived INTEGER, is_pinned INTEGER, first_user_message TEXT)")
+    con.execute("INSERT INTO threads VALUES (?, ?, 'cli', 'openai', '2026-08-01T00:00:00Z', NULL, 0, 0, NULL)", ('wal-deleted-thread', cwd))
+    con.commit()
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.execute("DELETE FROM threads WHERE id = 'wal-deleted-thread'")
+    con.commit()
+    pathlib.Path(ready).touch()
+    while not pathlib.Path(release).exists():
+        time.sleep(0.05)
+finally:
+    con.close()
+'@ | Set-Content -LiteralPath $writer -Encoding ASCII
+    $writerProcess = Start-Process -FilePath python -ArgumentList @($writer, $db, $ready, $release, $walCwd) -PassThru
+    try {
+        $deadline = [datetime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $ready) -and [datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+        Assert-True (Test-Path -LiteralPath $ready) 'T11 WAL fixture writer started' 'writer did not signal readiness'
+        if (Test-Path -LiteralPath $ready) {
+            $walRead = & $cleanup -StateDbPath $db -Now $nowPin -ReportPath $work -PassThru
+            Assert-Eq $walRead.ExitCode 0 'T12 WAL database read exits 0'
+            Assert-Eq $walRead.CandidateCount 0 'T12 WAL deletion is visible to read-only connection'
+            Assert-Eq $walRead.SkipCount 0 'T12 no stale base-database row is classified'
+        }
+    }
+    finally {
+        New-Item -ItemType File -Path $release -Force | Out-Null
+        if (-not $writerProcess.WaitForExit(10000)) { Stop-Process -Id $writerProcess.Id -Force }
+    }
+
     $nonAscii = [IO.File]::ReadAllBytes($cleanup) | Where-Object { $_ -gt 127 }
-    Assert-Eq @($nonAscii).Count 0 'T11 cleanup script is ASCII-only'
+    Assert-Eq @($nonAscii).Count 0 'T13 cleanup script is ASCII-only'
 }
 finally {
     try { Remove-Item -LiteralPath $work -Recurse -Force } catch { }
