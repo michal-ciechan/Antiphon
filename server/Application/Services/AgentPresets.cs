@@ -25,7 +25,7 @@ public static class AgentPresets
             "Watches the board, delegates every change.",
             AlwaysOn: true,
             ModelLevel: AgentModelLevel.High,
-            ReplyStyle: AgentReplyStyle.Caveman,
+            ReplyStyle: AgentReplyStyle.Normal,
             BundleKeys: [InstructionBundles.Orchestrator, InstructionBundles.BoardApi],
             SystemPromptTemplate: LoadOrchestratorTemplate(),
             NamePattern: "{project} Orchestrator"),

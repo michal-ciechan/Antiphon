@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -124,6 +125,7 @@ public class ProjectSetupServiceTests
                 CancellationToken.None);
 
             result.Agent!.AlwaysOn.ShouldBeTrue();
+            result.Agent.ReplyStyle.ShouldBe(AgentReplyStyle.Normal);
             result.Agent.AttachedBundleKeys.ShouldBe([InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
             result.Agent.SystemPromptAppend.ShouldContain("The Board");
             result.Agent.SystemPromptAppend.ShouldContain(directory);
