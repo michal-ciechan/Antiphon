@@ -37,9 +37,9 @@ public class CodexOverlayCanaryTests
         {
             var (app, args) = CxSession.BuildLaunch(CxSession.ResolveCli()!);
             await using var runner = new PtyAgentRunner("modern");
-            await runner.StartAsync(
-                app, args, cwd: cwd, cols: 120, rows: 34,
-                env: new Dictionary<string, string> { ["TERM"] = "xterm-256color" });
+            var env = CxSession.HeadedEnv();
+            env["TERM"] = "xterm-256color";
+            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34, env: env);
             (await CxSession.WaitForComposerAsync(runner, TimeSpan.FromSeconds(60)))
                 .ShouldBeTrue("the composer must render. Screen:\n" + runner.SnapshotScreen());
 

@@ -21,6 +21,14 @@ internal static class CxSession
 {
     public const string EnvFlag = "ANTIPHON_CODEX_HEADED_TESTS";
 
+    /// <summary>
+    /// Dedicated, persistent home for headed real-service tests. The user seeds this home once;
+    /// canaries must never inherit the operator's normal Codex Desktop thread list.
+    /// </summary>
+    public static string TestHome => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Antiphon", "codex-test-home");
+
     public static void SkipIfNotEligible()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -29,6 +37,12 @@ internal static class CxSession
             throw new SkipTestException($"Set {EnvFlag}=1 to opt in to headed-codex tests");
         if (ResolveCli() is null)
             throw new SkipTestException("No Codex CLI found (cx.ps1 or %APPDATA%\\npm\\codex.cmd)");
+        if (!Directory.Exists(TestHome) || !File.Exists(Path.Combine(TestHome, "auth.json")))
+        {
+            throw new SkipTestException(
+                $"Headed Codex test home is unseeded. Run `CODEX_HOME={TestHome} codex login` once; " +
+                "headed tests never inherit the user's ~/.codex.");
+        }
     }
 
     /// <summary>cx.ps1 first (the registry definition's shape), then the npm shim.</summary>
@@ -68,10 +82,13 @@ internal static class CxSession
             new[] { "/d", "/c", cli }.Concat(codexArgs).ToArray());
     }
 
-    public static string DefaultSessionsRoot => Path.Combine(
-        Environment.GetEnvironmentVariable("CODEX_HOME")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"),
-        "sessions");
+    public static string DefaultSessionsRoot => Path.Combine(TestHome, "sessions");
+
+    /// <summary>Launch environment for every headed real-service Codex canary.</summary>
+    public static Dictionary<string, string> HeadedEnv() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CODEX_HOME"] = TestHome,
+    };
 
     public static string[] Rollouts() =>
         Directory.Exists(DefaultSessionsRoot)

@@ -62,7 +62,7 @@ public class CodexCanaryTests
         {
             var (app, args) = CxSession.BuildLaunch(CxSession.ResolveCli()!, "-m", "gpt-5.6-luna");
             await using var runner = new PtyAgentRunner("modern");
-            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34);
+            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34, env: CxSession.HeadedEnv());
             runner.Backend!.Backend.ShouldBe(PtyBackend.ModernConPty,
                 "the deployment runs modern; measuring the inbox conhost would measure the wrong pty. "
                 + "Reason: " + runner.Backend!.Reason);
@@ -153,7 +153,7 @@ public class CodexCanaryTests
         {
             var (app, args) = CxSession.BuildLaunch(CxSession.ResolveCli()!, "-m", "gpt-5.6-luna");
             await using var runner = new PtyAgentRunner("modern");
-            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34);
+            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34, env: CxSession.HeadedEnv());
 
             (await CxSession.WaitForComposerAsync(runner, TimeSpan.FromSeconds(60)))
                 .ShouldBeTrue("the composer must render. Screen:\n" + runner.SnapshotScreen());
@@ -208,7 +208,7 @@ public class CodexCanaryTests
         {
             var (app, args) = CxSession.BuildLaunch(CxSession.ResolveCli()!, "-m", "gpt-5.6-luna");
             await using var runner = new PtyAgentRunner("modern");
-            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34);
+            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34, env: CxSession.HeadedEnv());
 
             (await CxSession.WaitForComposerAsync(runner, TimeSpan.FromSeconds(60)))
                 .ShouldBeTrue("the composer must render. Screen:\n" + runner.SnapshotScreen());

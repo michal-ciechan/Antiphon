@@ -53,11 +53,8 @@ public class CodexHerdrRealCliStubProxyCanaryTests
         await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
         stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
 
-        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey);
-        var env = new Dictionary<string, string>(overlay.Env, StringComparer.OrdinalIgnoreCase)
-        {
-            ["CODEX_HOME"] = codexHome,
-        };
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, codexHome);
+        var env = new Dictionary<string, string>(overlay.Env, StringComparer.OrdinalIgnoreCase);
 
         var codex = HeadedCodexGate.ResolveOrThrow();
         var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
