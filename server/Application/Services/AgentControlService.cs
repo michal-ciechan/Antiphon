@@ -28,6 +28,7 @@ public sealed class AgentControlService
     private readonly CardService _cardService;
     private readonly AgentSessionService _agentSessionService;
     private readonly AgentRegistry _agentRegistry;
+    private readonly AgentSessionLaunchComposer _launchComposer;
     private readonly AgentTuiLaunchResolver? _launchResolver;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
@@ -48,6 +49,7 @@ public sealed class AgentControlService
         CardService cardService,
         AgentSessionService agentSessionService,
         AgentRegistry agentRegistry,
+        AgentSessionLaunchComposer launchComposer,
         AgentSessionLaunchQueue launchQueue,
         IEventBus eventBus,
         TimeProvider timeProvider,
@@ -65,6 +67,7 @@ public sealed class AgentControlService
         _cardService = cardService;
         _agentSessionService = agentSessionService;
         _agentRegistry = agentRegistry;
+        _launchComposer = launchComposer;
         _launchResolver = launchResolver;
         _launchQueue = launchQueue;
         _eventBus = eventBus;
@@ -96,7 +99,7 @@ public sealed class AgentControlService
         if (await HasLiveSessionAsync(agent, ct))
             return await _agentService.GetByIdAsync(agent.Id, ct);
 
-        var kind = await PeekProfileKindAsync(agent, ct);
+        var kind = await _launchComposer.PeekProfileKindAsync(agent, ct);
         if (kind is AgentKind k && _quotaGate is not null)
         {
             var overridden = await _quotaGate.EnforceAsync(
@@ -171,117 +174,9 @@ public sealed class AgentControlService
         if (!Directory.Exists(cwd))
             throw new ConflictException($"Agent '{agent.Name}' working directory does not exist: {cwd}");
 
-        // Session-scoped delegation credential — the same env contract the task dispatcher gives
-        // delegates, so scripts/delegate.ps1 works unchanged from inside this session. The token
-        // authenticates the session to POST /api/agent-tasks as ITSELF: its delegates inherit ITS
-        // working directory (not the server process's cwd) and their reports return into THIS
-        // session (AgentTaskService.AuthenticateAsync, session fallback). Re-minted every launch;
-        // only the hash is stored.
-        var (delegationToken, delegationTokenHash) = AgentTaskService.NewToken();
-        var extraEnv = new Dictionary<string, string>
-        {
-            ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
-            ["ANTIPHON_AGENT_ID"] = agent.Id.ToString("D"),
-            ["ANTIPHON_TASK_TOKEN"] = delegationToken,
-        };
-
-        var profileKind = await PeekProfileKindAsync(agent, ct);
+        var composition = await _launchComposer.ComposeForAgentAsync(agent, ct);
+        var profileKind = await _launchComposer.PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
-        var isGrok = profileKind == AgentKind.Grok;
-        // CARD-0099 S3. Before this, a named Codex agent fell outside the whole block below: it was
-        // launched with no --model at all, so its ModelLevel was silently inert and it ran on
-        // whatever ~/.codex/config.toml happened to say, and its bundles and SystemPromptAppend were
-        // dropped without a word. The delegate path (AgentTaskDispatcher.BuildLaunchSpec) makes the
-        // same three decisions; both had to learn Codex at once or a Codex agent would launch one way
-        // as an agent and another way as a delegate.
-        var isCodex = profileKind == AgentKind.Codex;
-        var extraArgs = new List<string>();
-        // CARD-0182 D2: the alias is offered to the resolver/registry, never stuffed into ExtraArgs.
-        // A blank ModelArgumentName on the profile then drops it; ExtraArgs carrying --model would
-        // bypass that gate.
-        string? tierModelAlias = null;
-        // Null until a composition actually happens, and the difference is load-bearing: it is what
-        // the session row stores, and a null there means "no evidence" and can never raise a drift
-        // badge. A launch that composes nothing must not claim it composed nothing.
-        string? composedStamp = null;
-        if (isClaudeCode || isGrok || isCodex)
-        {
-            var sessionName = agent.Name.Trim();
-            if (isClaudeCode && sessionName.Length > 0)
-                extraArgs.AddRange(["--name", sessionName]);
-
-            // Prefer an exact selected model; fall back to the legacy ModelLevel alias only when
-            // the agent has no exact ModelId (migration compatibility).
-            if (string.IsNullOrWhiteSpace(agent.ModelId))
-            {
-                tierModelAlias = isCodex
-                    ? ModelLevelAliases.ForCodex(agent.ModelLevel)
-                    : isGrok
-                        ? ModelLevelAliases.ForGrok(agent.ModelLevel)
-                        : ModelLevelAliases.ForClaude(agent.ModelLevel);
-            }
-
-            // Codex's per-model default reasoning effort is `low` on the frontier slug and the
-            // operator's own config.toml overrides it globally, so the tier says it explicitly —
-            // exactly as the delegate path does.
-            if (isCodex)
-            {
-                extraArgs.AddRange([
-                    CodexLaunchArgs.ConfigFlag,
-                    CodexLaunchArgs.ReasoningEffortOverride(agent.ModelLevel),
-                ]);
-            }
-
-            // The agent's standing instructions, composed at launch (CARD-0058/0060): the bundles
-            // attached to THIS agent, then the reply-style block, then the agent's own
-            // SystemPromptAppend, which keeps the final word because it is the most specific thing
-            // anybody wrote about this one agent. A standing agent has no role, so attachments are
-            // the only way it can carry a bundle — this is what lets an agent that works the card
-            // API receive board-api without every delegate of some role receiving it too.
-            //
-            // Queried, never read off agent.BundleAttachments: the agent here is loaded FOR UPDATE
-            // with no includes, so the navigation would be empty and the agent would launch without
-            // its bundles and without a sound.
-            //
-            // With no attachments and a Normal style — which resolves to no bundle at all — this
-            // composes to the agent's SystemPromptAppend byte for byte, so every agent that existed
-            // before CARD-0058/0060 launches with unchanged arguments.
-            var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
-            var composed = InstructionBundleComposer.Compose(
-                attachedKeys,
-                AgentReplyStyles.ComposedKey(agent.ReplyStyle),
-                agent.SystemPromptAppend);
-            // Recorded even when it is empty: "" says this launch carried no bundles, which a
-            // later attachment then genuinely contradicts. Stamps only — the composed text is never
-            // stored, so there is nothing here that can drift from the repo's own files.
-            composedStamp = composed.StampLine;
-            if (!composed.IsEmpty)
-            {
-                var boundChannels = await _db.ChatChannels
-                    .Where(c => c.AgentId == agent.Id && c.Enabled)
-                    .Select(c => new { c.Provider, c.Title, c.ExternalId })
-                    .ToListAsync(ct);
-                // Substitution runs over the WHOLE composed text, bundles included — pinned harmless
-                // by InstructionBundleTests, which refuses a bundle containing either placeholder.
-                var rendered = ChannelPreamble.Render(
-                    composed.Text,
-                    agent.Name,
-                    boundChannels.Select(c => (c.Provider, c.Title ?? c.ExternalId)).ToList());
-                // Guarded on the RENDERED text, not the composed one: {channels} expands, and it is
-                // the expanded string that has to fit on the command line. Throws rather than
-                // truncating — half a contract with nothing on screen to say so is worse than a
-                // launch that fails and names what to shrink.
-                InstructionBundleComposer.EnsureWithinCommandLineBudget(
-                    composed with { Text = rendered },
-                    extraArgs,
-                    _delegationSettings.CommandLineBudgetChars,
-                    $"Agent '{agent.Name}'");
-                extraArgs.AddRange(isCodex
-                    ? [CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DeveloperInstructions(rendered)]
-                    : new[] { isGrok ? "--rules" : "--append-system-prompt", rendered });
-            }
-        }
-
         var resolved = await AgentLaunchResolution.ResolveForAgentAsync(
             agent,
             _agentRegistry,
@@ -289,10 +184,10 @@ public sealed class AgentControlService
             new AgentLaunchOptions(
                 Cols: 120,
                 Rows: 30,
-                ExtraArgs: extraArgs.Count > 0 ? extraArgs : null,
-                ExtraEnv: extraEnv,
+                ExtraArgs: composition.ExtraArgs,
+                ExtraEnv: composition.ExtraEnv,
                 LaunchEnvOverride: launchEnvOverride,
-                TierModelAlias: tierModelAlias),
+                ModelTier: agent.ModelLevel),
             ct,
             _apiKeyEnvResolver);
         var spec = resolved.Spec;
@@ -333,13 +228,13 @@ public sealed class AgentControlService
                 previous.EndedAt = null;
                 previous.ExitCode = null;
                 previous.FailureReason = null;
-                previous.DelegationTokenHash = delegationTokenHash;
+                previous.DelegationTokenHash = composition.DelegationTokenHash;
                 previous.TuiProfileRevisionId = resolved.ProfileRevisionId;
                 previous.EffectiveModelId = resolved.EffectiveModelId;
                 // A resume is a LAUNCH — the args are rebuilt per invocation, so the resumed process
                 // carries whatever the repo says today. Restamping is what keeps the badge honest:
                 // leaving the old stamp would keep flagging drift the resume just resolved.
-                previous.ComposedBundleStamp = composedStamp;
+                previous.ComposedBundleStamp = composition.ComposedStamp;
                 // CARD-0186: a PATCH that changed the agent's lane takes effect on the next
                 // crash-restart rather than being silently ignored for the life of this row.
                 previous.SessionBackend = agent.SessionBackend;
@@ -369,10 +264,10 @@ public sealed class AgentControlService
             CreatedAt = now,
             StartedAt = now,
             LastSeenAt = now,
-            DelegationTokenHash = delegationTokenHash,
+            DelegationTokenHash = composition.DelegationTokenHash,
             TuiProfileRevisionId = resolved.ProfileRevisionId,
             EffectiveModelId = resolved.EffectiveModelId,
-            ComposedBundleStamp = composedStamp,
+            ComposedBundleStamp = composition.ComposedStamp,
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -408,34 +303,6 @@ public sealed class AgentControlService
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);
         return session.Id;
-    }
-
-    private async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
-    {
-        if (agent.TuiProfileId is { } profileId)
-        {
-            return await _db.AgentTuiProfiles.AsNoTracking()
-                .Where(profile => profile.Id == profileId)
-                .Select(profile => (AgentKind?)profile.Kind)
-                .FirstOrDefaultAsync(ct);
-        }
-
-        if (_launchResolver is not null)
-        {
-            var defaultProfileKind = await _db.AgentTuiProfiles.AsNoTracking()
-                .Where(profile => profile.IsDefault)
-                .Select(profile => (AgentKind?)profile.Kind)
-                .FirstOrDefaultAsync(ct);
-            if (defaultProfileKind is not null)
-                return defaultProfileKind;
-        }
-
-        return Enum.TryParse<AgentKind>(
-            _agentRegistry.LookupByName(_agentRegistry.Settings.DefaultDefinition).Kind,
-            ignoreCase: true,
-            out var legacyKind)
-            ? legacyKind
-            : null;
     }
 
     // The agent's last interactive session is resumable when it is the same session-identity kind

@@ -1164,6 +1164,7 @@ public class AgentControlServiceIntegrationTests
         {
             InternalTrackerRepositoryPathPrefix = tempRoot
         }));
+        services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
@@ -1188,6 +1189,7 @@ public class AgentControlServiceIntegrationTests
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<OrchestratorService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();

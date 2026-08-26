@@ -85,6 +85,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     // that precedes the work prompt. SentPrompt still holds the last prompt for older tests.
     public IReadOnlyList<string> Prompts => _prompts;
     public IReadOnlyList<string> StartedArgs { get; private set; } = [];
+    public IReadOnlyDictionary<string, string> StartedEnv { get; private set; } =
+        new Dictionary<string, string>();
     // The session StartAsync was asked to run (null until then). Lets a factory-made fake record its
     // prompts against the RIGHT session without knowing the id up front (CARD-0201).
     public Guid? StartedSessionId { get; private set; }
@@ -123,6 +125,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
         Started = true;
         StartedArgs = spec.Args.ToArray();
+        StartedEnv = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal);
         StartedSessionId = spec.SessionId;
         Cols = spec.Cols;
         Rows = spec.Rows;

@@ -17,6 +17,7 @@ public sealed class OrchestratorService
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentTuiLaunchResolver? _launchResolver;
+    private readonly AgentSessionLaunchComposer _launchComposer;
     private readonly AgentSessionService _sessionService;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly RetryScheduler _retryScheduler;
@@ -30,10 +31,12 @@ public sealed class OrchestratorService
     // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
     // unresolved and the launch tripwire refuses them by name. Production always registers it.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    private readonly DelegationSettings _delegationSettings;
 
     public OrchestratorService(
         AppDbContext db,
         AgentRegistry agentRegistry,
+        AgentSessionLaunchComposer launchComposer,
         AgentSessionService sessionService,
         AgentSessionLaunchQueue launchQueue,
         RetryScheduler retryScheduler,
@@ -41,6 +44,7 @@ public sealed class OrchestratorService
         OrchestratorControlState controlState,
         IEventBus eventBus,
         IOptions<OrchestratorSettings> settings,
+        IOptions<DelegationSettings> delegationSettings,
         TimeProvider timeProvider,
         ILogger<OrchestratorService> logger,
         AgentSessionRuntime? runtime = null,
@@ -50,6 +54,7 @@ public sealed class OrchestratorService
         _db = db;
         _agentRegistry = agentRegistry;
         _launchResolver = launchResolver;
+        _launchComposer = launchComposer;
         _sessionService = sessionService;
         _launchQueue = launchQueue;
         _retryScheduler = retryScheduler;
@@ -57,6 +62,7 @@ public sealed class OrchestratorService
         _controlState = controlState;
         _eventBus = eventBus;
         _settings = settings.Value;
+        _delegationSettings = delegationSettings.Value;
         _timeProvider = timeProvider;
         _logger = logger;
         _runtime = runtime;
@@ -119,12 +125,16 @@ public sealed class OrchestratorService
             AgentLaunchSpec spec;
             Guid? tuiProfileRevisionId = null;
             string? effectiveModelId = null;
+            string? delegationTokenHash = null;
+            string? composedStamp = null;
             try
             {
                 var resolved = await ResolveDispatchLaunchAsync(candidate, request, ct);
-                spec = resolved.Spec;
-                tuiProfileRevisionId = resolved.ProfileRevisionId;
-                effectiveModelId = resolved.EffectiveModelId;
+                spec = resolved.Launch.Spec;
+                tuiProfileRevisionId = resolved.Launch.ProfileRevisionId;
+                effectiveModelId = resolved.Launch.EffectiveModelId;
+                delegationTokenHash = resolved.DelegationTokenHash;
+                composedStamp = resolved.ComposedStamp;
                 request = request with
                 {
                     DefinitionName = spec.DefinitionName,
@@ -149,7 +159,9 @@ public sealed class OrchestratorService
                 now,
                 ct,
                 tuiProfileRevisionId,
-                effectiveModelId);
+                effectiveModelId,
+                delegationTokenHash,
+                composedStamp);
             if (claimedSessionId is null)
             {
                 claimedElsewhere++;
@@ -333,7 +345,9 @@ public sealed class OrchestratorService
         DateTime utcNow,
         CancellationToken ct,
         Guid? tuiProfileRevisionId = null,
-        string? effectiveModelId = null)
+        string? effectiveModelId = null,
+        string? delegationTokenHash = null,
+        string? composedStamp = null)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         var card = await _db.Cards
@@ -355,7 +369,9 @@ public sealed class OrchestratorService
             StartedAt = utcNow,
             LastSeenAt = utcNow,
             TuiProfileRevisionId = tuiProfileRevisionId,
-            EffectiveModelId = effectiveModelId
+            EffectiveModelId = effectiveModelId,
+            DelegationTokenHash = delegationTokenHash,
+            ComposedBundleStamp = composedStamp,
         };
         _db.AgentSessions.Add(session);
         await _db.SaveChangesAsync(ct);
@@ -591,39 +607,68 @@ public sealed class OrchestratorService
         }
     }
 
-    private async Task<ResolvedAgentTuiLaunch> ResolveDispatchLaunchAsync(
+    private async Task<DispatchLaunchResolution> ResolveDispatchLaunchAsync(
         DispatchCandidate candidate,
         StartAgentSessionRequest request,
         CancellationToken ct)
     {
-        var options = new AgentLaunchOptions(
-            Cwd: null,
-            Cols: request.Cols,
-            Rows: request.Rows,
-            ExtraArgs: null,
-            ExtraEnv: null);
-
         if (candidate.AssignedAgentId is { } assignedAgentId)
         {
             var agent = await _db.Agents.AsNoTracking()
                 .SingleOrDefaultAsync(a => a.Id == assignedAgentId, ct);
             if (agent is not null)
-                return await AgentLaunchResolution.ResolveForAgentAsync(
+            {
+                var composition = await _launchComposer.ComposeForAgentAsync(agent, ct);
+                var launch = await AgentLaunchResolution.ResolveForAgentAsync(
                     agent,
                     _agentRegistry,
                     _launchResolver,
-                    options,
+                    new AgentLaunchOptions(
+                        Cwd: null,
+                        Cols: request.Cols,
+                        Rows: request.Rows,
+                        ExtraArgs: composition.ExtraArgs,
+                        ExtraEnv: composition.ExtraEnv),
                     ct,
                     _apiKeyEnvResolver);
+                return new DispatchLaunchResolution(
+                    launch, composition.DelegationTokenHash, composition.ComposedStamp);
+            }
         }
 
-        return await AgentLaunchResolution.ResolveDefaultAsync(
+        var credential = MintCardDelegationCredential();
+        var defaultLaunch = await AgentLaunchResolution.ResolveDefaultAsync(
             _agentRegistry,
             _launchResolver,
-            options,
+            new AgentLaunchOptions(
+                Cwd: null,
+                Cols: request.Cols,
+                Rows: request.Rows,
+                ExtraArgs: null,
+                ExtraEnv: credential.ExtraEnv),
             ct,
             _apiKeyEnvResolver);
+        return new DispatchLaunchResolution(defaultLaunch, credential.DelegationTokenHash, null);
     }
+
+    private AgentLaunchComposition MintCardDelegationCredential()
+    {
+        var (token, hash) = AgentTaskService.NewToken();
+        return new AgentLaunchComposition(
+            new Dictionary<string, string>
+            {
+                ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
+                ["ANTIPHON_TASK_TOKEN"] = token,
+            },
+            [],
+            hash,
+            null);
+    }
+
+    private sealed record DispatchLaunchResolution(
+        ResolvedAgentTuiLaunch Launch,
+        string DelegationTokenHash,
+        string? ComposedStamp);
 
     private static void ClearCardClaim(Card card, DateTime utcNow)
     {

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -8,6 +9,8 @@ using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,6 +20,115 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentControl")]
 public sealed class CardSpawnModelArgumentTests
 {
+    [Test]
+    public async Task Assigned_card_spawn_composes_instructions_and_authenticates_as_its_own_session()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.ClaudeCode, modelArgumentName: "--model");
+            var card = await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.ClaudeCode,
+                AgentModelLevel.High, modelId: null);
+            var agent = await db.Agents.SingleAsync(a => a.Id == card.AssignedAgentId);
+            agent.SystemPromptAppend = "Agent {agentName}; channels: {channels}.";
+            db.ChatChannels.Add(new ChatChannel
+            {
+                Id = Guid.NewGuid(), Provider = "telegram", ExternalId = "ops", Title = "Ops",
+                AgentId = agent.Id, Enabled = true, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+
+            await SpawnOnlyCardAsync(db, harness);
+
+            adapter.StartedArgs.ShouldContain("--name");
+            adapter.StartedArgs.ShouldContain("Card spawn agent");
+            adapter.StartedArgs.ShouldContain("--append-system-prompt");
+            adapter.StartedArgs.ShouldContain(a => a.Contains("Agent Card spawn agent; channels: telegram \"Ops\"."));
+            adapter.StartedEnv.ShouldContainKey("ANTIPHON_TASK_TOKEN");
+            adapter.StartedEnv.ShouldContainKey("ANTIPHON_AGENT_ID");
+
+            var session = await db.AgentSessions.SingleAsync(s => s.CardId == card.Id);
+            session.DelegationTokenHash.ShouldBe(AgentTaskService.HashToken(adapter.StartedEnv["ANTIPHON_TASK_TOKEN"]));
+            session.ComposedBundleStamp.ShouldNotBeNull();
+            var caller = await new AgentTaskService(
+                db, null!, Options.Create(new DelegationSettings()), new MockEventBus(), null!,
+                TimeProvider.System, NullLogger<AgentTaskService>.Instance)
+                .AuthenticateAsync(adapter.StartedEnv["ANTIPHON_TASK_TOKEN"], CancellationToken.None);
+            caller.Task.ShouldBeNull();
+            caller.SessionId.ShouldBe(session.Id);
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Codex_assigned_card_spawn_carries_the_reasoning_effort_override()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Codex, modelArgumentName: "--model");
+            await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Codex,
+                AgentModelLevel.High, modelId: null);
+
+            await SpawnOnlyCardAsync(db, harness);
+
+            adapter.StartedArgs.ShouldContain(CodexLaunchArgs.ConfigFlag);
+            adapter.StartedArgs.ShouldContain(CodexLaunchArgs.ReasoningEffortOverride(AgentModelLevel.High));
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Agentless_card_spawn_has_a_delegation_token_without_agent_composition()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Raw", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var card = await SeedUnassignedCardAsync(db, harness, tempRoot);
+
+            ClearHarnessTracking(harness);
+            await harness.CardService.SpawnAsync(
+                card.Id, new SpawnCardRequest(DefinitionName: "fake"), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            adapter.StartedEnv.ShouldContainKey("ANTIPHON_TASK_TOKEN");
+            adapter.StartedEnv.ShouldNotContainKey("ANTIPHON_AGENT_ID");
+            adapter.StartedArgs.ShouldNotContain("--name");
+            adapter.StartedArgs.ShouldNotContain("--append-system-prompt");
+            var session = await db.AgentSessions.SingleAsync(s => s.CardId == card.Id);
+            session.DelegationTokenHash.ShouldBe(AgentTaskService.HashToken(adapter.StartedEnv["ANTIPHON_TASK_TOKEN"]));
+            session.ComposedBundleStamp.ShouldBeNull();
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task Assigned_card_spawn_with_a_blank_model_uses_the_agents_claude_tier()
     {
@@ -75,6 +187,7 @@ public sealed class CardSpawnModelArgumentTests
                 AgentModelLevel.Medium, modelId: null);
             await SpawnOnlyCardAsync(db, harness);
 
+            SessionIndependentArgs(cardlessAdapter.StartedArgs).ShouldBe(SessionIndependentArgs(cardAdapter.StartedArgs));
             ModelPair(cardlessAdapter.StartedArgs).ShouldBe(ModelPair(cardAdapter.StartedArgs));
             ModelPair(cardAdapter.StartedArgs).ShouldBe(["--model", "sonnet"]);
         }
@@ -237,6 +350,14 @@ public sealed class CardSpawnModelArgumentTests
         var index = args.ToList().IndexOf("--model");
         index.ShouldBeGreaterThanOrEqualTo(0);
         return [args[index], args[index + 1]];
+    }
+
+    private static IReadOnlyList<string> SessionIndependentArgs(IReadOnlyList<string> args)
+    {
+        var sessionId = args.ToList().IndexOf("--session-id");
+        return sessionId < 0
+            ? args
+            : args.Take(sessionId).Concat(args.Skip(sessionId + 2)).ToList();
     }
 
     private static AppDbContext NewDb(string connectionString) => new(TestDbFixture.CreateDbContextOptions(connectionString));
