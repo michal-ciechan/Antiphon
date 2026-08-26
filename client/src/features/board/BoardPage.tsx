@@ -306,7 +306,7 @@ function SyncTrackerButton({ boardId, compact = false }: { boardId: string; comp
         notifications.show({
           color: 'red',
           title: 'Tracker sync failed',
-          message: getApiErrorMessage(error),
+          message: getApiErrorMessage(error, 'Tracker sync failed'),
         })
       },
     })
