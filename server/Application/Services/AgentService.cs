@@ -292,6 +292,7 @@ public sealed class AgentService
         ValidateAgentRequest(request.Name, request.WorkingDirectory);
         ValidateAutoCompactOverrides(request.AutoCompactIdleMinutes, request.AutoCompactContextPercent);
         await EnsureWorkflowTemplateExistsAsync(request.DefaultWorkflowTemplateId, ct);
+        await EnsureBoardExistsAsync(request.BoardId, ct);
 
         // CARD-0160 / CARD-0187: refuse Herdr×unsupported-Kind before the row exists. Channel-bind
         // cannot apply yet (no AgentId); Kind is ClaudeCode until a TuiProfile is applied below —
@@ -316,11 +317,62 @@ public sealed class AgentService
         {
             var now = UtcNow();
 
-            // Every agent gets its own board to organise its work. Boards belong to a project, so
-            // find-or-create a project keyed on the agent's working directory and hang the board off it.
-            var project = await ResolveProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
-            var board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, agentName, ct), now);
-            _db.Boards.Add(board);
+            // An explicit board wins. Otherwise inherit the project's only board, refuse to guess
+            // among several, or create the first project board for a previously unknown directory.
+            Board board;
+            var boardCreated = false;
+            if (request.BoardId is { } requestedBoardId)
+            {
+                board = await _db.Boards
+                    .Include(b => b.Project)
+                    .FirstOrDefaultAsync(b => b.Id == requestedBoardId, ct)
+                    ?? throw new NotFoundException(nameof(Board), requestedBoardId);
+
+                if (!PathsMatch(board.Project.LocalRepositoryPath, workingDirectory))
+                {
+                    _logger.LogInformation(
+                        "Agent {AgentName} uses board {BoardId} from project path {ProjectPath} while working in {WorkingDirectory}",
+                        agentName, board.Id, board.Project.LocalRepositoryPath, workingDirectory);
+                }
+            }
+            else
+            {
+                var project = await FindProjectForWorkingDirectoryAsync(workingDirectory, ct);
+                if (project is null)
+                {
+                    project = await CreateProjectForWorkingDirectoryAsync(workingDirectory, agentName, now, ct);
+                    board = BuildAgentBoard(
+                        project,
+                        await UniqueBoardNameAsync(project.Id, DeriveProjectName(workingDirectory, agentName), ct),
+                        now);
+                    _db.Boards.Add(board);
+                    boardCreated = true;
+                }
+                else
+                {
+                    var candidates = await _db.Boards
+                        .Where(b => b.ProjectId == project.Id)
+                        .OrderBy(b => b.Name)
+                        .ToListAsync(ct);
+                    if (candidates.Count == 1)
+                    {
+                        board = candidates[0];
+                    }
+                    else if (candidates.Count > 1)
+                    {
+                        throw new ValidationException(
+                            nameof(request.BoardId),
+                            $"Working directory belongs to project '{project.Name}', which has several boards: "
+                            + $"{string.Join(", ", candidates.Select(b => b.Name))}. Choose a board.");
+                    }
+                    else
+                    {
+                        board = BuildAgentBoard(project, await UniqueBoardNameAsync(project.Id, project.Name, ct), now);
+                        _db.Boards.Add(board);
+                        boardCreated = true;
+                    }
+                }
+            }
 
             var agent = new Agent
             {
@@ -383,7 +435,8 @@ public sealed class AgentService
             // nothing written — the repo's own CLAUDE.md already serves it.
             _workspace?.Provision(agent);
 
-            await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
+            if (boardCreated)
+                await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
             return await GetByIdAsync(agent.Id, ct);
@@ -474,11 +527,12 @@ public sealed class AgentService
     }
 
     /// <summary>
-    /// Backfill: every agent must have a default board. Agents created before that rule — or whose
+    /// Backfill: every standing agent must have a default board; pool delegates are boardless by design
+    /// (CARD-0210). Standing agents created before that rule — or whose
     /// board link was cleared by the old update path — are RE-LINKED to their original board when
     /// it still exists (same project, named after the agent, not claimed by another agent);
-    /// otherwise a board (and project) is created exactly like <see cref="CreateAsync"/> would
-    /// have. Runs at startup; idempotent. Saves per agent so two boardless agents sharing a
+    /// otherwise a board (and, when needed, project) is created for that standing agent. Runs at
+    /// startup; idempotent. Saves per agent so two boardless agents sharing a
     /// working directory reuse one project.
     /// </summary>
     public async Task<int> EnsureAgentBoardsAsync(CancellationToken ct)
@@ -489,7 +543,7 @@ public sealed class AgentService
         // backfill for everyone behind it. This runs during startup; failing the whole sweep on one
         // bad row is the worst available outcome.
         var orphanIds = await _db.Agents
-            .Where(a => a.BoardId == null)
+            .Where(a => a.BoardId == null && !a.IsPoolDelegate)
             .Select(a => a.Id)
             .ToListAsync(ct);
 
@@ -814,11 +868,24 @@ public sealed class AgentService
     private async Task<Project> ResolveProjectForWorkingDirectoryAsync(
         string workingDirectory, string fallbackName, DateTime now, CancellationToken ct)
     {
-        var existing = await _db.Projects
-            .FirstOrDefaultAsync(p => p.LocalRepositoryPath == workingDirectory, ct);
+        var existing = await FindProjectForWorkingDirectoryAsync(workingDirectory, ct);
         if (existing is not null)
             return existing;
 
+        return await CreateProjectForWorkingDirectoryAsync(workingDirectory, fallbackName, now, ct);
+    }
+
+    private async Task<Project?> FindProjectForWorkingDirectoryAsync(string workingDirectory, CancellationToken ct)
+    {
+        var normalized = DelegationWorkspaceResolver.NormalizeSeparators(workingDirectory).ToLowerInvariant();
+        return await _db.Projects.FirstOrDefaultAsync(
+            p => p.LocalRepositoryPath.Replace("/", "\\").ToLower() == normalized,
+            ct);
+    }
+
+    private async Task<Project> CreateProjectForWorkingDirectoryAsync(
+        string workingDirectory, string fallbackName, DateTime now, CancellationToken ct)
+    {
         var project = new Project
         {
             Id = Guid.NewGuid(),
@@ -833,6 +900,12 @@ public sealed class AgentService
         _db.Projects.Add(project);
         return project;
     }
+
+    private static bool PathsMatch(string left, string right) =>
+        string.Equals(
+            DelegationWorkspaceResolver.NormalizeSeparators(left),
+            DelegationWorkspaceResolver.NormalizeSeparators(right),
+            StringComparison.OrdinalIgnoreCase);
 
     private static Board BuildAgentBoard(Project project, string name, DateTime now)
     {

@@ -566,8 +566,8 @@ try
                 profileImport.ProfilesCreated,
                 profileImport.AgentsAssigned);
         }
-        // Every agent must have a default board (Add-Work and card routing rely on it) — create
-        // boards for any agent that predates the rule or lost its link to the old update path.
+        // Every standing agent must have a default board (Add-Work and card routing rely on it); pool
+        // delegates are boardless by design (CARD-0210). Repair standing agents that lost their link.
         var backfilled = await scope.ServiceProvider.GetRequiredService<AgentService>()
             .EnsureAgentBoardsAsync(CancellationToken.None);
         if (backfilled > 0)

@@ -47,7 +47,7 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
-    public async Task CreateAsync_creates_board_and_project_for_working_directory()
+    public async Task CreateAsync_on_an_unknown_directory_creates_a_project_and_a_board_named_after_it()
     {
         await using var db = CreateContext();
         var eventBus = new MockEventBus();
@@ -60,14 +60,14 @@ public class AgentServiceIntegrationTests
             CancellationToken.None);
 
         created.BoardId.ShouldNotBeNull();
-        created.BoardName.ShouldBe(agentName);
+        created.BoardName.ShouldBe(Path.GetFileName(workingDirectory));
 
         await using var verify = CreateContext();
         var board = await verify.Boards
             .Include(b => b.Columns)
             .Include(b => b.Project)
             .SingleAsync(b => b.Id == created.BoardId!.Value);
-        board.Name.ShouldBe(agentName);
+        board.Name.ShouldBe(Path.GetFileName(workingDirectory));
         board.Project.LocalRepositoryPath.ShouldBe(workingDirectory);
         board.Columns
             .Select(c => c.StateKey)
@@ -77,7 +77,7 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
-    public async Task CreateAsync_reuses_project_for_shared_working_directory_with_distinct_boards()
+    public async Task CreateAsync_reuses_the_projects_only_board_for_shared_working_directory()
     {
         await using var db = CreateContext();
         var service = CreateService(db, new MockEventBus());
@@ -92,9 +92,175 @@ public class AgentServiceIntegrationTests
 
         await using var verify = CreateContext();
         var firstBoard = await verify.Boards.SingleAsync(b => b.Id == first.BoardId!.Value);
-        var secondBoard = await verify.Boards.SingleAsync(b => b.Id == second.BoardId!.Value);
-        secondBoard.Id.ShouldNotBe(firstBoard.Id);
-        secondBoard.ProjectId.ShouldBe(firstBoard.ProjectId);
+        second.BoardId.ShouldBe(firstBoard.Id);
+        (await verify.Boards.CountAsync(b => b.ProjectId == firstBoard.ProjectId)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task CreateAsync_with_boardId_links_and_creates_nothing()
+    {
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Explicit board project {Guid.NewGuid():N}",
+            LocalRepositoryPath = $"D:/src/{Guid.NewGuid():N}",
+            GitRepositoryUrl = string.Empty,
+            BaseBranch = "master",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Project = project,
+            Name = "Chosen board",
+            Description = string.Empty,
+            TrackerKind = TrackerKind.Internal,
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        project.Boards.Add(board);
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+
+        var created = await CreateService(db, new MockEventBus()).CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("Explicit board agent"),
+                $"D:/src/worktree-{Guid.NewGuid():N}",
+                BoardId: board.Id),
+            CancellationToken.None);
+
+        created.BoardId.ShouldBe(board.Id);
+        await using var verify = CreateContext();
+        (await verify.Projects.CountAsync(p => p.Id == project.Id)).ShouldBe(1);
+        (await verify.Boards.CountAsync(b => b.ProjectId == project.Id)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task CreateAsync_without_boardId_links_to_the_projects_only_board()
+    {
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        var directory = $"D:/src/{Guid.NewGuid():N}";
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Inherited board project {Guid.NewGuid():N}",
+            LocalRepositoryPath = directory,
+            GitRepositoryUrl = string.Empty,
+            BaseBranch = "master",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Project = project,
+            Name = "Only board",
+            Description = string.Empty,
+            TrackerKind = TrackerKind.Internal,
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        project.Boards.Add(board);
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+
+        var created = await CreateService(db, new MockEventBus()).CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Inherited board agent"), directory),
+            CancellationToken.None);
+
+        created.BoardId.ShouldBe(board.Id);
+        await using var verify = CreateContext();
+        (await verify.Boards.CountAsync(b => b.ProjectId == project.Id)).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task CreateAsync_without_boardId_refuses_when_the_project_has_several_boards()
+    {
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        var directory = $"D:/src/{Guid.NewGuid():N}";
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Ambiguous board project {Guid.NewGuid():N}",
+            LocalRepositoryPath = directory,
+            GitRepositoryUrl = string.Empty,
+            BaseBranch = "master",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        foreach (var name in new[] { "Alpha", "Beta" })
+        {
+            project.Boards.Add(new Board
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                Name = name,
+                Description = string.Empty,
+                TrackerKind = TrackerKind.Internal,
+                MaxConcurrentSessions = 1,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+        }
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            CreateService(db, new MockEventBus()).CreateAsync(
+                new CreateAgentRequest(UniqueAgentName("Ambiguous board agent"), directory),
+                CancellationToken.None));
+
+        ex.Errors[nameof(CreateAgentRequest.BoardId)].Single().ShouldContain("Alpha, Beta");
+    }
+
+    [Test]
+    public async Task CreateAsync_matches_an_existing_project_path_regardless_of_separator_and_case()
+    {
+        await using var db = CreateContext();
+        var now = DateTime.UtcNow;
+        var leaf = Guid.NewGuid().ToString("N");
+        var project = new Project
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Normalised path project {leaf}",
+            LocalRepositoryPath = $"D:/SRC/{leaf}",
+            GitRepositoryUrl = string.Empty,
+            BaseBranch = "master",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Project = project,
+            Name = "Normalised board",
+            Description = string.Empty,
+            TrackerKind = TrackerKind.Internal,
+            MaxConcurrentSessions = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        project.Boards.Add(board);
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+
+        var created = await CreateService(db, new MockEventBus()).CreateAsync(
+            new CreateAgentRequest(UniqueAgentName("Normalised path agent"), $"d:\\src\\{leaf.ToUpperInvariant()}\\"),
+            CancellationToken.None);
+
+        created.BoardId.ShouldBe(board.Id);
+        await using var verify = CreateContext();
+        (await verify.Projects.CountAsync(p => p.Id == project.Id)).ShouldBe(1);
     }
 
     [Test]
@@ -177,6 +343,9 @@ public class AgentServiceIntegrationTests
         await using (var setup = CreateContext())
         {
             var row = await setup.Agents.SingleAsync(a => a.Id == created.Id);
+            // Legacy per-agent boards were named after their agent. New-agent boards use the
+            // directory leaf, but the backfill must still recover the legacy shape.
+            (await setup.Boards.SingleAsync(b => b.Id == created.BoardId!.Value)).Name = agentName;
             row.BoardId = null;
             await setup.SaveChangesAsync();
         }
@@ -226,6 +395,34 @@ public class AgentServiceIntegrationTests
         // Idempotent: a second run finds nothing to do for this agent.
         await using var secondDb = CreateContext();
         (await secondDb.Agents.AnyAsync(a => a.Id == created.Id && a.BoardId == null)).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task EnsureAgentBoardsAsync_leaves_pool_delegates_boardless()
+    {
+        await using var db = CreateContext();
+        var workingDirectory = $"D:/src/{Guid.NewGuid():N}/worktrees/card-task-deadbeef";
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = UniqueAgentName("task-deadbeef"),
+            Slug = $"task-{Guid.NewGuid():N}"[..13],
+            WorkingDirectory = workingDirectory,
+            Details = "Pool delegate under test.",
+            Status = AgentStatus.Idle,
+            IsPoolDelegate = true,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync();
+
+        await CreateService(db, new MockEventBus()).EnsureAgentBoardsAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).BoardId.ShouldBeNull();
+        (await verify.Projects.AnyAsync(p => p.LocalRepositoryPath == workingDirectory)).ShouldBeFalse();
+        (await verify.Boards.AnyAsync(b => b.Name == agent.Name)).ShouldBeFalse();
     }
 
     [Test]

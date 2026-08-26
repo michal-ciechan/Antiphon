@@ -88,7 +88,7 @@ public class Agent
 
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
-    /// <summary>The board automatically created for this agent when it was added.</summary>
+    /// <summary>The standing agent's default board; always null for a pool delegate (<see cref="IsPoolDelegate"/>).</summary>
     public Guid? BoardId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

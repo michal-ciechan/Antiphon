@@ -2121,6 +2121,7 @@ public sealed class AgentTaskDispatcher
         // settles it goes warm instead of dying, until the janitor retires it.
         var shortId = DelegationReportFormatter.Short(task.Id);
         var name = $"task-{shortId}";
+        // BoardId is deliberately absent: pool delegates are boardless by design (CARD-0210).
         var agent = new Agent
         {
             Id = Guid.NewGuid(),

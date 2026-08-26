@@ -297,6 +297,8 @@ export interface CreateAgentRequest {
   autoCompactEnabled?: boolean | null
   autoCompactIdleMinutes?: number | null
   autoCompactContextPercent?: number | null
+  /** Omit/null = inherit the project's only board, or create the first board for a new project. */
+  boardId?: string | null
 }
 
 export interface UpdateAgentRequest {
@@ -455,7 +457,7 @@ export function useCreateAgent() {
     onSuccess: (agent) => {
       queryClient.invalidateQueries({ queryKey: agentKeys.all })
       queryClient.setQueryData(agentKeys.detail(agent.id), agent)
-      // Creating an agent also creates its board (and possibly a project), so refresh boards.
+      // Creating an agent can create a board and project, so refresh boards.
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
     },

@@ -7,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -25,6 +26,39 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentQueue")]
 public class AgentTaskPoolTests
 {
+    [Test]
+    public async Task a_dispatched_pool_delegate_remains_boardless_after_agent_board_backfill()
+    {
+        using var workspace = new TempWorkspace();
+        var (dispatcher, _, _) = CreateHarness();
+        var shortId = Guid.NewGuid().ToString("N")[..8];
+        var worktreePath = Path.Combine(workspace.Path, "worktrees", $"card-task-{shortId}");
+        var task = await SeedQueuedTaskAsync(
+            workspace.Path,
+            AgentModelLevel.Medium,
+            worktreePath: worktreePath);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using (var db = CreateContext())
+        {
+            var dispatched = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            dispatched.AgentId.ShouldNotBeNull();
+            var poolAgent = await db.Agents.SingleAsync(a => a.Id == dispatched.AgentId!.Value);
+            poolAgent.IsPoolDelegate.ShouldBeTrue();
+            poolAgent.BoardId.ShouldBeNull();
+
+            await CreateAgentService(db).EnsureAgentBoardsAsync(CancellationToken.None);
+        }
+
+        await using var verify = CreateContext();
+        var storedTask = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        (await verify.Agents.SingleAsync(a => a.Id == storedTask.AgentId!.Value)).BoardId.ShouldBeNull();
+        var expectedBoardName = $"task-{DelegationReportFormatter.Short(task.Id)}";
+        (await verify.Boards.AnyAsync(b => b.Name == expectedBoardName)).ShouldBeFalse();
+        (await verify.Projects.AnyAsync(p => p.LocalRepositoryPath == worktreePath)).ShouldBeFalse();
+    }
+
     // ---- reuse -----------------------------------------------------------------------------
 
     [Test]
@@ -517,7 +551,8 @@ public class AgentTaskPoolTests
         Guid? rootTaskId = null,
         Guid? pinnedAgentId = null,
         Guid? projectId = null,
-        AgentKind kind = AgentKind.ClaudeCode)
+        AgentKind kind = AgentKind.ClaudeCode,
+        string? worktreePath = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -529,8 +564,9 @@ public class AgentTaskPoolTests
             Role = AgentTaskRole.Docs,
             AgentKind = kind,
             ModelLevel = level,
-            Workspace = WorkspaceMode.Shared,
+            Workspace = worktreePath is null ? WorkspaceMode.Shared : WorkspaceMode.Worktree,
             WorkingDirectory = directory,
+            WorktreePath = worktreePath,
             ProjectId = projectId,
             AgentId = pinnedAgentId,
             Ephemeral = pinnedAgentId is null,
@@ -581,6 +617,19 @@ public class AgentTaskPoolTests
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
+
+    private static AgentService CreateAgentService(AppDbContext db) => new(
+        db,
+        new CardWorkflowRunFactory(db, TimeProvider.System),
+        new MockEventBus(),
+        TimeProvider.System,
+        new NoOpDirectoryWriter(),
+        NullLogger<AgentService>.Instance);
+
+    private sealed class NoOpDirectoryWriter : IDirectoryWriter
+    {
+        public void CreateDirectory(string path) { }
+    }
 
     private sealed class TempWorkspace : IDisposable
     {

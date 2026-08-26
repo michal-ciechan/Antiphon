@@ -202,7 +202,9 @@ public sealed record CreateAgentRequest(
     // CARD-0082 S2. Null = use the global ContextCompactionSettings value.
     bool? AutoCompactEnabled = null,
     int? AutoCompactIdleMinutes = null,
-    int? AutoCompactContextPercent = null);
+    int? AutoCompactContextPercent = null,
+    // Null/omitted = inherit the project's only board, or create the first board for a new project.
+    Guid? BoardId = null);
 
 public sealed record DraftAgentRequest(string Description);
 

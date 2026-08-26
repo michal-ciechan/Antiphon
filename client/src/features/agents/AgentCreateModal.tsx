@@ -12,7 +12,7 @@ import {
   Textarea,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentReplyStyle } from '../../api/agents'
 import { AGENT_REPLY_STYLE_OPTIONS, useCreateAgent, useDraftAgent } from '../../api/agents'
@@ -20,6 +20,7 @@ import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useAgentTuiProfiles } from '../../api/agentTui'
+import { useBoards } from '../../api/boards'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -47,7 +48,14 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
+  const [boardId, setBoardId] = useState<string | null>(null)
+  const [creationError, setCreationError] = useState<string | null>(null)
   const { data: profiles } = useAgentTuiProfiles()
+  const boards = useBoards()
+  const boardOptions = useMemo(
+    () => (boards.data ?? []).map((board) => ({ value: board.id, label: `${board.projectName} / ${board.name}` })),
+    [boards.data],
+  )
 
   const reset = () => {
     setDraftDescription('')
@@ -62,6 +70,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setReplyStyle('Normal')
     setAlwaysOn(false)
     setRemoteControlEnabled(false)
+    setBoardId(null)
+    setCreationError(null)
     draftAgent.reset()
   }
 
@@ -75,6 +85,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
 
   const handleSubmit = () => {
     if (!name.trim() || !workingDirectory.trim() || blockedByMissingDir) return
+
+    setCreationError(null)
 
     const profileId =
       tuiProfileId ?? profiles?.find((profile) => profile.isDefault)?.id ?? null
@@ -92,6 +104,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         replyStyle,
         alwaysOn,
         remoteControlEnabled,
+        boardId: boardId ?? undefined,
       },
       {
         onSuccess: () => {
@@ -99,10 +112,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           handleClose()
         },
         onError: (error) => {
-          notifications.show({
-            color: 'red',
-            message: getApiErrorMessage(error, 'Agent creation failed'),
-          })
+          setCreationError(getApiErrorMessage(error, 'Agent creation failed'))
         },
       },
     )
@@ -173,6 +183,18 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           value={details}
           onChange={(event) => setDetails(event.currentTarget.value)}
         />
+        <Select
+          label="Board"
+          description="Optional. Leave empty to use the project's board."
+          placeholder="Use the project's board"
+          data={boardOptions}
+          value={boardId}
+          onChange={setBoardId}
+          disabled={boards.isLoading}
+          searchable
+          clearable
+        />
+        {creationError && <Input.Error>{creationError}</Input.Error>}
         <Select
           label="Assignment policy"
           data={ASSIGNMENT_POLICIES}
