@@ -32,7 +32,8 @@ public static class PlanEndpoints
         plans.MapGet("/content", async (
             string? path,
             string file,
+            string? @ref,
             PlanCatalogService service,
-            CancellationToken ct) => Results.Ok(await service.ReadAsync(path, file, ct)));
+            CancellationToken ct) => Results.Ok(await service.ReadAsync(path, file, @ref, ct)));
     }
 }

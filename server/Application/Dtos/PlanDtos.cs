@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
-/// Which of the two conventions a plan file follows. One list, one reader — the distinction is a
+/// Which convention a plan file follows. One list, one reader — the distinction is a
 /// label on the row, not a second endpoint (the mobile-thread spec §9.4: the reader is identical
 /// either way, so splitting them would buy a taxonomy and cost a surface).
 /// </summary>
@@ -12,6 +12,9 @@ public enum PlanKind
 
     /// <summary>A <c>proposal.md</c> under a <c>docs/features/&lt;name&gt;/</c> folder.</summary>
     Proposal = 1,
+
+    /// <summary>A delegated plan under <c>docs/superpowers/plans/</c>.</summary>
+    Plan = 2,
 }
 
 /// <summary>

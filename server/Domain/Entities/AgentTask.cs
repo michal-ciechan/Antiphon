@@ -137,6 +137,15 @@ public class AgentTask
     /// <summary>Set when the delegate spilled a long report to a file — the report references it.</summary>
     public string? ResultFilePath { get; set; }
 
+    /// <summary>The first repository markdown deliverable named by the immutable final report.</summary>
+    public string? DeliverablePath { get; set; }
+
+    /// <summary>The branch holding <see cref="DeliverablePath"/> when it was not on disk at settlement.</summary>
+    public string? DeliverableRef { get; set; }
+
+    /// <summary>When an operator first opened this task's deliverable or report.</summary>
+    public DateTime? ReadAt { get; set; }
+
     public string? FailureReason { get; set; }
 
     /// <summary>The normalized digest of the settled report last read by this task's parent session.</summary>

@@ -308,7 +308,10 @@ public class CardThreadServiceTests
             await SeedAsync();
             var service = new CardThreadService(
                 CreateContext(),
-                new PlanCatalogService(TimeProvider.System, NullLogger<PlanCatalogService>.Instance),
+                new PlanCatalogService(
+                    TimeProvider.System,
+                    NullLogger<PlanCatalogService>.Instance,
+                    new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance)),
                 new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
                 TimeProvider.System,
                 NullLogger<CardThreadService>.Instance);

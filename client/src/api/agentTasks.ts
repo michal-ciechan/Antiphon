@@ -91,6 +91,9 @@ export interface AgentTaskSummaryDto {
   createdAt: string
   dispatchedAt: string | null
   completedAt: string | null
+  readAt?: string | null
+  deliverablePath?: string | null
+  deliverableRef?: string | null
   /** Non-null when recovery settled an unbound session without observing completion. */
   recoveredAt: string | null
   /** UNCACHED input only — add the two cache counters for a human "tokens in". */
@@ -131,6 +134,8 @@ export interface AgentTaskDetailDto {
   /** The delegate's final message, untouched — forwarding may excerpt it, this never does. */
   result: string | null
   resultFilePath: string | null
+  deliverablePath?: string | null
+  deliverableRef?: string | null
   failureReason: string | null
   mergeTargetRef: string | null
   events: AgentTaskEventDto[]
@@ -262,6 +267,11 @@ export function useEscalateAgentTask() {
   return useTaskMutation(({ id, modelLevel }: { id: string; modelLevel?: AgentModelLevel }) =>
     apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/escalate`, { modelLevel: modelLevel ?? null }),
   )
+}
+
+/** First read wins, so a subsequent open never rewrites the operator-visible timestamp. */
+export function useMarkAgentTaskRead() {
+  return useTaskMutation((id: string) => apiPost<AgentTaskSummaryDto>(`/agent-tasks/${id}/read`, {}))
 }
 
 /** Answer a Blocked delegate's question. Taking the work back is the failure mode this prevents. */

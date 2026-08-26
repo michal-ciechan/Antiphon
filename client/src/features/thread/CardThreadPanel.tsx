@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -423,7 +424,7 @@ function ApprovePlanButton({
  * the card identifier and what is being reacted to, so the reaction becomes a delegated task
  * rather than the operator taking the work back.
  */
-function HandBackButton({
+export function HandBackButton({
   identifier,
   context,
   directory,
@@ -580,6 +581,20 @@ function ThreadTaskRow({
       )}
 
       <Group justify="flex-end" gap="xs" mt={6}>
+        {task.deliverablePath && (
+          <Anchor
+            component={Link}
+            to={`/plans?${new URLSearchParams({
+              file: task.deliverablePath,
+              ...(task.deliverableRef ? { ref: task.deliverableRef } : {}),
+              task: task.id,
+            }).toString()}`}
+            size="xs"
+            data-testid={`thread-task-read-${task.id}`}
+          >
+            Read
+          </Anchor>
+        )}
         {task.status === 'Blocked' && !answering && (
           <Button size="compact-xs" onClick={() => setAnswering(true)}>
             Answer it

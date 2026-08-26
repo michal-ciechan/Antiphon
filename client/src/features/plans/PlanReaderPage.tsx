@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import {
   ActionIcon,
@@ -17,9 +17,12 @@ import {
 import { TbArrowLeft, TbChevronDown, TbChevronRight } from 'react-icons/tb'
 import { ApiError, getApiErrorMessage } from '../../api/client'
 import { usePlanCatalog, usePlanContent, type PlanSummaryDto } from '../../api/plans'
+import { useAgentTasks, useMarkAgentTaskRead } from '../../api/agentTasks'
 import { splitSections } from '../agents/markdownSections'
+import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
 import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
 import { displayIdentifier } from '../../shared/cardIdentifier'
+import { HandBackButton } from '../thread/CardThreadPanel'
 
 /**
  * The plan reader (mobile-thread spec §4, M3): `/plans` lists the repo's plan files,
@@ -32,6 +35,8 @@ export function PlanReaderPage() {
   const [params, setParams] = useSearchParams()
   const path = params.get('path')
   const file = params.get('file')
+  const ref = params.get('ref')
+  const task = params.get('task')
 
   const openFile = (relativePath: string) => {
     const next = new URLSearchParams(params)
@@ -48,7 +53,7 @@ export function PlanReaderPage() {
   return file === null ? (
     <PlanCatalog path={path} onOpen={openFile} />
   ) : (
-    <PlanReader path={path} file={file} onBack={closeFile} />
+    <PlanReader path={path} file={file} refName={ref} taskId={task} onBack={closeFile} />
   )
 }
 
@@ -86,6 +91,11 @@ function PlanMeta({ plan }: { plan: PlanSummaryDto }) {
       {plan.kind === 'Proposal' && (
         <Badge size="xs" variant="light" color="grape">
           proposal
+        </Badge>
+      )}
+      {plan.kind === 'Plan' && (
+        <Badge size="xs" variant="light" color="violet">
+          plan
         </Badge>
       )}
       {plan.status && (
@@ -181,13 +191,22 @@ function PlanCatalog({ path, onOpen }: { path: string | null; onOpen: (file: str
 function PlanReader({
   path,
   file,
+  refName,
+  taskId,
   onBack,
 }: {
   path: string | null
   file: string
+  refName: string | null
+  taskId: string | null
   onBack: () => void
 }) {
-  const content = usePlanContent(path, file)
+  const content = usePlanContent(path, file, refName)
+  const catalog = usePlanCatalog(path)
+  const tasks = useAgentTasks()
+  const markRead = useMarkAgentTaskRead()
+  const stampedTask = useRef<string | null>(null)
+  const [selection, setSelection] = useState<string | null>(null)
   // Open section keys. Everything starts collapsed: the ToC IS the landing view.
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
 
@@ -195,6 +214,17 @@ function PlanReader({
     () => (content.data ? splitSections(content.data.content) : []),
     [content.data],
   )
+
+  const task = taskId ? (tasks.data ?? []).find((candidate) => candidate.id === taskId) : undefined
+  const goalContext = taskId
+    ? `Re ${content.data?.plan.cards[0] ?? 'this plan'} (task ${taskId.slice(0, 8)}):`
+    : undefined
+
+  useEffect(() => {
+    if (!taskId || stampedTask.current === taskId) return
+    stampedTask.current = taskId
+    markRead.mutate(taskId)
+  }, [taskId, markRead])
 
   if (content.isPending) {
     return (
@@ -253,14 +283,22 @@ function PlanReader({
               {plan.status}
             </Badge>
           )}
+          {plan.cards[0] && (
+            <HandBackButton
+              identifier={plan.cards[0]}
+              context={`plan ${plan.relativePath}`}
+              directory={catalog.data?.root ?? path ?? undefined}
+            />
+          )}
         </Group>
         <Text size="xs" c="dimmed" truncate>
           {plan.relativePath}
           {plan.date ? ` · ${plan.date}` : ''}
         </Text>
       </Box>
-      <Paper withBorder radius="md" px="xs">
-        {sections.map((section, i) => {
+      <SelectionDelegate onCompose={setSelection}>
+        <Paper withBorder radius="md" px="xs">
+          {sections.map((section, i) => {
           const isOpen = open.has(section.key)
           return (
             <Box key={section.key}>
@@ -292,13 +330,26 @@ function PlanReader({
               )}
             </Box>
           )
-        })}
-        {sections.length === 0 && (
-          <Text size="sm" c="dimmed" p="sm">
-            This plan is empty.
-          </Text>
-        )}
-      </Paper>
+          })}
+          {sections.length === 0 && (
+            <Text size="sm" c="dimmed" p="sm">
+              This plan is empty.
+            </Text>
+          )}
+        </Paper>
+      </SelectionDelegate>
+      {selection && (
+        <Box mt="sm">
+          <SelectionComposer
+            filePath={file}
+            workingDirectory={catalog.data?.root ?? path ?? ''}
+            selection={selection}
+            defaultRole={task?.role === 'Plan' ? 'Plan' : 'Docs'}
+            goalContext={goalContext}
+            onClose={() => setSelection(null)}
+          />
+        </Box>
+      )}
     </Box>
   )
 }

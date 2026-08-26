@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -415,6 +416,7 @@ public sealed class AgentTaskReplyService
         // The delegate was told to spill a long report to a file. Note it if it did — and if it
         // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
         task.ResultFilePath = await ResolveSpillFileAsync(task, report, ct);
+        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(services, task, report, ct);
 
         // What the report was built from, on the record. The report is the turn-ending response's
         // own text, so a delegate that front-loaded findings mid-turn left some behind — name how
@@ -1511,6 +1513,41 @@ public sealed class AgentTaskReplyService
                 DelegationReportFormatter.Short(task.Id));
             return null;
         }
+    }
+
+    private static readonly Regex DeliverablePathPattern = new(
+        "`?(?<path>docs/[\\w./-]+\\.md)`?", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// The report is immutable at settlement, so this is a one-time pointer extraction rather than
+    /// a second, drifting index of the workspace. Disk wins: a merged plan remains readable after
+    /// its transient worktree branch has gone. Only a branch-only hit retains its ref.
+    /// </summary>
+    private static async Task<(string? Path, string? Ref)> ResolveDeliverableAsync(
+        IServiceProvider services, AgentTask task, string report, CancellationToken ct)
+    {
+        var git = services.GetRequiredService<GitWorkspaceService>();
+        foreach (Match match in DeliverablePathPattern.Matches(report))
+        {
+            var relative = match.Groups["path"].Value;
+            if (string.IsNullOrWhiteSpace(relative))
+                continue;
+
+            foreach (var root in new[] { task.WorkingDirectory, task.RepoPath }.Where(root => !string.IsNullOrWhiteSpace(root)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (File.Exists(Path.Combine(root!, relative.Replace('/', Path.DirectorySeparatorChar))))
+                    return (relative, null);
+            }
+
+            if (task.Workspace == WorkspaceMode.Worktree && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
+            {
+                var repository = task.RepoPath ?? task.WorkingDirectory;
+                if (await git.GetContentAtAsync(repository, relative, task.WorktreeBranch, ct) is not null)
+                    return (relative, task.WorktreeBranch);
+            }
+        }
+
+        return (null, null);
     }
 
     /// <summary>

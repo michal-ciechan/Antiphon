@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -247,6 +248,18 @@ public class PlanCatalogServiceTests
     }
 
     [Test]
+    public async Task A_delegated_plan_is_catalogued_with_the_plan_kind()
+    {
+        using var repo = new TempRepo();
+        repo.WritePlan("2026-08-26-card-0034-review-and-react-plan.md", "# CARD-0034 — Review\n");
+
+        var plan = (await repo.ListAsync()).Plans.Single();
+
+        plan.Kind.ShouldBe(PlanKind.Plan);
+        plan.RelativePath.ShouldBe("docs/superpowers/plans/2026-08-26-card-0034-review-and-react-plan.md");
+    }
+
+    [Test]
     public async Task Plans_are_newest_first_with_the_undated_ones_last()
     {
         using var repo = new TempRepo();
@@ -273,7 +286,7 @@ public class PlanCatalogServiceTests
         repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", body);
 
         var read = await repo.Service.ReadAsync(
-            repo.Root, "docs/superpowers/specs/2026-08-16-card-0035-stuck-work-view.md", CancellationToken.None);
+            repo.Root, "docs/superpowers/specs/2026-08-16-card-0035-stuck-work-view.md", null, CancellationToken.None);
 
         read.Content.ShouldBe(body);
         read.Plan.Cards.ShouldBe(["CARD-0035"]);
@@ -293,7 +306,7 @@ public class PlanCatalogServiceTests
         File.Exists(secret).ShouldBeTrue();
 
         var thrown = await Should.ThrowAsync<ValidationException>(
-            () => repo.Service.ReadAsync(repo.Root, escape, CancellationToken.None));
+            () => repo.Service.ReadAsync(repo.Root, escape, null, CancellationToken.None));
 
         thrown.StatusCode.ShouldBe(422, "a 404 would tell a prober another path might have worked");
     }
@@ -305,7 +318,7 @@ public class PlanCatalogServiceTests
         var real = repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", "# CARD-0035\n");
 
         await Should.ThrowAsync<ValidationException>(
-            () => repo.Service.ReadAsync(repo.Root, real, CancellationToken.None));
+            () => repo.Service.ReadAsync(repo.Root, real, null, CancellationToken.None));
     }
 
     [Test]
@@ -317,7 +330,7 @@ public class PlanCatalogServiceTests
         repo.WriteInsideRepo("docs/adr/0002-modern-conpty-backend.md", "# ADR\n");
 
         await Should.ThrowAsync<ValidationException>(
-            () => repo.Service.ReadAsync(repo.Root, "docs/adr/0002-modern-conpty-backend.md", CancellationToken.None));
+            () => repo.Service.ReadAsync(repo.Root, "docs/adr/0002-modern-conpty-backend.md", null, CancellationToken.None));
     }
 
     [Test]
@@ -328,7 +341,7 @@ public class PlanCatalogServiceTests
         repo.WriteInsideRepo("docs/superpowers/specs/notes.env", "TOKEN=1");
 
         await Should.ThrowAsync<ValidationException>(
-            () => repo.Service.ReadAsync(repo.Root, "docs/superpowers/specs/notes.env", CancellationToken.None));
+            () => repo.Service.ReadAsync(repo.Root, "docs/superpowers/specs/notes.env", null, CancellationToken.None));
     }
 
     [Test]
@@ -339,7 +352,53 @@ public class PlanCatalogServiceTests
         repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", "# CARD-0035\n");
 
         await Should.ThrowAsync<NotFoundException>(
-            () => repo.Service.ReadAsync(repo.Root, "docs/superpowers/specs/never-written.md", CancellationToken.None));
+            () => repo.Service.ReadAsync(repo.Root, "docs/superpowers/specs/never-written.md", null, CancellationToken.None));
+    }
+
+    [Test]
+    public async Task A_branch_only_plan_can_be_read_at_its_ref()
+    {
+        using var repo = new TempRepo();
+        repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", "# CARD-0035\n");
+        repo.InitializeGit();
+        repo.RunGit("checkout", "-b", "feat/card-0034");
+        var branchOnly = "# CARD-0034 — branch plan\n\nText.\n";
+        repo.WritePlan("2026-08-26-card-0034-review-and-react-plan.md", branchOnly);
+        repo.RunGit("add", ".");
+        repo.RunGit("commit", "-m", "branch plan");
+        repo.RunGit("checkout", "main");
+
+        var read = await repo.Service.ReadAsync(
+            repo.Root,
+            "docs/superpowers/plans/2026-08-26-card-0034-review-and-react-plan.md",
+            "feat/card-0034",
+            CancellationToken.None);
+
+        read.Content.ShouldBe(branchOnly);
+        read.Plan.Kind.ShouldBe(PlanKind.Plan);
+    }
+
+    [Test]
+    public async Task An_unknown_ref_is_not_found()
+    {
+        using var repo = new TempRepo();
+        repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", "# CARD-0035\n");
+        repo.InitializeGit();
+
+        var thrown = await Should.ThrowAsync<NotFoundException>(() => repo.Service.ReadAsync(
+            repo.Root, "docs/superpowers/specs/2026-08-16-card-0035-stuck-work-view.md", "missing-ref", CancellationToken.None));
+
+        thrown.Message.ShouldContain("not on missing-ref");
+    }
+
+    [Test]
+    public async Task A_ref_does_not_widen_the_plan_path_refusal_boundary()
+    {
+        using var repo = new TempRepo();
+        repo.WriteSpec("2026-08-16-card-0035-stuck-work-view.md", "# CARD-0035\n");
+
+        await Should.ThrowAsync<ValidationException>(() => repo.Service.ReadAsync(
+            repo.Root, "docs/adr/secret.md", "any-ref", CancellationToken.None));
     }
 
     // ---- 3. root resolution and caching ---------------------------------------------------------
@@ -403,7 +462,10 @@ public class PlanCatalogServiceTests
         // Self-calibrating on purpose — it enumerates the files itself rather than asserting a
         // count, so adding a spec cannot fail it, but a parser that started dropping one will.
         // The root resolves by walking up from the test binary, which lives inside the checkout.
-        var service = new PlanCatalogService(TimeProvider.System, NullLogger<PlanCatalogService>.Instance);
+        var service = new PlanCatalogService(
+            TimeProvider.System,
+            NullLogger<PlanCatalogService>.Instance,
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
 
         var catalog = await service.ListAsync(null, CancellationToken.None);
 
@@ -443,7 +505,10 @@ public class PlanCatalogServiceTests
                 Directory.CreateDirectory(Path.Combine(Root, "docs", "features"));
             }
 
-            Service = new PlanCatalogService(TimeProvider.System, NullLogger<PlanCatalogService>.Instance);
+            Service = new PlanCatalogService(
+                TimeProvider.System,
+                NullLogger<PlanCatalogService>.Instance,
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance));
         }
 
         public Task<PlanCatalogDto> ListAsync() => Service.ListAsync(Root, CancellationToken.None);
@@ -453,6 +518,34 @@ public class PlanCatalogServiceTests
 
         public string WriteProposal(string folder, string content) =>
             Write(Path.Combine(Root, "docs", "features", folder, "proposal.md"), content);
+
+        public string WritePlan(string fileName, string content) =>
+            Write(Path.Combine(Root, "docs", "superpowers", "plans", fileName), content);
+
+        public void InitializeGit()
+        {
+            RunGit("init", "-b", "main");
+            RunGit("config", "user.email", "tests@antiphon.local");
+            RunGit("config", "user.name", "Antiphon Tests");
+            RunGit("add", ".");
+            RunGit("commit", "-m", "initial");
+        }
+
+        public void RunGit(params string[] arguments)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = Root,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+            using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start git.");
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(process.StandardError.ReadToEnd());
+        }
 
         public string WriteInsideRepo(string relativePath, string content) =>
             Write(Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar)), content);

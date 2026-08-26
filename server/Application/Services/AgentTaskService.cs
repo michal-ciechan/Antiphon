@@ -489,7 +489,27 @@ public sealed class AgentTaskService
 
         return new AgentTaskDetailDto(
             ToSummary(task, family), task.Goal, task.Result,
-            task.ResultFilePath, task.FailureReason, task.MergeTargetRef, events);
+            task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
+            task.FailureReason, task.MergeTargetRef, events);
+    }
+
+    /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>
+    public async Task<AgentTaskSummaryDto> MarkReadAsync(Guid id, CancellationToken ct)
+    {
+        var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), id);
+
+        if (task.ReadAt is null)
+        {
+            task.ReadAt = UtcNow();
+            task.ConcurrencyToken = Guid.NewGuid();
+            await _db.SaveChangesAsync(ct);
+        }
+
+        var family = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.RootTaskId == task.RootTaskId)
+            .ToListAsync(ct);
+        return ToSummary(task, family);
     }
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct)
@@ -964,7 +984,8 @@ public sealed class AgentTaskService
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
             task.AgentName,
             task.AgentSessionId, task.Attempt,
-            task.CreatedAt, task.DispatchedAt, task.CompletedAt, task.RecoveredAt,
+            task.CreatedAt, task.DispatchedAt, task.CompletedAt, task.ReadAt,
+            task.DeliverablePath, task.DeliverableRef, task.RecoveredAt,
             task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
             task.CostUsd, task.CostPricingVersion, subtreeCost, childCount,
             task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount);

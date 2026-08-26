@@ -13,7 +13,7 @@ import { apiGet } from './client'
  */
 
 /** Which convention the file follows. One list, one reader; the kind is a label, not a fork. */
-export type PlanKind = 'Spec' | 'Proposal'
+export type PlanKind = 'Spec' | 'Proposal' | 'Plan'
 
 /** One plan file, best-effort parsed: only the path pair is guaranteed. */
 export interface PlanSummaryDto {
@@ -54,7 +54,8 @@ export interface PlanContentDto {
 export const planKeys = {
   all: ['plans'] as const,
   catalog: (path: string | null) => ['plans', 'catalog', path ?? ''] as const,
-  content: (path: string | null, file: string) => ['plans', 'content', path ?? '', file] as const,
+  content: (path: string | null, file: string, ref: string | null) =>
+    ['plans', 'content', path ?? '', file, ref ?? ''] as const,
 }
 
 /**
@@ -73,13 +74,14 @@ export function usePlanCatalog(path: string | null) {
   })
 }
 
-export function usePlanContent(path: string | null, file: string | null) {
+export function usePlanContent(path: string | null, file: string | null, ref: string | null = null) {
   return useQuery({
-    queryKey: planKeys.content(path, file ?? ''),
+    queryKey: planKeys.content(path, file ?? '', ref),
     queryFn: () => {
       const params = new URLSearchParams()
       if (path !== null) params.set('path', path)
       params.set('file', file!)
+      if (ref !== null) params.set('ref', ref)
       return apiGet<PlanContentDto>(`/plans/content?${params.toString()}`)
     },
     enabled: file !== null,

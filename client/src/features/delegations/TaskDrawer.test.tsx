@@ -170,7 +170,7 @@ describe('TaskDrawer', () => {
     await waitFor(() => expect(sent).toEqual({ message: 'yes, accept negatives' }))
   })
 
-  it('links to the delegate’s own transcript and files', async () => {
+  it('keeps the transcript but hides the dead files link once a task settles', async () => {
     serve(detail())
     renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
 
@@ -178,7 +178,14 @@ describe('TaskDrawer', () => {
       'href',
       '/agents?agent=agent-9',
     )
-    expect(screen.getByRole('link', { name: /Files/ })).toHaveAttribute('href', '/agents/agent-9/files')
+    expect(screen.queryAllByRole('link', { name: /Files/ })).toHaveLength(0)
+  })
+
+  it('links to files while its delegate is still running', async () => {
+    serve(detail({ status: 'Working', completedAt: null }))
+    renderWithProviders(<TaskDrawer taskId={TASK_ID} onClose={() => {}} />)
+
+    expect(await screen.findByRole('link', { name: /Files/ })).toHaveAttribute('href', '/agents/agent-9/files')
   })
 
   it('points at the spill file when the report was too big to forward', async () => {

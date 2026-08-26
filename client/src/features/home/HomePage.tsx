@@ -17,6 +17,7 @@ import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks'
 import { useMemo } from 'react'
 import {
   TbAlertHexagon,
+  TbBook2,
   TbChevronDown,
   TbFolder,
   TbGitBranch,
@@ -24,7 +25,7 @@ import {
   TbMessage,
   TbUserShare,
 } from 'react-icons/tb'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useAgentList } from '../../api/agents'
 import { useAgentTasks } from '../../api/agentTasks'
 import { useAttention } from '../../api/attention'
@@ -36,6 +37,7 @@ import { AgentRail } from './AgentRail'
 import { MobileHomePage } from './MobileHomePage'
 import { ReportBugButton } from '../diagnostics/ReportBugButton'
 import { ProjectTasksPanel } from './ProjectTasksPanel'
+import { isUnreadDeliverable, taskIsInProject } from './taskReview'
 import {
   buildProjects,
   isActiveTask,
@@ -73,6 +75,7 @@ function DesktopHomePage() {
   const agents = useAgentList()
   const tasks = useAgentTasks()
   const [delegateOpen, delegate] = useDisclosure(false)
+  const [params, setParams] = useSearchParams()
 
   // Git identity (repo root + branch) for every directory on screen — what lets a worktree- or
   // subdirectory-scoped agent nest under the repo it belongs to instead of standing alone.
@@ -165,7 +168,15 @@ function DesktopHomePage() {
           )}
         </Group>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {projectView && (
+            <ToReadBadge dirKeys={[projectView.key, ...projectView.workspaces.map((w) => w.key)]} />
+          )}
           <NeedsAttentionBadge />
+          {project && (
+            <Anchor component={Link} to={`/plans?path=${encodeURIComponent(project.path)}`} size="sm" c="dimmed">
+              Plans
+            </Anchor>
+          )}
           <Anchor component={Link} to="/orchestrator?tab=delegations" size="sm" c="dimmed">
             Delegations board
           </Anchor>
@@ -252,7 +263,13 @@ function DesktopHomePage() {
           data-testid="home-dock"
         >
           <Tabs
-            defaultValue="chat"
+            value={params.get('tab') === 'tasks' ? 'tasks' : 'chat'}
+            onChange={(value) => {
+              const next = new URLSearchParams(params)
+              if (value === 'tasks') next.set('tab', 'tasks')
+              else next.delete('tab')
+              setParams(next)
+            }}
             style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flexGrow: 1 }}
           >
             <Tabs.List style={{ flexShrink: 0 }}>
@@ -342,6 +359,30 @@ function NeedsAttentionBadge() {
         style={{ textTransform: 'none' }}
       >
         Needs attention ({openCount})
+      </Badge>
+    </Anchor>
+  )
+}
+
+/** A pull signal, not an attention state: only recent successful deliverables count. */
+function ToReadBadge({ dirKeys }: { dirKeys: string[] }) {
+  const tasks = useAgentTasks()
+  const count = (tasks.data ?? []).filter(
+    (task) => taskIsInProject(task, dirKeys) && isUnreadDeliverable(task),
+  ).length
+
+  if (count === 0) return null
+
+  return (
+    <Anchor component={Link} to="/?tab=tasks" underline="never">
+      <Badge
+        size="sm"
+        variant="light"
+        color="violet"
+        leftSection={<TbBook2 size={12} />}
+        style={{ textTransform: 'none' }}
+      >
+        To read ({count})
       </Badge>
     </Anchor>
   )

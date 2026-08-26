@@ -55,6 +55,8 @@ export interface CardThreadTaskDto {
   latestCheck: CardThreadCheckDto | null
   result: string | null
   resultFilePath: string | null
+  deliverablePath?: string | null
+  deliverableRef?: string | null
   failureReason: string | null
 }
 

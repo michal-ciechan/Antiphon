@@ -81,6 +81,8 @@ public sealed record CardThreadTaskDto(
     CardThreadCheckDto? LatestCheck,
     string? Result,
     string? ResultFilePath,
+    string? DeliverablePath,
+    string? DeliverableRef,
     string? FailureReason);
 
 /// <param name="FromInterpreter">

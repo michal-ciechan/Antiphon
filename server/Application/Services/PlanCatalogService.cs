@@ -9,7 +9,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// A READ-ONLY projection over the plan files git already holds — <c>docs/superpowers/specs/*.md</c>
-/// and <c>docs/features/&lt;name&gt;/proposal.md</c> under a resolved repo root.
+/// <c>docs/superpowers/plans/*.md</c>, and <c>docs/features/&lt;name&gt;/proposal.md</c> under a resolved repo root.
 ///
 /// <para><b>Why there is no database artifact behind this.</b> Git already stores plans, versions
 /// them, diffs them and survives a restart. A row mirroring each file would be a second durable
@@ -53,18 +53,24 @@ public sealed class PlanCatalogService : IResettableCache
     private const long MaxContentBytes = 4 * 1024 * 1024;
 
     private static readonly string[] SpecsRoot = ["docs", "superpowers", "specs"];
+    private static readonly string[] PlansRoot = ["docs", "superpowers", "plans"];
     private static readonly string[] FeaturesRoot = ["docs", "features"];
 
     private readonly ILogger<PlanCatalogService> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly GitWorkspaceService _git;
 
     private readonly ConcurrentDictionary<string, (DateTime At, PlanCatalogDto Catalog)> _cache =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public PlanCatalogService(TimeProvider timeProvider, ILogger<PlanCatalogService> logger)
+    public PlanCatalogService(
+        TimeProvider timeProvider,
+        ILogger<PlanCatalogService> logger,
+        GitWorkspaceService git)
     {
         _timeProvider = timeProvider;
         _logger = logger;
+        _git = git;
     }
 
     /// <summary>
@@ -102,13 +108,24 @@ public sealed class PlanCatalogService : IResettableCache
     /// <see cref="ValidationException"/>, and a well-formed path with no file behind it is a
     /// <see cref="NotFoundException"/>.
     /// </summary>
-    public async Task<PlanContentDto> ReadAsync(string? requestedRoot, string file, CancellationToken ct)
+    public async Task<PlanContentDto> ReadAsync(string? requestedRoot, string file, string? gitRef, CancellationToken ct)
     {
         var root = ResolveRoot(requestedRoot)
             ?? throw new NotFoundException("PlanRoot", requestedRoot ?? "(server root)");
 
         if (!TryResolvePlanFile(root, file, out var fullPath, out var refusal))
             throw new ValidationException(nameof(file), refusal);
+
+        if (!string.IsNullOrWhiteSpace(gitRef))
+        {
+            var contentAtRef = await _git.GetContentAtAsync(root, file, gitRef.Trim(), ct);
+            if (contentAtRef is null)
+                throw new NotFoundException("Plan", $"{file} not on {gitRef.Trim()}");
+
+            return new PlanContentDto(
+                SummaryFromContent(root, file, contentAtRef, _timeProvider.GetUtcNow().UtcDateTime),
+                contentAtRef);
+        }
 
         if (!File.Exists(fullPath))
             throw new NotFoundException("Plan", file);
@@ -157,7 +174,9 @@ public sealed class PlanCatalogService : IResettableCache
     public void Clear() => _cache.Clear();
 
     private static bool HasPlanRoot(string root) =>
-        Directory.Exists(Combine(root, SpecsRoot)) || Directory.Exists(Combine(root, FeaturesRoot));
+        Directory.Exists(Combine(root, SpecsRoot))
+        || Directory.Exists(Combine(root, PlansRoot))
+        || Directory.Exists(Combine(root, FeaturesRoot));
 
     private static string Combine(string root, string[] segments) =>
         Path.Combine([root, .. segments]);
@@ -169,6 +188,13 @@ public sealed class PlanCatalogService : IResettableCache
         {
             foreach (var file in SafeEnumerateFiles(specs, "*.md"))
                 yield return (file, PlanKind.Spec);
+        }
+
+        var plans = Combine(root, PlansRoot);
+        if (Directory.Exists(plans))
+        {
+            foreach (var file in SafeEnumerateFiles(plans, "*.md"))
+                yield return (file, PlanKind.Plan);
         }
 
         var features = Combine(root, FeaturesRoot);
@@ -257,7 +283,26 @@ public sealed class PlanCatalogService : IResettableCache
         Path.GetRelativePath(root, fullPath).Replace('\\', '/');
 
     private static PlanKind KindOf(string root, string fullPath) =>
-        IsUnder(Combine(root, FeaturesRoot), fullPath) ? PlanKind.Proposal : PlanKind.Spec;
+        IsUnder(Combine(root, FeaturesRoot), fullPath) ? PlanKind.Proposal
+        : IsUnder(Combine(root, PlansRoot), fullPath) ? PlanKind.Plan
+        : PlanKind.Spec;
+
+    private static PlanSummaryDto SummaryFromContent(string root, string file, string content, DateTime modifiedAt)
+    {
+        var fullPath = Path.GetFullPath(Path.Combine(root, file));
+        var kind = KindOf(root, fullPath);
+        var fileName = Path.GetFileName(file);
+        var fallbackName = kind == PlanKind.Proposal
+            ? Path.GetFileName(Path.GetDirectoryName(file)) ?? fileName
+            : Path.GetFileNameWithoutExtension(fileName);
+        var header = ParseHeader(
+            fileName,
+            fallbackName,
+            content.ReplaceLineEndings("\n").Split('\n').Take(ScannedLines).ToList());
+        return new PlanSummaryDto(
+            file.Replace('\\', '/'), fileName, kind, header.Title, header.Date, header.Status,
+            header.Cards, header.MentionedCards, System.Text.Encoding.UTF8.GetByteCount(content), modifiedAt);
+    }
 
     private static int Newest(PlanSummaryDto a, PlanSummaryDto b)
     {
@@ -329,7 +374,7 @@ public sealed class PlanCatalogService : IResettableCache
 
         if (!IsInPlanRoots(root, fullPath) || !IsInPlanRoots(root, resolved))
         {
-            refusal = $"'{file}' is outside docs/superpowers/specs and docs/features.";
+            refusal = $"'{file}' is outside docs/superpowers/specs, docs/superpowers/plans and docs/features.";
             fullPath = string.Empty;
             return false;
         }
@@ -345,7 +390,9 @@ public sealed class PlanCatalogService : IResettableCache
     }
 
     private static bool IsInPlanRoots(string root, string fullPath) =>
-        IsUnder(Combine(root, SpecsRoot), fullPath) || IsUnder(Combine(root, FeaturesRoot), fullPath);
+        IsUnder(Combine(root, SpecsRoot), fullPath)
+        || IsUnder(Combine(root, PlansRoot), fullPath)
+        || IsUnder(Combine(root, FeaturesRoot), fullPath);
 
     private static bool IsUnder(string parent, string child)
     {

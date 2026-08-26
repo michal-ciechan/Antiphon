@@ -17,7 +17,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   TbAlertTriangle,
   TbArrowBigUpLine,
@@ -34,8 +34,11 @@ import {
   useEscalateAgentTask,
   useRetryAgentTask,
   useReplyToAgentTask,
+  useMarkAgentTaskRead,
   type AgentTaskDetailDto,
 } from '../../api/agentTasks'
+import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
+import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
 import { TierBadge } from './TaskChip'
 import {
   STATUS_COLOR,
@@ -93,11 +96,20 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   const escalate = useEscalateAgentTask()
   const cancel = useCancelAgentTask()
   const reply = useReplyToAgentTask()
+  const markRead = useMarkAgentTaskRead()
   const [answer, setAnswer] = useState('')
+  const [selection, setSelection] = useState<string | null>(null)
+  const stampedTask = useRef<string | null>(null)
 
   const running = summary.status === 'Dispatched' || summary.status === 'Working'
   const settled = summary.status === 'Succeeded' || summary.status === 'Failed' || summary.status === 'Canceled'
   const atTopTier = summary.modelLevel === 'Frontier'
+
+  useEffect(() => {
+    if (!settled || !detail.result || stampedTask.current === summary.id) return
+    stampedTask.current = summary.id
+    markRead.mutate(summary.id)
+  }, [detail.result, markRead, settled, summary.id])
 
   const act = (
     label: string,
@@ -186,11 +198,13 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
               <TbTerminal2 size={14} /> Transcript
             </Group>
           </Anchor>
-          <Anchor href={`/agents/${summary.agentId}/files`} target="_blank" size="sm">
-            <Group gap={4} wrap="nowrap">
-              <TbFiles size={14} /> Files
-            </Group>
-          </Anchor>
+          {!settled && (
+            <Anchor href={`/agents/${summary.agentId}/files`} target="_blank" size="sm">
+              <Group gap={4} wrap="nowrap">
+                <TbFiles size={14} /> Files
+              </Group>
+            </Anchor>
+          )}
         </Group>
       )}
 
@@ -208,11 +222,24 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
 
       {detail.result && (
         <Section title={summary.status === 'Blocked' ? 'The delegate asked' : 'Report'}>
-          <ScrollArea.Autosize mah={320}>
-            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-              {detail.result}
-            </Text>
-          </ScrollArea.Autosize>
+          <SelectionDelegate onCompose={setSelection}>
+            <ScrollArea.Autosize mah={320}>
+              <RenderedMarkdown>{detail.result}</RenderedMarkdown>
+            </ScrollArea.Autosize>
+          </SelectionDelegate>
+          {selection && (
+            <Box mt="sm">
+              <SelectionComposer
+                filePath={`task ${shortId(summary.id)} report`}
+                workingDirectory={summary.workingDirectory}
+                selection={selection}
+                defaultRole="Docs"
+                goalContext={`Re ${summary.title} (task ${shortId(summary.id)}):`}
+                scopeGlob={null}
+                onClose={() => setSelection(null)}
+              />
+            </Box>
+          )}
           {detail.resultFilePath && (
             <Text size="xs" c="dimmed" mt="xs">
               Full detail: <Code>{detail.resultFilePath}</Code>

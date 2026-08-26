@@ -800,6 +800,60 @@ public class AgentTaskReplyIntegrationTests
     }
 
     [Test]
+    public async Task a_settled_report_stores_the_first_resolving_markdown_deliverable()
+    {
+        using var workspace = new TempWorkspace();
+        var deliverable = Path.Combine(workspace.Path, "docs", "superpowers", "plans", "plan.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(deliverable)!);
+        await File.WriteAllTextAsync(deliverable, "# Plan\n");
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Missing `docs/superpowers/plans/nope.md`; delivered `docs/superpowers/plans/plan.md`.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.DeliverablePath.ShouldBe("docs/superpowers/plans/plan.md");
+        settled.DeliverableRef.ShouldBeNull("a disk hit survives worktree cleanup without retaining a branch");
+    }
+
+    [Test]
+    public async Task a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path);
+
+        await SeedTurnAsync(
+            sessionId,
+            DelegationReportFormatter.TaskMarker(task.Id),
+            "Tried `docs/superpowers/plans/not-written.md`, but there is no deliverable.");
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.DeliverablePath.ShouldBeNull();
+        settled.DeliverableRef.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task marking_a_task_read_is_idempotent_and_preserves_the_first_stamp()
+    {
+        using var workspace = new TempWorkspace();
+        var (task, _) = await SeedDispatchedTaskAsync(workspace.Path);
+        var factory = new TestScopeFactory();
+        var service = factory.ServiceProvider.GetRequiredService<AgentTaskService>();
+
+        var first = await service.MarkReadAsync(task.Id, CancellationToken.None);
+        var second = await service.MarkReadAsync(task.Id, CancellationToken.None);
+
+        first.ReadAt.ShouldNotBeNull();
+        second.ReadAt.ShouldBe(first.ReadAt);
+    }
+
+    [Test]
     public async Task an_oversized_report_is_backstopped_to_a_file_by_the_server()
     {
         // The delegate was told to spill and didn't. The server writes the file itself, so the
@@ -2524,6 +2578,7 @@ public class AgentTaskReplyIntegrationTests
             services.AddLogging();
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
             services.AddSingleton<Antiphon.Server.Application.Interfaces.IEventBus, MockEventBus>();
+            services.AddSingleton<GitWorkspaceService>();
             services.AddSingleton(Options.Create(new SupervisionSettings()));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings()));

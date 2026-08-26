@@ -95,6 +95,9 @@ public sealed record AgentTaskSummaryDto(
     DateTime CreatedAt,
     DateTime? DispatchedAt,
     DateTime? CompletedAt,
+    DateTime? ReadAt,
+    string? DeliverablePath,
+    string? DeliverableRef,
     /// <summary>Non-null when an unbound-session recovery, rather than an observed finish, settled the task.</summary>
     DateTime? RecoveredAt,
     /// <summary>UNCACHED input only — add the two cache counters for a human "tokens in".</summary>
@@ -128,6 +131,8 @@ public sealed record AgentTaskDetailDto(
     /// <summary>The delegate's final message, UNTOUCHED — forwarding may excerpt, this never does.</summary>
     string? Result,
     string? ResultFilePath,
+    string? DeliverablePath,
+    string? DeliverableRef,
     string? FailureReason,
     string? MergeTargetRef,
     IReadOnlyList<AgentTaskEventDto> Events);

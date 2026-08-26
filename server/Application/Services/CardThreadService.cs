@@ -205,6 +205,8 @@ public sealed class CardThreadService
                 checks.GetValueOrDefault(m.Task.Id),
                 m.Task.Result,
                 m.Task.ResultFilePath,
+                m.Task.DeliverablePath,
+                m.Task.DeliverableRef,
                 m.Task.FailureReason)),
         ];
     }

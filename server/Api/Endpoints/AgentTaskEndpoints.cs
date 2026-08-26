@@ -50,6 +50,15 @@ public static class AgentTaskEndpoints
             return Results.Ok(await service.GetAsync(taskId, ct, caller?.SessionId));
         });
 
+        tasks.MapPost("/{id}/read", async (
+            string id,
+            AgentTaskService service,
+            CancellationToken ct) =>
+        {
+            var taskId = await service.ResolveTaskIdAsync(id, ct);
+            return Results.Ok(await service.MarkReadAsync(taskId, ct));
+        });
+
         tasks.MapPost("/{id:guid}/cancel", async (
             Guid id,
             AgentTaskService service,

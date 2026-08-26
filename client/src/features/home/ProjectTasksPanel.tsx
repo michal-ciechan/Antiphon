@@ -1,9 +1,10 @@
-import { Anchor, Badge, Group, Paper, Stack, Text, UnstyledButton } from '@mantine/core'
+import { Anchor, Badge, Box, Group, Paper, Stack, Text } from '@mantine/core'
 import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useAgentTasks, type AgentTaskSummaryDto } from '../../api/agentTasks'
 import { STATUS_COLOR, formatCost, shortId } from '../delegations/taskVisuals'
-import { isActiveTask, normalizeDir, taskProjectDir, taskRunDir } from './projectGrouping'
+import { isActiveTask } from './projectGrouping'
+import { isUnreadDeliverable, taskIsInProject } from './taskReview'
 
 const DONE_LIMIT = 12
 
@@ -18,16 +19,17 @@ export function ProjectTasksPanel({ dirKeys }: { dirKeys: string[] }) {
   const navigate = useNavigate()
 
   const { active, done } = useMemo(() => {
-    const keys = new Set(dirKeys)
-    const mine = (tasks.data ?? []).filter(
-      (t) => keys.has(normalizeDir(taskProjectDir(t))) || keys.has(normalizeDir(taskRunDir(t))),
-    )
+    const mine = (tasks.data ?? []).filter((t) => taskIsInProject(t, dirKeys))
     const active = mine
       .filter(isActiveTask)
       .sort((a, b) => rank(a) - rank(b) || b.createdAt.localeCompare(a.createdAt))
     const done = mine
       .filter((t) => !isActiveTask(t))
-      .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt))
+      .sort(
+        (a, b) =>
+          Number(isUnreadDeliverable(b)) - Number(isUnreadDeliverable(a)) ||
+          (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt),
+      )
       .slice(0, DONE_LIMIT)
     return { active, done }
   }, [tasks.data, dirKeys])
@@ -53,6 +55,7 @@ export function ProjectTasksPanel({ dirKeys }: { dirKeys: string[] }) {
         label="Done"
         empty="Nothing finished yet."
         tasks={done}
+        showCount={false}
         onOpen={(id) => navigate(`/orchestrator?tab=delegations&task=${id}`)}
       />
       <Anchor component={Link} to="/orchestrator?tab=delegations" size="xs" c="dimmed">
@@ -72,11 +75,13 @@ function Section({
   empty,
   tasks,
   onOpen,
+  showCount = true,
 }: {
   label: string
   empty: string
   tasks: AgentTaskSummaryDto[]
   onOpen: (id: string) => void
+  showCount?: boolean
 }) {
   return (
     <Stack gap={6}>
@@ -84,18 +89,38 @@ function Section({
         <Text size="xs" tt="uppercase" fw={700} c="dimmed">
           {label}
         </Text>
-        <Badge size="xs" variant="default">
-          {tasks.length}
-        </Badge>
+        {showCount && <Badge size="xs" variant="default">{tasks.length}</Badge>}
       </Group>
       {tasks.length === 0 ? (
         <Text size="xs" c="dimmed">
           {empty}
         </Text>
       ) : (
-        tasks.map((task) => (
-          <UnstyledButton key={task.id} onClick={() => onOpen(task.id)} aria-label={`Open task ${shortId(task.id)}`}>
-            <Paper withBorder p={6} radius="sm">
+        tasks.map((task) => {
+          const unread = isUnreadDeliverable(task)
+          const readTarget = task.deliverablePath
+            ? `/plans?${new URLSearchParams({
+                file: task.deliverablePath,
+                ...(task.deliverableRef ? { ref: task.deliverableRef } : {}),
+                task: task.id,
+              }).toString()}`
+            : null
+          return (
+            <Paper
+              key={task.id}
+              withBorder
+              p={6}
+              radius="sm"
+              component="div"
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(task.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') onOpen(task.id)
+              }}
+              aria-label={`Open task ${shortId(task.id)}`}
+              style={{ cursor: 'pointer' }}
+            >
               <Group gap={6} wrap="nowrap">
                 <Badge
                   size="xs"
@@ -106,8 +131,24 @@ function Section({
                   {task.status}
                 </Badge>
                 <Text size="sm" truncate style={{ flexGrow: 1, minWidth: 0 }}>
+                  {unread && (
+                    <Box component="span" c="violet" mr={6} aria-label="Unread" data-testid={`task-unread-${task.id}`}>
+                      ●
+                    </Box>
+                  )}
                   {task.title}
                 </Text>
+                {unread && readTarget && (
+                  <Anchor
+                    component={Link}
+                    to={readTarget}
+                    size="xs"
+                    onClick={(event) => event.stopPropagation()}
+                    data-testid={`task-read-${task.id}`}
+                  >
+                    Read
+                  </Anchor>
+                )}
                 {task.agentName && (
                   <Text size="xs" c="dimmed" truncate style={{ maxWidth: 90, flexShrink: 0 }}>
                     {task.agentName}
@@ -122,8 +163,8 @@ function Section({
                 </Text>
               </Group>
             </Paper>
-          </UnstyledButton>
-        ))
+          )
+        })
       )}
     </Stack>
   )

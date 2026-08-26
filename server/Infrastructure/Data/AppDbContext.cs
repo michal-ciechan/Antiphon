@@ -1390,6 +1390,8 @@ public class AppDbContext : DbContext
             entity.Property(t => t.FailureReason).HasMaxLength(4000);
             entity.Property(t => t.LastPolledResultHash).HasColumnType("text");
             entity.Property(t => t.ResultFilePath).HasMaxLength(1000);
+            entity.Property(t => t.DeliverablePath).HasMaxLength(1000);
+            entity.Property(t => t.DeliverableRef).HasMaxLength(300);
             entity.Property(t => t.TokenHash).HasMaxLength(128);
             entity.Property(t => t.CacheReadTokens).IsRequired();
             entity.Property(t => t.CacheCreationTokens).IsRequired();

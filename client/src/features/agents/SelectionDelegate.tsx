@@ -90,12 +90,18 @@ export function SelectionComposer({
   workingDirectory,
   selection,
   defaultRole,
+  goalContext,
+  scopeGlob,
   onClose,
 }: {
   filePath: string
   workingDirectory: string
   selection: string
   defaultRole: AgentTaskRole
+  /** Optional task/card context retained above the standard, byte-stable selection goal. */
+  goalContext?: string
+  /** Reports have no file lease; file review keeps the selected path by default. */
+  scopeGlob?: string | null
   onClose: () => void
 }) {
   const create = useCreateAgentTask()
@@ -103,7 +109,7 @@ export function SelectionComposer({
   const [role, setRole] = useState<AgentTaskRole>(defaultRole)
   const [moreOpen, setMoreOpen] = useState(false)
 
-  const goal = buildSelectionGoal(filePath, selection, instruction)
+  const goal = buildSelectionGoal(filePath, selection, instruction, goalContext)
 
   const submit = () => {
     if (!instruction.trim()) return
@@ -115,7 +121,7 @@ export function SelectionComposer({
         // null = the server decides (workers run Shared) — exactly the pool's pickup path.
         workspace: null,
         workingDirectory,
-        scopeGlob: filePath,
+        scopeGlob: scopeGlob === undefined ? filePath : scopeGlob,
       },
       {
         onSuccess: (task) => {
