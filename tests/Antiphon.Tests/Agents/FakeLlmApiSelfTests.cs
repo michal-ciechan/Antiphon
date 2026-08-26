@@ -199,6 +199,10 @@ public class FakeLlmApiSelfTests
             var overlay = RealCliStubEnv.ForCodex("http://127.0.0.1:9", "stub-codex-key", codexHome);
             overlay.Env["OPENAI_API_KEY"].ShouldBe("stub-codex-key");
             overlay.Env["CODEX_HOME"].ShouldBe(Path.GetFullPath(codexHome));
+            var auth = File.ReadAllText(Path.Combine(codexHome, "auth.json"));
+            auth.ShouldContain("\"auth_mode\": \"chatgpt\"");
+            auth.ShouldContain("stub-account");
+            auth.ShouldNotContain("stub-codex-key");
             overlay.Args.Count.ShouldBe(10); // five (-c, value) pairs
             var values = overlay.Args.Where((_, i) => i % 2 == 1).ToArray();
             values[0].ShouldBe("model_providers.stub.name=\"Stub\"");

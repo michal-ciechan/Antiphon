@@ -89,6 +89,11 @@ public static class RealCliStubEnv
         if (!providerBase.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
             providerBase += "/v1";
 
+        // Codex only refreshes a custom provider's /models endpoint when its local auth state
+        // identifies a ChatGPT account. A disposable, unsigned fixture token enables that code
+        // path; the provider's Authorization header still comes from OPENAI_API_KEY below.
+        SeedCodexHome(codexHome);
+
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["OPENAI_API_KEY"] = syntheticKey,
@@ -109,6 +114,25 @@ public static class RealCliStubEnv
         };
 
         return new LaunchOverlay(env, args);
+    }
+
+    private static void SeedCodexHome(string codexHome)
+    {
+        Directory.CreateDirectory(codexHome);
+        // This is intentionally synthetic and unsigned: it is only local bootstrap metadata for
+        // a throwaway CODEX_HOME, never a credential or a token capable of authenticating.
+        File.WriteAllText(Path.Combine(codexHome, "auth.json"), """
+            {
+              "auth_mode": "chatgpt",
+              "tokens": {
+                "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjQxMDI0NDQ4MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X3BsYW5fdHlwZSI6InBybyIsImNoYXRncHRfdXNlcl9pZCI6InN0dWItdXNlciIsImNoYXRncHRfYWNjb3VudF9pZCI6InN0dWItYWNjb3VudCJ9fQ.stub-signature",
+                "access_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjQxMDI0NDQ4MDB9.stub-signature",
+                "refresh_token": "stub-refresh-token",
+                "account_id": "stub-account"
+              },
+              "last_refresh": "2026-01-01T00:00:00Z"
+            }
+            """);
     }
 
     private static string TrimTrailingSlash(string url)
