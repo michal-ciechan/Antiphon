@@ -134,4 +134,7 @@ public enum AgentTaskEventType
     /// reduced to a pointer while preserving its caller-facing header and warning.
     /// </summary>
     NoteShrunk = 16,
+
+    /// <summary>A digest channel was told this blocked task needs a human answer.</summary>
+    HumanNotified = 17,
 }

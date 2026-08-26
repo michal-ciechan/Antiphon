@@ -81,6 +81,13 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
     )
   }
 
+  const onDigestChange = (digestEnabled: boolean) => {
+    update.mutate(
+      { id: channel.id, request: { digestEnabled } },
+      { onError: (e) => notifications.show({ color: 'red', message: getApiErrorMessage(e, 'Failed to update channel') }) },
+    )
+  }
+
   return (
     <Table.Tr>
       <Table.Td>
@@ -153,6 +160,16 @@ function ChannelRow({ channel }: { channel: ChatChannelDto }) {
           />
         </Tooltip>
       </Table.Td>
+      <Table.Td>
+        <Tooltip label={channel.digestEnabled ? 'Away digest enabled' : 'Away digest off'} withArrow>
+          <Switch
+            checked={channel.digestEnabled}
+            onChange={(e) => onDigestChange(e.currentTarget.checked)}
+            disabled={update.isPending}
+            size="sm"
+          />
+        </Tooltip>
+      </Table.Td>
     </Table.Tr>
   )
 }
@@ -180,6 +197,7 @@ export function ChannelsPage() {
               <Table.Th w={220}>Agent</Table.Th>
               <Table.Th w={90}>Enabled</Table.Th>
               <Table.Th w={140}>Alerts</Table.Th>
+              <Table.Th w={100}>Digest</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -188,7 +206,7 @@ export function ChannelsPage() {
             ))}
             {!isLoading && (channels ?? []).length === 0 && (
               <Table.Tr>
-                <Table.Td colSpan={5}>
+                <Table.Td colSpan={7}>
                   <Text c="dimmed" ta="center" py="lg" size="sm">
                     No channels yet — they appear automatically when a connected provider (e.g. the
                     Telegram bot) receives its first message.

@@ -967,13 +967,12 @@ public sealed class AgentTaskService
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
-        var subtreeCost = task.CostUsd;
+        var subtreeCost = AgentTaskCostWalk.Calculate([task], family)[task.Id];
         var childCount = 0;
         foreach (var other in family)
         {
             if (other.Id == task.Id) continue;
             if (other.ParentTaskId == task.Id) childCount++;
-            if (IsDescendantOf(other, task.Id, family)) subtreeCost += other.CostUsd;
         }
 
         return new AgentTaskSummaryDto(

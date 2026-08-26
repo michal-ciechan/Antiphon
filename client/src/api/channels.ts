@@ -20,6 +20,8 @@ export interface ChatChannelDto {
   createdAt: string
   /** Non-null = this channel is an alert sink for severities >= the value. */
   alertMinSeverity: AlertSeverity | null
+  digestEnabled: boolean
+  digestLastSentAt: string | null
 }
 
 export interface UpdateChatChannelRequest {
@@ -28,6 +30,7 @@ export interface UpdateChatChannelRequest {
   enabled?: boolean
   alertMinSeverity?: AlertSeverity | null
   clearAlertMinSeverity?: boolean
+  digestEnabled?: boolean
 }
 
 export const channelKeys = {

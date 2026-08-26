@@ -159,6 +159,10 @@ try
         .Bind(builder.Configuration.GetSection("ContextCompaction"))
         .ValidateOnStart();
     builder.Services.Configure<AlertsSettings>(builder.Configuration.GetSection("Alerts"));
+    builder.Services.AddSingleton<IValidateOptions<DigestSettings>, DigestSettingsValidator>();
+    builder.Services.AddOptions<DigestSettings>()
+        .Bind(builder.Configuration.GetSection("Digest"))
+        .ValidateOnStart();
     builder.Services.Configure<RetentionSettings>(builder.Configuration.GetSection("Retention"));
     builder.Services.AddSingleton<IValidateOptions<AgentTuiSettings>, AgentTuiSettingsValidator>();
     builder.Services.AddOptions<AgentTuiSettings>()
@@ -430,6 +434,9 @@ try
     builder.Services.AddScoped<TrackerBidirectionalSyncService>();
     // CARD-0171: opt-in change summary to the board's tracker.notify_channel, after a sync commits.
     builder.Services.AddScoped<TrackerSyncNotifier>();
+    builder.Services.AddScoped<AwayDigestProjection>();
+    builder.Services.AddScoped<AwayDigestNotifier>();
+    builder.Services.AddScoped<BlockedTaskNotifier>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 
@@ -454,6 +461,7 @@ try
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SubscriptionUsageMonitorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AwayDigestHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
@@ -601,6 +609,7 @@ try
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
     app.MapAttentionEndpoints();
+    app.MapDigestEndpoints();
     app.MapDiagnosticsEndpoints();
     app.MapPlanEndpoints();
     app.MapFileSystemEndpoints();

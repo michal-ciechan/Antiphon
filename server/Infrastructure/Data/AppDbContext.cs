@@ -194,6 +194,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.ReplyHandle).HasMaxLength(500);
             entity.Property(c => c.LastMessagePreview).HasMaxLength(500);
             entity.Property(c => c.LastAuthor).HasMaxLength(200);
+            entity.Property(c => c.DigestEnabled).IsRequired().HasDefaultValue(false);
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.Property(c => c.UpdatedAt).IsRequired();
 

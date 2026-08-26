@@ -866,9 +866,8 @@ public sealed class AttentionService
     private async Task<Dictionary<Guid, decimal>> LoadSubtreeCostsAsync(
         IReadOnlyList<AgentTask> subjects, CancellationToken ct)
     {
-        var costs = new Dictionary<Guid, decimal>();
         if (subjects.Count == 0)
-            return costs;
+            return [];
 
         var rootIds = subjects.Select(t => t.RootTaskId).Distinct().ToList();
         var family = await _db.AgentTasks.AsNoTracking()
@@ -876,23 +875,9 @@ public sealed class AttentionService
             .ToListAsync(ct);
         var byRoot = family.GroupBy(t => t.RootTaskId).ToDictionary(g => g.Key, g => (IReadOnlyList<AgentTask>)[.. g]);
 
-        foreach (var task in subjects)
-        {
-            if (costs.ContainsKey(task.Id))
-                continue;
-            var run = byRoot.GetValueOrDefault(task.RootTaskId) ?? [];
-            var total = task.CostUsd;
-            foreach (var other in run)
-            {
-                if (other.Id == task.Id)
-                    continue;
-                if (AgentTaskService.IsDescendantOf(other, task.Id, run))
-                    total += other.CostUsd;
-            }
-            costs[task.Id] = total;
-        }
-
-        return costs;
+        return subjects.GroupBy(t => t.RootTaskId)
+            .SelectMany(g => AgentTaskCostWalk.Calculate([.. g], byRoot.GetValueOrDefault(g.Key) ?? []))
+            .ToDictionary(p => p.Key, p => p.Value);
     }
 
     /// <summary>

@@ -35,6 +35,12 @@ public class ChatChannel
     /// </summary>
     public AlertSeverity? AlertMinSeverity { get; set; }
 
+    /// <summary>Whether this conversation receives the human-facing away digest.</summary>
+    public bool DigestEnabled { get; set; }
+
+    /// <summary>Successful digest watermark; null means the first digest covers 24 hours.</summary>
+    public DateTime? DigestLastSentAt { get; set; }
+
     /// <summary>Latest opaque reply-routing token from the provider (addresses outbound sends).</summary>
     public string? ReplyHandle { get; set; }
 

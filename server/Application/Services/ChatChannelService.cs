@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -71,6 +72,9 @@ public sealed class ChatChannelService
         else if (request.AlertMinSeverity is { } alertMinSeverity)
             channel.AlertMinSeverity = alertMinSeverity;
 
+        if (request.DigestEnabled is bool digestEnabled)
+            channel.DigestEnabled = digestEnabled;
+
         channel.UpdatedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
         return ToDto(channel);
@@ -85,6 +89,10 @@ public sealed class ChatChannelService
     /// inbound routing already does, not offer a side door around it.
     /// </summary>
     public async Task SendAsync(Guid id, string text, CancellationToken ct)
+        => await SendAsync(id, text, options: null, ct);
+
+    /// <summary>Targeted send options for server-composed channel messages.</summary>
+    public async Task SendAsync(Guid id, string text, ChannelSendOptions? options, CancellationToken ct)
     {
         var channel = await _db.ChatChannels
             .AsNoTracking()
@@ -98,8 +106,18 @@ public sealed class ChatChannelService
                 "channel_disabled");
         }
 
+        JsonElement? rawOverrides = options?.Silent == true
+            ? JsonDocument.Parse("{\"disable_notification\":true}").RootElement.Clone()
+            : null;
         await _producer.SendAsync(
-            new ChannelReply { Channel = channel.Provider, ConversationId = channel.ExternalId, Text = text },
+            new ChannelReply
+            {
+                Channel = channel.Provider,
+                ConversationId = channel.ExternalId,
+                Text = text,
+                ReplyToMessageId = options?.ReplyToMessageId,
+                RawOverrides = rawOverrides,
+            },
             ct);
     }
 
@@ -161,7 +179,9 @@ public sealed class ChatChannelService
         c.Id, c.Provider, c.ExternalId, c.Kind, c.Title,
         c.AgentId, c.Agent?.Name, c.Enabled,
         c.LastMessageAt, c.LastMessagePreview, c.LastAuthor, c.MessageCount, c.CreatedAt,
-        c.AlertMinSeverity);
+        c.AlertMinSeverity, c.DigestEnabled, c.DigestLastSentAt);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
+
+public sealed record ChannelSendOptions(bool Silent = false, string? ReplyToMessageId = null);

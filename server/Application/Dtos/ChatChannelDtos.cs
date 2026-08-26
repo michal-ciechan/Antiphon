@@ -17,7 +17,9 @@ public sealed record ChatChannelDto(
     long MessageCount,
     DateTime CreatedAt,
     // Non-null = this channel is an alert sink for severities >= the value.
-    AlertSeverity? AlertMinSeverity = null);
+    AlertSeverity? AlertMinSeverity = null,
+    bool DigestEnabled = false,
+    DateTime? DigestLastSentAt = null);
 
 /// <summary>
 /// Partial update. <paramref name="AgentId"/> binds the channel to an agent; <paramref name="UnbindAgent"/>
@@ -31,4 +33,5 @@ public sealed record UpdateChatChannelRequest(
     // Set the alert-sink threshold; ClearAlertMinSeverity turns alerting off for this channel
     // (same JSON absent-vs-null dance as the agent binding).
     AlertSeverity? AlertMinSeverity = null,
-    bool ClearAlertMinSeverity = false);
+    bool ClearAlertMinSeverity = false,
+    bool? DigestEnabled = null);
