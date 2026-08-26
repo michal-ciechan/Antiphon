@@ -288,6 +288,7 @@ try
     builder.Services.AddSingleton<AgentSessionLaunchQueue>();
     builder.Services.AddScoped<LlmProviderService>();
     builder.Services.AddScoped<ProjectService>();
+    builder.Services.AddScoped<ProjectSetupService>();
     builder.Services.AddScoped<BoardService>();
     builder.Services.AddScoped<CardService>();
     builder.Services.AddScoped<CardCommentService>();

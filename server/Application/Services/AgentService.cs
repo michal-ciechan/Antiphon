@@ -901,11 +901,15 @@ public sealed class AgentService
         return project;
     }
 
-    private static bool PathsMatch(string left, string right) =>
-        string.Equals(
+    internal static bool PathsMatch(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            return false;
+        return string.Equals(
             DelegationWorkspaceResolver.NormalizeSeparators(left),
             DelegationWorkspaceResolver.NormalizeSeparators(right),
             StringComparison.OrdinalIgnoreCase);
+    }
 
     private static Board BuildAgentBoard(Project project, string name, DateTime now)
     {

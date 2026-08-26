@@ -27,6 +27,15 @@ public static class ProjectEndpoints
             return Results.Ok(project);
         });
 
+        projects.MapGet("/{id:guid}/readiness", async (
+            Guid id,
+            ProjectSetupService service,
+            CancellationToken cancellationToken) =>
+        {
+            var readiness = await service.GetReadinessAsync(id, cancellationToken);
+            return Results.Ok(readiness);
+        });
+
         projects.MapPost("/", async (
             CreateProjectRequest request,
             ProjectService service,

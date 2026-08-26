@@ -4,6 +4,7 @@ import {
   Group,
   Modal,
   Paper,
+  Popover,
   Stack,
   Table,
   Text,
@@ -41,7 +42,13 @@ import {
   type ProjectDto,
 } from '../../api/projects'
 import { useBoards, useDeleteBoard, type BoardSummaryDto } from '../../api/boards'
+import {
+  missingRequiredCount,
+  useProjectReadinessList,
+  type ProjectReadinessDto,
+} from '../../api/projectSetup'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
+import { ProjectReadinessPanel } from './ProjectReadinessPanel'
 import { ApiKeysSection } from './ApiKeysSection'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { notifications } from '@mantine/notifications'
@@ -75,6 +82,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const { data: boards } = useBoards()
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
+  const readinessQueries = useProjectReadinessList(projects.map((project) => project.id))
 
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
@@ -235,12 +243,12 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                 <Table.Th>Repository</Table.Th>
                 <Table.Th>Boards</Table.Th>
                 <Table.Th>Default Context</Table.Th>
-                <Table.Th>Features</Table.Th>
+                <Table.Th>Readiness</Table.Th>
                 <Table.Th w={100}>Actions</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {projects.map((project) => (
+              {projects.map((project, index) => (
                 <Table.Tr key={project.id}>
                   <Table.Td fw={500}>{project.name}</Table.Td>
                   <Table.Td>
@@ -257,23 +265,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <Group gap={4}>
-                      {project.gitHubIntegrationEnabled && (
-                        <Badge variant="light" color="blue" size="sm">
-                          GitHub
-                        </Badge>
-                      )}
-                      {project.notificationsEnabled && (
-                        <Badge variant="light" color="violet" size="sm">
-                          Notifications
-                        </Badge>
-                      )}
-                      {!project.gitHubIntegrationEnabled && !project.notificationsEnabled && (
-                        <Text size="sm" c="dimmed">
-                          --
-                        </Text>
-                      )}
-                    </Group>
+                    <ProjectReadinessCell query={readinessQueries[index]} />
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
@@ -306,7 +298,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
       ) : (
         <Paper withBorder p="xl">
           <Text ta="center" c="dimmed">
-            No projects configured. Click "Add Project" to get started.
+            No projects yet. Set up a project from a directory path.
           </Text>
         </Paper>
       )}
@@ -486,6 +478,46 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
       <ProjectDeleteDialog project={deletingProject} onClose={() => setDeletingProject(null)} />
     </Stack>
+  )
+}
+
+function ProjectReadinessCell({
+  query,
+}: {
+  query: { data?: ProjectReadinessDto; isLoading: boolean; isError: boolean }
+}) {
+  if (query.isLoading) {
+    return <Loader size="xs" />
+  }
+  if (query.isError || !query.data) {
+    return (
+      <Text size="sm" c="dimmed">
+        --
+      </Text>
+    )
+  }
+
+  const missing = missingRequiredCount(query.data)
+  const label = query.data.canDispatch
+    ? 'Ready to dispatch'
+    : `${missing} thing${missing === 1 ? '' : 's'} missing`
+  return (
+    <Popover position="bottom-start" withinPortal shadow="md" width={420}>
+      <Popover.Target>
+        <Badge
+          variant="light"
+          color={query.data.canDispatch ? 'green' : 'red'}
+          style={{ cursor: 'pointer' }}
+          aria-label={label}
+          title={label}
+        >
+          {query.data.canDispatch ? 'Ready' : `${missing} missing`}
+        </Badge>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <ProjectReadinessPanel readiness={query.data} />
+      </Popover.Dropdown>
+    </Popover>
   )
 }
 

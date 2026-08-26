@@ -2,6 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { notifications } from '@mantine/notifications'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../../api/agents'
+import type { ProjectReadinessDto } from '../../api/projectSetup'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
@@ -174,6 +175,15 @@ const instructionBundles: InstructionBundleDto[] = [
   },
 ]
 
+const readyReadiness: ProjectReadinessDto = {
+  projectId: 'project-1',
+  canDispatch: true,
+  checks: [
+    { key: 'agent-directory', level: 'Required', status: 'Ok', summary: 'Working directory exists' },
+    { key: 'agent-runner', level: 'Required', status: 'Ok', summary: 'Runner profile is enabled' },
+  ],
+}
+
 function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: AgentDetailDto = agentDetail) {
   return [
     http.get('/api/agents', () => HttpResponse.json(summary)),
@@ -183,6 +193,8 @@ function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: Agen
     http.get('/api/agents/:id', () => HttpResponse.json(detail)),
     http.get('/api/agent-tui/profiles', () => HttpResponse.json([agentTuiProfile])),
     http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
+    http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+    http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
   ]
 }
 
@@ -481,6 +493,8 @@ describe('AgentsPage', () => {
       http.get('/api/agents/:id', ({ params }) =>
         HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
       ),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+      http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
     )
 
     renderWithProviders(<AgentsPage />)
@@ -523,6 +537,8 @@ describe('AgentsPage', () => {
       http.get('/api/agents/:id', ({ params }) =>
         HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
       ),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary])),
+      http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
     )
 
     renderWithProviders(<AgentsPage />)
@@ -704,11 +720,7 @@ describe('AgentsPage', () => {
     await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: 'red', message: 'Agent name is required.' }),
-      ),
-    )
+    expect(await screen.findByText('Agent name is required.')).toBeInTheDocument()
   })
 
   it('creates a new card, queues it, and starts the agent in remote control', async () => {
@@ -823,5 +835,30 @@ describe('AgentsPage', () => {
     // Remote control mirrors the agent's persisted setting (false in this fixture) — explicitly
     // passing the persisted value is equivalent to omitting it server-side.
     await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ fresh: false, remoteControl: false }))
+  })
+
+  it('chips directory missing from the project readiness checks', async () => {
+    server.use(
+      http.get('/api/projects/:id/readiness', () =>
+        HttpResponse.json({
+          ...readyReadiness,
+          canDispatch: false,
+          checks: [
+            {
+              key: 'agent-directory',
+              level: 'Required',
+              status: 'Missing',
+              summary: 'Working directory does not exist',
+            },
+            { key: 'agent-runner', level: 'Required', status: 'Ok', summary: 'Runner profile is enabled' },
+          ],
+        } satisfies ProjectReadinessDto),
+      ),
+      ...agentHandlers(),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    expect(await screen.findByTestId('agent-readiness-agent-1')).toHaveTextContent('directory missing')
   })
 })

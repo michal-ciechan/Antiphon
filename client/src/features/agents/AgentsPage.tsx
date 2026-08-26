@@ -47,6 +47,8 @@ import {
   useStopAgent,
 } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
+import { useBoards, type BoardSummaryDto } from '../../api/boards'
+import { useProjectReadinessList, type ProjectReadinessDto } from '../../api/projectSetup'
 import { AgentActivityBadge } from './AgentActivityBadge'
 import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SessionContextBadge } from './SessionContextBadge'
@@ -58,6 +60,20 @@ import { AgentSettingsModal } from './AgentSettingsModal'
 
 export function AgentsPage() {
   const agents = useAgentList()
+  const boards = useBoards()
+  const projectIds = [
+    ...new Set(
+      (agents.data ?? [])
+        .map((agent) => boards.data?.find((board) => board.id === agent.boardId)?.projectId)
+        .filter((id): id is string => !!id),
+    ),
+  ]
+  const readinessQueries = useProjectReadinessList(projectIds)
+  const readinessByProject = new Map<string, ProjectReadinessDto>()
+  projectIds.forEach((id, index) => {
+    const data = readinessQueries[index]?.data
+    if (data) readinessByProject.set(id, data)
+  })
   // ?agent=<id> deep-links a specific agent — how the delegations board points at the delegate
   // that ran a task.
   const [searchParams] = useSearchParams()
@@ -142,6 +158,11 @@ export function AgentsPage() {
                         <ReplyStyleBadge agent={agent} />
                         <BundleDriftBadge agent={agent} />
                         <SupervisionBadge agent={agent} compact />
+                        <AgentReadinessChip
+                          agent={agent}
+                          boards={boards.data}
+                          readinessByProject={readinessByProject}
+                        />
                         {agent.liveSession?.agentKind === 'ClaudeCode' && (
                           <SessionContextBadge
                             fullness={agent.liveSession.contextFullness}
@@ -452,6 +473,41 @@ function IncidentRow({ incident }: { incident: AgentIncidentDto }) {
  * composes no instruction, so a chip announcing it would be a badge for the absence of a setting on
  * every agent in the list.
  */
+function AgentReadinessChip({
+  agent,
+  boards,
+  readinessByProject,
+}: {
+  agent: AgentSummaryDto
+  boards: BoardSummaryDto[] | undefined
+  readinessByProject: Map<string, ProjectReadinessDto>
+}) {
+  const projectId = boards?.find((board) => board.id === agent.boardId)?.projectId
+  if (!projectId) return null
+  const readiness = readinessByProject.get(projectId)
+  if (!readiness) return null
+  const directory = readiness.checks.find((c) => c.key === 'agent-directory')
+  const runner = readiness.checks.find((c) => c.key === 'agent-runner')
+  const label =
+    directory?.status === 'Missing'
+      ? 'directory missing'
+      : runner?.status === 'Missing'
+        ? 'runner profile disabled'
+        : null
+  if (!label) return null
+  return (
+    <Badge
+      size="sm"
+      color="red"
+      variant="light"
+      data-testid={`agent-readiness-${agent.id}`}
+      title={label}
+    >
+      {label}
+    </Badge>
+  )
+}
+
 function ReplyStyleBadge({ agent }: { agent: AgentSummaryDto }) {
   const style = agent.replyStyle ?? 'Normal'
   if (style === 'Normal') return null

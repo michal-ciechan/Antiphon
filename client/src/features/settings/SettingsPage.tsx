@@ -1,4 +1,5 @@
 import { Container, Title, Paper, Tabs } from '@mantine/core'
+import { useSearchParams } from 'react-router'
 import { TemplateManager } from './TemplateManager'
 import { ProviderConfig } from './ProviderConfig'
 import { ProjectConfig } from './ProjectConfig'
@@ -6,14 +7,19 @@ import { StatusTab } from './StatusTab'
 import { AgentTuiConfig } from './AgentTuiConfig'
 import { ApiKeysSection } from './ApiKeysSection'
 
+const SETTINGS_TABS = ['templates', 'llm-providers', 'projects', 'api-keys', 'agent-tui', 'status'] as const
+
 export function SettingsPage() {
+  const [searchParams] = useSearchParams()
+  const requested = searchParams.get('tab') ?? 'templates'
+  const tab = (SETTINGS_TABS as readonly string[]).includes(requested) ? requested : 'templates'
   return (
     <Container size="lg" py="xl">
       <Title order={2} mb="lg">
         Settings
       </Title>
       <Paper p="md" radius="md" withBorder>
-        <Tabs defaultValue="templates">
+        <Tabs defaultValue={tab}>
           <Tabs.List>
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>
