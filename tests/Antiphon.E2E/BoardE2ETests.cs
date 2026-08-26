@@ -192,7 +192,9 @@ public class BoardE2ETests
                 NameRegex = new Regex(cardTitle)
             })).ToBeVisibleAsync();
 
-            await MoveCardViaUiAsync(page, "CARD-0001", "in-progress", "starting work");
+            var move = await MoveCardViaUiAsync(page, "CARD-0001", "in-progress", "starting work");
+            move.SpawnedSessionId.ShouldNotBeNull(
+                $"the UI move sends spawn:true (MoveMenu.tsx:75); suppressed={move.SpawnSuppressed}");
 
             var movedCard = activeColumn.GetByRole(AriaRole.Article, new LocatorGetByRoleOptions
             {
@@ -202,7 +204,13 @@ public class BoardE2ETests
 
             await movedCard.ClickAsync();
             var cardDialog = page.GetByRole(AriaRole.Dialog);
-            await Expect(cardDialog.GetByText("Session 1")).ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions
+            // The session list is a compact Mantine Select, whose selected option is the input's
+            // value rather than a text node. Its label includes the session's current status.
+            var sessionSelect = cardDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions
+            {
+                Name = "All sessions"
+            });
+            await Expect(sessionSelect).ToHaveValueAsync(new Regex(@"^Session 1 - "), new LocatorAssertionsToHaveValueOptions
             {
                 Timeout = 30_000
             });
@@ -1076,7 +1084,7 @@ public class BoardE2ETests
     /// carries a reason now, and moving into an active column spawns an agent session, which is
     /// not a thing a drag gesture should be able to do.
     /// </summary>
-    private static async Task MoveCardViaUiAsync(IPage page, string identifier, string stateKey, string reason)
+    private static async Task<UiMoveCardResult> MoveCardViaUiAsync(IPage page, string identifier, string stateKey, string reason)
     {
         await page.GetByLabel($"Actions for {identifier}").ClickAsync();
         await page.GetByTestId($"move-to-{stateKey}").ClickAsync();
@@ -1098,5 +1106,10 @@ public class BoardE2ETests
             throw new InvalidOperationException(
                 $"Card move failed with HTTP {response.Status}: {responseBody}");
         }
+
+        return JsonSerializer.Deserialize<UiMoveCardResult>(await response.TextAsync(), JsonOptions)
+            ?? throw new InvalidOperationException("Card move returned an empty response body.");
     }
+
+    private sealed record UiMoveCardResult(Guid? SpawnedSessionId, bool SpawnSuppressed);
 }
