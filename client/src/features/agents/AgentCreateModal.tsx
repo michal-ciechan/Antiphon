@@ -4,6 +4,7 @@ import {
   Group,
   Input,
   Modal,
+  MultiSelect,
   SegmentedControl,
   Select,
   Stack,
@@ -14,13 +15,14 @@ import {
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
-import type { AgentAssignmentPolicy, AgentReplyStyle } from '../../api/agents'
-import { AGENT_REPLY_STYLE_OPTIONS, useCreateAgent, useDraftAgent } from '../../api/agents'
+import type { AgentAssignmentPolicy, AgentModelLevel, AgentReplyStyle } from '../../api/agents'
+import { AGENT_REPLY_STYLE_OPTIONS, useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useAgentTuiProfiles } from '../../api/agentTui'
 import { useBoards } from '../../api/boards'
+import { ModelLevelSelect } from './ModelLevelSelect'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -45,16 +47,24 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [assignmentPolicy, setAssignmentPolicy] = useState<AgentAssignmentPolicy>('AutoPick')
   const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
   const [modelId, setModelId] = useState<string | null>(null)
+  const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
   const [boardId, setBoardId] = useState<string | null>(null)
+  const [bundleKeys, setBundleKeys] = useState<string[]>([])
+  const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [creationError, setCreationError] = useState<string | null>(null)
   const { data: profiles } = useAgentTuiProfiles()
   const boards = useBoards()
+  const bundles = useInstructionBundles(opened)
   const boardOptions = useMemo(
     () => (boards.data ?? []).map((board) => ({ value: board.id, label: `${board.projectName} / ${board.name}` })),
     [boards.data],
+  )
+  const bundleOptions = useMemo(
+    () => (bundles.data ?? []).map((bundle) => ({ value: bundle.key, label: bundle.key })),
+    [bundles.data],
   )
 
   const reset = () => {
@@ -67,10 +77,13 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
     setAssignmentPolicy('AutoPick')
     setTuiProfileId(null)
     setModelId(null)
+    setModelLevel('High')
     setReplyStyle('Normal')
     setAlwaysOn(false)
     setRemoteControlEnabled(false)
     setBoardId(null)
+    setBundleKeys([])
+    setSystemPromptAppend('')
     setCreationError(null)
     draftAgent.reset()
   }
@@ -101,10 +114,13 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         createWorkingDirectory: createDir,
         tuiProfileId: profileId,
         modelId,
+        modelLevel,
         replyStyle,
         alwaysOn,
         remoteControlEnabled,
         boardId: boardId ?? undefined,
+        bundleKeys,
+        systemPromptAppend: systemPromptAppend.trim() || null,
       },
       {
         onSuccess: () => {
@@ -210,6 +226,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onProfileChange={setTuiProfileId}
           onModelChange={setModelId}
         />
+        <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
         <Input.Wrapper
           label="Reply style"
           description={
@@ -224,6 +241,23 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
             onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
           />
         </Input.Wrapper>
+        <MultiSelect
+          label="Attached bundles"
+          description="Instructions composed into this agent's next launch."
+          data={bundleOptions}
+          value={bundleKeys}
+          onChange={setBundleKeys}
+          searchable
+          clearable
+          disabled={bundles.isLoading}
+        />
+        <Textarea
+          label="System prompt append"
+          description="Optional instructions added after the attached bundles."
+          value={systemPromptAppend}
+          onChange={(event) => setSystemPromptAppend(event.currentTarget.value)}
+          minRows={3}
+        />
         <Switch
           label="Always on"
           description="Auto-start at boot and auto-restart on crash (backing off, never giving up). Stop suspends until the next manual start."

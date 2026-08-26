@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -21,17 +22,32 @@ public sealed class ProjectSetupService
     private readonly DelegationWorkspaceResolver _resolver;
     private readonly DelegationSettings _delegation;
     private readonly ILogger<ProjectSetupService> _logger;
+    private readonly ProjectService? _projectService;
+    private readonly BoardService? _boardService;
+    private readonly AgentService? _agentService;
+    private readonly AgentControlService? _agentControlService;
+    private readonly IDirectoryWriter? _directoryWriter;
 
     public ProjectSetupService(
         AppDbContext db,
         DelegationWorkspaceResolver resolver,
         IOptions<DelegationSettings> delegation,
-        ILogger<ProjectSetupService> logger)
+        ILogger<ProjectSetupService> logger,
+        ProjectService? projectService = null,
+        BoardService? boardService = null,
+        AgentService? agentService = null,
+        AgentControlService? agentControlService = null,
+        IDirectoryWriter? directoryWriter = null)
     {
         _db = db;
         _resolver = resolver;
         _delegation = delegation.Value;
         _logger = logger;
+        _projectService = projectService;
+        _boardService = boardService;
+        _agentService = agentService;
+        _agentControlService = agentControlService;
+        _directoryWriter = directoryWriter;
     }
 
     public async Task<ProjectReadinessDto> GetReadinessAsync(Guid projectId, CancellationToken ct)
@@ -139,6 +155,180 @@ public sealed class ProjectSetupService
                 _delegation.MaxCostUsdPerRoot,
                 _delegation.MaxDepth,
                 _delegation.DefaultLevel));
+    }
+
+    /// <summary>
+    /// Creates the project chain in one database transaction. Starting an agent deliberately happens
+    /// after commit: a session launch cannot be rolled back, and a refusal leaves useful setup rows.
+    /// </summary>
+    public async Task<ProjectSetupResultDto> SetupAsync(ProjectSetupRequest request, CancellationToken ct)
+    {
+        var projectService = _projectService ?? throw new InvalidOperationException("Project setup write services are not configured.");
+        var boardService = _boardService ?? throw new InvalidOperationException("Project setup write services are not configured.");
+        var agentService = _agentService ?? throw new InvalidOperationException("Project setup write services are not configured.");
+
+        if (string.IsNullOrWhiteSpace(request.Directory))
+            throw new ValidationException("directory", "Directory is required.");
+
+        string directory;
+        try
+        {
+            directory = Path.GetFullPath(request.Directory.Trim());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ValidationException("directory", "Directory is not a usable path.");
+        }
+
+        var notes = new List<string>();
+        if (!Directory.Exists(directory) && request.CreateDirectory)
+        {
+            (_directoryWriter ?? throw new InvalidOperationException("Directory writer is not configured."))
+                .CreateDirectory(directory);
+            notes.Add($"Directory created: {directory}");
+        }
+        if (!Directory.Exists(directory))
+            throw new ValidationException("directory", $"Directory does not exist: {directory}. Select create directory to create it.");
+
+        var toplevel = await _resolver.GetRepoToplevelAsync(directory, ct);
+        if (toplevel is not null && !AgentService.PathsMatch(toplevel, directory))
+        {
+            throw new ValidationException(
+                "directory",
+                $"Directory '{directory}' is inside the repository at '{toplevel}'. Use the repository root instead.");
+        }
+
+        if (await agentService.FindProjectForWorkingDirectoryAsync(directory, ct) is { } existing)
+        {
+            throw new ConflictException(
+                $"Directory '{directory}' already belongs to project '{existing.Name}' ({existing.Id}).");
+        }
+
+        var name = string.IsNullOrWhiteSpace(request.Name)
+            ? AgentService.DeriveProjectName(directory, "Project")
+            : request.Name.Trim();
+        var gitUrl = request.GitRepositoryUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(gitUrl) && toplevel is not null)
+        {
+            gitUrl = await TryGetOriginUrlAsync(toplevel, ct);
+            if (!string.IsNullOrWhiteSpace(gitUrl))
+                notes.Add("Git remote read from the checkout.");
+        }
+        gitUrl ??= string.Empty;
+
+        var boardName = string.IsNullOrWhiteSpace(request.BoardName) ? name : request.BoardName.Trim();
+        ProjectDto project;
+        BoardSummaryDto board;
+        AgentDetailDto? agent = null;
+
+        await using (var transaction = await _db.Database.BeginTransactionAsync(ct))
+        {
+            project = await projectService.CreateAsync(
+                new CreateProjectRequest(
+                    name,
+                    gitUrl,
+                    ConstitutionPath: null,
+                    GitHubIntegrationEnabled: false,
+                    NotificationsEnabled: false,
+                    LocalRepositoryPath: directory,
+                    BaseBranch: request.BaseBranch),
+                ct);
+
+            var createdBoard = await boardService.CreateAsync(
+                new CreateBoardRequest(project.Id, boardName, MaxConcurrentSessions: request.BoardMaxConcurrentSessions),
+                ct);
+            board = new BoardSummaryDto(
+                createdBoard.Id,
+                createdBoard.ProjectId,
+                createdBoard.ProjectName,
+                createdBoard.Name,
+                createdBoard.Description,
+                createdBoard.TrackerKind,
+                createdBoard.MaxConcurrentSessions,
+                CardCount: 0,
+                CreatedAt: createdBoard.CreatedAt,
+                UpdatedAt: createdBoard.UpdatedAt);
+
+            if (request.Agent is { } setupAgent)
+            {
+                var preset = AgentPresets.Find(setupAgent.Preset);
+                if (!string.IsNullOrWhiteSpace(setupAgent.Preset) && preset is null)
+                    throw new ValidationException("agent.preset", $"Unknown agent preset '{setupAgent.Preset}'.");
+
+                var prompt = setupAgent.SystemPromptAppend ?? AgentPresets.RenderTemplate(
+                    preset?.SystemPromptTemplate,
+                    project.Name,
+                    board.Name,
+                    project.GitRepositoryUrl,
+                    directory);
+                agent = await agentService.CreateAsync(
+                    new CreateAgentRequest(
+                        Name: string.IsNullOrWhiteSpace(setupAgent.Name)
+                            ? preset is null ? $"{project.Name} Agent" : AgentPresets.RenderName(preset.NamePattern, project.Name)
+                            : setupAgent.Name.Trim(),
+                        WorkingDirectory: directory,
+                        CreateWorkingDirectory: false,
+                        ModelLevel: setupAgent.ModelLevel ?? preset?.ModelLevel ?? AgentModelLevel.High,
+                        TuiProfileId: setupAgent.TuiProfileId,
+                        ModelId: setupAgent.ModelId,
+                        ReplyStyle: setupAgent.ReplyStyle ?? preset?.ReplyStyle ?? AgentReplyStyle.Normal,
+                        AlwaysOn: setupAgent.AlwaysOn ?? preset?.AlwaysOn ?? false,
+                        RemoteControlEnabled: setupAgent.RemoteControlEnabled ?? false,
+                        BoardId: board.Id,
+                        BundleKeys: setupAgent.BundleKeys ?? preset?.BundleKeys,
+                        SystemPromptAppend: prompt),
+                    ct);
+            }
+
+            await transaction.CommitAsync(ct);
+        }
+
+        if (request.StartAgent && agent is not null)
+        {
+            try
+            {
+                agent = await (_agentControlService ?? throw new InvalidOperationException("Agent control service is not configured."))
+                    .StartAsync(agent.Id, new StartAgentRequest(), ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                notes.Add($"Agent start was refused: {ex.Message}");
+            }
+        }
+
+        var readiness = await GetReadinessAsync(project.Id, ct);
+        return new ProjectSetupResultDto(project, board, agent, readiness, notes);
+    }
+
+    private static async Task<string?> TryGetOriginUrlAsync(string directory, CancellationToken ct)
+    {
+        try
+        {
+            var info = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = directory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            info.ArgumentList.Add("remote");
+            info.ArgumentList.Add("get-url");
+            info.ArgumentList.Add("origin");
+            using var process = System.Diagnostics.Process.Start(info);
+            if (process is null)
+                return null;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var output = await process.StandardOutput.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) ? output.Trim() : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<ModelLevelDto> ModelLevelCatalog()

@@ -286,7 +286,7 @@ export interface CreateAgentRequest {
   modelLevel?: AgentModelLevel | null
   tuiProfileId?: string | null
   modelId?: string | null
-  /** Omit = Normal. Create deliberately still cannot set systemPromptAppend. */
+  /** Omit = Normal. */
   replyStyle?: AgentReplyStyle
   /** Omit = PtyHost (CARD-0160). */
   sessionBackend?: SessionBackend
@@ -299,6 +299,10 @@ export interface CreateAgentRequest {
   autoCompactContextPercent?: number | null
   /** Omit/null = inherit the project's only board, or create the first board for a new project. */
   boardId?: string | null
+  /** Omit/null = no attached instruction bundles. */
+  bundleKeys?: string[] | null
+  /** Omit/null = no agent-specific appended system prompt. */
+  systemPromptAppend?: string | null
 }
 
 export interface UpdateAgentRequest {

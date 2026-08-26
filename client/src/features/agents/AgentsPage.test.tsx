@@ -1,5 +1,4 @@
 import { HttpResponse, http } from 'msw'
-import { notifications } from '@mantine/notifications'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../../api/agents'
 import type { ProjectReadinessDto } from '../../api/projectSetup'
@@ -578,11 +577,14 @@ describe('AgentsPage', () => {
         createWorkingDirectory: false,
         tuiProfileId: 'tui-profile-1',
         modelId: null,
+        modelLevel: 'High',
         // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
         // CARD-0008: supervision flags ride create; untouched switches stay off.
         alwaysOn: false,
         remoteControlEnabled: false,
+        bundleKeys: [],
+        systemPromptAppend: null,
       }),
     )
   })
@@ -622,9 +624,12 @@ describe('AgentsPage', () => {
         createWorkingDirectory: false,
         tuiProfileId: 'tui-profile-1',
         modelId: null,
+        modelLevel: 'High',
         replyStyle: 'Normal',
         alwaysOn: true,
         remoteControlEnabled: true,
+        bundleKeys: [],
+        systemPromptAppend: null,
       }),
     )
   })
@@ -689,11 +694,14 @@ describe('AgentsPage', () => {
         createWorkingDirectory: false,
         tuiProfileId: 'tui-profile-1',
         modelId: null,
+        modelLevel: 'High',
         // CARD-0060: create carries a style, and Normal is what an untouched picker means.
         replyStyle: 'Normal',
         // CARD-0008: draft path does not guess these; they stay off until toggled.
         alwaysOn: false,
         remoteControlEnabled: false,
+        bundleKeys: [],
+        systemPromptAppend: null,
       }),
     )
   })
