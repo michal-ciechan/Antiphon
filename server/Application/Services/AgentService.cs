@@ -396,6 +396,11 @@ public sealed class AgentService
                 CreatedAt = now,
                 UpdatedAt = now
             };
+            if (request.SystemPromptAppend is { } createAppend)
+            {
+                ApiKeyPlaceholderInPromptGuard(createAppend);
+                agent.SystemPromptAppend = string.IsNullOrWhiteSpace(createAppend) ? null : createAppend;
+            }
             await ApplyTuiSelectionAsync(
                 agent,
                 request.TuiProfileId,
@@ -405,6 +410,8 @@ public sealed class AgentService
             // Re-check after the profile may have changed Kind (Herdr is Claude/Grok/Codex only).
             ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
             _db.Agents.Add(agent);
+            if (request.BundleKeys is { } createBundles)
+                await AgentBundleAttachments.SetAsync(_db, agent, createBundles, now, ct);
 
             try
             {
@@ -875,7 +882,7 @@ public sealed class AgentService
         return await CreateProjectForWorkingDirectoryAsync(workingDirectory, fallbackName, now, ct);
     }
 
-    private async Task<Project?> FindProjectForWorkingDirectoryAsync(string workingDirectory, CancellationToken ct)
+    internal async Task<Project?> FindProjectForWorkingDirectoryAsync(string workingDirectory, CancellationToken ct)
     {
         var normalized = DelegationWorkspaceResolver.NormalizeSeparators(workingDirectory).ToLowerInvariant();
         return await _db.Projects.FirstOrDefaultAsync(
@@ -930,7 +937,7 @@ public sealed class AgentService
         return board;
     }
 
-    private static string DeriveProjectName(string workingDirectory, string fallback)
+    internal static string DeriveProjectName(string workingDirectory, string fallback)
     {
         var trimmed = workingDirectory.TrimEnd('/', '\\');
         var separator = trimmed.LastIndexOfAny(['/', '\\']);

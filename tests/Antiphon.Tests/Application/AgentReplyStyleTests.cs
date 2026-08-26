@@ -132,12 +132,10 @@ public class AgentReplyStyleTests
     [Test]
     public void a_create_request_defaults_to_normal_and_can_ask_for_a_style()
     {
-        // Create gains a composition-relevant field for the first time. It deliberately still does
-        // NOT gain SystemPromptAppend — that stays update-only, and is out of this card's scope.
         new CreateAgentRequest("A", "C:\\tmp").ReplyStyle.ShouldBe(AgentReplyStyle.Normal);
         new CreateAgentRequest("A", "C:\\tmp", ReplyStyle: AgentReplyStyle.Terse)
             .ReplyStyle.ShouldBe(AgentReplyStyle.Terse);
-        typeof(CreateAgentRequest).GetProperty("SystemPromptAppend").ShouldBeNull();
+        new CreateAgentRequest("A", "C:\\tmp").SystemPromptAppend.ShouldBeNull();
     }
 
     [Test]

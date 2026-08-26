@@ -19,6 +19,18 @@ namespace Antiphon.Tests.Application;
 public class InstructionBundleTests
 {
     [Test]
+    public void the_orchestrator_preset_prompt_is_embedded_and_not_attachable()
+    {
+        var text = AgentPresets.LoadOrchestratorTemplate();
+        text.ShouldContain("{project}");
+        text.ShouldContain("{board}");
+        text.ShouldContain("{directory}");
+        InstructionBundles.Attachable.Select(b => b.Key).ShouldNotContain("Presets.orchestrator-prompt");
+        InstructionBundles.All.Keys.ShouldNotContain("Presets.orchestrator-prompt");
+        AgentPresets.Find("orchestrator")!.SystemPromptTemplate.ShouldBe(text);
+    }
+
+    [Test]
     public void the_catalog_holds_exactly_the_bundles_that_ship()
     {
         // Pinned rather than counted: the resource glob is `Bundles\*.md` minus README.md, so a file

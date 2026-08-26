@@ -200,6 +200,9 @@ public static class InstructionBundles
                 continue;
 
             var key = resource[ResourcePrefix.Length..^ResourceSuffix.Length];
+            // Preset templates live under Bundles/Presets/ and must not be attachable bundles.
+            if (key.StartsWith("Presets.", StringComparison.Ordinal))
+                continue;
             var text = ReadNormalised(assembly, resource);
             bundles[key] = new InstructionBundle(key, HashOf(text), text);
         }

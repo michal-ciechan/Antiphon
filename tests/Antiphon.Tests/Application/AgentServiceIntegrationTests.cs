@@ -47,6 +47,38 @@ public class AgentServiceIntegrationTests
     }
 
     [Test]
+    public async Task CreateAsync_applies_bundle_keys_and_system_prompt_append()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var created = await service.CreateAsync(
+            new CreateAgentRequest(
+                UniqueAgentName("Bundled At Birth"),
+                "D:/src/bundled",
+                BundleKeys: [InstructionBundles.Orchestrator, InstructionBundles.BoardApi],
+                SystemPromptAppend: "You watch the board."),
+            CancellationToken.None);
+
+        created.SystemPromptAppend.ShouldBe("You watch the board.");
+        created.AttachedBundleKeys.ShouldBe([InstructionBundles.Orchestrator, InstructionBundles.BoardApi]);
+    }
+
+    [Test]
+    public async Task CreateAsync_unknown_bundle_key_is_422()
+    {
+        await using var db = CreateContext();
+        var service = CreateService(db, new MockEventBus());
+        var ex = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(
+                new CreateAgentRequest(
+                    UniqueAgentName("Bad Bundle"),
+                    "D:/src/bad-bundle",
+                    BundleKeys: ["not-a-bundle"]),
+                CancellationToken.None));
+        ex.Errors.Values.SelectMany(v => v).ShouldContain(m => m.Contains("not-a-bundle"));
+    }
+
+    [Test]
     public async Task CreateAsync_on_an_unknown_directory_creates_a_project_and_a_board_named_after_it()
     {
         await using var db = CreateContext();

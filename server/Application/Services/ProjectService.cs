@@ -50,7 +50,7 @@ public class ProjectService
     public async Task<ProjectDto> CreateAsync(
         CreateProjectRequest request, CancellationToken cancellationToken)
     {
-        ValidateRequest(request.Name, request.GitRepositoryUrl);
+        ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
 
         var project = new Project
         {
@@ -87,7 +87,7 @@ public class ProjectService
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Project), id);
 
-        ValidateRequest(request.Name, request.GitRepositoryUrl);
+        ValidateRequest(request.Name, request.GitRepositoryUrl, request.LocalRepositoryPath);
 
         project.Name = request.Name;
         project.GitRepositoryUrl = request.GitRepositoryUrl;
@@ -304,7 +304,7 @@ public class ProjectService
         }
     }
 
-    private static void ValidateRequest(string name, string gitRepositoryUrl)
+    private static void ValidateRequest(string name, string gitRepositoryUrl, string? localRepositoryPath)
     {
         var errors = new Dictionary<string, string[]>();
 
@@ -313,9 +313,13 @@ public class ProjectService
             errors["name"] = ["Name is required."];
         }
 
+        var hasLocalPath = !string.IsNullOrWhiteSpace(localRepositoryPath);
         if (string.IsNullOrWhiteSpace(gitRepositoryUrl))
         {
-            errors["gitRepositoryUrl"] = ["Git repository URL is required."];
+            if (!hasLocalPath)
+            {
+                errors["gitRepositoryUrl"] = ["Git repository URL is required when no local path is set."];
+            }
         }
         else if (!Uri.TryCreate(gitRepositoryUrl, UriKind.Absolute, out _) &&
                  !gitRepositoryUrl.StartsWith("git@", StringComparison.OrdinalIgnoreCase))

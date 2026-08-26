@@ -23,6 +23,9 @@
       rather than reaching an agent's system prompt.
     -->
     <EmbeddedResource Include="Bundles\*.md" Exclude="Bundles\README.md" />
+    <!-- CARD-0032: preset prompt templates. Not attachable bundles — InstructionBundles skips the
+         Presets. prefix so they cannot ride an agent's composition by accident. -->
+    <EmbeddedResource Include="Bundles\Presets\*.md" />
   </ItemGroup>
 
   <ItemGroup>

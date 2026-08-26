@@ -190,8 +190,8 @@ public sealed record CreateAgentRequest(
     Guid? TuiProfileId = null,
     // Null/omitted = runner default model (no exact --model argument).
     string? ModelId = null,
-    // CARD-0060. Create finally gains a composition-relevant field; SystemPromptAppend deliberately
-    // still is NOT one of them (update-only, out of scope here).
+    // CARD-0060 / CARD-0032. Create carries ReplyStyle, SystemPromptAppend and BundleKeys so a
+    // standing orchestrator exists with its contract from the first write, not after a PATCH.
     AgentReplyStyle ReplyStyle = AgentReplyStyle.Normal,
     // CARD-0160. Null = PtyHost (the only lane that existed before this field).
     SessionBackend? SessionBackend = null,
@@ -204,7 +204,10 @@ public sealed record CreateAgentRequest(
     int? AutoCompactIdleMinutes = null,
     int? AutoCompactContextPercent = null,
     // Null/omitted = inherit the project's only board, or create the first board for a new project.
-    Guid? BoardId = null);
+    Guid? BoardId = null,
+    // CARD-0032. Null = none. Applied the same way UpdateAsync applies them.
+    IReadOnlyList<string>? BundleKeys = null,
+    string? SystemPromptAppend = null);
 
 public sealed record DraftAgentRequest(string Description);
 

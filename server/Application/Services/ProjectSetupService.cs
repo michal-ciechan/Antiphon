@@ -110,6 +110,74 @@ public sealed class ProjectSetupService
         return new ProjectReadinessDto(project.Id, canDispatch, checks);
     }
 
+    public async Task<ProjectSetupCatalogDto> GetCatalogAsync(CancellationToken ct)
+    {
+        var profiles = await _db.AgentTuiProfiles
+            .AsNoTracking()
+            .Where(p => p.IsEnabled)
+            .OrderBy(p => p.DisplayName)
+            .Select(p => new AgentTuiProfileSummaryDto(
+                p.Id,
+                p.DisplayName,
+                p.Kind,
+                p.IsDefault,
+                p.ActiveRevisionId != null))
+            .ToListAsync(ct);
+
+        var roots = _delegation.AllowedRoots.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+        return new ProjectSetupCatalogDto(
+            ModelLevels: ModelLevelCatalog(),
+            ReplyStyles: ReplyStyleCatalog(),
+            Bundles: [.. InstructionBundles.Attachable.Select(b =>
+                new InstructionBundleDto(b.Key, b.Version, b.Stamp, b.Summary, b.Text.Length))],
+            Profiles: profiles,
+            Presets: AgentPresets.All,
+            Delegation: new DelegationSummaryDto(
+                roots,
+                roots.Count == 0,
+                _delegation.MaxConcurrentTasks,
+                _delegation.MaxCostUsdPerRoot,
+                _delegation.MaxDepth,
+                _delegation.DefaultLevel));
+    }
+
+    private static IReadOnlyList<ModelLevelDto> ModelLevelCatalog()
+    {
+        var kinds = new[] { AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex };
+        return Enum.GetValues<AgentModelLevel>().Select(level =>
+        {
+            var aliases = kinds.ToDictionary(
+                k => k.ToString(),
+                k => ModelLevelAliases.For(k, level),
+                StringComparer.Ordinal);
+            var (label, blurb) = level switch
+            {
+                AgentModelLevel.Frontier => (
+                    "Frontier",
+                    "The most capable model — the very hardest tasks, highest level of reasoning."),
+                AgentModelLevel.High => (
+                    "High (default)",
+                    "Frontier-grade daily driver — hard tasks, deep reasoning."),
+                AgentModelLevel.Medium => (
+                    "Medium",
+                    "Balanced — strong everyday reasoning at moderate cost and token usage."),
+                AgentModelLevel.Low => (
+                    "Low",
+                    "Fast and light — simple tasks and quick replies."),
+                _ => (level.ToString(), string.Empty),
+            };
+            return new ModelLevelDto(level.ToString(), label, blurb, aliases);
+        }).ToList();
+    }
+
+    private static IReadOnlyList<ReplyStyleDto> ReplyStyleCatalog() =>
+    [
+        new("Normal", "Normal", "No style instruction at all — the model writes the way it does by default."),
+        new("Terse", "Terse", "Answer first, one line where one line will do. No preamble, no sign-off."),
+        new("Caveman", "Caveman", "Short word. Drop small word. Paths, flags and code still written exactly."),
+        new("Explanatory", "Explanatory", "Answer first, then the reasoning: alternatives, what it depends on, where it was read."),
+    ];
+
     private static ReadinessCheckDto DirectoryCheck(Project project)
     {
         if (string.IsNullOrWhiteSpace(project.LocalRepositoryPath))

@@ -36,6 +36,14 @@ public static class ProjectEndpoints
             return Results.Ok(readiness);
         });
 
+        projects.MapGet("/setup-catalog", async (
+            ProjectSetupService service,
+            CancellationToken cancellationToken) =>
+        {
+            var catalog = await service.GetCatalogAsync(cancellationToken);
+            return Results.Ok(catalog);
+        });
+
         projects.MapPost("/", async (
             CreateProjectRequest request,
             ProjectService service,

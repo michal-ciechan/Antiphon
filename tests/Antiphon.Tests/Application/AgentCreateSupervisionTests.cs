@@ -28,10 +28,11 @@ public class AgentCreateSupervisionTests
         asked.AlwaysOn.ShouldBeTrue();
         asked.RemoteControlEnabled.ShouldBeTrue();
 
-        // These stay update-only — the plan named each exclusion.
-        typeof(CreateAgentRequest).GetProperty("BoardId").ShouldBeNull();
-        typeof(CreateAgentRequest).GetProperty("SystemPromptAppend").ShouldBeNull();
-        typeof(CreateAgentRequest).GetProperty("BundleKeys").ShouldBeNull();
+        // CARD-0210 added BoardId; CARD-0032 added SystemPromptAppend and BundleKeys so a
+        // standing orchestrator is born with its contract. They default to null / omitted.
+        omitted.BoardId.ShouldBeNull();
+        omitted.SystemPromptAppend.ShouldBeNull();
+        omitted.BundleKeys.ShouldBeNull();
     }
 
     [Test]

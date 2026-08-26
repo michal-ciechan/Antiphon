@@ -49,3 +49,78 @@ public static class ReadinessKeys
     public const string Channel = "channel";
     public const string GitHub = "github";
 }
+
+public sealed record ProjectSetupCatalogDto(
+    IReadOnlyList<ModelLevelDto> ModelLevels,
+    IReadOnlyList<ReplyStyleDto> ReplyStyles,
+    IReadOnlyList<InstructionBundleDto> Bundles,
+    IReadOnlyList<AgentTuiProfileSummaryDto> Profiles,
+    IReadOnlyList<AgentPresetDto> Presets,
+    DelegationSummaryDto Delegation);
+
+public sealed record ModelLevelDto(
+    string Key,
+    string Label,
+    string Blurb,
+    IReadOnlyDictionary<string, string> AliasesByKind);
+
+public sealed record ReplyStyleDto(
+    string Key,
+    string Label,
+    string Description);
+
+public sealed record AgentTuiProfileSummaryDto(
+    Guid Id,
+    string DisplayName,
+    AgentKind Kind,
+    bool IsDefault,
+    bool HasActiveRevision);
+
+public sealed record AgentPresetDto(
+    string Key,
+    string Label,
+    string Description,
+    bool AlwaysOn,
+    AgentModelLevel ModelLevel,
+    AgentReplyStyle ReplyStyle,
+    IReadOnlyList<string> BundleKeys,
+    string? SystemPromptTemplate,
+    string NamePattern);
+
+public sealed record DelegationSummaryDto(
+    IReadOnlyList<string> AllowedRoots,
+    bool AllowedRootsIsEmpty,
+    int MaxConcurrentTasks,
+    decimal MaxCostUsdPerRoot,
+    int MaxDepth,
+    AgentModelLevel DefaultLevel);
+
+public sealed record ProjectSetupRequest(
+    string Directory,
+    bool CreateDirectory = false,
+    string? Name = null,
+    string? GitRepositoryUrl = null,
+    string? BaseBranch = null,
+    string? BoardName = null,
+    int BoardMaxConcurrentSessions = 1,
+    ProjectSetupAgentRequest? Agent = null,
+    bool StartAgent = false);
+
+public sealed record ProjectSetupAgentRequest(
+    string? Preset = null,
+    string? Name = null,
+    Guid? TuiProfileId = null,
+    string? ModelId = null,
+    AgentModelLevel? ModelLevel = null,
+    AgentReplyStyle? ReplyStyle = null,
+    bool? AlwaysOn = null,
+    bool? RemoteControlEnabled = null,
+    IReadOnlyList<string>? BundleKeys = null,
+    string? SystemPromptAppend = null);
+
+public sealed record ProjectSetupResultDto(
+    ProjectDto Project,
+    BoardSummaryDto Board,
+    AgentDetailDto? Agent,
+    ProjectReadinessDto Readiness,
+    IReadOnlyList<string> Notes);
