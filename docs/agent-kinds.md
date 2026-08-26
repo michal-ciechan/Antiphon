@@ -282,6 +282,18 @@ never prints its id on screen, so the path is **discovered under the full C1–C
 Claude. The file is created lazily at the first submit — 30 s of an idle rendered composer wrote
 zero bytes — and is held open by Codex, so reads must share write+delete.
 
+**Headed-test home.** Opt-in real-service headed tests (`ANTIPHON_CODEX_HEADED_TESTS=1`) use the
+dedicated persistent home `%LOCALAPPDATA%\Antiphon\codex-test-home`, never the user's
+`~/.codex`. Seed it once, by choice, with
+`CODEX_HOME=%LOCALAPPDATA%\Antiphon\codex-test-home codex login`; tests skip with that message
+until the home contains `auth.json`. Do not copy the user's normal `auth.json` programmatically.
+The headed tests export this `CODEX_HOME` on every launch, so their rollouts and thread rows cannot
+appear in the user's Codex Desktop sidebar.
+
+For an ad-hoc `codex exec` probe from an agent scratchpad, set
+`CODEX_HOME=<scratchpad>\codex-home` first. Scratchpad probes are not attributable to a committed
+test helper and must never write into the user's normal Codex home.
+
 **Behaviour worth knowing:**
 - Turn completion is an explicit `event_msg/task_complete` row. Codex renders **no "Worked for Ns"
   done-line**, so the screen fallback is the *lifecycle* of the `Working (Ns — esc to interrupt)`

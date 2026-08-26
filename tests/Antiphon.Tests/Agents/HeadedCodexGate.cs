@@ -22,6 +22,14 @@ internal static class HeadedCodexGate
     /// <summary>Escape hatch: an explicit path wins over every heuristic below.</summary>
     public const string ExeOverrideEnv = "ANTIPHON_CODEX_EXE";
 
+    /// <summary>
+    /// Dedicated, persistent home for headed real-service tests. It is intentionally separate from
+    /// the operator's ~/.codex because each headed run writes a thread visible in Codex Desktop.
+    /// </summary>
+    public static string TestHome => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Antiphon", "codex-test-home");
+
     public static void SkipIfNotEligible()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -32,6 +40,27 @@ internal static class HeadedCodexGate
             throw new SkipTestException(
                 $"codex was not found (npm shim, {ExeOverrideEnv}, or PATH); cannot run headed Codex tests");
     }
+
+    /// <summary>
+    /// The real-service headed tests need user-seeded ChatGPT authentication. Never copy auth.json
+    /// from the user's normal CODEX_HOME: opting into a second credential location is their choice.
+    /// </summary>
+    public static void SkipIfRealServiceNotEligible()
+    {
+        SkipIfNotEligible();
+        if (!Directory.Exists(TestHome) || !File.Exists(Path.Combine(TestHome, "auth.json")))
+        {
+            throw new SkipTestException(
+                $"Headed Codex test home is unseeded. Run `CODEX_HOME={TestHome} codex login` once; " +
+                "headed tests never inherit the user's ~/.codex.");
+        }
+    }
+
+    /// <summary>Launch environment for every headed real-service Codex test.</summary>
+    public static Dictionary<string, string> RealServiceEnv() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CODEX_HOME"] = TestHome,
+    };
 
     public static string ResolveOrThrow()
         => ResolveCodex() ?? throw new InvalidOperationException("codex was not found");

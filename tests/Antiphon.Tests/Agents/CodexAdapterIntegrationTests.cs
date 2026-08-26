@@ -52,7 +52,7 @@ public class CodexAdapterIntegrationTests
     [Test]
     public async Task Full_round_trip_via_the_production_runner_adapter_returns_the_models_answer()
     {
-        HeadedCodexGate.SkipIfNotEligible();
+        HeadedCodexGate.SkipIfRealServiceNotEligible();
         var cx = HeadedCodexGate.ResolveOrThrow();
         var (app, args) = HeadedCodexGate.BuildLaunch(
             cx,
@@ -89,7 +89,7 @@ public class CodexAdapterIntegrationTests
                 Kind: AgentKind.Codex,
                 Exe: app,
                 Args: args,
-                Env: new Dictionary<string, string>(),
+                Env: HeadedCodexGate.RealServiceEnv(),
                 Cwd: cwd,
                 Cols: 120,
                 Rows: 30,

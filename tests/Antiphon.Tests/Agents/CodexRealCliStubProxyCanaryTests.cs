@@ -36,26 +36,30 @@ public class CodexRealCliStubProxyCanaryTests
         var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
         var reply = $"STUBREPLY-{Guid.NewGuid():N}";
         var syntheticKey = $"stub-codex-{Guid.NewGuid():N}";
+        var codexHome = Directory.CreateTempSubdirectory("antiphon-codex-stub-home").FullName;
 
-        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
-        stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
-
-        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey);
-        overlay.Args.Count.ShouldBe(10); // five (-c, value) pairs
-        overlay.Env["OPENAI_API_KEY"].ShouldBe(syntheticKey);
-
-        var codex = HeadedCodexGate.ResolveOrThrow();
-        var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
-        var args = new List<string>(launchArgs)
+        try
         {
-            "exec",
-            "--skip-git-repo-check",
-        };
-        args.AddRange(overlay.Args);
-        args.Add($"Reply with exactly this token and nothing else is needed: {nonce}");
+            await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+            stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
 
-        var result = await RealCliStubProcess.RunAsync(
-            app, args, overlay.Env, TimeSpan.FromSeconds(PerTestBudgetSeconds - 10));
+            var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, codexHome);
+            overlay.Args.Count.ShouldBe(10); // five (-c, value) pairs
+            overlay.Env["OPENAI_API_KEY"].ShouldBe(syntheticKey);
+            overlay.Env["CODEX_HOME"].ShouldBe(Path.GetFullPath(codexHome));
+
+            var codex = HeadedCodexGate.ResolveOrThrow();
+            var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
+            var args = new List<string>(launchArgs)
+            {
+                "exec",
+                "--skip-git-repo-check",
+            };
+            args.AddRange(overlay.Args);
+            args.Add($"Reply with exactly this token and nothing else is needed: {nonce}");
+
+            var result = await RealCliStubProcess.RunAsync(
+                app, args, overlay.Env, TimeSpan.FromSeconds(PerTestBudgetSeconds - 10));
 
         var chatHit = await stub.Requests.WaitForAsync(
             r => r.Method == "POST"
@@ -76,7 +80,17 @@ public class CodexRealCliStubProxyCanaryTests
 
         result.ExitCode.ShouldBe(0, result.Combined);
         result.Combined.ShouldContain(reply);
-        stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+            stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+            result.Combined.Contains(
+                    "Refusing to create helper binaries under temporary dir",
+                    StringComparison.Ordinal)
+                .ShouldBeTrue(
+                    "Codex currently warns, rather than fails, when CODEX_HOME is a per-test temporary directory.");
+        }
+        finally
+        {
+            RealCliStubBServerHarness.TryDelete(codexHome);
+        }
     }
 
     [Test]
@@ -89,14 +103,17 @@ public class CodexRealCliStubProxyCanaryTests
 
         var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
         var syntheticKey = $"stub-codex-{Guid.NewGuid():N}";
+        var codexHome = Directory.CreateTempSubdirectory("antiphon-codex-stub-home").FullName;
 
-        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
-        // Probe-observed: models 400 → reconnect-looping POST /v1/responses. Keep responses as
-        // error too so a loop cannot "succeed" into a real-looking turn.
-        stub.Script.SetDefault(StubEndpointKeys.CodexModels, new ScriptedError(400));
-        stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedError(400));
+        try
+        {
+            await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+            // Probe-observed: models 400 → reconnect-looping POST /v1/responses. Keep responses as
+            // error too so a loop cannot "succeed" into a real-looking turn.
+            stub.Script.SetDefault(StubEndpointKeys.CodexModels, new ScriptedError(400));
+            stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedError(400));
 
-        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey);
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, codexHome);
         var codex = HeadedCodexGate.ResolveOrThrow();
         var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
         var args = new List<string>(launchArgs) { "exec", "--skip-git-repo-check" };
@@ -126,6 +143,11 @@ public class CodexRealCliStubProxyCanaryTests
             "loop did not bound itself within the test budget.");
 
         stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+        }
+        finally
+        {
+            RealCliStubBServerHarness.TryDelete(codexHome);
+        }
     }
 
     /// <summary>
@@ -149,11 +171,13 @@ public class CodexRealCliStubProxyCanaryTests
         Directory.CreateDirectory(tempRoot);
         var cwd = Path.Combine(tempRoot, "cwd");
         Directory.CreateDirectory(cwd);
+        var codexHome = Path.Combine(tempRoot, "codex-home");
+        Directory.CreateDirectory(codexHome);
 
         await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
         stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn(reply));
 
-        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey);
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, codexHome);
         var codex = HeadedCodexGate.ResolveOrThrow();
         var (app, launchArgs) = HeadedCodexGate.BuildLaunch(codex);
         var args = new List<string>(launchArgs)

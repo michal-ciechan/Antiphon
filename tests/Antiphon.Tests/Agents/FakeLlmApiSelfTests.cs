@@ -192,15 +192,36 @@ public class FakeLlmApiSelfTests
     [Test]
     public void ForCodex_emits_five_c_args_and_openai_api_key()
     {
-        var overlay = RealCliStubEnv.ForCodex("http://127.0.0.1:9", "stub-codex-key");
-        overlay.Env["OPENAI_API_KEY"].ShouldBe("stub-codex-key");
-        overlay.Args.Count.ShouldBe(10); // five (-c, value) pairs
-        var values = overlay.Args.Where((_, i) => i % 2 == 1).ToArray();
-        values[0].ShouldBe("model_providers.stub.name=\"Stub\"");
-        values[1].ShouldBe("model_providers.stub.base_url=\"http://127.0.0.1:9/v1\"");
-        values[2].ShouldBe("model_providers.stub.env_key=\"OPENAI_API_KEY\"");
-        values[3].ShouldBe("model_providers.stub.wire_api=\"responses\"");
-        values[4].ShouldBe("model_provider=stub");
+        var codexHome = Path.Combine(Path.GetTempPath(), $"codex-home-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(codexHome);
+        try
+        {
+            var overlay = RealCliStubEnv.ForCodex("http://127.0.0.1:9", "stub-codex-key", codexHome);
+            overlay.Env["OPENAI_API_KEY"].ShouldBe("stub-codex-key");
+            overlay.Env["CODEX_HOME"].ShouldBe(Path.GetFullPath(codexHome));
+            overlay.Args.Count.ShouldBe(10); // five (-c, value) pairs
+            var values = overlay.Args.Where((_, i) => i % 2 == 1).ToArray();
+            values[0].ShouldBe("model_providers.stub.name=\"Stub\"");
+            values[1].ShouldBe("model_providers.stub.base_url=\"http://127.0.0.1:9/v1\"");
+            values[2].ShouldBe("model_providers.stub.env_key=\"OPENAI_API_KEY\"");
+            values[3].ShouldBe("model_providers.stub.wire_api=\"responses\"");
+            values[4].ShouldBe("model_provider=stub");
+        }
+        finally
+        {
+            try { Directory.Delete(codexHome, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public void HeadedCodexGate_launch_env_uses_the_dedicated_test_home()
+    {
+        var env = HeadedCodexGate.RealServiceEnv();
+
+        env.ShouldContainKey("CODEX_HOME");
+        env["CODEX_HOME"].ShouldBe(HeadedCodexGate.TestHome);
+        env["CODEX_HOME"].ShouldNotBe(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"));
     }
 
     [Test]

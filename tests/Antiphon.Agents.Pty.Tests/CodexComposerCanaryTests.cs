@@ -101,7 +101,7 @@ public class CodexComposerCanaryTests
             log($"LAUNCH: {app} {string.Join(" ", args)}");
 
             await using var runner = new PtyAgentRunner("modern");
-            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 30);
+            await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 30, env: CxSession.HeadedEnv());
             runner.Backend!.Backend.ShouldBe(PtyBackend.ModernConPty,
                 "the deployment runs modern; measuring the inbox conhost would measure the wrong pty. "
                 + "Reason: " + runner.Backend!.Reason);

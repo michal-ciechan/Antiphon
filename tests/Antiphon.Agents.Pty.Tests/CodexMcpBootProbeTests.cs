@@ -83,7 +83,7 @@ public class CodexMcpBootProbeTests
                 log($"--- iteration {i} --- LAUNCH {app} {string.Join(' ', args)} (cwd {cwd})");
                 await using var runner = new PtyAgentRunner("modern");
                 var started = DateTime.UtcNow;
-                await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34);
+                await runner.StartAsync(app, args, cwd: cwd, cols: 120, rows: 34, env: CxSession.HeadedEnv());
                 runner.Backend!.Backend.ShouldBe(PtyBackend.ModernConPty, "Reason: " + runner.Backend!.Reason);
 
                 DateTime? mcpFirstSeen = null, mcpLastSeen = null, headerSeen = null;

@@ -79,10 +79,11 @@ public static class RealCliStubEnv
     /// Base URL for the provider includes <c>/v1</c> — Codex hits <c>/v1/models</c> and
     /// <c>/v1/responses</c> relative to that.
     /// </summary>
-    public static LaunchOverlay ForCodex(string baseUrl, string syntheticKey)
+    public static LaunchOverlay ForCodex(string baseUrl, string syntheticKey, string codexHome)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(syntheticKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(codexHome);
 
         var providerBase = TrimTrailingSlash(baseUrl);
         if (!providerBase.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
@@ -91,6 +92,10 @@ public static class RealCliStubEnv
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["OPENAI_API_KEY"] = syntheticKey,
+            // A real Codex CLI persists every exec run under CODEX_HOME. Stub-proxy tests must
+            // never inherit the operator's home, which would put synthetic test threads in the
+            // Codex Desktop sidebar.
+            ["CODEX_HOME"] = Path.GetFullPath(codexHome),
         };
 
         // Five -c overrides. Quoted values match the probe-confirmed launch line.
