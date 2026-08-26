@@ -5,7 +5,6 @@ import {
   Input,
   Modal,
   MultiSelect,
-  SegmentedControl,
   Select,
   Stack,
   Switch,
@@ -16,13 +15,14 @@ import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbSparkles } from 'react-icons/tb'
 import type { AgentAssignmentPolicy, AgentModelLevel, AgentReplyStyle } from '../../api/agents'
-import { AGENT_REPLY_STYLE_OPTIONS, useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
+import { useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useAgentTuiProfiles } from '../../api/agentTui'
 import { useBoards } from '../../api/boards'
 import { ModelLevelSelect } from './ModelLevelSelect'
+import { ReplyStyleControl } from './ReplyStyleControl'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -227,20 +227,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
           onModelChange={setModelId}
         />
         <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
-        <Input.Wrapper
-          label="Reply style"
-          description={
-            AGENT_REPLY_STYLE_OPTIONS.find((option) => option.value === replyStyle)?.description ?? ''
-          }
-        >
-          <SegmentedControl
-            fullWidth
-            mt={4}
-            data={AGENT_REPLY_STYLE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-            value={replyStyle}
-            onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
-          />
-        </Input.Wrapper>
+        <ReplyStyleControl value={replyStyle} onChange={setReplyStyle} />
         <MultiSelect
           label="Attached bundles"
           description="Instructions composed into this agent's next launch."

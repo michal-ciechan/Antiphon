@@ -57,6 +57,7 @@ import { FilesReviewPanel } from './FilesReviewPanel'
 import { AgentCliModal } from './AgentCliModal'
 import { AgentCreateModal } from './AgentCreateModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
+import { ProjectSetupModal } from '../settings/ProjectSetupModal'
 
 export function AgentsPage() {
   const agents = useAgentList()
@@ -80,6 +81,7 @@ export function AgentsPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(searchParams.get('agent'))
   const selected = useAgent(selectedAgentId)
   const [createOpen, setCreateOpen] = useState(false)
+  const [setupProjectOpen, setSetupProjectOpen] = useState(false)
   const [addWorkOpen, setAddWorkOpen] = useState(false)
   const [settingsAgent, setSettingsAgent] = useState<AgentSummaryDto | null>(null)
   const [terminalAgent, setTerminalAgent] = useState<AgentSummaryDto | null>(null)
@@ -105,9 +107,14 @@ export function AgentsPage() {
       <Stack gap="md">
         <Group justify="space-between" align="flex-end">
           <Title order={2}>Agents</Title>
-          <Button leftSection={<TbPlus size={16} />} onClick={() => setCreateOpen(true)}>
-            New Agent
-          </Button>
+          <Group>
+            <Button variant="light" leftSection={<TbPlus size={16} />} onClick={() => setSetupProjectOpen(true)}>
+              Set up a project
+            </Button>
+            <Button leftSection={<TbPlus size={16} />} onClick={() => setCreateOpen(true)}>
+              New Agent
+            </Button>
+          </Group>
         </Group>
 
         {agents.isLoading && (
@@ -389,6 +396,7 @@ export function AgentsPage() {
       </Stack>
 
       <AgentCreateModal opened={createOpen} onClose={() => setCreateOpen(false)} />
+      <ProjectSetupModal opened={setupProjectOpen} onClose={() => setSetupProjectOpen(false)} />
       {settingsAgent && (
         <AgentSettingsModal
           agent={settingsAgent}

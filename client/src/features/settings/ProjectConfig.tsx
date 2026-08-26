@@ -34,7 +34,6 @@ import {
 } from 'react-icons/tb'
 import {
   useProjects,
-  useCreateProject,
   useUpdateProject,
   useTestGitConnectivity,
   useGitHubRepos,
@@ -49,6 +48,7 @@ import {
 } from '../../api/projectSetup'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { ProjectReadinessPanel } from './ProjectReadinessPanel'
+import { ProjectSetupModal } from './ProjectSetupModal'
 import { ApiKeysSection } from './ApiKeysSection'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { notifications } from '@mantine/notifications'
@@ -76,7 +76,6 @@ export function ProjectConfig() {
 }
 
 function ProjectList({ projects }: { projects: ProjectDto[] }) {
-  const createMutation = useCreateProject()
   const updateMutation = useUpdateProject()
   const testMutation = useTestGitConnectivity()
   const { data: boards } = useBoards()
@@ -85,6 +84,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const readinessQueries = useProjectReadinessList(projects.map((project) => project.id))
 
   const [editModalOpen, setEditModalOpen] = useState(false)
+  const [setupModalOpen, setSetupModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
   const [deletingProject, setDeletingProject] = useState<ProjectDto | null>(null)
   const [testResult, setTestResult] = useState<{
@@ -112,22 +112,6 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     const q = repoSearch.toLowerCase()
     return githubRepos.filter((r) => r.fullName.toLowerCase().includes(q)).slice(0, 50)
   }, [githubRepos, repoSearch])
-
-  const openCreateModal = () => {
-    setEditingProject(null)
-    setFormName('')
-    setFormGitUrl('')
-    setFormLocalRepoPath('')
-    setFormBaseBranch('master')
-    setRepoSearch('')
-    setFormConstitutionPath('AGENTS.md;CLAUDE.md;README.md')
-    setFormGitHubEnabled(false)
-    setFormNotificationsEnabled(false)
-    setFormDefaultLaunchEnvText('')
-    setFormError(null)
-    setTestResult(null)
-    setEditModalOpen(true)
-  }
 
   const openEditModal = (project: ProjectDto) => {
     setEditingProject(project)
@@ -166,6 +150,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   }
 
   const handleSave = async () => {
+    if (!editingProject) return
     setFormError(null)
     const parsedDefaultEnv = parseEnvironmentText(formDefaultLaunchEnvText)
     if (parsedDefaultEnv.warnings.length > 0) {
@@ -175,22 +160,9 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
       })
     }
     try {
-      if (editingProject) {
-        await updateMutation.mutateAsync({
-          id: editingProject.id,
-          data: {
-            name: formName,
-            gitRepositoryUrl: formGitUrl,
-            localRepositoryPath: formLocalRepoPath || undefined,
-            baseBranch: formBaseBranch || 'master',
-            constitutionPath: formConstitutionPath || undefined,
-            gitHubIntegrationEnabled: formGitHubEnabled,
-            notificationsEnabled: formNotificationsEnabled,
-            defaultLaunchEnv: parsedDefaultEnv.env,
-          },
-        })
-      } else {
-        await createMutation.mutateAsync({
+      await updateMutation.mutateAsync({
+        id: editingProject.id,
+        data: {
           name: formName,
           gitRepositoryUrl: formGitUrl,
           localRepositoryPath: formLocalRepoPath || undefined,
@@ -199,8 +171,8 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           gitHubIntegrationEnabled: formGitHubEnabled,
           notificationsEnabled: formNotificationsEnabled,
           defaultLaunchEnv: parsedDefaultEnv.env,
-        })
-      }
+        },
+      })
       setEditModalOpen(false)
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'body' in err) {
@@ -220,7 +192,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     }
   }
 
-  const isSaving = createMutation.isPending || updateMutation.isPending
+  const isSaving = updateMutation.isPending
 
   return (
     <Stack>
@@ -229,7 +201,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           Configure projects pointing at git repositories. Each project loads context files from
           the repository and supports per-project feature flags.
         </Text>
-        <Button leftSection={<TbPlus />} onClick={openCreateModal}>
+        <Button leftSection={<TbPlus />} onClick={() => setSetupModalOpen(true)}>
           Add Project
         </Button>
       </Group>
@@ -300,14 +272,21 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           <Text ta="center" c="dimmed">
             No projects yet. Set up a project from a directory path.
           </Text>
+          <Group justify="center" mt="md">
+            <Button leftSection={<TbPlus />} onClick={() => setSetupModalOpen(true)}>
+              Set up a project
+            </Button>
+          </Group>
         </Paper>
       )}
 
-      {/* Create / Edit Project Modal */}
+      <ProjectSetupModal opened={setupModalOpen} onClose={() => setSetupModalOpen(false)} />
+
+      {/* Edit Project Modal */}
       <Modal
         opened={editModalOpen}
         onClose={() => setEditModalOpen(false)}
-        title={editingProject ? 'Edit Project' : 'Add Project'}
+        title="Edit Project"
         size="md"
       >
         <Stack>
@@ -390,7 +369,6 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           <TextInput
             label="Git Repository URL"
             placeholder="https://github.com/org/repo.git"
-            required
             value={formGitUrl}
             onChange={(e) => setFormGitUrl(e.currentTarget.value)}
             rightSection={
@@ -470,7 +448,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               Cancel
             </Button>
             <Button onClick={handleSave} loading={isSaving}>
-              {editingProject ? 'Save Changes' : 'Create Project'}
+              Save Changes
             </Button>
           </Group>
         </Stack>

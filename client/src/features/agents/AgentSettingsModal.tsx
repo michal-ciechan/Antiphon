@@ -26,7 +26,6 @@ import type {
   SessionBackend,
 } from '../../api/agents'
 import {
-  AGENT_REPLY_STYLE_OPTIONS,
   SESSION_BACKEND_OPTIONS,
   fetchPreamblePreset,
   useAgent,
@@ -38,6 +37,7 @@ import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { AgentTuiSelection } from './AgentTuiSelection'
+import { ReplyStyleControl } from './ReplyStyleControl'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
   { value: 'AutoPick', label: 'Auto pick' },
@@ -352,20 +352,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           </Button>
         </Group>
 
-        <Input.Wrapper
-          label="Reply style"
-          description={
-            AGENT_REPLY_STYLE_OPTIONS.find((option) => option.value === replyStyle)?.description ?? ''
-          }
-        >
-          <SegmentedControl
-            fullWidth
-            mt={4}
-            data={AGENT_REPLY_STYLE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-            value={replyStyle}
-            onChange={(value) => setReplyStyle(value as AgentReplyStyle)}
-          />
-        </Input.Wrapper>
+        <ReplyStyleControl value={replyStyle} onChange={setReplyStyle} />
 
         <MultiSelect
           label="Attached bundles"

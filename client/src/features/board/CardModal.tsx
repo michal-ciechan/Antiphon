@@ -1,10 +1,10 @@
-import { ActionIcon, Anchor, Badge, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text, Title } from '@mantine/core'
+import { ActionIcon, Anchor, Badge, Box, Button, Group, Modal, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { useCardDiscussion, useSpawnCard } from '../../api/boards'
+import { CARD_LIMITS, useCardDiscussion, useCreateCard, useSpawnCard } from '../../api/boards'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardDiscussionPanel } from './CardDiscussionPanel'
@@ -43,7 +43,7 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
   )
   const showDiffReview = !!card?.currentWorktreeId && (card.status === 'Review' || card.status === 'Done')
 
-  if (!card) return null
+  if (!card) return <CardCreateModal boardId={boardId} opened={opened} onClose={onClose} />
   const description = card.description.trim()
   const archived = !!card.archivedAt
   const activeSessionCount = card.sessions.filter((session) =>
@@ -257,6 +257,47 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
       {editing && (
         <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
       )}
+    </Modal>
+  )
+}
+
+/**
+ * `CardModal` is also the public card entry point for callers that only have a board. Keeping the
+ * create form here means `card: null` is a useful, explicit create state instead of a silent no-op.
+ */
+function CardCreateModal({ boardId, opened, onClose }: { boardId: string; opened: boolean; onClose: () => void }) {
+  const createCard = useCreateCard(boardId)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [priority, setPriority] = useState<number | string>(1)
+  const [labels, setLabels] = useState('')
+  const canSubmit = !!title.trim() && title.length <= CARD_LIMITS.title && description.length <= CARD_LIMITS.description
+
+  const submit = () => {
+    if (!canSubmit) return
+    createCard.mutate({
+      title: title.trim(),
+      description,
+      priority: Number(priority) || 0,
+      labels: labels.split(',').map((label) => label.trim()).filter(Boolean),
+    }, {
+      onSuccess: onClose,
+      onError: (error) => notifications.show({ color: 'red', message: error instanceof Error ? error.message : 'Create failed' }),
+    })
+  }
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="New Card">
+      <Stack>
+        <TextInput label="Title" value={title} onChange={(event) => setTitle(event.currentTarget.value)} />
+        <Textarea label="Description" value={description} onChange={(event) => setDescription(event.currentTarget.value)} autosize minRows={3} />
+        <NumberInput label="Priority" min={0} value={priority} onChange={setPriority} />
+        <TextInput label="Labels" value={labels} onChange={(event) => setLabels(event.currentTarget.value)} />
+        <Group justify="flex-end">
+          <Button variant="subtle" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} loading={createCard.isPending} disabled={!canSubmit}>Create</Button>
+        </Group>
+      </Stack>
     </Modal>
   )
 }

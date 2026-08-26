@@ -66,10 +66,11 @@ export interface ProjectDeletionImpactDto {
 
 const PROJECTS_KEY = ['projects'] as const
 
-export function useProjects() {
+export function useProjects(enabled = true) {
   return useQuery({
     queryKey: PROJECTS_KEY,
     queryFn: () => apiGet<ProjectDto[]>('/projects'),
+    enabled,
   })
 }
 
