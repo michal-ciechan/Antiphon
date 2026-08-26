@@ -56,6 +56,7 @@ public sealed class CardService
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
     private readonly AgentTuiLaunchResolver? _launchResolver;
+    private readonly AgentSessionLaunchComposer? _launchComposer;
     private readonly OrchestratorService _orchestrator;
     private readonly AgentSessionLaunchQueue _launchQueue;
     private readonly IEventBus _eventBus;
@@ -66,6 +67,7 @@ public sealed class CardService
     // CARD-0106 S2. Optional like the launch resolver beside it: absent, placeholders go
     // unresolved and the launch tripwire refuses them by name. Production always registers it.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
+    private readonly DelegationSettings _delegationSettings;
 
     public CardService(
         AppDbContext db,
@@ -78,11 +80,14 @@ public sealed class CardService
         AgentTuiLaunchResolver? launchResolver = null,
         IOptions<ContextWindowSettings>? contextWindow = null,
         ILogger<CardService>? logger = null,
-        ApiKeyEnvResolver? apiKeyEnvResolver = null)
+        ApiKeyEnvResolver? apiKeyEnvResolver = null,
+        IOptions<DelegationSettings>? delegationSettings = null,
+        AgentSessionLaunchComposer? launchComposer = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
         _launchResolver = launchResolver;
+        _launchComposer = launchComposer;
         _orchestrator = orchestrator;
         _launchQueue = launchQueue;
         _eventBus = eventBus;
@@ -91,6 +96,7 @@ public sealed class CardService
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _logger = logger;
         _apiKeyEnvResolver = apiKeyEnvResolver;
+        _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -584,15 +590,19 @@ public sealed class CardService
         AgentLaunchSpec spec;
         Guid? tuiProfileRevisionId = null;
         string? effectiveModelId = null;
+        string? delegationTokenHash;
+        string? composedStamp = null;
         if (!string.IsNullOrWhiteSpace(request.DefinitionName))
         {
+            var credential = MintCardDelegationCredential();
+            delegationTokenHash = credential.DelegationTokenHash;
             definitionName = request.DefinitionName.Trim();
             spec = _agentRegistry.Resolve(definitionName, new AgentLaunchOptions(
                 Cwd: null,
                 Cols: request.Cols,
                 Rows: request.Rows,
                 ExtraArgs: null,
-                ExtraEnv: null,
+                ExtraEnv: credential.ExtraEnv,
                 ApiKeyProjectId: card.Board.ProjectId,
                 LaunchEnvOverride: request.LaunchEnvOverride,
                 ProjectDefaultEnv: _apiKeyEnvResolver is not null
@@ -613,6 +623,11 @@ public sealed class CardService
         }
         else if (card.AssignedAgent is { } assignedAgent)
         {
+            var composition = await (_launchComposer
+                ?? throw new InvalidOperationException("Agent session launch composition is not configured."))
+                .ComposeForAgentAsync(assignedAgent, ct);
+            delegationTokenHash = composition.DelegationTokenHash;
+            composedStamp = composition.ComposedStamp;
             var resolved = await AgentLaunchResolution.ResolveForAgentAsync(
                 assignedAgent,
                 _agentRegistry,
@@ -621,8 +636,8 @@ public sealed class CardService
                     Cwd: null,
                     Cols: request.Cols,
                     Rows: request.Rows,
-                    ExtraArgs: null,
-                    ExtraEnv: null,
+                    ExtraArgs: composition.ExtraArgs,
+                    ExtraEnv: composition.ExtraEnv,
                     // The CARD's board names the project for a card spawn (plan section 4), whether
                     // or not the agent that runs it happens to sit on the same board.
                     ApiKeyProjectId: card.Board.ProjectId,
@@ -636,6 +651,8 @@ public sealed class CardService
         }
         else
         {
+            var credential = MintCardDelegationCredential();
+            delegationTokenHash = credential.DelegationTokenHash;
             var resolved = await AgentLaunchResolution.ResolveDefaultAsync(
                 _agentRegistry,
                 _launchResolver,
@@ -644,7 +661,7 @@ public sealed class CardService
                     Cols: request.Cols,
                     Rows: request.Rows,
                     ExtraArgs: null,
-                    ExtraEnv: null,
+                    ExtraEnv: credential.ExtraEnv,
                     // The CARD's board names the project for a card spawn (plan section 4), whether
                     // or not the agent that runs it happens to sit on the same board.
                     ApiKeyProjectId: card.Board.ProjectId,
@@ -667,7 +684,9 @@ public sealed class CardService
             UtcNow(),
             ct,
             tuiProfileRevisionId,
-            effectiveModelId);
+            effectiveModelId,
+            delegationTokenHash,
+            composedStamp);
         if (sessionId is null)
             throw new ConflictException($"Card '{card.Identifier}' is already claimed by another session.");
 
@@ -696,6 +715,20 @@ public sealed class CardService
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return new SpawnCardResult(card.Id, sessionId.Value);
+    }
+
+    private AgentLaunchComposition MintCardDelegationCredential()
+    {
+        var (token, hash) = AgentTaskService.NewToken();
+        return new AgentLaunchComposition(
+            new Dictionary<string, string>
+            {
+                ["ANTIPHON_API"] = _delegationSettings.ApiBaseUrl,
+                ["ANTIPHON_TASK_TOKEN"] = token,
+            },
+            [],
+            hash,
+            null);
     }
 
     /// <summary>

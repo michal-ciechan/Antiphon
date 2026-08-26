@@ -246,6 +246,7 @@ try
     builder.Services.AddScoped<WorkflowTemplateService>();
     builder.Services.AddScoped<WorkspaceHookService>();
     builder.Services.AddScoped<AgentSessionService>();
+    builder.Services.AddScoped<AgentSessionLaunchComposer>();
     // Cancel/escalate on a delegated task must actually stop the delegate, not just relabel the row.
     builder.Services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>());
     builder.Services.AddScoped<RunAttemptStallDetector>();

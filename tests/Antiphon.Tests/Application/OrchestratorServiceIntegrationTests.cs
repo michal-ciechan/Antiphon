@@ -60,6 +60,10 @@ public class OrchestratorServiceIntegrationTests
             var modelIndex = adapter.StartedArgs.ToList().IndexOf("--model");
             modelIndex.ShouldBeGreaterThanOrEqualTo(0);
             adapter.StartedArgs[modelIndex + 1].ShouldBe("opus");
+            adapter.StartedEnv.ShouldContainKey("ANTIPHON_TASK_TOKEN");
+            var session = await db.AgentSessions.SingleAsync(s => s.CardId == graph.Card.Id);
+            session.DelegationTokenHash.ShouldBe(AgentTaskService.HashToken(adapter.StartedEnv["ANTIPHON_TASK_TOKEN"]));
+            session.ComposedBundleStamp.ShouldNotBeNull();
         }
         finally
         {
@@ -1236,6 +1240,7 @@ public class OrchestratorServiceIntegrationTests
             DefaultRows = 30,
             InternalTrackerRepositoryPathPrefix = tempRoot
         }));
+        services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
@@ -1256,6 +1261,7 @@ public class OrchestratorServiceIntegrationTests
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<OrchestratorService>();
         services.AddLogging();
 
