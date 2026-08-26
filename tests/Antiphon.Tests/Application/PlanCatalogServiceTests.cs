@@ -473,6 +473,8 @@ public class PlanCatalogServiceTests
         var onDisk = Directory
             .EnumerateFiles(Path.Combine(catalog.Root!, "docs", "superpowers", "specs"), "*.md")
             .Concat(Directory.EnumerateFiles(
+                Path.Combine(catalog.Root!, "docs", "superpowers", "plans"), "*.md"))
+            .Concat(Directory.EnumerateFiles(
                 Path.Combine(catalog.Root!, "docs", "features"), "proposal.md", SearchOption.AllDirectories))
             .Select(f => Path.GetRelativePath(catalog.Root!, f).Replace('\\', '/'))
             .OrderBy(f => f, StringComparer.Ordinal)
