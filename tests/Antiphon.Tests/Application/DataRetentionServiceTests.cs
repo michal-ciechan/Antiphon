@@ -194,6 +194,28 @@ public class DataRetentionServiceTests
     }
 
     [Test]
+    public async Task A_swept_parked_row_is_pruned_after_the_queued_message_retention_window()
+    {
+        var marker = NewMarker();
+        try
+        {
+            var sessionId = await SeedSessionAsync(marker, SessionStatus.Failed, DaysAgo(40));
+            var swept = await SeedQueuedAsync(
+                sessionId, 1, QueuedMessageStatus.Canceled, QueuedMessageOrigin.Delegation, DaysAgo(40),
+                deliveryAttempts: 3);
+
+            await using var db = CreateContext();
+            (await CreateService(db).PruneQueuedMessagesAsync(CancellationToken.None)).ShouldBeGreaterThanOrEqualTo(1);
+
+            (await QueueExistsAsync(swept)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task A_zero_transcript_window_skips_transcripts_and_still_prunes_queued_messages()
     {
         var marker = NewMarker();
@@ -737,7 +759,8 @@ public class DataRetentionServiceTests
         QueuedMessageStatus status,
         QueuedMessageOrigin origin,
         DateTime createdAt,
-        DateTime? settledAt = null)
+        DateTime? settledAt = null,
+        int deliveryAttempts = 0)
     {
         var id = Guid.NewGuid();
         await using var db = CreateContext();
@@ -754,6 +777,7 @@ public class DataRetentionServiceTests
             SentAt = status == QueuedMessageStatus.Sent ? createdAt : null,
             CanceledAt = status == QueuedMessageStatus.Canceled ? createdAt : null,
             ChannelReplySettledAt = settledAt,
+            DeliveryAttempts = deliveryAttempts,
         });
         await db.SaveChangesAsync();
         return id;

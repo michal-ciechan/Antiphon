@@ -354,31 +354,12 @@ public sealed class SessionMessageQueueService
     /// <summary>Remove a pending message before it is delivered.</summary>
     public async Task<SessionQueueDto> CancelAsync(Guid sessionId, Guid messageId, CancellationToken ct)
     {
-        var sem = GetLock(sessionId);
-        await sem.WaitAsync(ct);
-        try
-        {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var message = await db.SessionQueuedMessages
-                .FirstOrDefaultAsync(m => m.Id == messageId && m.AgentSessionId == sessionId, ct)
-                ?? throw new NotFoundException(nameof(SessionQueuedMessage), messageId);
+        var canceled = await CancelUnderLockAsync(
+            sessionId, messageId, m => m.Status == QueuedMessageStatus.Pending, ct);
+        if (canceled is null)
+            throw new NotFoundException(nameof(SessionQueuedMessage), messageId);
 
-            if (message.Status == QueuedMessageStatus.Pending)
-            {
-                message.Status = QueuedMessageStatus.Canceled;
-                message.CanceledAt = UtcNow();
-                await db.SaveChangesAsync(ct);
-            }
-        }
-        finally
-        {
-            sem.Release();
-        }
-
-        var dto = await GetQueueAsync(sessionId, ct);
-        await PublishQueueChangedAsync(dto, ct);
-        return dto;
+        return await GetQueueAsync(sessionId, ct);
     }
 
     /// <summary>
@@ -445,7 +426,31 @@ public sealed class SessionMessageQueueService
     /// uses the same lock and re-check-under-lock shape as <see cref="CancelAsync"/> so it cannot
     /// race a flush that has already captured the body for delivery.
     /// </summary>
-    public async Task<bool> CancelPendingIfUntypedAsync(Guid sessionId, Guid messageId, CancellationToken ct)
+    public async Task<bool> CancelPendingIfUntypedAsync(Guid sessionId, Guid messageId, CancellationToken ct) =>
+        await CancelUnderLockAsync(
+            sessionId, messageId,
+            m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct) == true;
+
+    /// <summary>
+    /// CARD-0091. Cancels a message only if it is still Pending and parked while its session lock
+    /// is held. A Send-now or late confirm that marked it Sent first wins; an earlier human Drop
+    /// simply returns false.
+    /// </summary>
+    public async Task<bool> CancelParkedIfStaleAsync(Guid sessionId, Guid messageId, CancellationToken ct) =>
+        await CancelUnderLockAsync(
+            sessionId, messageId,
+            m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= MaxAttempts, ct) == true;
+
+    /// <summary>
+    /// The single cancel write primitive. A null result means the row did not exist; false means
+    /// it existed but no longer met the caller's precondition. The lock is shared with all queue
+    /// delivery paths, so a caller's evidence is always rechecked immediately before the write.
+    /// </summary>
+    private async Task<bool?> CancelUnderLockAsync(
+        Guid sessionId,
+        Guid messageId,
+        Func<SessionQueuedMessage, bool> when,
+        CancellationToken ct)
     {
         var canceled = false;
         var sem = GetLock(sessionId);
@@ -456,7 +461,10 @@ public sealed class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var message = await db.SessionQueuedMessages
                 .FirstOrDefaultAsync(m => m.Id == messageId && m.AgentSessionId == sessionId, ct);
-            if (message is null || message.Status != QueuedMessageStatus.Pending || message.DeliveryAttempts != 0)
+            if (message is null)
+                return null;
+
+            if (!when(message))
                 return false;
 
             message.Status = QueuedMessageStatus.Canceled;

@@ -215,6 +215,61 @@ public class SessionMessageQueueServiceTests
         }
     }
 
+    [Test]
+    public async Task Cancel_keeps_a_non_pending_message_unchanged()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            var dto = await h.Queue.EnqueueAsync(h.SessionId, "already sent", MessageSendMode.WhenIdle, CancellationToken.None);
+            var id = dto.Messages[0].Id;
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+                row.Status = QueuedMessageStatus.Sent;
+                row.SentAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+
+            await h.Queue.CancelAsync(h.SessionId, id, CancellationToken.None);
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Cancel_pending_if_untyped_refuses_an_attempted_message()
+    {
+        var h = await CreateHarnessAsync();
+        try
+        {
+            await MarkWorkingAsync(h);
+            var dto = await h.Queue.EnqueueAsync(h.SessionId, "attempted", MessageSendMode.WhenIdle, CancellationToken.None);
+            var id = dto.Messages[0].Id;
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+                row.DeliveryAttempts = 1;
+                await db.SaveChangesAsync();
+            }
+
+            (await h.Queue.CancelPendingIfUntypedAsync(h.SessionId, id, CancellationToken.None)).ShouldBeFalse();
+
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        }
+        finally
+        {
+            await h.DisposeAsync();
+        }
+    }
+
     // Live miss 2026-07-29: Mike rejected a tool call mid-turn; Claude wrote the
     // "[Request interrupted by user for tool use]" USER marker and no TurnEnd, the session read
     // as permanently "working", and the photo + multiline test messages stranded for 25 minutes.

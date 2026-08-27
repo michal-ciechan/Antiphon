@@ -209,6 +209,28 @@ public class AgentTaskReuseEnqueueTests
         logs.ShouldContain(l => l.Contains("reuse brief was not queued"));
     }
 
+    [Test]
+    public async Task A_grok_reuse_enqueue_queues_only_the_brief()
+    {
+        // CARD-0091 S2: Grok's unmeasured RefocusCompact contract is Unknown, which must keep
+        // reuse from producing a stale /compact if the session later dies.
+        var (dispatcher, queue, _) = CreateHarness();
+        var task = await SeedReuseDispatchAsync(AgentKind.Grok);
+        dispatcher.ReuseEnqueueOverride = (session, body, ct) =>
+            queue.EnqueueAsync(session, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation);
+
+        await dispatcher.DeliverReuseMessagesAsync(task, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var rows = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == task.AgentSessionId)
+            .ToListAsync();
+        rows.Count.ShouldBe(1);
+        rows[0].Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        rows[0].Body.ShouldContain(DelegationReportFormatter.TaskMarker(task.Id));
+        rows.ShouldNotContain(m => m.Body.StartsWith("/compact"));
+    }
+
     private static (AgentTaskDispatcher Dispatcher, SessionMessageQueueService Queue, List<string> Logs)
         CreateHarness()
     {

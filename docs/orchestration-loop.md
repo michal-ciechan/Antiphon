@@ -144,6 +144,11 @@ say it in the brief for that dispatch.
 
 ## 4. Checking on a delegate
 
+A `ParkedMessage` attention row on a finished task now clears itself within roughly 10 minutes: the
+queue sweep discards the stale machine-origin message rather than retrying it. A parked row that
+remains is deliberately one whose content may still need a human decision (for example a UI/channel
+message, a completion note, or work on a session with an open task).
+
 **Check-ins are automatic now (CARD-0047, slices 1-3).** Delegate with `-ExpectAbout <minutes>`
 (1-1440, defaults to 10) and the server arms a schedule: a deterministic, read-only probe of the
 task row, the delegate's session/transcript, its queue and its incidents — plus its git log for a
