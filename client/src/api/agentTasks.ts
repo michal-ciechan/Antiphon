@@ -121,6 +121,10 @@ export interface AgentTaskSummaryDto {
   /** When the next scheduled check-in is due; null means this task is never checked. */
   nextCheckAt: string | null
   checkCount: number
+  /** The card this task's work is against (CARD-0040); null when nothing bound. */
+  cardId?: string | null
+  /** The bound card's identifier, denormalised at read time. */
+  cardIdentifier?: string | null
 }
 
 export interface AgentTaskEventDto {

@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -1413,6 +1413,8 @@ public class AppDbContext : DbContext
             entity.HasIndex(t => t.ParentTaskId).HasDatabaseName("IX_AgentTasks_ParentTaskId");
             entity.HasIndex(t => t.AgentSessionId).HasDatabaseName("IX_AgentTasks_AgentSessionId");
             entity.HasIndex(t => t.TokenHash).HasDatabaseName("IX_AgentTasks_TokenHash");
+            // CARD-0040: the sweep loads "every card with a bound task" every 60s.
+            entity.HasIndex(t => t.CardId).HasDatabaseName("IX_AgentTasks_CardId");
 
             // Self-reference: deleting a parent must NOT cascade a whole subtree away — the tree is
             // the audit trail. Restrict forces an explicit decision instead.
@@ -1428,6 +1430,12 @@ public class AppDbContext : DbContext
                 .HasForeignKey(t => t.ProjectId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            // CARD-0040. SetNull, not Restrict: cards are archived rather than deleted, but a card
+            // row that could ever go away must not make its tasks undeletable by DataRetentionService.
+            entity.HasOne(t => t.Card)
+                .WithMany()
+                .HasForeignKey(t => t.CardId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<AgentTaskEvent>(entity =>

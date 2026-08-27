@@ -3,6 +3,7 @@ using System;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827061139_AddCardIdToAgentTasks")]
+    partial class AddCardIdToAgentTasks
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -488,10 +491,6 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("NextCheckAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("ObservedScope")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
                     b.Property<Guid?>("ParentSessionId")
                         .HasColumnType("uuid");
 
@@ -527,7 +526,7 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid>("RootTaskId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Scope")
+                    b.Property<string>("ScopeGlob")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 

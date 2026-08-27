@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -126,6 +126,8 @@ public sealed class AgentTaskService
         }
 
         Agent? subscriptionOwner = null;
+        // CARD-0040: a follow-up continues the earlier task's work, so it continues its card too.
+        Guid? followUpCardId = null;
 
         // Follow-up: run on the SAME agent that ran an earlier task, keeping its context. The
         // task inherits that agent's directory (that is where the context lives) and its TIER —
@@ -134,6 +136,7 @@ public sealed class AgentTaskService
         {
             var priorId = await ResolveTaskIdAsync(request.FollowUpOnTask, ct);
             var prior = await _db.AgentTasks.AsNoTracking().FirstAsync(t => t.Id == priorId, ct);
+            followUpCardId = prior.CardId;
             if (prior.AgentId is not Guid followAgentId)
                 throw new ConflictException(
                     $"Task {DelegationReportFormatter.Short(priorId)} never ran on an agent — there is nothing to follow up on.");
@@ -270,6 +273,25 @@ public sealed class AgentTaskService
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
 
+        // CARD-0040. Resolved BEFORE the row so an explicit -Card that names nothing is a 422 on
+        // creation rather than a task that runs with a binding its caller thinks it has.
+        var title = BuildTitle(request);
+        var binding = await AgentTaskCardBinder.BindAsync(
+            _db,
+            request.Card,
+            new AgentTaskCardBinder.Context(
+                request.Role,
+                title,
+                // A parent's card outranks a follow-up's: a child created by an orchestrator that
+                // is itself bound is working the orchestrator's card unless its title says otherwise.
+                parent?.CardId ?? followUpCardId,
+                caller.SessionId,
+                resolved.RepoPath,
+                resolved.WorkingDirectory),
+            ct);
+        if (binding.Warning is not null)
+            warning = warning is null ? binding.Warning : warning + " " + binding.Warning;
+
         var task = new AgentTask
         {
             Id = id,
@@ -279,11 +301,12 @@ public sealed class AgentTaskService
             // for a task created before its parent's session existed.
             ParentSessionId = caller.SessionId,
             Depth = depth,
-            Title = BuildTitle(request),
+            Title = title,
             Goal = request.Goal.Trim(),
             Kind = request.Kind,
             Role = request.Role,
             ProjectId = projectId,
+            CardId = binding.CardId,
             LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(launchEnvOverride),
             AgentKind = agentKind,
             ModelLevel = level,
@@ -327,7 +350,8 @@ public sealed class AgentTaskService
                 + (agentKind == AgentKind.ClaudeCode
                     ? string.Empty
                     : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}")
-                + ProjectScopeSuffix(projectId),
+                + ProjectScopeSuffix(projectId)
+                + CardScopeSuffix(binding.Identifier),
             At = now,
         });
         if (warning is not null)
@@ -352,7 +376,9 @@ public sealed class AgentTaskService
         return new AgentTaskCreatedDto(
             id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind,
             NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None,
-            ScopeOverlaps: await FindScopeOverlapsAsync(task, ct));
+            ScopeOverlaps: await FindScopeOverlapsAsync(task, ct),
+            CardId: binding.CardId,
+            CardIdentifier: binding.Identifier);
     }
 
     /// <summary>
@@ -386,6 +412,10 @@ public sealed class AgentTaskService
 
     private static string ProjectScopeSuffix(Guid? projectId) =>
         projectId is { } id ? $" — project scope: {id}" : string.Empty;
+
+    /// <summary>CARD-0040: the Created event says which card this task will move, or says nothing.</summary>
+    private static string CardScopeSuffix(string? identifier) =>
+        identifier is { Length: > 0 } ? $" — bound to {identifier}" : string.Empty;
 
     /// <summary>
     /// The workspace an unspecified request gets, and the warning a risky explicit one earns.
@@ -467,7 +497,8 @@ public sealed class AgentTaskService
         if (!includeChecks) query = query.Where(t => t.Role != AgentTaskRole.Check);
 
         var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
-        return tasks.Select(t => ToSummary(t, tasks)).ToList();
+        var cardIdentifiers = await LoadCardIdentifiersAsync(tasks, ct);
+        return tasks.Select(t => ToSummary(t, tasks, cardIdentifiers)).ToList();
     }
 
     public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct, Guid? pollingSessionId = null)
@@ -499,7 +530,7 @@ public sealed class AgentTaskService
             .ToListAsync(ct);
 
         return new AgentTaskDetailDto(
-            ToSummary(task, family), task.Goal, task.Result,
+            ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct)), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events);
     }
@@ -520,7 +551,7 @@ public sealed class AgentTaskService
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId)
             .ToListAsync(ct);
-        return ToSummary(task, family);
+        return ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
     }
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct)
@@ -818,6 +849,8 @@ public sealed class AgentTaskService
             Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Merge,
             ProjectId = conflicted.ProjectId,
+            // CARD-0040: integrating a task's work is still that task's card's work.
+            CardId = conflicted.CardId,
             ModelLevel = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null),
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = worktree,
@@ -950,16 +983,16 @@ public sealed class AgentTaskService
 
     /// <summary>Project a loaded task to its DTO. <paramref name="family"/> is the whole run — it
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
-    public Task<AgentTaskSummaryDto> GetSummaryAsync(
+    public async Task<AgentTaskSummaryDto> GetSummaryAsync(
         AgentTask task, IReadOnlyList<AgentTask> family, CancellationToken ct = default) =>
-        Task.FromResult(ToSummary(task, family));
+        ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
 
     /// <summary>The DTO for one task, re-reading its run for the cost rollup.</summary>
     private async Task<AgentTaskSummaryDto> SummaryOfAsync(AgentTask task, CancellationToken ct)
     {
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return ToSummary(task, family);
+        return ToSummary(task, family, await LoadCardIdentifiersAsync([task], ct));
     }
 
     internal static bool IsSettled(AgentTaskStatus status) =>
@@ -974,7 +1007,27 @@ public sealed class AgentTaskService
         && ((parent.RepoPath is not null && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.RepoPath))
             || (parent.WorktreePath is not null && DelegationWorkspaceResolver.IsWithinRoot(repoPath, parent.WorktreePath)));
 
-    private static AgentTaskSummaryDto ToSummary(AgentTask task, IReadOnlyList<AgentTask> family)
+    /// <summary>
+    /// The identifiers of every card the given tasks are bound to (CARD-0040). One query for the
+    /// whole page: a per-row lookup on a board listing hundreds of tasks is a hundred round-trips
+    /// for a string that is already denormalisable.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, string>> LoadCardIdentifiersAsync(
+        IEnumerable<AgentTask> tasks, CancellationToken ct)
+    {
+        var cardIds = tasks.Where(t => t.CardId is not null).Select(t => t.CardId!.Value).Distinct().ToList();
+        if (cardIds.Count == 0)
+            return new Dictionary<Guid, string>();
+
+        return await _db.Cards.AsNoTracking()
+            .Where(c => cardIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Identifier, ct);
+    }
+
+    private static AgentTaskSummaryDto ToSummary(
+        AgentTask task,
+        IReadOnlyList<AgentTask> family,
+        IReadOnlyDictionary<Guid, string>? cardIdentifiers = null)
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
@@ -999,7 +1052,12 @@ public sealed class AgentTaskService
             task.DeliverablePath, task.DeliverableRef, task.RecoveredAt,
             task.TokensIn, task.CacheReadTokens, task.CacheCreationTokens, task.TokensOut,
             task.CostUsd, task.CostPricingVersion, subtreeCost, childCount,
-            task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount);
+            task.ExpectedDurationMinutes, task.NextCheckAt, task.CheckCount,
+            task.CardId,
+            task.CardId is Guid cardId && cardIdentifiers is not null
+                && cardIdentifiers.TryGetValue(cardId, out var identifier)
+                    ? identifier
+                    : null);
     }
 
     /// <summary>Internal so the attention projection rolls up subtree spend the SAME way the board

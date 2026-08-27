@@ -93,6 +93,21 @@ public class AgentTask
     /// <summary>Repo toplevel derived from the working directory; null when it isn't a git repo.</summary>
     public string? RepoPath { get; set; }
 
+    /// <summary>
+    /// The card this task's work is against (CARD-0040). The missing edge between delegation and
+    /// the board: with it, "work started" and "work settled" are durable rows a sweep can move a
+    /// card on, instead of a convention that only ever lived in the title's prose.
+    ///
+    /// <para>Set once at creation, in precedence order: an explicit <c>Card</c> on the request; the
+    /// parent / followed-up / conflicted task's binding; the FIRST <c>CARD-nnnn</c> in the title.
+    /// <see cref="AgentTaskRole.Check"/> rows are never bound - they are about a task, not a card.
+    /// Null is normal and never an error: the task runs, the card simply does not move.</para>
+    ///
+    /// <para>The FK is <c>ON DELETE SET NULL</c>. Cards are archived rather than deleted, but a
+    /// task must never become undeletable by <c>DataRetentionService</c> because of a card.</para>
+    /// </summary>
+    public Guid? CardId { get; set; }
+
     public Guid? WorktreeId { get; set; }
 
     /// <summary>
@@ -224,6 +239,7 @@ public class AgentTask
     /// </summary>
     public int CostPricingVersion { get; set; }
 
+    public Card? Card { get; set; }
     public AgentTask? ParentTask { get; set; }
     public ICollection<AgentTask> Children { get; set; } = new List<AgentTask>();
     public ICollection<AgentTaskEvent> Events { get; set; } = new List<AgentTaskEvent>();

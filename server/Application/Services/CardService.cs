@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -52,6 +52,13 @@ public sealed class CardService
     /// actor here — the server has no principals — but distinguishable from a name a caller chose.
     /// </summary>
     internal const string SystemActor = "system";
+
+    /// <summary>
+    /// The author recorded on a move the CARD-0040 sweep made from delegated-task evidence.
+    /// Deliberately NOT <see cref="SystemActor"/>: that name already means the RunAttempt /
+    /// card-spawn path, and a history line has to say which automation moved the card.
+    /// </summary>
+    internal const string TransitionActor = "card-transitions";
 
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
@@ -227,8 +234,12 @@ public sealed class CardService
     /// The forms <c>cardIdentifier.ts</c> accepts, normalized to the stored canonical identifier:
     /// trim, drop a leading <c>#</c>, drop a <c>card-</c>/<c>card </c> prefix, drop leading zeros.
     /// Null when what is left is not all digits — i.e. not one of OUR identifiers.
+    ///
+    /// <para>Internal rather than private so <see cref="AgentTaskCardBinder"/> (CARD-0040) resolves
+    /// a delegate's <c>-Card</c> argument through exactly the same normalisation the card API does.
+    /// Two spellings of "which card is CARD-51" would eventually disagree.</para>
     /// </summary>
-    private static string? TryCanonicalIdentifier(string raw)
+    internal static string? TryCanonicalIdentifier(string raw)
     {
         var value = raw.StartsWith('#') ? raw[1..].Trim() : raw;
         if (value.StartsWith("card", StringComparison.OrdinalIgnoreCase)

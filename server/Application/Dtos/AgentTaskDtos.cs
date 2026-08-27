@@ -65,7 +65,15 @@ public sealed record CreateAgentTaskRequest(
     /// <see cref="FollowUpOnTask"/> is refused 422 — a follow-up continues an existing
     /// process. Does not cascade to child tasks; blanket a subtree with a project default.
     /// </summary>
-    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null);
+    IReadOnlyDictionary<string, string>? LaunchEnvOverride = null,
+    /// <summary>
+    /// The card this work is against (CARD-0040), as a guid or any identifier shape
+    /// <c>card.ps1</c> accepts (<c>CARD-0040</c>, <c>card-40</c>, <c>#40</c>, <c>40</c>). Omitted,
+    /// the binding is derived: the parent / followed-up task's card, else the FIRST
+    /// <c>CARD-nnnn</c> in the title. An EXPLICIT value that resolves to no card is a 422 — a
+    /// binding the caller asked for and silently did not get is worse than none.
+    /// </summary>
+    string? Card = null);
 
 public sealed record AgentTaskSummaryDto(
     Guid Id,
@@ -125,7 +133,11 @@ public sealed record AgentTaskSummaryDto(
     int ExpectedDurationMinutes,
     /// <summary>When the next scheduled check-in is due; null means this task is never checked.</summary>
     DateTime? NextCheckAt,
-    int CheckCount);
+    int CheckCount,
+    /// <summary>The card this task's work is against (CARD-0040); null when nothing bound.</summary>
+    Guid? CardId = null,
+    /// <summary>Denormalised at read time so a row can name its card without a second request.</summary>
+    string? CardIdentifier = null);
 
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
@@ -169,7 +181,12 @@ public sealed record AgentTaskCreatedDto(
     /// ergonomic centre of the card: the caller declares intent and is told, at once, what that
     /// intent costs — a wait, or a rebase to expect. Empty when nothing overlaps.
     /// </summary>
-    IReadOnlyList<ScopeOverlapDto>? ScopeOverlaps = null);
+    IReadOnlyList<ScopeOverlapDto>? ScopeOverlaps = null,
+    /// <summary>The card this task bound to (CARD-0040), or null. Printed at dispatch so a
+    /// mis-binding is caught by the caller who can still fix it, not on the board a week later.</summary>
+    Guid? CardId = null,
+    /// <summary>The bound card's identifier — what <c>delegate.ps1</c> echoes as "bound to CARD-nnnn".</summary>
+    string? CardIdentifier = null);
 
 /// <summary>
 /// One running task a newly created task overlaps, and what the dispatcher will do about it.

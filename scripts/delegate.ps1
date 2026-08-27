@@ -34,6 +34,14 @@ param(
     [ValidateSet('ClaudeCode', 'Grok', 'Codex')]
     [string]$Kind,
 
+    # Which CARD this work is against (CARD-0040). Accepts CARD-0040, card-40, #40, 40, or the
+    # card's guid. Omitted, the server derives it: your own task's card, else the first CARD-nnnn
+    # in -Title. Binding it is what makes the card move itself - Backlog -> In Progress when this
+    # task dispatches, -> Review when it settles - so a card you never touch stays honest. An
+    # explicit value that names no card is refused 422 rather than silently ignored.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$Card,
+
     # Run somewhere else - another repo, another checkout. Defaults to the caller's directory.
     [Parameter(ParameterSetName = 'Create')]
     [string]$Dir,
@@ -225,6 +233,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which
         # ships unset and therefore resolves to ClaudeCode.
         if ($Kind) { $body['agentKind'] = $Kind }
+        if ($Card) { $body['card'] = $Card }
         if ($Dir) { $body['workingDirectory'] = $Dir }
         if ($Scope) { $body['scope'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
@@ -246,8 +255,12 @@ switch ($PSCmdlet.ParameterSetName) {
         } else {
             " - its report will arrive in your session"
         }
-        Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}" -f `
-                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing)
+        # Which card this task will move (CARD-0040), said HERE because this is the last moment the
+        # caller can still correct a mis-binding - the alternative is discovering it on the board.
+        $cardNote = ''
+        if ($created.cardIdentifier) { $cardNote = " - bound to $($created.cardIdentifier)" }
+        Write-Output ("queued task {0} ({1} {2} on {3}{4}){5}{6}" -f `
+                $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing, $cardNote)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
         # And so is this: what the declared -Scope costs, right now, against what is already
