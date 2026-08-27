@@ -586,6 +586,9 @@ public class HerdrAlwaysOnChannelParityTests
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        // OrchestratorService depends on AgentSessionLaunchComposer since 1b1b667 (2026-08-26);
+        // this harness's copy of that registration was missed at the time.
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<OrchestratorService>();
         services.AddScoped<CardWorkflowRunFactory>();
         services.AddScoped<AgentService>();
