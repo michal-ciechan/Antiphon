@@ -216,3 +216,52 @@ churn**, were re-run with keep-alive, and are explicitly discounted above rather
 The claim that 184 revalidations x RTT reaches 30-60 s on a remote link is arithmetic from measured
 request counts, not a measurement taken from the user's device - the proxy row (20.6 s cold on this
 machine) is the measured half of it.
+
+## Confirmation (orchestrator, 2026-08-27) — both open questions answered, spinner identified
+
+The user answered both questions this round left open, and supplied a screenshot from the actual
+device: an iPhone on 5G, loading `https://antiphon.desktop.codeperf.net`. The screenshot shows the
+nav bar fully rendered ("Antiphon", "Report bug", the avatar) with a single large centered spinner
+filling the entire body below it — not the small `AgentRail` "Working" dots this doc's section 1
+flagged as a live candidate. That rules out section 1's false-positive theory for this report: the
+user is not describing the per-agent status indicator.
+
+**Reproduced directly** via `browser-harness` against the same CDP Edge instance, mobile-emulated
+(390x844, iPhone UA) against the real remote URL, hard-reload with cache disabled, polled every
+second:
+
+| t | state |
+|---|---|
+| 1.0–3.1 s | `#root` empty, `readyState: interactive` |
+| **5.2 s** | **exactly one spinner present**, `#root` text is just `"Antiphon\n\nReport bug\n390 × 844"` |
+| **6.2 s** | spinner gone, real content present (`"NEEDS YOU · 1"`, `"INCIDENTS"`, `"antiphon-check-interpreter · 12h04m"`) |
+
+This is the exact shape in the screenshot — nav bar first, one generic full-body spinner, then
+content — reproduced on demand. On this machine's network path it resolved in ~5-6 s rather than the
+user's reported 30-60 s; the gap is consistent with this section's own finding that the mechanism is
+RTT-bound (worse mobile-network RTT/jitter than this box's link would stretch the same 184-revalidation
+wait proportionally longer, per section 2(b)'s 50 ms→9 s / 150 ms→28 s arithmetic).
+
+**The exact component is not `HomePage.tsx` — it's the mobile-specific gate.**
+`client/src/features/home/MobileHomePage.tsx:111`:
+```
+if (attention.isLoading || tasks.isLoading) {
+  return <Loader />
+}
+```
+This blanks the ENTIRE mobile page body to a single bare `<Loader/>` while EITHER `/api/attention`
+OR the tasks query is loading — narrower and more aggressive than the desktop gate section 5 already
+named (`HomePage.tsx:143-149`, gated on `agents.isLoading` alone). On mobile, the same
+four-seconds-of-module-loading-before-the-first-API-call delay (section 3) is fully hidden behind
+this one full-screen spinner with no incremental content at all, which is exactly why it reads as
+"stuck" rather than "loading something."
+
+**Answers to this doc's own open questions, now settled:**
+- Which URL: the remote domain (`antiphon.desktop.codeperf.net`), confirmed directly. Section 7's
+  ranking stands as written — priority 1 (serve a built bundle for non-development access) is the
+  fix for what the user is actually seeing, not priority 3-6.
+- Which spinner: `MobileHomePage.tsx:111`'s full-page loader, not `AgentRail`'s per-agent badge.
+  Add to the Plan pass's scope: consider whether this gate should render the nav/shell immediately
+  and only gate the content BELOW it (matching what already happens once real content is fetched -
+  the shell is not the slow part per section 3, only the data is), so a slow mobile load shows
+  *something* incremental rather than one undifferentiated spinner for the full duration.
