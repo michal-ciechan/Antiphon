@@ -98,6 +98,8 @@ check at **$0.12**.
 
 ### Launching an agent
 
+Start a new project through `POST /api/projects/setup` (or `scripts/project.ps1 new -Dir ... -Orchestrator -Start`): it creates the project, board, and preset agent in one transaction and returns readiness. `POST /api/agents` remains for adding an agent to a project that already exists.
+
 Create and start an agent through `POST /api/agents` + `POST /api/agents/{id}/start` (or the UI).
 Never launch the `claude` CLI directly, and never a `launch-remote` script. When setting
 `modelLevel`, send it as the string `"Frontier"` (or `"High"` / `"Medium"` / `"Low"`). A numeric

@@ -63,6 +63,8 @@ what was believed on one day, not a reference.
 `scripts/card.ps1` talks to the board API so nothing has to hand-compose HTTP or hand-quote card
 text. Its header comment is the full reference; this is the synopsis.
 
+`scripts/project.ps1` is its sibling for creating a project setup and inspecting project readiness.
+
 - **A card is addressed the way it's *named*.** `CARD-0051`, `card-51`, `#51`, `51`, or its guid —
   every verb takes any of those. There is no separate "look up the id first" step.
 - **Verbs:** `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`, `unarchive`, and `-Limits`

@@ -111,6 +111,9 @@ GET    /api/projects  |  /api/projects/{id}
 POST   /api/projects   PUT /api/projects/{id}   DELETE /api/projects/{id}
 GET    /api/projects/{id}/deletion-impact
 POST   /api/projects/test-connectivity
+GET    /api/projects/{id}/readiness                 ProjectReadinessDto
+GET    /api/projects/setup-catalog                  ProjectSetupCatalogDto
+POST   /api/projects/setup                          ProjectSetupResultDto
 ```
 
 > A move into an active column **does not start an agent** unless `spawn: true` (CARD-0051), and
