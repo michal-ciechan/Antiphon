@@ -2,6 +2,9 @@ namespace Antiphon.Server.Application.Settings;
 
 public class GitSettings
 {
+    public int MaxConcurrentProcesses { get; set; } = 8;
+    public int TimeoutSeconds { get; set; } = 15;
+    public string ExecutableName { get; set; } = "git";
     public string WorkspacePath { get; set; } = "work";
     public string DefaultBranch { get; set; } = "main";
     public int PollIntervalSeconds { get; set; } = 30;

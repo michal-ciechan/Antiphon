@@ -23,6 +23,10 @@ public sealed class WorkspaceInfoService : IResettableCache
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (DateTime At, WorkspaceWorktreesDto List)> _worktreeCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<WorkspaceGitInfoDto>>> _infoInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Lazy<Task<WorkspaceWorktreesDto>>> _worktreeInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public WorkspaceInfoService(GitWorkspaceService git) => _git = git;
 
@@ -46,11 +50,21 @@ public sealed class WorkspaceInfoService : IResettableCache
         if (_infoCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < Ttl)
             return hit.Info;
 
-        var info = Directory.Exists(path)
-            ? await _git.GetWorkspaceInfoAsync(path, ct)
-            : new WorkspaceGitInfoDto(path, false, null, null, false);
-        _infoCache[key] = (DateTime.UtcNow, info);
-        return info;
+        var operation = _infoInFlight.GetOrAdd(
+            key,
+            _ => new Lazy<Task<WorkspaceGitInfoDto>>(
+                () => ComputeWorkspaceAsync(path), LazyThreadSafetyMode.ExecutionAndPublication));
+        var task = operation.Value;
+        try
+        {
+            return await task.WaitAsync(ct);
+        }
+        finally
+        {
+            if (task.IsCompleted)
+                ((ICollection<KeyValuePair<string, Lazy<Task<WorkspaceGitInfoDto>>>>)_infoInFlight)
+                    .Remove(new(key, operation));
+        }
     }
 
     public async Task<WorkspaceWorktreesDto> GetWorktreesAsync(string path, CancellationToken ct)
@@ -59,19 +73,49 @@ public sealed class WorkspaceInfoService : IResettableCache
         if (_worktreeCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < Ttl)
             return hit.List;
 
-        var info = await GetWorkspaceAsync(path, ct);
-        IReadOnlyList<WorktreeEntryDto> worktrees = info.IsGitRepository
-            ? await _git.ListWorktreesAsync(path, ct)
-            : [];
-        var list = new WorkspaceWorktreesDto(path, info.IsGitRepository, info.RepoRoot, worktrees);
-        _worktreeCache[key] = (DateTime.UtcNow, list);
-        return list;
+        var operation = _worktreeInFlight.GetOrAdd(
+            key,
+            _ => new Lazy<Task<WorkspaceWorktreesDto>>(
+                () => ComputeWorktreesAsync(path), LazyThreadSafetyMode.ExecutionAndPublication));
+        var task = operation.Value;
+        try
+        {
+            return await task.WaitAsync(ct);
+        }
+        finally
+        {
+            if (task.IsCompleted)
+                ((ICollection<KeyValuePair<string, Lazy<Task<WorkspaceWorktreesDto>>>>)_worktreeInFlight)
+                    .Remove(new(key, operation));
+        }
     }
 
     public void Clear()
     {
         _infoCache.Clear();
         _worktreeCache.Clear();
+        _infoInFlight.Clear();
+        _worktreeInFlight.Clear();
+    }
+
+    private async Task<WorkspaceGitInfoDto> ComputeWorkspaceAsync(string path)
+    {
+        var info = Directory.Exists(path)
+            ? await _git.GetWorkspaceInfoAsync(path, CancellationToken.None)
+            : new WorkspaceGitInfoDto(path, false, null, null, false);
+        _infoCache[Normalize(path)] = (DateTime.UtcNow, info);
+        return info;
+    }
+
+    private async Task<WorkspaceWorktreesDto> ComputeWorktreesAsync(string path)
+    {
+        var info = await GetWorkspaceAsync(path, CancellationToken.None);
+        IReadOnlyList<WorktreeEntryDto> worktrees = info.IsGitRepository
+            ? await _git.ListWorktreesAsync(path, CancellationToken.None)
+            : [];
+        var list = new WorkspaceWorktreesDto(path, info.IsGitRepository, info.RepoRoot, worktrees);
+        _worktreeCache[Normalize(path)] = (DateTime.UtcNow, list);
+        return list;
     }
 
     private static string Normalize(string path)

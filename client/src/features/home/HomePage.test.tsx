@@ -155,6 +155,58 @@ beforeEach(() => {
 })
 
 describe('HomePage', () => {
+  it('requests git workspace information once, after agents and tasks provide the full directory union', async () => {
+    let requests = 0
+    let requestedPaths: string[] = []
+    seed({
+      agents: [agent({ workingDirectory: 'C:\\src\\antiphon' })],
+      tasks: [
+        task({
+          workingDirectory: 'C:\\wt\\card-216',
+          repoPath: 'C:\\src\\antiphon',
+        }),
+      ],
+    })
+    server.use(
+      http.get('/api/filesystem/workspaces', ({ request }) => {
+        requests += 1
+        requestedPaths = new URL(request.url).searchParams.getAll('path').sort()
+        return HttpResponse.json(
+          requestedPaths.map((path) => ({
+            path,
+            isGitRepository: false,
+            repoRoot: null,
+            branch: null,
+            isWorktree: false,
+          })),
+        )
+      }),
+    )
+
+    renderWithProviders(<HomePage />)
+
+    await waitFor(() => expect(requests).toBe(1))
+    expect(requestedPaths).toEqual(['C:\\src\\antiphon', 'C:\\wt\\card-216'])
+  })
+
+  it('does not refetch agent tasks when the Tasks panel mounts inside the stale window', async () => {
+    let taskRequests = 0
+    seed({ tasks: [task({})] })
+    server.use(
+      http.get('/api/agent-tasks', () => {
+        taskRequests += 1
+        return HttpResponse.json([task({})])
+      }),
+    )
+
+    renderWithProviders(<HomePage />)
+
+    await waitFor(() => expect(taskRequests).toBe(1))
+    await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }))
+    expect(await screen.findByText('tighten the deploy doc')).toBeInTheDocument()
+    expect(taskRequests).toBe(1)
+  })
+
   it('shows the project, its agents, and the files pane for the picked agent', async () => {
     seed({
       agents: [

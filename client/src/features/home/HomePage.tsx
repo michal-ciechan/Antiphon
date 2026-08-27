@@ -80,11 +80,13 @@ function DesktopHomePage() {
   // Git identity (repo root + branch) for every directory on screen — what lets a worktree- or
   // subdirectory-scoped agent nest under the repo it belongs to instead of standing alone.
   const gitDirs = useMemo(() => {
+    if (!agents.data || !tasks.data) return []
+
     const dirs = new Set<string>()
-    for (const a of agents.data ?? []) {
+    for (const a of agents.data) {
       if (a.workingDirectory.trim()) dirs.add(a.workingDirectory.trim())
     }
-    for (const t of tasks.data ?? []) {
+    for (const t of tasks.data) {
       if (!isActiveTask(t)) continue
       dirs.add(taskRunDir(t))
       if (t.repoPath) dirs.add(t.repoPath)

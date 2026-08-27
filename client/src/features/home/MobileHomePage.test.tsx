@@ -163,6 +163,47 @@ function seed({
 }
 
 describe('MobileHomePage', () => {
+  it('renders its shell and per-band skeletons while both home queries are pending', () => {
+    seed()
+    server.use(
+      http.get('/api/attention', async () => await new Promise<Response>(() => {})),
+      http.get('/api/agent-tasks', async () => await new Promise<Response>(() => {})),
+    )
+
+    renderWithProviders(<MobileHomePage />)
+
+    expect(screen.getByTestId('mobile-home')).toBeInTheDocument()
+    expect(screen.getByTestId('needs-you-skeleton')).toBeInTheDocument()
+    expect(screen.getByTestId('in-motion-skeleton')).toBeInTheDocument()
+    expect(screen.getByTestId('away-skeleton')).toBeInTheDocument()
+    expect(screen.getByText('In motion')).toBeInTheDocument()
+    expect(screen.getByText('While you were away')).toBeInTheDocument()
+    expect(screen.queryByTestId('calm-state')).not.toBeInTheDocument()
+  })
+
+  it('shows running work as soon as tasks arrive while attention remains pending', async () => {
+    seed({ tasks: [task({})] })
+    server.use(http.get('/api/attention', async () => await new Promise<Response>(() => {})))
+
+    renderWithProviders(<MobileHomePage />)
+
+    expect(await screen.findByText('#56 launch leak - slices 3+4 · opus')).toBeInTheDocument()
+    expect(screen.getByTestId('needs-you-skeleton')).toBeInTheDocument()
+    expect(screen.queryByTestId('calm-state')).not.toBeInTheDocument()
+  })
+
+  it('never calls the unknown attention state calm after an attention error', async () => {
+    seed({ tasks: [task({})] })
+    server.use(http.get('/api/attention', () => HttpResponse.error()))
+
+    renderWithProviders(<MobileHomePage />)
+
+    expect(await screen.findByTestId('needs-you-error')).toHaveTextContent(
+      "Couldn't load what needs you — retrying.",
+    )
+    expect(screen.queryByTestId('calm-state')).not.toBeInTheDocument()
+  })
+
   it('a healthy day reads as calm, not empty: no band 1, a forecast, and the live lines', async () => {
     // The spec's bar (§D3): when nothing needs you, the screen still says when to next expect
     // something, so the operator knows whether to wait or to chase.

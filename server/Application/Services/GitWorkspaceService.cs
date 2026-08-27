@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -13,10 +15,22 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class GitWorkspaceService
 {
-    private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(15);
+    // The direct-construction test seam needs a process-wide default, while DI supplies the
+    // configured singleton gate in production.
+    private static readonly GitProcessGate SharedGate = new();
     private readonly ILogger<GitWorkspaceService> _logger;
+    private readonly GitProcessGate _gate;
+    private readonly GitSettings _settings;
 
-    public GitWorkspaceService(ILogger<GitWorkspaceService> logger) => _logger = logger;
+    public GitWorkspaceService(
+        ILogger<GitWorkspaceService> logger,
+        GitProcessGate? gate = null,
+        IOptions<GitSettings>? settings = null)
+    {
+        _logger = logger;
+        _gate = gate ?? SharedGate;
+        _settings = settings?.Value ?? new GitSettings();
+    }
 
     public sealed record GitChange(string Path, GitFileStatus Status, string? OldPath);
 
@@ -592,11 +606,12 @@ public sealed class GitWorkspaceService
     private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
         string workingDirectory, CancellationToken ct, params string[] args)
     {
+        Process? process = null;
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "git",
+                FileName = _settings.ExecutableName,
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -608,26 +623,54 @@ public sealed class GitWorkspaceService
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
 
-            using var process = Process.Start(psi);
+            using var lease = await _gate.EnterAsync(ct);
+            process = Process.Start(psi);
             if (process is null)
-                return (-1, "", "git failed to start");
+                return (-1, "", $"{_settings.ExecutableName} failed to start");
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(GitTimeout);
+            var timeout = TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds));
+            timeoutCts.CancelAfter(timeout);
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
             await process.WaitForExitAsync(timeoutCts.Token);
             return (process.ExitCode, await stdoutTask, await stderrTask);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            _logger.LogWarning("git {Args} timed out in {Dir}", string.Join(' ', args), workingDirectory);
+            TryKill(process);
+            if (ct.IsCancellationRequested)
+                throw;
+
+            _logger.LogWarning(
+                "git {Args} timed out after {Timeout} in {Dir}; child killed",
+                string.Join(' ', args), TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)), workingDirectory);
             return (-1, "", "timeout");
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "git {Args} failed in {Dir}", string.Join(' ', args), workingDirectory);
             return (-1, "", ex.Message);
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void TryKill(Process? process)
+    {
+        if (process is null)
+            return;
+
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // A concurrently-exiting child is already the desired state.
         }
     }
 }

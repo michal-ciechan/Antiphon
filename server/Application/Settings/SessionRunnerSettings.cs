@@ -9,6 +9,9 @@ public sealed class SessionRunnerSettings
     /// <summary>Timeout for ordinary request/response calls to the runner (HttpClient.Timeout).</summary>
     public int RequestTimeoutSeconds { get; set; } = 100;
 
+    /// <summary>Tighter deadline for the agent-list's read-only runner state lookup.</summary>
+    public int ListTimeoutSeconds { get; set; } = 3;
+
     /// <summary>
     /// /events idle watchdog: reconnect if NOTHING (event or keepalive comment) arrives for this
     /// long. The stream itself runs with an infinite HttpClient timeout — the default 100 s

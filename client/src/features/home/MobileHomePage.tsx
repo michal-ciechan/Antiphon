@@ -4,7 +4,6 @@ import {
   Button,
   Divider,
   Group,
-  Loader,
   Paper,
   Stack,
   Text,
@@ -26,6 +25,7 @@ import { useAllBoardDetails, useBoards } from '../../api/boards'
 import { usePlanCatalog } from '../../api/plans'
 import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
 import { displayIdentifier } from '../../shared/cardIdentifier'
+import { CardSkeleton, InlineSkeleton } from '../../shared/SkeletonLayouts'
 import { BlockedReplyRow } from '../attention/BlockedReplyRow'
 import { ATTENTION_VISUALS, ageSeconds, keyOf, targetOf } from '../attention/attentionVisuals'
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
@@ -108,19 +108,39 @@ export function MobileHomePage() {
     [tasks.data, cards, lastSeen, nowMs, plans],
   )
 
-  if (attention.isLoading || tasks.isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader />
-      </Group>
-    )
-  }
-
   return (
     <Stack gap={0} maw={480} mx="auto" data-testid="mobile-home">
-      {needsYou.length === 0 ? <CalmCard tasks={inMotion} /> : <NeedsYouBand items={needsYou} />}
-      <InMotionBand tasks={inMotion} />
-      <AwayBand delta={delta} />
+      {attention.isPending ? (
+        <div data-testid="needs-you-skeleton">
+          <CardSkeleton />
+        </div>
+      ) : attention.isError ? (
+        <Text size="sm" c="dimmed" px={4} data-testid="needs-you-error">
+          Couldn&apos;t load what needs you — retrying.
+        </Text>
+      ) : needsYou.length === 0 ? (
+        <CalmCard tasks={inMotion} />
+      ) : (
+        <NeedsYouBand items={needsYou} />
+      )}
+      {tasks.isPending ? (
+        <BandLoading title="In motion" rows={2} testId="in-motion-skeleton" />
+      ) : tasks.isError ? (
+        <BandError title="In motion" message="Couldn't load running work." testId="in-motion-error" />
+      ) : (
+        <InMotionBand tasks={inMotion} />
+      )}
+      {tasks.isPending ? (
+        <BandLoading title="While you were away" testId="away-skeleton" />
+      ) : tasks.isError ? (
+        <BandError
+          title="While you were away"
+          message="Couldn't load what happened while you were away."
+          testId="away-error"
+        />
+      ) : (
+        <AwayBand delta={delta} />
+      )}
     </Stack>
   )
 }
@@ -150,6 +170,30 @@ function BandTitle({ children, color }: { children: React.ReactNode; color?: str
     >
       {children}
     </Text>
+  )
+}
+
+function BandLoading({ title, rows = 1, testId }: { title: string; rows?: number; testId: string }) {
+  return (
+    <>
+      <BandTitle>{title}</BandTitle>
+      <Stack gap="xs" px={4} data-testid={testId}>
+        {Array.from({ length: rows }, (_, index) => (
+          <InlineSkeleton key={index} />
+        ))}
+      </Stack>
+    </>
+  )
+}
+
+function BandError({ title, message, testId }: { title: string; message: string; testId: string }) {
+  return (
+    <>
+      <BandTitle>{title}</BandTitle>
+      <Text size="sm" c="dimmed" px={4} data-testid={testId}>
+        {message}
+      </Text>
+    </>
   )
 }
 

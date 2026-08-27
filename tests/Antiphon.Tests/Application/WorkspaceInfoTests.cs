@@ -148,6 +148,37 @@ public class WorkspaceInfoGitIntegrationTests
         infos[1].RepoRoot.ShouldBeNull();
     }
 
+    [Test]
+    public async Task Concurrent_cold_workspace_lookups_share_one_git_pair_and_respect_the_process_gate()
+    {
+        await SkipIfGitUnavailableAsync();
+        using var repo = new ScratchGitRepo("antiphon-ws-gate");
+        await repo.CommitFileAsync("readme.md", "hello");
+
+        var gate = new GitProcessGate(8);
+        var service = new WorkspaceInfoService(
+            new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance, gate));
+        var paths = Enumerable.Range(0, 16)
+            .Select(index => Path.Combine(repo.Path, $"dir-{index}"))
+            .ToList();
+        foreach (var path in paths)
+            Directory.CreateDirectory(path);
+
+        var infos = await Task.WhenAll(paths.Select(path => service.GetWorkspaceAsync(path, CancellationToken.None)));
+
+        infos.All(info => info.IsGitRepository).ShouldBeTrue();
+        gate.PeakInFlight.ShouldBeLessThanOrEqualTo(8);
+
+        service.Clear();
+        var started = gate.Started;
+        var concurrent = await Task.WhenAll(
+            service.GetWorkspacesAsync([repo.Path], CancellationToken.None),
+            service.GetWorkspacesAsync([repo.Path], CancellationToken.None));
+
+        concurrent.SelectMany(result => result).All(info => info.IsGitRepository).ShouldBeTrue();
+        (gate.Started - started).ShouldBe(2, "one rev-parse plus one branch is shared by both callers");
+    }
+
     private static bool SamePath(string? a, string b) =>
         a is not null && string.Equals(
             Path.GetFullPath(a).TrimEnd('\\', '/'),

@@ -407,6 +407,8 @@ try
     builder.Services.AddAntiphonMessaging(builder.Configuration);
     builder.Services.AddScoped<ChatChannelService>();
     builder.Services.AddSingleton<ChannelReplyDispatcher>();
+    builder.Services.AddSingleton<GitProcessGate>(sp =>
+        new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
     builder.Services.AddSingleton<GitWorkspaceService>();
     // CARD-0085: positive-evidence gate before a zero-transcript Failed. Singleton — no DB of
     // its own; the dispatcher (scoped) calls it with the task + session it already loaded.

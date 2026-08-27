@@ -2593,8 +2593,15 @@ public sealed class SessionMessageQueueService
 
     // Internal so the agent list/detail can surface the SAME working signal on agent cards —
     // "Working" on a card must mean mid-turn right now, not merely "session started".
-    internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        (await IsWorkingBatchAsync(db, [sessionId], ct))[sessionId];
+
+    internal static async Task<IReadOnlyDictionary<Guid, bool>> IsWorkingBatchAsync(
+        AppDbContext db, IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
     {
+        if (sessionIds.Count == 0)
+            return new Dictionary<Guid, bool>();
+
         // Mirror the client's isWorking(): the agent is working while activity outranks the last
         // turn-end. An interrupt marker ("[Request interrupted...") counts as a turn END, not
         // activity — an aborted turn writes NO TurnEnd, and counting the marker as activity left
@@ -2610,7 +2617,7 @@ public sealed class SessionMessageQueueService
         // housekeeping — it fires mid-turn, so counting it as an end would read a working session
         // as idle. Predicates inlined for EF translation, like the interrupt prefix.
         var end = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
+            .Where(t => sessionIds.Contains(t.AgentSessionId)
                 && (t.Kind == TranscriptKinds.TurnEnd
                     || t.Kind == TranscriptKinds.SessionRestartBoundary
                     || (t.Kind == TranscriptKinds.CompactBoundary
@@ -2620,10 +2627,10 @@ public sealed class SessionMessageQueueService
                         && t.Text != null
                         && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))))
             .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
-            .FirstOrDefaultAsync(ct);
+            .Select(g => new { SessionId = g.Key, Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
+            .ToDictionaryAsync(entry => entry.SessionId, ct);
         var activity = await db.TranscriptEntries
-            .Where(t => t.AgentSessionId == sessionId
+            .Where(t => sessionIds.Contains(t.AgentSessionId)
                 && t.Kind != TranscriptKinds.TurnEnd
                 && t.Kind != TranscriptKinds.TurnTitle
                 && t.Kind != TranscriptKinds.SessionRestartBoundary
@@ -2652,11 +2659,20 @@ public sealed class SessionMessageQueueService
                     && t.Text != null
                     && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))
             .GroupBy(t => t.AgentSessionId)
-            .Select(g => new { Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
-            .FirstOrDefaultAsync(ct);
+            .Select(g => new { SessionId = g.Key, Seq = g.Max(t => t.Sequence), Ts = g.Max(t => t.Timestamp) })
+            .ToDictionaryAsync(entry => entry.SessionId, ct);
 
-        if ((activity?.Seq ?? 0) <= (end?.Seq ?? 0))
-            return false;
+        var result = new Dictionary<Guid, bool>(sessionIds.Count);
+        foreach (var sessionId in sessionIds)
+        {
+            end.TryGetValue(sessionId, out var sessionEnd);
+            activity.TryGetValue(sessionId, out var sessionActivity);
+
+            if ((sessionActivity?.Seq ?? 0) <= (sessionEnd?.Seq ?? 0))
+            {
+                result[sessionId] = false;
+                continue;
+            }
 
         // Sequence says working — but stored sequences are ARRIVAL-ordered: a catch-up sync that
         // backfills entries missed during a stream gap rebases them past the session's max, so
@@ -2667,10 +2683,15 @@ public sealed class SessionMessageQueueService
         // session is idle. Equal timestamps stay with the sequence verdict (same-line record pairs
         // share one timestamp), and missing ones (TurnTitle-only in practice, excluded anyway)
         // never override.
-        if (activity?.Ts is DateTime activityTs && end?.Ts is DateTime endTs && activityTs < endTs)
-            return false;
+            if (sessionActivity?.Ts is DateTime activityTs && sessionEnd?.Ts is DateTime endTs && activityTs < endTs)
+            {
+                result[sessionId] = false;
+                continue;
+            }
 
-        return true;
+            result[sessionId] = true;
+        }
+        return result;
     }
 
     /// <param name="maxAttempts">

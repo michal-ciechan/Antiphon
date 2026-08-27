@@ -36,6 +36,7 @@ public sealed class AgentService
     private readonly AgentWorkspaceProvisioner? _workspace;
     private readonly ContextWindowSettings _contextWindow;
     private readonly ISessionRunnerClient? _runnerClient;
+    private readonly SessionRunnerSettings _runnerSettings;
 
     public AgentService(
         AppDbContext db,
@@ -48,7 +49,8 @@ public sealed class AgentService
         // it an agent is simply created without its CLAUDE.md floor, which the next launch writes.
         AgentWorkspaceProvisioner? workspace = null,
         IOptions<ContextWindowSettings>? contextWindow = null,
-        ISessionRunnerClient? runnerClient = null)
+        ISessionRunnerClient? runnerClient = null,
+        IOptions<SessionRunnerSettings>? runnerSettings = null)
     {
         _db = db;
         _workflowRunFactory = workflowRunFactory;
@@ -59,6 +61,7 @@ public sealed class AgentService
         _workspace = workspace;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _runnerClient = runnerClient;
+        _runnerSettings = runnerSettings?.Value ?? new SessionRunnerSettings();
     }
 
     public async Task<IReadOnlyList<AgentSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -79,6 +82,11 @@ public sealed class AgentService
         // are: a missing include reads as "no attachments" and would clear every badge on the page.
         var attachments = await AgentBundleAttachments.LoadAsync(
             _db, [.. agents.Select(a => a.Id)], _logger, ct);
+        var runningSessionIds = liveSessions.Values
+            .Where(session => session.Dto.Status == SessionStatus.Running)
+            .Select(session => session.Dto.Id)
+            .ToList();
+        var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, runningSessionIds, ct);
         var result = new List<AgentSummaryDto>(agents.Count);
         foreach (var a in agents)
         {
@@ -87,7 +95,7 @@ public sealed class AgentService
                 a,
                 live?.Dto,
                 supervision.GetValueOrDefault(a.Id),
-                await IsSessionWorkingAsync(live?.Dto, ct),
+                live is { Dto.Status: SessionStatus.Running } && working.GetValueOrDefault(live.Dto.Id),
                 IsOutOfDate(live, Compose(a, attachments.GetValueOrDefault(a.Id, [])))));
         }
         return result;
@@ -246,9 +254,19 @@ public sealed class AgentService
             return;
 
         IReadOnlyList<SessionRunnerSessionDto> runnerSessions;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var timeoutSeconds = Math.Max(1, _runnerSettings.ListTimeoutSeconds);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
-            runnerSessions = await _runnerClient.ListAsync(ct);
+            runnerSessions = await _runnerClient.ListAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "runner did not list sessions within {TimeoutSeconds}s; live runner state left unknown",
+                timeoutSeconds);
+            return;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
