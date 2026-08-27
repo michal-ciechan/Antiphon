@@ -1,4 +1,4 @@
-using Antiphon.Agents.Pty;
+﻿using Antiphon.Agents.Pty;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -468,6 +468,12 @@ public sealed class AgentTaskReplyService
         if (task.Status == AgentTaskStatus.Succeeded && task.Role == AgentTaskRole.Merge)
             await ResolveConflictedParentAsync(services, db, task, now, ct);
 
+        // What the delegate ACTUALLY touched, against what it said it would (CARD-0063 S4).
+        // Before ReleaseDelegateAsync, which retires the ephemeral agent whose working directory
+        // the file data hangs off. Observability only: it can add an event and fill a column, and
+        // it can do neither of those things badly enough to stop a settlement.
+        var drift = await RecordScopeDriftAsync(services, db, task, now, ct);
+
         // A settled delegate is not spent — it is WARM. A Shared task's agent goes into the pool
         // for follow-ups and unrelated work in its directory; only worktree delegates retire on
         // the spot (their directory dies with the merge). Blocked tasks keep everything — the
@@ -507,8 +513,55 @@ public sealed class AgentTaskReplyService
             "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000})",
             DelegationReportFormatter.Short(task.Id), task.Status, report.Length, task.CostUsd);
 
-        await DeliverToParentAsync(task, report, ct, workspaceNote, callerWarning);
+        await DeliverToParentAsync(task, report, ct, workspaceNote, callerWarning, drift);
         await PublishAsync(task, ct);
+    }
+
+    /// <summary>
+    /// Map the task's touched paths onto the repo's areas, store them on the row, and write one
+    /// <see cref="AgentTaskEventType.ScopeDrift"/> event when the declaration did not cover them
+    /// (CARD-0063 S4). Returns the completion header's <c>drift=</c> value, or null.
+    ///
+    /// <para><b>It never blocks, holds, kills or re-types anything</b> — that is the whole design
+    /// decision (§2.5): a path hook could only ever be armed in a worktree, where an out-of-area
+    /// write is already isolated, and it would turn every wrong prediction into a stuck delegate at
+    /// exactly the moment it found the file nobody predicted. And it never throws: observability
+    /// must not be able to break settlement.</para>
+    /// </summary>
+    private async Task<string?> RecordScopeDriftAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct)
+    {
+        if (task.AgentId is not Guid agentId)
+            return null;
+
+        try
+        {
+            if (services.GetService<AgentFilesService>() is not { } files)
+                return null;
+
+            var dto = await files.GetFilesAsync(agentId, since: null, ct);
+            if (dto?.Files is not { Count: > 0 } touched)
+                return null;
+
+            var map = services.GetService<AreaMapLoader>()?.Load(task.RepoPath) ?? AreaMap.Empty;
+            var result = ScopeDriftPolicy.Evaluate(task.Scope, touched.Select(f => f.Path), map);
+            task.ObservedScope = result.ObservedScope;
+
+            if (ScopeDriftPolicy.DescribeDrift(task.Scope, result.Drifted) is not { } detail)
+                return null;
+
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.ScopeDrift, detail, now));
+            _logger.LogInformation(
+                "Task {ShortId} drifted: {Detail}", DelegationReportFormatter.Short(task.Id), detail);
+            return ScopeDriftPolicy.DescribeHeader(result.Drifted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not record scope drift for task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
+            return null;
+        }
     }
 
     /// <summary>
@@ -1092,13 +1145,14 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private async Task DeliverToParentAsync(
         AgentTask task, string report, CancellationToken ct, string? workspaceNote = null,
-        string? warning = null)
+        string? warning = null, string? drift = null)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
         var note = DelegationReportFormatter.BuildCompletionNote(
-            task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning);
+            task, _settings, report, workspaceNote, ReplyInlineMaxChars, warning,
+            await DescribeOverlappingRunningAsync(task, ct), drift);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1118,6 +1172,65 @@ public sealed class AgentTaskReplyService
             _logger.LogWarning(
                 ex, "Could not deliver task {ShortId} report to parent session {SessionId}",
                 DelegationReportFormatter.Short(task.Id), parentSession);
+        }
+    }
+
+    /// <summary>
+    /// Short ids of tasks still running in this task's repo whose areas it touched, or null when
+    /// there are none (CARD-0063 S3).
+    ///
+    /// <para>This is the entire merge-ordering deliverable. The server's auto-merge has met zero
+    /// conflicts in production because 216 of 246 merge-backs are LeftForHuman: the operator merges
+    /// by hand, by design. Naming the live task that shares this one's ground lets them pick an
+    /// order in which the second rebase is trivial - which is worth far more than a merge queue
+    /// nothing would use.</para>
+    ///
+    /// <para>Declared-scope intersections only. D3's "two shared writers in one checkout" is a
+    /// dispatch-safety rule, not a statement about which files this task's diff touches, so it has
+    /// no business in a merge-order hint. Never throws: an observability line must not be able to
+    /// stop a settlement (the same contract as the catch this method sits beside).</para>
+    /// </summary>
+    private async Task<string?> DescribeOverlappingRunningAsync(AgentTask task, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(task.Scope))
+            return null;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var map = scope.ServiceProvider.GetService<AreaMapLoader>()?.Load(task.RepoPath)
+                ?? AreaMap.Empty;
+            var mine = ScopeResolver.Resolve(task.Scope, map);
+            var key = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+
+            var running = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id != task.Id
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                    && t.Scope != null
+                    && t.Workspace != WorkspaceMode.ReadOnly
+                    && t.Role != AgentTaskRole.Check)
+                .Select(t => new { t.Id, t.WorkingDirectory, t.RepoPath, t.Scope })
+                .ToListAsync(ct);
+
+            var ids = running
+                .Where(t => string.Equals(
+                    DelegationWorkspaceResolver.NormalizeSeparators(
+                        ScopeResolver.KeyFor(t.RepoPath, t.WorkingDirectory)),
+                    DelegationWorkspaceResolver.NormalizeSeparators(key),
+                    StringComparison.OrdinalIgnoreCase))
+                .Where(t => ScopeResolver.Intersects(ScopeResolver.Resolve(t.Scope, map), mine))
+                .Select(t => DelegationReportFormatter.Short(t.Id))
+                .ToList();
+
+            return ids.Count == 0 ? null : string.Join(",", ids);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not list running tasks overlapping task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
+            return null;
         }
     }
 

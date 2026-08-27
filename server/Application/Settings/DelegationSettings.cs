@@ -532,6 +532,21 @@ public sealed class DelegationSettings
     public string AreasFileName { get; set; } = "antiphon.areas.json";
 
     /// <summary>
+    /// Hold a queued <c>Shared</c> task behind ANY running <c>Shared</c> task in the same repo,
+    /// whether or not either declares a scope (CARD-0063 D3).
+    ///
+    /// <para>On by default because the delegate skill already states that a second write-capable
+    /// task in a shared checkout is a collision <b>regardless of scope</b> — one <c>git status</c>,
+    /// one <c>git add -A</c>, one <c>bin/</c> — and its 2026-08-18 live miss is exactly a caller
+    /// forgetting to ask. With the <c>Held</c> event the wait is visible, and the caller can
+    /// re-dispatch with <c>-Worktree</c>. Check-role and ReadOnly tasks are outside it.</para>
+    ///
+    /// <para>Turn it off to run deliberately sequential shared tasks across two checkouts of one
+    /// repo, where the pair is safe and the operator knows it.</para>
+    /// </summary>
+    public bool SerialiseSharedWriters { get; set; } = true;
+
+    /// <summary>
     /// Reuse settled delegates instead of spawning a fresh Claude per task. A Shared task's agent
     /// goes warm on settle and the next task in the same directory (at the same tier) takes it
     /// over — with a focused /compact first when the work is unrelated. Worktree delegates are

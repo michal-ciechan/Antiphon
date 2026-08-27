@@ -250,6 +250,22 @@ switch ($PSCmdlet.ParameterSetName) {
                 $created.shortId, $body.kind.ToLower(), $body.role.ToLower(), $created.modelLevel, $kindNote, $routing)
         # A warning at creation is the caller's one chance to reconsider before the collision.
         if ($created.warning) { Write-Output ("WARNING: {0}" -f $created.warning) }
+        # And so is this: what the declared -Scope costs, right now, against what is already
+        # running. 'serialise' means this task waits; 'warn' means it starts and somebody owes a
+        # rebase. Said here because the dispatcher's verdict is 5 seconds and one queue away, and
+        # by then nobody is reading.
+        foreach ($overlap in @($created.scopeOverlaps)) {
+            if (-not $overlap) { continue }
+            $what = if ($overlap.areas) { $overlap.areas } else { 'shared checkout' }
+            if ($overlap.policy -eq 'serialise') {
+                Write-Output ("  will wait behind {0} ({1}, {2})" -f $overlap.shortId, $what, $overlap.workspace)
+            }
+            else {
+                $branch = if ($overlap.branch) { $overlap.branch } else { 'the shared checkout' }
+                Write-Output ("  overlaps {0} ({1}, {2}) - merge order matters; expect a rebase against {3}" -f `
+                    $overlap.shortId, $what, $overlap.workspace, $branch)
+            }
+        }
         return
     }
 }

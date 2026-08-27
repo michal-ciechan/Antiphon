@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Enums;
+﻿using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -87,6 +87,8 @@ public sealed record AgentTaskSummaryDto(
     string? WorktreePath,
     string? WorktreeBranch,
     string? Scope,
+    /// <summary>Areas the task actually touched, filled at settlement (CARD-0063 S4).</summary>
+    string? ObservedScope,
     Guid? AgentId,
     /// <summary>The delegate that ran (or is running) the work — the board chip names it.</summary>
     string? AgentName,
@@ -161,7 +163,28 @@ public sealed record AgentTaskCreatedDto(
     /// pasting a <c>curl</c> learned it by never receiving the report. Said here, at creation, it
     /// is the one moment the caller can still decide to send a token instead.
     /// </summary>
-    bool NoReplyRouting = false);
+    bool NoReplyRouting = false,
+    /// <summary>
+    /// Tasks already running in this repo whose areas this one touches (CARD-0063 S3). The
+    /// ergonomic centre of the card: the caller declares intent and is told, at once, what that
+    /// intent costs — a wait, or a rebase to expect. Empty when nothing overlaps.
+    /// </summary>
+    IReadOnlyList<ScopeOverlapDto>? ScopeOverlaps = null);
+
+/// <summary>
+/// One running task a newly created task overlaps, and what the dispatcher will do about it.
+/// </summary>
+/// <param name="Policy"><c>serialise</c> (this task will wait) or <c>warn</c> (it will start anyway).</param>
+/// <param name="Areas">The area names or path tokens that intersected; null when the overlap is
+/// D3's "two shared writers in one checkout", which needs no declared scope.</param>
+public sealed record ScopeOverlapDto(
+    Guid TaskId,
+    string ShortId,
+    string Title,
+    WorkspaceMode Workspace,
+    string? Branch,
+    string Policy,
+    string? Areas);
 
 public sealed record ReplyToAgentTaskRequest(string Message);
 

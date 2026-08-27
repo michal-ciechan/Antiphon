@@ -351,7 +351,8 @@ public sealed class AgentTaskService
         RawTokens[id] = token;
         return new AgentTaskCreatedDto(
             id, DelegationReportFormatter.Short(id), task.Status, level, warning, agentKind,
-            NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None);
+            NoReplyRouting: task.ReplyTo == AgentTaskReplyTo.None,
+            ScopeOverlaps: await FindScopeOverlapsAsync(task, ct));
     }
 
     /// <summary>
@@ -989,7 +990,8 @@ public sealed class AgentTaskService
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.AgentKind,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
-            task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.Scope, task.AgentId,
+            task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.Scope, task.ObservedScope,
+            task.AgentId,
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
             task.AgentName,
             task.AgentSessionId, task.Attempt,
@@ -1059,6 +1061,94 @@ public sealed class AgentTaskService
             : "known areas: " + string.Join(", ", map.Names);
         return $"Scope names no area this repo knows: {string.Join(", ", unknown)} "
             + $"— kept as a label, matched exactly against other tasks using it ({known}).";
+    }
+
+    /// <summary>
+    /// Running tasks in this task's repo whose areas it touches, and what each one will cost it
+    /// (CARD-0063 S3). Answered at CREATE time because that is the one moment the caller can still
+    /// change its mind: the dispatcher's own verdict is 5 seconds and one queue away, and by then
+    /// nobody is reading.
+    ///
+    /// <para>Mirrors the tick's arms exactly — the pair-weighted policy, D3's undeclared shared
+    /// writers, ReadOnly and Check outside the lease — so the answer here and the event the task
+    /// earns cannot disagree. Never throws: an overlap listing that broke a create would be a
+    /// bookkeeping field refusing a launch.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<ScopeOverlapDto>?> FindScopeOverlapsAsync(
+        AgentTask task, CancellationToken ct)
+    {
+        if (task.Workspace == WorkspaceMode.ReadOnly || task.Role == AgentTaskRole.Check)
+            return null;
+
+        try
+        {
+            var key = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+            var map = _areas?.Load(task.RepoPath) ?? AreaMap.Empty;
+            var scope = ScopeResolver.Resolve(task.Scope, map);
+
+            var running = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id != task.Id
+                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+                    && t.Workspace != WorkspaceMode.ReadOnly
+                    && t.Role != AgentTaskRole.Check)
+                .Select(t => new
+                {
+                    t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch,
+                })
+                .ToListAsync(ct);
+
+            var overlaps = new List<ScopeOverlapDto>();
+            foreach (var other in running)
+            {
+                if (!string.Equals(
+                        DelegationWorkspaceResolver.NormalizeSeparators(
+                            ScopeResolver.KeyFor(other.RepoPath, other.WorkingDirectory)),
+                        DelegationWorkspaceResolver.NormalizeSeparators(key),
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var intersection = ScopeResolver.Intersect(
+                    ScopeResolver.Resolve(other.Scope, map), scope);
+                ScopeOverlapPolicy policy;
+                string? areas;
+                if (intersection.Any)
+                {
+                    policy = ScopeResolver.PolicyFor(task.Workspace, other.Workspace, intersection.AllAllow);
+                    areas = intersection.Describe();
+                }
+                else if (_settings.SerialiseSharedWriters
+                    && task.Workspace == WorkspaceMode.Shared
+                    && other.Workspace == WorkspaceMode.Shared)
+                {
+                    policy = ScopeOverlapPolicy.Serialise;
+                    areas = null;
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (policy == ScopeOverlapPolicy.Allow)
+                    continue;
+
+                overlaps.Add(new ScopeOverlapDto(
+                    other.Id,
+                    DelegationReportFormatter.Short(other.Id),
+                    other.Title,
+                    other.Workspace,
+                    other.WorktreeBranch,
+                    policy == ScopeOverlapPolicy.Serialise ? "serialise" : "warn",
+                    areas));
+            }
+
+            return overlaps.Count == 0 ? null : overlaps;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not compute scope overlaps for task {ShortId}.",
+                DelegationReportFormatter.Short(task.Id));
+            return null;
+        }
     }
 
     /// <summary>The declared areas of the repo a directory belongs to, for the areas endpoint.</summary>

@@ -131,8 +131,11 @@ public class DelegationScopeHoldTests
     {
         // The only hold in 623 live tasks, and it was wrong: CARD-0054 slice 3 waited 579 seconds
         // behind slice 2 because "card-reopen-client".StartsWith("card-reopen-cli").
+        //
+        // SerialiseSharedWriters off: D3 would hold this pair anyway, for the honest reason that
+        // they share a checkout, and that would hide whether the LABEL rule still matches by prefix.
         using var workspace = new TempWorkspace();
-        var dispatcher = CreateDispatcher();
+        var dispatcher = CreateDispatcher(serialiseSharedWriters: false);
         await SeedRunningTaskAsync(
             workspace.Path, WorkspaceMode.Shared, "card-reopen-client", title: "slice 2");
         var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
@@ -146,9 +149,121 @@ public class DelegationScopeHoldTests
             .ShouldBe(AgentTaskStatus.Dispatched, "two different labels are two different areas");
     }
 
+    // ---- CARD-0063 S3: the pair decides, not the area ---------------------------------------
+
+    [Test]
+    public async Task a_worktree_task_dispatches_over_a_shared_holder_with_one_warning()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatcher();
+        var holder = await SeedRunningTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, "delivery", title: "the shared writer",
+            branch: "feat/holder");
+        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var isolated = await SeedQueuedTaskAsync(
+            workspace.Path, WorkspaceMode.Worktree, "delivery", pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == isolated.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched, "a worktree collides at merge, not at dispatch");
+        (await verify.AgentTaskEvents
+                .AnyAsync(e => e.AgentTaskId == isolated.Id && e.Type == AgentTaskEventType.Held))
+            .ShouldBeFalse();
+        var warnings = await verify.AgentTaskEvents
+            .Where(e => e.AgentTaskId == isolated.Id && e.Type == AgentTaskEventType.Warning)
+            .ToListAsync();
+        warnings.Count.ShouldBe(1);
+        warnings[0].Detail.ShouldContain(DelegationReportFormatter.Short(holder.Id));
+        warnings[0].Detail.ShouldContain("the shared writer");
+        warnings[0].Detail.ShouldContain("feat/holder");
+        warnings[0].Detail.ShouldContain("Worktree");
+    }
+
+    [Test]
+    public async Task two_worktree_tasks_in_one_area_both_run()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatcher();
+        await SeedRunningTaskAsync(
+            workspace.Path, WorkspaceMode.Worktree, "delivery", title: "worktree one",
+            branch: "feat/one");
+        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var second = await SeedQueuedTaskAsync(
+            workspace.Path, WorkspaceMode.Worktree, "delivery", pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+        (await verify.AgentTaskEvents
+                .CountAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Warning))
+            .ShouldBe(1);
+    }
+
+    [Test]
+    public async Task an_undeclared_shared_writer_waits_behind_another_shared_writer()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatcher();
+        var holder = await SeedRunningTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, scope: null, title: "the first writer");
+        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var second = await SeedQueuedTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, scope: null, pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id)).Status
+            .ShouldBe(AgentTaskStatus.Queued, "two shared writers share one working TREE");
+        var held = await verify.AgentTaskEvents
+            .SingleAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Held);
+        held.Detail.ShouldContain(DelegationReportFormatter.Short(holder.Id));
+        held.Detail.ShouldContain("no intersecting scope");
+    }
+
+    [Test]
+    public async Task undeclared_shared_writers_run_concurrently_with_the_setting_off()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatcher(serialiseSharedWriters: false);
+        await SeedRunningTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, scope: null, title: "the first writer");
+        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var second = await SeedQueuedTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, scope: null, pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == second.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched, "the operator turned the rule off deliberately");
+    }
+
+    [Test]
+    public async Task a_read_only_task_is_outside_the_undeclared_shared_writer_rule_too()
+    {
+        using var workspace = new TempWorkspace();
+        var dispatcher = CreateDispatcher();
+        await SeedRunningTaskAsync(
+            workspace.Path, WorkspaceMode.Shared, scope: null, title: "a running writer");
+        var (agentId, _) = await SeedWarmAgentAsync(workspace.Path);
+        var reader = await SeedQueuedTaskAsync(
+            workspace.Path, WorkspaceMode.ReadOnly, scope: null, pinnedAgentId: agentId);
+
+        await dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        (await verify.AgentTasks.SingleAsync(t => t.Id == reader.Id)).Status
+            .ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static AgentTaskDispatcher CreateDispatcher()
+    private static AgentTaskDispatcher CreateDispatcher(bool serialiseSharedWriters = true)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -165,6 +280,7 @@ public class DelegationScopeHoldTests
             // The fixture database is shared; leftover Dispatched/Working rows from other suites
             // must never eat this harness's dispatch budget.
             MaxConcurrentTasks = 512,
+            SerialiseSharedWriters = serialiseSharedWriters,
         }));
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
@@ -207,10 +323,11 @@ public class DelegationScopeHoldTests
 
     private static async Task<AgentTask> SeedRunningTaskAsync(
         string directory, WorkspaceMode workspace, string? scope,
-        string title, string? repoPath = null)
+        string title, string? repoPath = null, string? branch = null)
     {
         var task = NewTask(directory, workspace, scope, repoPath, title);
         task.Status = AgentTaskStatus.Working;
+        task.WorktreeBranch = branch ?? task.WorktreeBranch;
         task.DispatchedAt = DateTime.UtcNow.AddMinutes(-1);
         await using var db = CreateContext();
         db.AgentTasks.Add(task);
@@ -222,6 +339,7 @@ public class DelegationScopeHoldTests
         string directory, WorkspaceMode workspace, string? scope, string? repoPath, string title)
     {
         var id = Guid.NewGuid();
+        var shortId = id.ToString("N")[..8];
         return new AgentTask
         {
             Id = id,
@@ -235,6 +353,12 @@ public class DelegationScopeHoldTests
             WorkingDirectory = directory,
             RepoPath = repoPath,
             Scope = scope,
+            // Pre-filled for a Worktree task so the dispatch does not try a real `git worktree add`
+            // in a temp directory that is not a repo — the lease is what is under test, not git.
+            WorktreePath = workspace == WorkspaceMode.Worktree
+                ? Path.Combine(directory, "worktrees", $"task-{shortId}")
+                : null,
+            WorktreeBranch = workspace == WorkspaceMode.Worktree ? $"feat/task-{shortId}" : null,
             Ephemeral = true,
             CreatedAt = DateTime.UtcNow,
         };

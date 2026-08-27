@@ -66,6 +66,22 @@ public sealed record ScopeIntersection(bool Any, bool AllAllow, IReadOnlyList<st
 }
 
 /// <summary>
+/// What an intersection between two tasks costs. Ordered so the strongest verdict across several
+/// running tasks is simply the maximum.
+/// </summary>
+public enum ScopeOverlapPolicy
+{
+    /// <summary>Nothing happens: no wait, no event.</summary>
+    Allow = 0,
+
+    /// <summary>Dispatch now, but say so — the caller is about to owe somebody a rebase.</summary>
+    Warn = 1,
+
+    /// <summary>Wait. The only pair that corrupts: one checkout, one `git status`, one `bin/`.</summary>
+    Serialise = 2,
+}
+
+/// <summary>
 /// The advisory file lease's comparison: a list of elements resolved through the repo's area map,
 /// rather than one string compared by prefix.
 ///
@@ -104,6 +120,37 @@ public static class ScopeResolver
     /// </summary>
     public static string KeyFor(string? repoPath, string workingDirectory) =>
         string.IsNullOrWhiteSpace(repoPath) ? workingDirectory : repoPath;
+
+    /// <summary>
+    /// What an intersection between these two workspaces costs (CARD-0063 §2.3). The severity is
+    /// mostly a property of the PAIR, not of the area:
+    ///
+    /// <list type="bullet">
+    /// <item>ReadOnly ↔ anything: <b>allow</b>. It writes nothing.</item>
+    /// <item>Every intersecting area weighted <c>allow</c>: <b>allow</b>. The per-area weight is a
+    /// downgrade only — it can never raise <see cref="ScopeOverlapPolicy.Warn"/> to
+    /// <see cref="ScopeOverlapPolicy.Serialise"/>.</item>
+    /// <item>Shared ↔ Shared: <b>serialise</b>. One checkout, one <c>git status</c>, one
+    /// <c>bin/</c> — the only pair that corrupts.</item>
+    /// <item>Anything else (Worktree on either side): <b>warn</b>. The worktree task is isolated;
+    /// it collides at merge, and holding its dispatch throws away the parallelism worktrees exist
+    /// to give. In 623 live tasks the hold never once protected anything.</item>
+    /// </list>
+    /// </summary>
+    public static ScopeOverlapPolicy PolicyFor(WorkspaceMode queued, WorkspaceMode running, bool allAllow)
+    {
+        if (queued == WorkspaceMode.ReadOnly || running == WorkspaceMode.ReadOnly)
+            return ScopeOverlapPolicy.Allow;
+        if (allAllow)
+            return ScopeOverlapPolicy.Allow;
+        return queued == WorkspaceMode.Shared && running == WorkspaceMode.Shared
+            ? ScopeOverlapPolicy.Serialise
+            : ScopeOverlapPolicy.Warn;
+    }
+
+    /// <summary>How a pair reads in an event sentence: <c>Shared ↔ Worktree</c>.</summary>
+    public static string DescribePair(WorkspaceMode queued, WorkspaceMode running) =>
+        $"{queued} ↔ {running}";
 
     /// <summary>Split a declared scope into its elements. Never null; empty for a blank scope.</summary>
     public static IReadOnlyList<ScopeToken> Parse(string? scope)

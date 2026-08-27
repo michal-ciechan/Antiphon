@@ -17,6 +17,7 @@
     "worktreePath": null,
     "worktreeBranch": null,
     "scope": "docs/setup.md",
+    "observedScope": null,
     "agentId": "bbbbbbbb-0000-0000-0000-000000000004",
     "agentName": "task-install",
     "agentSessionId": null,

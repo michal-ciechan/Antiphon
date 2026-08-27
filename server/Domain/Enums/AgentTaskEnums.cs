@@ -1,4 +1,4 @@
-namespace Antiphon.Server.Domain.Enums;
+﻿namespace Antiphon.Server.Domain.Enums;
 
 /// <summary>
 /// The one structural choice made when delegating: a <see cref="Worker"/> does a piece of work and
@@ -145,4 +145,12 @@ public enum AgentTaskEventType
     /// was invisible: the one real hold in 623 tasks left nothing behind but its own queue time.
     /// </summary>
     Held = 18,
+
+    /// <summary>
+    /// The task touched an area (or an unmapped path) its declared scope did not cover
+    /// (CARD-0063 S4). Recorded at settlement, from the same git-diff-vs-baseline data the Files
+    /// review surface already merges. NEVER a state change and never a block: a drift that recurs
+    /// is either a caller who should declare that area too, or a map missing a path.
+    /// </summary>
+    ScopeDrift = 19,
 }

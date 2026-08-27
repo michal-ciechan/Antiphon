@@ -1,4 +1,4 @@
-using Antiphon.Server.Domain.Enums;
+﻿using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Domain.Entities;
 
@@ -110,6 +110,13 @@ public class AgentTask
 
     /// <summary>Advisory file lease — two Shared tasks with intersecting globs are serialised.</summary>
     public string? Scope { get; set; }
+
+    /// <summary>
+    /// What the task actually touched, mapped back onto the repo's areas at settlement
+    /// (CARD-0063 S4). Same shape as <see cref="Scope"/>: area names, plus any path that matched
+    /// no area. Observability only — nothing is ever failed, held or killed for drifting.
+    /// </summary>
+    public string? ObservedScope { get; set; }
 
     /// <summary>Pinned agent; null means an ephemeral one is spawned at the task's tier.</summary>
     public Guid? AgentId { get; set; }

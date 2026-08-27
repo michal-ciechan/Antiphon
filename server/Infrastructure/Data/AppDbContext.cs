@@ -1387,6 +1387,7 @@ public class AppDbContext : DbContext
             entity.Property(t => t.MergeTargetRef).HasMaxLength(300);
             entity.Property(t => t.AgentName).HasMaxLength(200);
             entity.Property(t => t.Scope).HasMaxLength(1000);
+            entity.Property(t => t.ObservedScope).HasMaxLength(1000);
             entity.Property(t => t.Status).IsRequired();
             entity.Property(t => t.ReplyTo).IsRequired();
             entity.Property(t => t.FailureReason).HasMaxLength(4000);

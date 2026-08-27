@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -51,7 +51,7 @@ public static class DelegationReportFormatter
           .Append(" tier=").Append(task.ModelLevel)
           .Append(" workspace=").Append(task.Workspace);
         if (!string.IsNullOrWhiteSpace(task.Scope))
-            sb.Append(" scope=").Append(task.Scope);
+            sb.Append(" areas=").Append(task.Scope);
         sb.AppendLine().AppendLine();
 
         if (refocus)
@@ -184,9 +184,16 @@ public static class DelegationReportFormatter
     /// <see cref="FitReport"/>: the ceiling and the excerpt arithmetic are about the report, and a
     /// warning that could itself be excerpted away would be worthless.
     /// </param>
+    /// <param name="overlappingRunning">
+    /// Short ids of tasks that were still running when this one settled and whose areas it touched
+    /// (CARD-0063 S3). This is the WHOLE of the card's merge-ordering deliverable: the operator
+    /// merges by hand, so being told which live task shares this one's ground is what lets them
+    /// pick an order in which the second rebase is trivial. No queue, no lock.
+    /// </param>
     public static Note BuildCompletionNote(
         AgentTask task, DelegationSettings settings, string report, string? workspaceNote = null,
-        int? replyInlineMaxChars = null, string? warning = null)
+        int? replyInlineMaxChars = null, string? warning = null, string? overlappingRunning = null,
+        string? drift = null)
     {
         var header = new StringBuilder();
         header.Append('[').Append("task ").Append(Short(task.Id)).Append(' ')
@@ -199,6 +206,12 @@ public static class DelegationReportFormatter
             bits.Add(FormatDuration(finished - started));
         if (task.CostUsd > 0) bits.Add($"${task.CostUsd:0.000}");
         if (!string.IsNullOrWhiteSpace(workspaceNote)) bits.Add(workspaceNote.Trim());
+        if (!string.IsNullOrWhiteSpace(overlappingRunning))
+            bits.Add($"overlapping-running={overlappingRunning.Trim()}");
+        // CARD-0063 S4: what this task actually touched outside what it declared. A fact for the
+        // caller, never a verdict on the work.
+        if (!string.IsNullOrWhiteSpace(drift))
+            bits.Add($"drift={drift.Trim()}");
         if (bits.Count > 0) header.Append(' ').Append(string.Join(" · ", bits));
 
         var (body, excerpted) = FitReport(report ?? string.Empty, task, settings, replyInlineMaxChars);
@@ -315,7 +328,7 @@ public static class DelegationReportFormatter
           .Append(" tier=").Append(task.ModelLevel)
           .Append(" workspace=").Append(task.Workspace);
         if (!string.IsNullOrWhiteSpace(task.Scope))
-            sb.Append(" scope=").Append(task.Scope);
+            sb.Append(" areas=").Append(task.Scope);
         sb.AppendLine().AppendLine();
 
         sb.AppendLine($"""

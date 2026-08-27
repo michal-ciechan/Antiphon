@@ -592,6 +592,11 @@ public class CodexDelegateDispatchTests
             // The fixture database is shared across suites; leftover Dispatched/Working rows from
             // other tests must never eat this harness's dispatch budget.
             MaxConcurrentTasks = 512,
+            // These tests are about which PROGRAM a task launches, and several of them dispatch two
+            // Shared tasks into one directory in a single tick to compare the two stamps. CARD-0063
+            // D3 holds the second of those by design (two shared writers share one working tree);
+            // the lease has its own tests, so it is turned off here rather than reshaping these.
+            SerialiseSharedWriters = false,
         };
         if (budgetChars is int budget)
             delegation.CommandLineBudgetChars = budget;

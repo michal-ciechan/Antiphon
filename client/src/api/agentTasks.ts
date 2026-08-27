@@ -84,6 +84,8 @@ export interface AgentTaskSummaryDto {
   worktreePath: string | null
   worktreeBranch: string | null
   scope: string | null
+  /** Areas the task actually touched, filled at settlement (CARD-0063 S4). */
+  observedScope?: string | null
   agentId: string | null
   agentName: string | null
   agentSessionId: string | null
