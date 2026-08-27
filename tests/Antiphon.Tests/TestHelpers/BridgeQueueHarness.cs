@@ -145,6 +145,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<GitWorkspaceService>();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<CardService>();
+        // OrchestratorService depends on AgentSessionLaunchComposer since 1b1b667 (2026-08-26);
+        // this harness's copy of that registration was missed at the time.
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<OrchestratorService>();
         services.AddSingleton<OrchestratorControlState>();
         services.AddSingleton<AgentSessionLaunchQueue>();
