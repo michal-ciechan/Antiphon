@@ -275,6 +275,8 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 ## Gotchas
 
+- **A card's decision question lives on its move/reopen revision and the attention feed — never add a column for it, and never route a decision through the alert sinks.**
+
 - **Dev compose file**: Always use `docker compose -f docker-compose.dev.yml up -d` — the default `docker-compose.yml` is not the dev stack.
 - **Startup order**: Postgres must be healthy before the .NET server starts. Postgres is now an always-on external container (auto-started at login), so it is already up by the time you run `dev-aspire.ps1`. The AppHost references it via `AddConnectionString` (no `WaitFor` — connection-string resources don't support it); `dev-aspire.ps1` also `docker compose up -d`'s it as a safety net.
 - **npm install first**: `client/node_modules` may not exist — run `npm install` before `npm run dev` or `npm run storybook`.

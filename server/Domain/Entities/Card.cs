@@ -26,6 +26,13 @@ public class Card
     public string? TerminalReason { get; set; }
 
     /// <summary>
+    /// The last decision question that was sent to digest channels. It is deliberately separate
+    /// from card history: notification delivery is operational state, not a user-facing edit.
+    /// A later parking has a newer attention <c>SinceUtc</c> and therefore wakes the human again.
+    /// </summary>
+    public DateTime? DecisionNotifiedAt { get; set; }
+
+    /// <summary>
     /// Set when the card is archived. Archive is what "delete" means here — the row stays, so a
     /// card that is cited in commit messages, docs and other cards' terminal reasons never turns
     /// into a dangling reference, and <c>NextIdentifierAsync</c> keeps seeing its identifier

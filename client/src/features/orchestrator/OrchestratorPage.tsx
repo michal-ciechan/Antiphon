@@ -1,12 +1,13 @@
 import { Badge, Tabs } from '@mantine/core'
 import { useSearchParams } from 'react-router'
-import { TbAlertHexagon, TbCards, TbSitemap } from 'react-icons/tb'
+import { TbAlertHexagon, TbCards, TbHelpCircle, TbSitemap } from 'react-icons/tb'
 import { useAttention } from '../../api/attention'
 import { AttentionPanel } from '../attention/AttentionPanel'
+import { DecisionsPanel } from '../attention/DecisionsPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
 import { OrchestratorPanel } from './OrchestratorPanel'
 
-const TABS = ['cards', 'delegations', 'attention'] as const
+const TABS = ['cards', 'delegations', 'attention', 'decisions'] as const
 type TabValue = (typeof TABS)[number]
 
 /**
@@ -25,6 +26,7 @@ export function OrchestratorPage() {
   // Settled failures are carried as context and must not make a healthy fleet look busy — the badge
   // counts only conditions that are still open, matching the panel's own header.
   const openCount = (attention.data?.items ?? []).filter((item) => item.kind !== 'RecentFailure').length
+  const decisionCount = (attention.data?.items ?? []).filter((item) => item.kind === 'CardNeedsDecision').length
 
   return (
     <Tabs
@@ -56,6 +58,17 @@ export function OrchestratorPage() {
         >
           Needs attention
         </Tabs.Tab>
+        <Tabs.Tab
+          value="decisions"
+          leftSection={<TbHelpCircle size={16} />}
+          rightSection={
+            decisionCount > 0 ? (
+              <Badge size="xs" variant="filled" color="danger" circle>{decisionCount}</Badge>
+            ) : null
+          }
+        >
+          Decisions
+        </Tabs.Tab>
       </Tabs.List>
 
       <Tabs.Panel value="cards">
@@ -66,6 +79,9 @@ export function OrchestratorPage() {
       </Tabs.Panel>
       <Tabs.Panel value="attention">
         <AttentionPanel />
+      </Tabs.Panel>
+      <Tabs.Panel value="decisions">
+        <DecisionsPanel />
       </Tabs.Panel>
     </Tabs>
   )

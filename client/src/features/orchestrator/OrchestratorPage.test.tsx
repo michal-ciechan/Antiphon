@@ -35,6 +35,7 @@ function serve(items: AttentionItemDto[]) {
       }),
     ),
     http.get('/api/agent-tasks', () => HttpResponse.json([])),
+    http.get('/api/boards', () => HttpResponse.json([])),
     // The Cards tab renders eagerly alongside the others, so its own endpoint has to answer with a
     // real shape — an empty object throws inside OrchestratorPanel and takes the page down with it.
     http.get('/api/orchestrator/state', () =>
@@ -94,5 +95,13 @@ describe('OrchestratorPage', () => {
       expect(new URLSearchParams(window.location.search).get('tab')).toBe('attention'),
     )
     expect(await screen.findByText('Which branch should this land on?')).toBeInTheDocument()
+  })
+
+  it('the decisions tab badge counts decision cards and nothing else', async () => {
+    serve([stuck({ kind: 'CardNeedsDecision', cardId: 'card-1', boardId: 'board-1' }), stuck({})])
+    renderWithProviders(<OrchestratorPage />)
+
+    const tab = await screen.findByRole('tab', { name: /Decisions/ })
+    await waitFor(() => expect(tab).toHaveTextContent('1'))
   })
 })

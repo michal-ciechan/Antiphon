@@ -80,6 +80,38 @@ function discussionHandler(cardId = 'card-1') {
 }
 
 describe('CardModal', () => {
+  it('a card in Needs decision leads with its question and a Decide button', async () => {
+    server.use(
+      agentDefinitionsHandler(), discussionHandler(),
+      http.get('/api/attention', () => HttpResponse.json({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items: [{
+        kind: 'CardNeedsDecision', severity: 'Critical', taskId: null, sessionId: null, agentId: null, messageId: null,
+        cardId: 'card-1', boardId: 'board-1', title: 'CARD-0001 — Implement terminal', headline: 'Needs a decision', evidence: 'Should this use WebGL?', sinceUtc: '2026-08-27T10:00:00Z', subtreeCostUsd: null, actions: ['OpenCard'],
+      }] })),
+      http.get('/api/cards/card-1/revisions', () => HttpResponse.json([])),
+    )
+    renderWithProviders(<CardModal boardId="board-1" card={{ ...card, status: 'NeedsDecision' }} columns={[{
+      id: 'column-backlog', stateKey: 'backlog', name: 'Backlog', columnOrder: 0, cardStatus: 'Backlog', isActive: false, isTerminal: false, maxConcurrentSessions: null, cards: [],
+    }]} opened onClose={() => undefined} />)
+
+    await waitFor(() => expect(screen.getByTestId('waiting-on-decision')).toHaveTextContent('Should this use WebGL?'))
+    expect(screen.getByRole('button', { name: 'Decide…' })).toBeInTheDocument()
+  })
+
+  it('falls back to the revision history when the feed has no row yet', async () => {
+    server.use(
+      agentDefinitionsHandler(), discussionHandler(),
+      http.get('/api/attention', () => HttpResponse.json({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items: [] })),
+      http.get('/api/cards/card-1/revisions', () => HttpResponse.json([{
+        id: 'revision-1', cardId: 'card-1', revisionNumber: 1, kind: 'Reopen', title: null, description: null, priority: null, labels: null,
+        fromColumnId: null, toColumnId: 'column-decision', fromStatus: 'Done', toStatus: 'NeedsDecision', reason: 'Pick a database.', editedBy: null,
+        createdAt: '2026-08-27T10:00:00Z', terminalReason: null, completedAt: null,
+      }])),
+    )
+    renderWithProviders(<CardModal boardId="board-1" card={{ ...card, status: 'NeedsDecision' }} opened onClose={() => undefined} />)
+
+    await waitFor(() => expect(screen.getByTestId('waiting-on-decision')).toHaveTextContent('Pick a database.'))
+  })
+
   it('posts spawn with the selected agent definition', async () => {
     const spawnSpy = vi.fn()
     server.use(

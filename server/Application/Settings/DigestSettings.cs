@@ -9,6 +9,7 @@ public sealed class DigestSettings
     public List<string> SendTimesLocal { get; set; } = ["08:00", "18:00"];
     public string TimeZone { get; set; } = "Europe/London";
     public bool WakeOnBlocked { get; set; } = true;
+    public bool WakeOnDecision { get; set; } = true;
     public int SweepSeconds { get; set; } = 60;
     public int MaxChars { get; set; } = 3500;
     public int RowsPerSection { get; set; } = 5;

@@ -280,6 +280,11 @@ GET    /api/version                          build-time git SHA (CARD-0179); /he
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
 ```
 
+`GET /api/attention` includes `CardNeedsDecision` rows for cards currently in the Needs decision
+state. Each row carries the card and board IDs, the move/reopen reason as its evidence, and the
+`OpenCard` action. The dedicated human-decision surface is
+`/orchestrator?tab=decisions`; it uses this same feed rather than a second decisions endpoint.
+
 ## 3. Real-time (SignalR)
 
 Hub: `/hubs/antiphon` (`AntiphonHub`). Client-callable methods: `JoinGroup`, `LeaveGroup`,

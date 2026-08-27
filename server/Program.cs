@@ -438,6 +438,7 @@ try
     builder.Services.AddScoped<AwayDigestProjection>();
     builder.Services.AddScoped<AwayDigestNotifier>();
     builder.Services.AddScoped<BlockedTaskNotifier>();
+    builder.Services.AddScoped<DecisionCardNotifier>();
     builder.Services.AddScoped<CostTrackingService>();
     builder.Services.AddScoped<FeatureStatusService>();
 

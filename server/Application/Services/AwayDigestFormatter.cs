@@ -18,6 +18,8 @@ public static class AwayDigestFormatter
         };
         var rows = Math.Max(1, settings.RowsPerSection);
         AddTasks(lines, "❗ Needs you", digest.NeedsYou, "asked", rows);
+        if (digest.Decisions.Count > 0)
+            AddCards(lines, "❓ Decisions", digest.Decisions, rows, includeDetail: true);
         AddTasks(lines, "✗ Failed", digest.Failed, "failed", rows);
         AddTasks(lines, "✓ Finished", digest.Finished, "finished", rows);
         if (digest.Review.Count > 0)
@@ -43,6 +45,17 @@ public static class AwayDigestFormatter
         return Cap($"❓ task {id} needs an answer — {blocked.Title}\n{Clean(blocked.Evidence, SentenceChars)} (blocked {blocked.SinceUtc?.ToLocalTime():HH:mm}, ${(blocked.SubtreeCostUsd ?? 0m):F2} so far)", MaxChars);
     }
 
+    public static string FormatDecisionPing(AttentionItemDto decision, DigestSettings? settings = null)
+    {
+        var title = decision.Title.Split(" — ", 2);
+        var identifier = title[0];
+        var cardTitle = title.Length > 1 ? title[1] : decision.Title;
+        var text = $"❓ {identifier} needs a decision — {cardTitle}\n{Clean(decision.Evidence, SentenceChars)} (parked {decision.SinceUtc?.ToLocalTime():HH:mm})";
+        if (!string.IsNullOrWhiteSpace(settings?.PublicBaseUrl))
+            text += "\n" + settings.PublicBaseUrl.TrimEnd('/') + "/orchestrator?tab=decisions";
+        return Cap(text, MaxChars);
+    }
+
     public static string FormatQuiet(AwayDigestDto digest, DateTimeOffset localNow) =>
         $"Quiet since {digest.SinceUtc.ToLocalTime():HH:mm} · {digest.Running.Count} running · nothing needs you";
 
@@ -54,10 +67,12 @@ public static class AwayDigestFormatter
             lines.Add($"• {task.ShortId} {Clean(task.Title, 80)} — {verb}: {Clean(task.Detail, SentenceChars)}{(task.CostUsd > 0 ? $" (${task.CostUsd:F2})" : string.Empty)}");
         if (tasks.Count > rows) lines.Add($"• +{tasks.Count - rows} more");
     }
-    private static void AddCards(List<string> lines, string heading, IReadOnlyList<AwayDigestCardDto> cards, int rows)
+    private static void AddCards(List<string> lines, string heading, IReadOnlyList<AwayDigestCardDto> cards, int rows, bool includeDetail = false)
     {
         lines.Add($"{heading} ({cards.Count})");
-        foreach (var card in cards.Take(rows)) lines.Add($"• {card.Identifier} {Clean(card.Title, SentenceChars)}");
+        foreach (var card in cards.Take(rows))
+            lines.Add($"• {card.Identifier} {Clean(card.Title, SentenceChars)}" +
+                (includeDetail && !string.IsNullOrWhiteSpace(card.Detail) ? $" — {Clean(card.Detail, SentenceChars)}" : string.Empty));
         if (cards.Count > rows) lines.Add($"• +{cards.Count - rows} more");
     }
     private static string Clean(string? text, int max)

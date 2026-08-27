@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Button, Group, Menu, Modal, Stack, Text, Textarea } from '@mantine/core'
+import { ActionIcon, Alert, Button, Group, Menu, Modal, Select, Stack, Text, Textarea } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
 import { TbAlertTriangle, TbArchive, TbArchiveOff, TbCopy, TbDots, TbRestore } from 'react-icons/tb'
@@ -18,7 +18,7 @@ interface MoveMenuProps {
   boardId: string
   card: CardDto
   columns: BoardColumnDto[]
-  variant?: 'kebab' | 'button'
+  variant?: 'kebab' | 'button' | 'decide'
   /**
    * Called after a successful archive. The card leaves the default board payload, so anything
    * showing it (the card modal) has to let go rather than wait for `selectedCard` to resolve null.
@@ -52,6 +52,8 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
   // targets would only produce a 409 the operator has to read to understand.
   const targets = archived ? [] : legalMoveTargets(card, columns)
   const needsDecisionReason = target?.cardStatus === 'NeedsDecision'
+  const deciding = variant === 'decide'
+  const requiresReason = needsDecisionReason || deciding
 
   const close = () => {
     setTarget(null)
@@ -60,8 +62,15 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
     setReason('')
   }
 
+  const openDecision = () => {
+    // Backlog is the ordinary next state, but an actual decision may close the card or send it to
+    // another legal column. The dialog exposes those same legal targets instead of inventing a
+    // second move path.
+    setTarget(targets.find((column) => column.cardStatus === 'Backlog') ?? targets[0] ?? null)
+  }
+
   const submit = () => {
-    if (!target || (needsDecisionReason && !reason.trim())) return
+    if (!target || (requiresReason && !reason.trim())) return
     const chosen = target
     moveCard.mutate(
       {
@@ -165,6 +174,9 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
 
   return (
     <>
+      {deciding ? (
+        <Button size="xs" variant="light" onClick={openDecision}>Decide…</Button>
+      ) : (
       <Menu position="bottom-end" withinPortal>
         <Menu.Target>
           {/*
@@ -256,6 +268,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
           </Menu.Item>
         </Menu.Dropdown>
       </Menu>
+      )}
 
       <Modal
         opened={!!target}
@@ -264,6 +277,15 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
         zIndex={400}
       >
         <Stack>
+          {deciding && (
+            <Select
+              label="Move to"
+              data={targets.map((column) => ({ value: column.id, label: column.name }))}
+              value={target?.id ?? null}
+              onChange={(id) => setTarget(targets.find((column) => column.id === id) ?? null)}
+              allowDeselect={false}
+            />
+          )}
           {target?.isActive && (
             <Alert
               color="warning"
@@ -280,9 +302,10 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
             </Alert>
           )}
           <Textarea
-            label="Reason"
-            placeholder={needsDecisionReason ? 'What decision is needed?' : 'Why this card is moving'}
-            withAsterisk={needsDecisionReason}
+            label={deciding ? 'Your decision' : 'Reason'}
+            placeholder={deciding ? 'Record the decision' : needsDecisionReason ? 'What decision is needed?' : 'Why this card is moving'}
+            withAsterisk={requiresReason}
+            required={requiresReason}
             autosize
             minRows={2}
             value={reason}
@@ -294,7 +317,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
           </Text>
           <Group justify="flex-end">
             <Button variant="subtle" onClick={close}>Cancel</Button>
-            <Button onClick={submit} loading={moveCard.isPending} disabled={needsDecisionReason && !reason.trim()}>Move</Button>
+            <Button onClick={submit} loading={moveCard.isPending} disabled={requiresReason && !reason.trim()}>{deciding ? 'Decide' : 'Move'}</Button>
           </Group>
         </Stack>
       </Modal>

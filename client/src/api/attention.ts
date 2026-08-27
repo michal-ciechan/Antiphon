@@ -110,10 +110,11 @@ export const attentionKeys = {
  * connection. CARD-0035 §D5 rules out a new SignalR event for this view — the conditions are
  * derived from state that already broadcasts.
  */
-export function useAttention() {
+export function useAttention(enabled = true) {
   return useQuery({
     queryKey: attentionKeys.all,
     queryFn: () => apiGet<AttentionDto>('/attention'),
     refetchInterval: 15_000,
+    enabled,
   })
 }

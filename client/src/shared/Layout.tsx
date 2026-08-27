@@ -17,6 +17,7 @@ import { TbWifi, TbWifiOff, TbLoader } from 'react-icons/tb'
 import { Outlet, useNavigate, NavLink } from 'react-router'
 import { useConnectionStore } from '../stores/connectionStore'
 import { ReportBugButton } from '../features/diagnostics/ReportBugButton'
+import { DecisionsBadge } from '../features/attention/DecisionsBadge'
 
 function RebelLogo({ size = 20 }: { size?: number }) {
   return (
@@ -169,6 +170,7 @@ export function Layout() {
           {/* Nav links — center (desktop only) */}
           <Group gap="lg" visibleFrom="sm">
             <NavLinks />
+            <DecisionsBadge />
           </Group>
 
           {/* Right — report-bug + connection status + user avatar + mobile burger */}

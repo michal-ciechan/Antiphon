@@ -57,6 +57,34 @@ public class AttentionServiceTests
         item.Actions.ShouldBe([AttentionAction.OpenCard]);
     }
 
+    [Test]
+    public async Task A_card_reopened_straight_into_needs_decision_is_listed_with_the_reopen_reason()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, reopenedAt) = await scenario.AddNeedsDecisionCardAsync(
+            "Should this be released before the migration?", minutesAgo: 8, kind: CardRevisionKind.Reopen);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.CardId == cardId);
+
+        item.Kind.ShouldBe(AttentionKind.CardNeedsDecision);
+        item.Evidence.ShouldBe("Should this be released before the migration?");
+        item.SinceUtc!.Value.ShouldBeInRange(reopenedAt.AddTicks(-10), reopenedAt.AddTicks(10));
+    }
+
+    [Test]
+    public async Task A_card_reopened_then_moved_within_needs_decision_shows_the_newest_reason_once()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddNeedsDecisionCardAsync(
+            "Original question", minutesAgo: 12, kind: CardRevisionKind.Reopen);
+        var movedAt = await scenario.AddNeedsDecisionRevisionAsync(cardId, "Clarified question", minutesAgo: 3);
+
+        var rows = (await ItemsForAsync(scenario)).Where(i => i.CardId == cardId).ToList();
+
+        rows.ShouldHaveSingleItem().Evidence.ShouldBe("Clarified question");
+        rows[0].SinceUtc!.Value.ShouldBeInRange(movedAt.AddTicks(-10), movedAt.AddTicks(10));
+    }
+
     // ---- 1. BlockedQuestion ---------------------------------------------------------------------
 
     [Test]
@@ -1051,7 +1079,7 @@ public class AttentionServiceTests
         }
 
         public async Task<(Guid CardId, Guid BoardId, DateTime MovedAt)> AddNeedsDecisionCardAsync(
-            string reason, int minutesAgo)
+            string reason, int minutesAgo, CardRevisionKind kind = CardRevisionKind.Move)
         {
             var now = DateTime.UtcNow;
             var projectId = Guid.NewGuid();
@@ -1099,7 +1127,7 @@ public class AttentionServiceTests
                 Id = Guid.NewGuid(),
                 CardId = cardId,
                 RevisionNumber = 1,
-                Kind = CardRevisionKind.Move,
+                Kind = kind,
                 FromColumnId = backlogId,
                 ToColumnId = decisionId,
                 FromStatus = CardStatus.Backlog,
@@ -1112,6 +1140,28 @@ public class AttentionServiceTests
             _boards.Add(boardId);
             _cards.Add(cardId);
             return (cardId, boardId, movedAt);
+        }
+
+        public async Task<DateTime> AddNeedsDecisionRevisionAsync(Guid cardId, string reason, int minutesAgo)
+        {
+            var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+            await using var db = CreateContext();
+            var card = await db.Cards.SingleAsync(c => c.Id == cardId);
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(),
+                CardId = cardId,
+                RevisionNumber = ++card.RevisionCount,
+                Kind = CardRevisionKind.Move,
+                FromColumnId = card.BoardColumnId,
+                ToColumnId = card.BoardColumnId,
+                FromStatus = CardStatus.NeedsDecision,
+                ToStatus = CardStatus.NeedsDecision,
+                Reason = reason,
+                CreatedAt = at,
+            });
+            await db.SaveChangesAsync();
+            return at;
         }
 
         public async Task AddIncidentAsync(

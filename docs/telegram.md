@@ -121,6 +121,21 @@ current Antiphon-Family setup; set the list to fail closed).
 - **One bot per group**: Antiphon keys channels on `(provider, chatId)`, so two Antiphon bots in
   the same group would collide on one channel row (see telegram-bot-ops.md).
 
+## Digest channel
+
+Away digests and their loud, one-per-state wake pings are provider-neutral sends, so a Telegram
+channel receives them only when both switches are on: `Digest:Enabled=true` in server configuration
+and that channel's `DigestEnabled=true`. The feature is intentionally inert until an operator sets
+both; `WakeOnBlocked` and `WakeOnDecision` only control their respective pings after a digest
+channel exists.
+
+Blocked work pings start `❓ task <8hex> needs an answer — …`; decision pings start
+`❓ CARD-nnnn needs a decision — …`. A decision stays in the digest's `❓ Decisions` section until
+the card moves out of Needs decision. Set `Digest:PublicBaseUrl` to add the decisions-page link to
+decision pings and the app-root footer to digests. Do not use a
+family/group channel as the digest channel unless it is deliberately the recipient for every
+blocked-task and decision prompt.
+
 ## Tests
 
 - `tests/Antiphon.Messaging.Tests/TelegramMarkdownRendererTests.cs` — pins the full mapping

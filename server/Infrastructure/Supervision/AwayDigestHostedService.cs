@@ -24,6 +24,7 @@ public sealed class AwayDigestHostedService : BackgroundService
                 {
                     await using var scope = _scopes.CreateAsyncScope();
                     await scope.ServiceProvider.GetRequiredService<BlockedTaskNotifier>().SweepAsync(stoppingToken);
+                    await scope.ServiceProvider.GetRequiredService<DecisionCardNotifier>().SweepAsync(stoppingToken);
                     await scope.ServiceProvider.GetRequiredService<AwayDigestNotifier>().SendDueAsync(null, null, false, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }

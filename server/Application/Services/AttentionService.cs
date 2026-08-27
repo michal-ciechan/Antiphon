@@ -233,7 +233,8 @@ public sealed class AttentionService
     private async Task<List<AttentionItemDto>> BuildCardNeedsDecisionAsync(CancellationToken ct)
     {
         var moves = await _db.CardRevisions.AsNoTracking()
-            .Where(r => r.Kind == CardRevisionKind.Move && r.ToStatus == CardStatus.NeedsDecision)
+            .Where(r => (r.Kind == CardRevisionKind.Move || r.Kind == CardRevisionKind.Reopen)
+                && r.ToStatus == CardStatus.NeedsDecision)
             .Include(r => r.Card)
             .Where(r => r.Card.Status == CardStatus.NeedsDecision && r.Card.ArchivedAt == null)
             .ToListAsync(ct);

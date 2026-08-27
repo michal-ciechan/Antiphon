@@ -37,6 +37,12 @@ public sealed class AwayDigestProjection
             .Select(i => new AwayDigestTaskDto(i.TaskId!.Value, Short(i.TaskId.Value), i.Title,
                 FirstSentence(i.Evidence), i.SinceUtc, i.SubtreeCostUsd ?? 0m, i.SinceUtc > sinceUtc))
             .OrderByDescending(i => i.IsNew).ThenBy(i => i.At).ToList();
+        // Decisions are intentionally not windowed: a card is still waiting until it is moved out,
+        // and an away digest that lets an old question disappear recreates the original problem.
+        var decisions = attention.Items
+            .Where(i => i.Kind == AttentionKind.CardNeedsDecision && i.CardId is not null)
+            .Select(i => Decision(i, sinceUtc, untilUtc))
+            .OrderByDescending(i => i.IsNew).ThenBy(i => i.At).ToList();
 
         var roots = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.ParentTaskId == null && t.Role != AgentTaskRole.Check)
@@ -55,7 +61,7 @@ public sealed class AwayDigestProjection
 
         var cards = await _db.Cards.AsNoTracking()
             .Where(c => c.CompletedAt != null && c.CompletedAt > sinceUtc && c.CompletedAt <= untilUtc)
-            .Select(c => new AwayDigestCardDto(c.Identifier, c.Title, c.CompletedAt!.Value)).ToListAsync(ct);
+            .Select(c => new AwayDigestCardDto(c.Identifier, c.Title, c.CompletedAt!.Value, null, false)).ToListAsync(ct);
         finished.AddRange(cards.Select(c => new AwayDigestTaskDto(Guid.Empty, c.Identifier, c.Title, "done", c.At, 0m)));
 
         var reviewMoves = await _db.CardRevisions.AsNoTracking()
@@ -75,11 +81,21 @@ public sealed class AwayDigestProjection
         var subscription = (await _subscriptions.GetLatestAsync(ct))
             .Select(s => new AwayDigestSubscriptionDto(s.Provider, s.RemainingPercent, s.ResetsAt)).ToList();
 
-        return new AwayDigestDto(sinceUtc, untilUtc, false, blocked, failed, finished, review, running, spend, subscription);
+        return new AwayDigestDto(sinceUtc, untilUtc, false, blocked, failed, finished, review, decisions, running, spend, subscription);
     }
 
     private static AwayDigestTaskDto Task(AgentTask t, string detail, decimal cost) =>
         new(t.Id, Short(t.Id), t.Title, detail, t.CompletedAt, cost);
+    private static AwayDigestCardDto Decision(AttentionItemDto item, DateTime sinceUtc, DateTime fallbackAt)
+    {
+        var title = item.Title.Split(" — ", 2);
+        return new AwayDigestCardDto(
+            title[0],
+            title.Length > 1 ? title[1] : item.Title,
+            item.SinceUtc ?? fallbackAt,
+            FirstSentence(item.Evidence),
+            item.SinceUtc > sinceUtc);
+    }
     private static string Short(Guid id) => id.ToString("N")[..8];
     internal static string FirstSentence(string? value)
     {

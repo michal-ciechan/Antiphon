@@ -866,6 +866,7 @@ public class AppDbContext : DbContext
             // long close-out reason into a 500 twice while closing CARD-0042 and CARD-0046, and a
             // review verdict had to be hand-trimmed to exactly 1000 characters to fit.
             entity.Property(c => c.TerminalReason).HasColumnType("text");
+            entity.Property(c => c.DecisionNotifiedAt);
             entity.Property(c => c.ArchivedReason).HasColumnType("text");
             entity.Property(c => c.ArchivedBy).HasMaxLength(200);
             entity.Property(c => c.AutoDispatchHeldAt);

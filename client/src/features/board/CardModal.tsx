@@ -1,10 +1,11 @@
-import { ActionIcon, Anchor, Badge, Box, Button, Group, Modal, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
+import { ActionIcon, Alert, Anchor, Badge, Box, Button, Group, Modal, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { CARD_LIMITS, useCardDiscussion, useCreateCard, useSpawnCard } from '../../api/boards'
+import { CARD_LIMITS, useCardDiscussion, useCardRevisions, useCreateCard, useSpawnCard } from '../../api/boards'
+import { useAttention } from '../../api/attention'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardDiscussionPanel } from './CardDiscussionPanel'
@@ -34,6 +35,8 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
   const spawnCard = useSpawnCard(boardId)
   const discussion = useCardDiscussion(card?.id, opened && !!card)
+  const attention = useAttention(opened && card?.status === 'NeedsDecision')
+  const revisions = useCardRevisions(card?.id, opened && card?.status === 'NeedsDecision')
   const discussionCount = discussion.data?.length ?? 0
   const hasActiveSession = useMemo(
     () => card?.sessions.some((session) =>
@@ -45,6 +48,12 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
   const showDiffReview = !!card?.currentWorktreeId && (card.status === 'Review' || card.status === 'Done')
 
   if (!card) return <CardCreateModal boardId={boardId} opened={opened} onClose={onClose} />
+  const decisionQuestion = attention.data?.items.find(
+    (item) => item.kind === 'CardNeedsDecision' && item.cardId === card.id,
+  )?.evidence ?? revisions.data?.find(
+    (revision) => (revision.kind === 'Move' || revision.kind === 'Reopen')
+      && revision.toStatus === 'NeedsDecision',
+  )?.reason
   const description = card.description.trim()
   const archived = !!card.archivedAt
   const activeSessionCount = card.sessions.filter((session) =>
@@ -170,6 +179,24 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
             </ActionIcon>
           </Group>
         </Group>
+
+        {card.status === 'NeedsDecision' && (
+          <Alert
+            color="danger"
+            variant="light"
+            title="Waiting on a decision"
+            mx="md"
+            mb="sm"
+            data-testid="waiting-on-decision"
+          >
+            <Stack gap="xs">
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {decisionQuestion ?? 'The decision question is loading from the card history.'}
+              </Text>
+              {columns.length > 0 && <MoveMenu boardId={boardId} card={card} columns={columns} variant="decide" />}
+            </Stack>
+          </Alert>
+        )}
 
         <Box className="card-page__body">
           <Box className="card-page__workspace">

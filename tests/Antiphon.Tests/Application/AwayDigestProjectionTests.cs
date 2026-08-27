@@ -154,6 +154,31 @@ public class AwayDigestProjectionTests
     }
 
     [Test]
+    public async Task Decisions_are_not_windowed_and_flag_is_new_by_since()
+    {
+        await using var h = await Harness.CreateAsync();
+        try
+        {
+            var old = await h.AddCardAsync("old decision", CardStatus.NeedsDecision);
+            await h.AddMoveAsync(old, CardStatus.Backlog, CardStatus.NeedsDecision, Since.AddMinutes(-1), "Old question.");
+            var fresh = await h.AddCardAsync("fresh decision", CardStatus.NeedsDecision);
+            await h.AddMoveAsync(fresh, CardStatus.Backlog, CardStatus.NeedsDecision, Until.AddMinutes(-5), "Fresh question.");
+
+            var decisions = (await h.ComputeAsync()).Decisions
+                .Where(c => c.Identifier == old.Identifier || c.Identifier == fresh.Identifier)
+                .ToDictionary(c => c.Identifier);
+
+            decisions[old.Identifier].IsNew.ShouldBeFalse();
+            decisions[fresh.Identifier].IsNew.ShouldBeTrue();
+            decisions[old.Identifier].Detail.ShouldBe("Old question.");
+        }
+        finally
+        {
+            await h.CleanupAsync();
+        }
+    }
+
+    [Test]
     public async Task First_window_stays_false_on_the_projection()
     {
         await using var h = await Harness.CreateAsync();
@@ -315,7 +340,7 @@ public class AwayDigestProjectionTests
             return card;
         }
 
-        public async Task AddMoveAsync(Card card, CardStatus from, CardStatus to, DateTime at)
+        public async Task AddMoveAsync(Card card, CardStatus from, CardStatus to, DateTime at, string? reason = null)
         {
             Db.CardRevisions.Add(new CardRevision
             {
@@ -325,6 +350,7 @@ public class AwayDigestProjectionTests
                 Kind = CardRevisionKind.Move,
                 FromStatus = from,
                 ToStatus = to,
+                Reason = reason,
                 CreatedAt = at,
             });
             await Db.SaveChangesAsync();
