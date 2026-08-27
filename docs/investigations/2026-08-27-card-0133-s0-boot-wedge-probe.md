@@ -6,7 +6,7 @@
 
 The new `CodexBootWedgeProbeTests.P1_plain_ptyhost_production_shape_measures_boot_wedge` was run once with `ANTIPHON_CODEX_HEADED_TESTS=1`, `ANTIPHON_REAL_CLI_STUB_TESTS=1`, and the plain `PtyHost` backend. It uses native `codex.exe` 0.147.0, `PtyBackend=modern`, the production `--no-alt-screen --dangerously-bypass-approvals-and-sandbox` flags, a seeded isolated `CODEX_HOME`, the five `RealCliStubEnv.ForCodex` provider overrides, 120x30 geometry, and a 620-character body.
 
-The host launched the child, but the composer marker never rendered, so the corrected canary sends no Enter and reports `no-composer-evidence`. The ANSI capture was 359 bytes and contained only terminal negotiation plus:
+The host launched the child, but the composer marker never rendered. That run exposed a false-positive submit predicate in the first probe revision; the committed revision now requires the marker before it sends Enter and reports `no-composer-evidence` otherwise. The ANSI capture was 359 bytes and contained only terminal negotiation plus:
 
 ```
 WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir
