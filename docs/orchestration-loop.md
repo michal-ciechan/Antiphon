@@ -212,6 +212,12 @@ dotnet run --project tests/<X> --property:OutputPath=bin-v/ -- --treenode-filter
 
 Read the commit messages rather than the report — in this repo they carry the real outcome.
 
+**Merge order comes off the completion header.** A note whose header carries
+`overlapping-running=<ids>` is telling you that those tasks were still running when this one settled
+and touched the same areas — merge this one first, or expect the rebase (CARD-0063). A `drift=<area>`
+in the same header says the delegate wrote outside what it declared, which is a fact about the diff
+to read before you merge it, never a verdict on the work.
+
 ---
 
 ## 6. Deploy

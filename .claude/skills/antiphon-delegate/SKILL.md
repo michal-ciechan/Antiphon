@@ -77,7 +77,7 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-Shared` | force the shared directory — opts a sub-orchestrator OUT of its worktree (warned) |
 | `-ReadOnly` | shared directory, but the brief says don't write |
 | `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
-| `-Scope "<glob>"` | declare the files this task owns; intersecting scopes are serialised |
+| `-Scope "<areas>"` | what this task owns: area names from `antiphon.areas.json` and/or path globs, comma-separated. Two **Shared** tasks whose scopes intersect are serialised — the waiting one gets a visible `Held` event; a worktree on either side runs anyway with a `Warning`. `-ListAreas` prints the names |
 | `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
 
@@ -97,7 +97,22 @@ dispatch, don't just accept the default:
 (Live miss 2026-08-18: CARD-0054 slice 1 landed in the shared directory; a second, unrelated Code
 worker was then queued while it was still running, without stopping to ask this question first. Caught
 before either wrote anything wrong — fixed by giving the second task `-Worktree`. The checklist above
-is the fix, so the next dispatch doesn't rely on catching it by luck.)
+is the fix, so the next dispatch doesn't rely on catching it by luck. Since CARD-0063 the server asks
+the same question itself: a second Shared task in a repo that already has one running is **held**,
+scope or no scope, and the `Held` event says so. `Delegation:SerialiseSharedWriters` turns that off
+for an operator who knows the pair is safe.)
+
+**Declare areas, not file lists.** `-Scope` takes a comma-separated list; each element is either an
+**area name** from [`antiphon.areas.json`](../../../antiphon.areas.json) at the repo root
+(`delivery`, `schema`, `client`, `ops`, …) or a **path glob** (`server/Migrations/**`,
+`docs/setup.md`). Elements are compared one at a time, area names by exact match — so
+`card-reopen-cli` and `card-reopen-client` are two different things, and `delivery,docs/x.md`
+collides with `AGENTS.md,delivery`. Run `pwsh -File scripts/delegate.ps1 -ListAreas` to see the
+names, and read the response the create prints: `will wait behind 3f2a1c…` means this task is queued
+behind that one, `overlaps 3f2a1c…` means it starts now and somebody owes a rebase. A name the map
+does not know is still accepted (it becomes a label that matches only itself) and earns a `Warning`
+event — it never refuses the launch. **An area is added when two tasks collide in it, named for the
+work, not the folder.**
 
 **A sub-orchestrator defaults to its own worktree** (or just its own `-Dir` when you point it
 elsewhere) — it fans out writers, so it must own something. Its workers land on ITS branch and it
