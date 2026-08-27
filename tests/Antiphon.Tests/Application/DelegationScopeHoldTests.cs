@@ -234,7 +234,7 @@ public class DelegationScopeHoldTests
             Workspace = workspace,
             WorkingDirectory = directory,
             RepoPath = repoPath,
-            ScopeGlob = scope,
+            Scope = scope,
             Ephemeral = true,
             CreatedAt = DateTime.UtcNow,
         };

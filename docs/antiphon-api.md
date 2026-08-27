@@ -159,12 +159,13 @@ GET    /api/agent-tasks  |  /api/agent-tasks/{id}      {id} accepts the 8-char s
 POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question
 POST   /api/agent-tasks/{id}/refine          steer a running delegate without cancelling it
+GET    /api/agent-tasks/areas?directory=     the repo's named areas (antiphon.areas.json)
 ```
 
 `CreateAgentTaskRequest` (`server/Application/Dtos/AgentTaskDtos.cs`) is the biggest body in the
 API and is fully commented in place. The fields that change behaviour most: `role`, `kind`
 (`Worker` / `Orchestrator`), `modelLevel`, `agentKind` (ClaudeCode / Grok / Codex — see
-[agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scopeGlob`, `followUpOnTask`,
+[agent-kinds.md](agent-kinds.md)), `workspace`, `workingDirectory`, `scope`, `followUpOnTask`,
 `expectedMinutes`, `envOverride`, `ignoreSubscriptionQuota`.
 
 > `POST /api/agent-tasks` can refuse with **409 `subscription_quota_low`** (CARD-0136). That is a

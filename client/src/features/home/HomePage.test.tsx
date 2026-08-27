@@ -65,7 +65,7 @@ function task(overrides: Record<string, unknown>) {
     repoPath: null,
     worktreePath: null,
     worktreeBranch: null,
-    scopeGlob: null,
+    scope: null,
     agentId: null,
     agentName: 'pool-1',
     agentSessionId: null,

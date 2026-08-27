@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antiphon.local/schemas/antiphon.areas.schema.json",
+  "title": "Antiphon area map",
+  "description": "Named areas of one repository. A delegated task's `scope` is a comma-separated list of these names and/or path globs; the dispatcher resolves the names through this file to decide whether two tasks touch the same part of the tree (CARD-0063). The file lives at the repo root as `antiphon.areas.json`; a repo without one simply has no names, and every scope token is read as a path.",
+  "type": "object",
+  "required": ["areas"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Pointer to this schema, for editor completion."
+    },
+    "areas": {
+      "type": "object",
+      "description": "Area name -> definition. Names are compared case-insensitively and matched EXACTLY - never by prefix.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+        "description": "A label, not a path: no separators, dots or wildcards, or the dispatcher would read it as a path glob instead of a name."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["paths"],
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Path globs owned by this area, relative to the repo root and written with forward slashes. Dispatch gating compares only each glob's LITERAL PREFIX (the text before its first wildcard), so a leading wildcard in the file name collapses the glob to its directory and makes the area swallow everything in it.",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "weight": {
+            "enum": ["serialise", "allow"],
+            "default": "serialise",
+            "description": "`allow` means an intersection in this area alone is not worth serialising or warning about. A DOWNGRADE only: it can never make a pair stricter than the workspace pair already makes it."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional one-line note about what the area is for."
+          }
+        }
+      }
+    }
+  }
+}

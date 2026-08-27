@@ -13,7 +13,7 @@ interface CreateBody {
   modelLevel: string | null
   workspace: string
   workingDirectory: string | null
-  scopeGlob: string | null
+  scope: string | null
   denyDirectEdits: boolean | null
 }
 
@@ -159,7 +159,7 @@ describe('DelegateModal', () => {
       <DelegateModal
         opened
         onClose={() => {}}
-        prefill={{ goal: 'In docs/setup.md: ', workingDirectory: 'C:/src/antiphon', scopeGlob: 'docs/setup.md' }}
+        prefill={{ goal: 'In docs/setup.md: ', workingDirectory: 'C:/src/antiphon', scope: 'docs/setup.md' }}
       />,
     )
 
@@ -173,7 +173,7 @@ describe('DelegateModal', () => {
     expect(captured.body).toMatchObject({
       goal: 'In docs/setup.md: say pwsh 7 instead of cmd',
       workingDirectory: 'C:/src/antiphon',
-      scopeGlob: 'docs/setup.md',
+      scope: 'docs/setup.md',
     })
   })
 

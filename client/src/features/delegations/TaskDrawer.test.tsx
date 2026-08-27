@@ -25,7 +25,7 @@ function detail(overrides: Partial<AgentTaskSummaryDto> = {}, extra: Partial<Age
     workspace: 'Shared',
     workingDirectory: 'C:/src/antiphon',
     repoPath: 'C:/src/antiphon',
-    scopeGlob: null,
+    scope: null,
     agentId: 'agent-9',
     agentName: 'task-77777777',
     agentSessionId: 'session-9',

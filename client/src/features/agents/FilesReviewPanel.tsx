@@ -833,7 +833,7 @@ function FileViewer({
         prefill={{
           goal: `In ${file.path}: `,
           workingDirectory: workspaceRoot,
-          scopeGlob: file.path,
+          scope: file.path,
         }}
       />
 

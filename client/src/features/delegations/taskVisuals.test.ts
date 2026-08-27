@@ -33,7 +33,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> & { id: string }): AgentTa
     workspace: 'Shared',
     workingDirectory: 'C:/src/antiphon',
     repoPath: 'C:/src/antiphon',
-    scopeGlob: null,
+    scope: null,
     agentId: null,
     agentName: null,
     agentSessionId: null,

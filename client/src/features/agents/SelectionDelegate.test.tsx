@@ -13,7 +13,7 @@ interface CreateBody {
   role: string
   workspace: string | null
   workingDirectory: string | null
-  scopeGlob: string | null
+  scope: string | null
 }
 
 function captureCreate(): { body: CreateBody | null } {
@@ -68,7 +68,7 @@ describe('SelectionComposer', () => {
       // null = the server decides — the Shared default is what lets the warm pool pick it up.
       workspace: null,
       workingDirectory: 'C:\\src\\antiphon',
-      scopeGlob: 'docs/plan.md',
+      scope: 'docs/plan.md',
     })
   })
 

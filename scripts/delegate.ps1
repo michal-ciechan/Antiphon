@@ -61,7 +61,10 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$AllowDirectEdits,
 
-    # Declare the files this task owns; intersecting scopes are serialised.
+    # What this task owns: a comma-separated list of AREA NAMES from the repo's antiphon.areas.json
+    # and/or path globs, each element compared independently. Two Shared tasks whose scopes
+    # intersect are serialised - the waiting one gets a visible 'Held' event naming what it waits
+    # for. A ReadOnly task never waits and never makes anyone wait. Run -ListAreas to see the names.
     [Parameter(ParameterSetName = 'Create')]
     [string]$Scope,
 
@@ -104,7 +107,15 @@ param(
 
     # Look up a task you already created.
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
-    [string]$Status
+    [string]$Status,
+
+    # Print the repo's named areas - what -Scope may name, and the paths each one owns. Reads
+    # antiphon.areas.json at the repo root of -Dir (or the current directory).
+    [Parameter(ParameterSetName = 'ListAreas', Mandatory = $true)]
+    [switch]$ListAreas,
+
+    [Parameter(ParameterSetName = 'ListAreas')]
+    [string]$AreasDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -139,6 +150,24 @@ function Invoke-Antiphon {
 }
 
 switch ($PSCmdlet.ParameterSetName) {
+    'ListAreas' {
+        $dir = if ($AreasDir) { $AreasDir } else { (Get-Location).Path }
+        $map = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/areas?directory=$([uri]::EscapeDataString($dir))"
+        if (-not $map.areas -or $map.areas.Count -eq 0) {
+            Write-Output "No areas declared for $($map.repoPath) - every -Scope token is read as a path or a label."
+            return
+        }
+        Write-Output "Areas in $($map.sourcePath):"
+        foreach ($area in $map.areas) {
+            $weight = if ($area.weight -eq 'allow') { '  [allow]' } else { '' }
+            Write-Output ("  {0}{1}" -f $area.name, $weight)
+            foreach ($path in $area.paths) { Write-Output "      $path" }
+        }
+        Write-Output ''
+        Write-Output 'An area is added when two tasks collide in it, named for the work, not the folder.'
+        return
+    }
+
     'Status' {
         $task = Invoke-Antiphon -Method GET -Path "/api/agent-tasks/$Status"
         $s = $task.summary
@@ -197,7 +226,7 @@ switch ($PSCmdlet.ParameterSetName) {
         # ships unset and therefore resolves to ClaudeCode.
         if ($Kind) { $body['agentKind'] = $Kind }
         if ($Dir) { $body['workingDirectory'] = $Dir }
-        if ($Scope) { $body['scopeGlob'] = $Scope }
+        if ($Scope) { $body['scope'] = $Scope }
         # Omitted (0 - an unbound [int] is 0, not $null) leaves the server's default expectation.
         if ($ExpectAbout -gt 0) { $body['expectedMinutes'] = $ExpectAbout }
         if ($IgnoreSubscriptionQuota) { $body['ignoreSubscriptionQuota'] = $true }

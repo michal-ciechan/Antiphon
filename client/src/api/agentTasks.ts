@@ -83,7 +83,7 @@ export interface AgentTaskSummaryDto {
   /** Where a Worktree task actually runs — the throwaway checkout, branch included. */
   worktreePath: string | null
   worktreeBranch: string | null
-  scopeGlob: string | null
+  scope: string | null
   agentId: string | null
   agentName: string | null
   agentSessionId: string | null
@@ -155,7 +155,7 @@ export interface CreateAgentTaskRequest {
    */
   workspace?: WorkspaceMode | null
   workingDirectory?: string | null
-  scopeGlob?: string | null
+  scope?: string | null
   /**
    * Arm the PreToolUse deny hook in an orchestrator's worktree (blocks direct Edit/Write —
    * "delegate this instead"). Null follows the server's config default.

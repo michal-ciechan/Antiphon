@@ -28,6 +28,8 @@ public sealed class AgentTaskService
     private readonly ILogger<AgentTaskService> _logger;
     // CARD-0136. Optional so every harness that predates this card keeps constructing this.
     private readonly SubscriptionQuotaGate? _quotaGate;
+    // CARD-0063 S2. Optional for the same reason; absent, every scope name is an opaque label.
+    private readonly AreaMapLoader? _areas;
 
     public AgentTaskService(
         AppDbContext db,
@@ -37,8 +39,10 @@ public sealed class AgentTaskService
         IDelegateSessionStopper sessions,
         TimeProvider timeProvider,
         ILogger<AgentTaskService> logger,
-        SubscriptionQuotaGate? quotaGate = null)
+        SubscriptionQuotaGate? quotaGate = null,
+        AreaMapLoader? areas = null)
     {
+        _areas = areas;
         _db = db;
         _workspace = workspace;
         _settings = settings.Value;
@@ -287,7 +291,7 @@ public sealed class AgentTaskService
             DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = resolved.WorkingDirectory,
             RepoPath = resolved.RepoPath,
-            ScopeGlob = string.IsNullOrWhiteSpace(request.ScopeGlob) ? null : request.ScopeGlob.Trim(),
+            Scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope.Trim(),
             // A worktree task merges into its parent's BRANCH — but only when they share a repo.
             // A worktree parent's children target its task branch (integration once per level);
             // a shared-workspace parent passes its own target down. Cross-repo "merge" is a
@@ -328,6 +332,12 @@ public sealed class AgentTaskService
         });
         if (warning is not null)
             AddEvent(id, AgentTaskEventType.Warning, null, warning, now);
+        // D1: an area name the repo's map does not know is ACCEPTED as an opaque label and warned
+        // about. A bookkeeping field must never refuse a launch — this one would be refusing it for
+        // a typo — and the label still exact-matches another task that wrote the same name, which
+        // is strictly better than the string-prefix comparison it replaces.
+        if (UnknownAreaWarning(task) is { } areaWarning)
+            AddEvent(id, AgentTaskEventType.Warning, null, areaWarning, now);
         await _db.SaveChangesAsync(ct);
 
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = id, rootId = task.RootTaskId }, ct);
@@ -979,7 +989,7 @@ public sealed class AgentTaskService
             task.Id, task.RootTaskId, task.ParentTaskId, task.Depth, task.Title, task.Kind, task.Role,
             task.AgentKind,
             task.ModelLevel, task.EscalatedFrom, task.Status, task.Workspace, task.WorkingDirectory,
-            task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.ScopeGlob, task.AgentId,
+            task.RepoPath, task.WorktreePath, task.WorktreeBranch, task.Scope, task.AgentId,
             // Snapshotted at dispatch — survives the ephemeral agent row's deletion on settle.
             task.AgentName,
             task.AgentSessionId, task.Attempt,
@@ -1028,6 +1038,46 @@ public sealed class AgentTaskService
         await _db.SaveChangesAsync(ct);
         _logger.LogWarning("Delegation rejected for task {ShortId}: {Detail}",
             DelegationReportFormatter.Short(task.Id), detail);
+    }
+
+    /// <summary>
+    /// The area names this task declared that its repo's <c>antiphon.areas.json</c> does not know,
+    /// as one sentence naming the known list — or null when everything resolved (CARD-0063 D1).
+    /// </summary>
+    private string? UnknownAreaWarning(AgentTask task)
+    {
+        if (_areas is null || string.IsNullOrWhiteSpace(task.Scope))
+            return null;
+
+        var map = _areas.Load(task.RepoPath);
+        var unknown = ScopeResolver.Resolve(task.Scope, map).UnknownAreaNames;
+        if (unknown.Count == 0)
+            return null;
+
+        var known = map.Count == 0
+            ? "this repo declares no areas (no antiphon.areas.json)"
+            : "known areas: " + string.Join(", ", map.Names);
+        return $"Scope names no area this repo knows: {string.Join(", ", unknown)} "
+            + $"— kept as a label, matched exactly against other tasks using it ({known}).";
+    }
+
+    /// <summary>The declared areas of the repo a directory belongs to, for the areas endpoint.</summary>
+    public async Task<AreaMapDto> ListAreasAsync(string? directory, Caller caller, CancellationToken ct)
+    {
+        var target = string.IsNullOrWhiteSpace(directory) ? caller.WorkingDirectory : directory.Trim();
+        if (string.IsNullOrWhiteSpace(target))
+            return new AreaMapDto(string.Empty, null, []);
+
+        var repoPath = await _workspace.GetRepoToplevelAsync(target, ct) ?? target;
+        var map = _areas?.Load(repoPath) ?? AreaMap.Empty;
+        return new AreaMapDto(
+            repoPath,
+            map.SourcePath,
+            map.Areas
+                .Select(a => new AreaDto(
+                    a.Name, a.Paths, a.Weight == AreaWeight.Allow ? "allow" : "serialise"))
+                .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList());
     }
 
     private void AddEvent(Guid taskId, AgentTaskEventType type, AgentModelLevel? level, string detail, DateTime at) =>

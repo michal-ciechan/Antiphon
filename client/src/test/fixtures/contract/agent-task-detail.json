@@ -16,7 +16,7 @@
     "repoPath": "C:\\src\\antiphon",
     "worktreePath": null,
     "worktreeBranch": null,
-    "scopeGlob": "docs/setup.md",
+    "scope": "docs/setup.md",
     "agentId": "bbbbbbbb-0000-0000-0000-000000000004",
     "agentName": "task-install",
     "agentSessionId": null,

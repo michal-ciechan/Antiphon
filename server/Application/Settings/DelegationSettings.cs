@@ -524,6 +524,14 @@ public sealed class DelegationSettings
     public bool OrchestratorDenyHookEnabled { get; set; } = true;
 
     /// <summary>
+    /// Name of the tracked file at each repo's root that names its areas (CARD-0063). A repo
+    /// without one simply has no names — every scope token is read as a path, which is the
+    /// behaviour that predates the map. Configurable so a repo that already owns the filename can
+    /// choose another; never a path, always a basename resolved against the task's RepoPath.
+    /// </summary>
+    public string AreasFileName { get; set; } = "antiphon.areas.json";
+
+    /// <summary>
     /// Reuse settled delegates instead of spawning a fresh Claude per task. A Shared task's agent
     /// goes warm on settle and the next task in the same directory (at the same tier) takes it
     /// over — with a focused /compact first when the work is unrelated. Worktree delegates are

@@ -25,7 +25,7 @@ function task(overrides: Partial<AgentTaskSummaryDto> = {}): AgentTaskSummaryDto
     repoPath: null,
     worktreePath: null,
     worktreeBranch: null,
-    scopeGlob: null,
+    scope: null,
     agentId: null,
     agentName: null,
     agentSessionId: null,

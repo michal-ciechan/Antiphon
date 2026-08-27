@@ -1,0 +1,156 @@
+// The repo's named areas. A task's -Scope is a comma-separated list of these names and/or path
+// globs; the dispatcher resolves the names through this file to decide whether two tasks touch the
+// same part of the tree (CARD-0063).
+//
+// HOW TO EXTEND IT: an area is added when two tasks collide in it, named for the work, not the
+// folder. Areas are allowed - expected - to overlap; overlap is resolved by the path sets, not by
+// carving the tree into disjoint boxes. A name this file does not know is still accepted as an
+// opaque label (it matches another task using the same label, exactly), so a typo can never refuse
+// a launch - it only earns a Warning event on the task.
+//
+// Every glob's literal prefix (the text before its first wildcard) must exist in the tree;
+// AreaMapContractTests asserts it, so a rename here or in the repo goes red rather than silently
+// making an area match nothing. Avoid a leading wildcard in the FILE name of a glob
+// ("services/*Profile.cs"): the literal prefix collapses to the directory, and the area quietly
+// swallows everything in it.
+//
+// "weight": "allow" means an intersection in this area alone is not worth serialising or warning
+// about. It is a DOWNGRADE only - it can never make a pair stricter. `docs` is the only one, and
+// deliberately so: nearly every card appends to AGENTS.md, and serialising on that would serialise
+// the fleet.
+{
+  "$schema": "docs/schemas/antiphon.areas.schema.json",
+  "areas": {
+    "session-launch": {
+      "paths": [
+        "server/Application/Services/AgentSessionService*.cs",
+        "server/Infrastructure/Agents/**",
+        "tests/Antiphon.Tests/Application/AgentSessionLaunch*"
+      ]
+    },
+    "session-lifecycle": {
+      "paths": [
+        "server/Application/Services/AgentSupervisor*.cs",
+        "server/Application/Services/SessionReconciliation*.cs",
+        "server/Application/Services/AgentControlService*.cs"
+      ]
+    },
+    "delegation": {
+      "paths": [
+        "server/Application/Services/AgentTask*.cs",
+        "server/Application/Services/Delegation*.cs",
+        "server/Application/Services/DelegateCheckProbe.cs",
+        "server/Application/Services/ScopeResolver.cs",
+        "server/Application/Services/AreaMapLoader.cs",
+        "server/Application/Settings/DelegationSettings.cs",
+        "scripts/delegate.ps1",
+        ".claude/skills/antiphon-delegate/**",
+        "antiphon.areas.json"
+      ]
+    },
+    "delivery": {
+      "paths": [
+        "server/Application/Services/SessionMessageQueueService*.cs",
+        "server/Application/Services/PtyDeliveryProfile.cs",
+        "server/Application/Services/SessionDeliveryProfile.cs",
+        "src/Antiphon.SessionRunner.Contracts/PromptSubmissionMatch.cs",
+        "src/Antiphon.Agents.Pty/ComposerDeliveryEvidence*.cs",
+        "server/Application/Settings/SupervisionSettings.cs"
+      ]
+    },
+    "pty": {
+      "paths": [
+        "src/Antiphon.Agents.Pty/**",
+        "src/Antiphon.PtyHost*/**",
+        "src/Antiphon.FakeClaude/**",
+        "src/Antiphon.FakeGrok/**",
+        "tests/Antiphon.Agents.Pty.Tests/**",
+        "tests/Antiphon.PtyHost.Tests/**"
+      ]
+    },
+    "runner": {
+      "paths": [
+        "src/Antiphon.SessionRunner/**",
+        "src/Antiphon.SessionRunner.Contracts/**",
+        "tests/Antiphon.SessionRunner.Tests/**"
+      ]
+    },
+    "herdr": {
+      "paths": [
+        "src/Antiphon.SessionRunner/Herdr*",
+        "server/Application/Services/Herdr*",
+        "docs/herdr-sessions.md"
+      ]
+    },
+    "schema": {
+      "paths": [
+        "server/Migrations/**",
+        "server/Infrastructure/Data/AppDbContext.cs",
+        "server/Domain/Entities/**"
+      ]
+    },
+    "board": {
+      "paths": [
+        "server/Application/Services/Card*.cs",
+        "server/Application/Services/Board*.cs",
+        "server/Api/Endpoints/CardEndpoints.cs",
+        "scripts/card.ps1"
+      ]
+    },
+    "tracker": {
+      "paths": [
+        "server/Application/Services/Tracker*.cs",
+        "scripts/github-sync.ps1",
+        "docs/workflow-tracker-block.md"
+      ]
+    },
+    "channels": {
+      "paths": [
+        "server/Application/Services/Channel*.cs",
+        "server/Application/Services/Chat*.cs",
+        "src/Antiphon.Messaging*/**",
+        "tests/Antiphon.Messaging.Tests/**",
+        "docs/messaging/**",
+        "docs/telegram*.md",
+        "docs/slack*.md"
+      ]
+    },
+    "agents-admin": {
+      "paths": [
+        "server/Application/Services/AgentService.cs",
+        "server/Application/Services/AgentTuiProfile*.cs",
+        "server/Application/Services/ApiKey*.cs"
+      ]
+    },
+    "client": {
+      "paths": [
+        "client/**"
+      ]
+    },
+    "ops": {
+      "paths": [
+        "scripts/**",
+        "Antiphon.AppHost/**",
+        "docker-compose*.yml",
+        "dev-*.ps1",
+        "restart*.ps1",
+        "stop-server.ps1",
+        "verify-dev-stack.ps1",
+        "Directory.Build.props",
+        "global.json",
+        "Antiphon.sln",
+        "Dockerfile"
+      ]
+    },
+    "docs": {
+      "weight": "allow",
+      "paths": [
+        "docs/**",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "README.md",
+        ".claude/skills/**"
+      ]
+    }
+  }
+}

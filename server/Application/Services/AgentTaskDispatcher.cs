@@ -58,6 +58,9 @@ public sealed class AgentTaskDispatcher
     // CARD-0136. EvaluateAsync only — never EnforceAsync. A refusal here would silently
     // fail a task with no caller present.
     private readonly SubscriptionQuotaGate? _quotaGate;
+    // CARD-0063 S2: the repo's named areas. Optional so every harness that predates the map keeps
+    // constructing this; absent, a scope name compares as an opaque label, which is exactly S1.
+    private readonly AreaMapLoader? _areas;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -99,8 +102,10 @@ public sealed class AgentTaskDispatcher
         AgentTuiLaunchResolver? launchResolver = null,
         IOptions<SupervisionSettings>? supervision = null,
         AgentFilesService? files = null,
-        SubscriptionQuotaGate? quotaGate = null)
+        SubscriptionQuotaGate? quotaGate = null,
+        AreaMapLoader? areas = null)
     {
+        _areas = areas;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _scopeFactory = scopeFactory;
         _launchResolver = launchResolver;
@@ -235,16 +240,18 @@ public sealed class AgentTaskDispatcher
         // dispatched with `-Dir <repo>/client` used to compare with nothing.
         var busyScopes = await _db.AgentTasks
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                && t.ScopeGlob != null
+                && t.Scope != null
                 && t.Workspace != WorkspaceMode.ReadOnly)
-            .Select(t => new { t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.ScopeGlob })
+            .Select(t => new { t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.Scope })
             .ToListAsync(ct);
         var heldScopes = busyScopes
             .Select(s => new ScopeHolder(
                 s.Id,
                 s.Title,
                 ScopeResolver.KeyFor(s.RepoPath, s.WorkingDirectory),
-                ScopeResolver.Parse(s.ScopeGlob)))
+                // Resolved against the HOLDER's own repo map: two tasks only ever compare when
+                // they share a repo, so both sides always read the same antiphon.areas.json.
+                ScopeResolver.Resolve(s.Scope, AreasFor(s.RepoPath))))
             .ToList();
 
         // A hold leaves a trace exactly once. Before CARD-0063 it left none at all: the single
@@ -278,8 +285,8 @@ public sealed class AgentTaskDispatcher
 
             var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
             var taskScope = ScopeResolver.ParticipatesInLease(task.Workspace)
-                ? ScopeResolver.Parse(task.ScopeGlob)
-                : [];
+                ? ScopeResolver.Resolve(task.Scope, AreasFor(task.RepoPath))
+                : ResolvedScope.Empty;
             if (taskScope.Count > 0
                 && heldScopes.FirstOrDefault(h => h.Intersects(taskKey, taskScope)) is { } holder)
             {
@@ -291,7 +298,7 @@ public sealed class AgentTaskDispatcher
                         Id = Guid.NewGuid(),
                         AgentTaskId = task.Id,
                         Type = AgentTaskEventType.Held,
-                        Detail = $"Held: scope '{task.ScopeGlob}' intersects running task "
+                        Detail = $"Held: scope '{task.Scope}' intersects running task "
                             + $"{DelegationReportFormatter.Short(holder.TaskId)} \"{holder.Title}\"",
                         At = UtcNow(),
                     });
@@ -300,7 +307,7 @@ public sealed class AgentTaskDispatcher
                     // write twelve an hour per waiting task and say nothing new after the first.
                     _logger.LogInformation(
                         "Task {ShortId} held: scope '{Scope}' intersects running task {HolderShortId}",
-                        DelegationReportFormatter.Short(task.Id), task.ScopeGlob,
+                        DelegationReportFormatter.Short(task.Id), task.Scope,
                         DelegationReportFormatter.Short(holder.TaskId));
                 }
 
@@ -329,7 +336,7 @@ public sealed class AgentTaskDispatcher
                     {
                         _logger.LogInformation(
                             "Task {ShortId} released: its scope '{Scope}' no longer intersects a running task",
-                            DelegationReportFormatter.Short(task.Id), task.ScopeGlob);
+                            DelegationReportFormatter.Short(task.Id), task.Scope);
                     }
                 }
             }
@@ -2745,11 +2752,18 @@ public sealed class AgentTaskDispatcher
     /// because a hold that leaves no trace is the defect CARD-0063 measured — the event text names
     /// who is being waited for.
     /// </summary>
-    private sealed record ScopeHolder(Guid TaskId, string Title, string Key, IReadOnlyList<ScopeToken> Scope)
+    private sealed record ScopeHolder(Guid TaskId, string Title, string Key, ResolvedScope Scope)
     {
-        public bool Intersects(string key, IReadOnlyList<ScopeToken> scope) =>
+        public bool Intersects(string key, ResolvedScope scope) =>
             SameRepo(Key, key) && ScopeResolver.Intersects(Scope, scope);
     }
+
+    /// <summary>
+    /// The repo's declared areas, or an empty map when nothing is registered to read one (a
+    /// harness that predates CARD-0063 S2) — in which case a name compares as an opaque label,
+    /// exactly as in S1.
+    /// </summary>
+    private AreaMap AreasFor(string? repoPath) => _areas?.Load(repoPath) ?? AreaMap.Empty;
 
     /// <summary>
     /// Advisory lease check: same repo and overlapping scopes. Kept as a two-tuple entry point for
@@ -2758,6 +2772,13 @@ public sealed class AgentTaskDispatcher
     /// </summary>
     internal static bool ScopesIntersect((string Key, string Scope) a, (string Key, string Scope) b) =>
         SameRepo(a.Key, b.Key) && ScopeResolver.Intersects(a.Scope, b.Scope);
+
+    /// <inheritdoc cref="ScopesIntersect((string, string), (string, string))"/>
+    internal static bool ScopesIntersect(
+        (string Key, string Scope) a, (string Key, string Scope) b, AreaMap map) =>
+        SameRepo(a.Key, b.Key)
+        && ScopeResolver.Intersects(
+            ScopeResolver.Resolve(a.Scope, map), ScopeResolver.Resolve(b.Scope, map));
 
     private static bool SameRepo(string a, string b) =>
         string.Equals(

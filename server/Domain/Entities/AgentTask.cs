@@ -109,7 +109,7 @@ public class AgentTask
     public string? MergeTargetRef { get; set; }
 
     /// <summary>Advisory file lease — two Shared tasks with intersecting globs are serialised.</summary>
-    public string? ScopeGlob { get; set; }
+    public string? Scope { get; set; }
 
     /// <summary>Pinned agent; null means an ephemeral one is spawned at the task's tier.</summary>
     public Guid? AgentId { get; set; }

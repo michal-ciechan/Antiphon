@@ -30,7 +30,7 @@ public sealed record CreateAgentTaskRequest(
     WorkspaceMode? Workspace = null,
     /// <summary>Run somewhere else — another repo, another checkout. Null inherits the caller's.</summary>
     string? WorkingDirectory = null,
-    string? ScopeGlob = null,
+    string? Scope = null,
     string? MergeTargetRef = null,
     Guid? AgentId = null,
     /// <summary>
@@ -86,7 +86,7 @@ public sealed record AgentTaskSummaryDto(
     /// <summary>Where a Worktree task actually runs — the throwaway checkout, branch included.</summary>
     string? WorktreePath,
     string? WorktreeBranch,
-    string? ScopeGlob,
+    string? Scope,
     Guid? AgentId,
     /// <summary>The delegate that ran (or is running) the work — the board chip names it.</summary>
     string? AgentName,
@@ -167,3 +167,17 @@ public sealed record ReplyToAgentTaskRequest(string Message);
 
 /// <summary>Manual tier bump. Null takes the next rung up (or the role policy's target).</summary>
 public sealed record EscalateAgentTaskRequest(AgentModelLevel? ModelLevel = null);
+
+/// <summary>
+/// One named area of a repo, as the areas endpoint reports it (CARD-0063 S2).
+/// </summary>
+/// <param name="Name">The name a task's <c>scope</c> may use.</param>
+/// <param name="Paths">The path globs it owns, as written in the file.</param>
+/// <param name="Weight"><c>serialise</c> (the default) or <c>allow</c>.</param>
+public sealed record AreaDto(string Name, IReadOnlyList<string> Paths, string Weight);
+
+/// <summary>
+/// A repo's declared areas. An empty list is the honest answer for a repo with no
+/// <c>antiphon.areas.json</c> — every scope token is then read as a path or an opaque label.
+/// </summary>
+public sealed record AreaMapDto(string RepoPath, string? SourcePath, IReadOnlyList<AreaDto> Areas);

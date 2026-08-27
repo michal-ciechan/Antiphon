@@ -31,7 +31,7 @@ export interface DelegatePrefill {
   /** Where the delegate runs. Defaults to the server's caller directory when omitted. */
   workingDirectory?: string
   /** Declares the files this task owns; intersecting scopes are serialised by the dispatcher. */
-  scopeGlob?: string
+  scope?: string
 }
 
 /**
@@ -66,7 +66,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const [goal, setGoal] = useState(prefill?.goal ?? '')
   const [workspace, setWorkspace] = useState<WorkspaceMode>('Shared')
   const [directory, setDirectory] = useState(prefill?.workingDirectory ?? '')
-  const [scope, setScope] = useState(prefill?.scopeGlob ?? '')
+  const [scope, setScope] = useState(prefill?.scope ?? '')
   const [level, setLevel] = useState<AgentModelLevel | null>(null)
   const [denyEdits, setDenyEdits] = useState(true)
 
@@ -86,7 +86,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         modelLevel: level,
         workspace,
         workingDirectory: directory.trim() || null,
-        scopeGlob: scope.trim() || null,
+        scope: scope.trim() || null,
         denyDirectEdits: kind === 'Orchestrator' ? denyEdits : null,
       },
       {

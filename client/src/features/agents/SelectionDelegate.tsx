@@ -91,7 +91,7 @@ export function SelectionComposer({
   selection,
   defaultRole,
   goalContext,
-  scopeGlob,
+  scope,
   onClose,
 }: {
   filePath: string
@@ -101,7 +101,7 @@ export function SelectionComposer({
   /** Optional task/card context retained above the standard, byte-stable selection goal. */
   goalContext?: string
   /** Reports have no file lease; file review keeps the selected path by default. */
-  scopeGlob?: string | null
+  scope?: string | null
   onClose: () => void
 }) {
   const create = useCreateAgentTask()
@@ -121,7 +121,7 @@ export function SelectionComposer({
         // null = the server decides (workers run Shared) — exactly the pool's pickup path.
         workspace: null,
         workingDirectory,
-        scopeGlob: scopeGlob === undefined ? filePath : scopeGlob,
+        scope: scope === undefined ? filePath : scope,
       },
       {
         onSuccess: (task) => {
@@ -208,7 +208,7 @@ export function SelectionComposer({
           onClose()
         }}
         title={`Delegate — ${filePath}`}
-        prefill={{ goal, workingDirectory, scopeGlob: filePath }}
+        prefill={{ goal, workingDirectory, scope: filePath }}
       />
     </Paper>
   )

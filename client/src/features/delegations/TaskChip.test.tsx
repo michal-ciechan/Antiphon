@@ -20,7 +20,7 @@ const task: AgentTaskSummaryDto = {
   repoPath: 'C:/src/antiphon',
   worktreePath: null,
   worktreeBranch: null,
-  scopeGlob: null,
+  scope: null,
   agentId: null,
   agentName: 'task-77777777',
   agentSessionId: null,

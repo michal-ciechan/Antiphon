@@ -37,6 +37,20 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
             Results.Ok(await service.ListAsync(rootId, status, includeChecks ?? false, ct)));
 
+        // The repo's named areas (CARD-0063). Declared BEFORE /{id} so "areas" is never read as a
+        // task id. A read-only listing: the caller needs it to write a -Scope, so a missing or
+        // stale token must not stop it — a token-less caller passes ?directory= instead.
+        tasks.MapGet("/areas", async (
+            string? directory,
+            HttpContext http,
+            AgentTaskService service,
+            CancellationToken ct) =>
+        {
+            var caller = await ResolvePollingCallerAsync(http, service, ct)
+                ?? new AgentTaskService.Caller(null, null, string.Empty);
+            return Results.Ok(await service.ListAreasAsync(directory, caller, ct));
+        });
+
         // {id} is a string, not :guid — a delegate only ever SEES 8-char short ids (the completion
         // note, the board chip), so -Status and -Reply must accept them or they are unusable.
         tasks.MapGet("/{id}", async (

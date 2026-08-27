@@ -259,6 +259,10 @@ try
     // Delegated agent tasks (feature 007). The reply service is a SINGLETON because the runtime's
     // transcript observer (itself a singleton) calls it on every turn-end; it opens its own scope.
     builder.Services.AddSingleton<DelegationWorkspaceResolver>();
+    // CARD-0063: each repo's antiphon.areas.json. A SINGLETON so its per-path, mtime-keyed cache
+    // survives between the dispatcher's 5 s scopes; it can never fail a dispatch (a missing or
+    // malformed map degrades to "no names known").
+    builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional

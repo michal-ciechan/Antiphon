@@ -182,7 +182,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         )}
         <Text size="xs" c="dimmed" mt="xs" style={{ wordBreak: 'break-all' }}>
           {summary.workingDirectory}
-          {summary.scopeGlob ? ` · scope ${summary.scopeGlob}` : ''}
+          {summary.scope ? ` · scope ${summary.scope}` : ''}
         </Text>
         {detail.mergeTargetRef && (
           <Text size="xs" c="dimmed">
@@ -235,7 +235,7 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
                 selection={selection}
                 defaultRole="Docs"
                 goalContext={`Re ${summary.title} (task ${shortId(summary.id)}):`}
-                scopeGlob={null}
+                scope={null}
                 onClose={() => setSelection(null)}
               />
             </Box>

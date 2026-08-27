@@ -50,8 +50,8 @@ public static class DelegationReportFormatter
           .Append(" role=").Append(task.Role)
           .Append(" tier=").Append(task.ModelLevel)
           .Append(" workspace=").Append(task.Workspace);
-        if (!string.IsNullOrWhiteSpace(task.ScopeGlob))
-            sb.Append(" scope=").Append(task.ScopeGlob);
+        if (!string.IsNullOrWhiteSpace(task.Scope))
+            sb.Append(" scope=").Append(task.Scope);
         sb.AppendLine().AppendLine();
 
         if (refocus)
@@ -314,8 +314,8 @@ public static class DelegationReportFormatter
           .Append(" role=").Append(task.Role)
           .Append(" tier=").Append(task.ModelLevel)
           .Append(" workspace=").Append(task.Workspace);
-        if (!string.IsNullOrWhiteSpace(task.ScopeGlob))
-            sb.Append(" scope=").Append(task.ScopeGlob);
+        if (!string.IsNullOrWhiteSpace(task.Scope))
+            sb.Append(" scope=").Append(task.Scope);
         sb.AppendLine().AppendLine();
 
         sb.AppendLine($"""

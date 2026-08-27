@@ -260,7 +260,7 @@ public class ContractSnapshotTests
                     t.Role = Server.Domain.Enums.AgentTaskRole.Test;
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Low;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Succeeded;
-                    t.ScopeGlob = "tests/**";
+                    t.Scope = "tests/**";
                     t.DispatchedAt = t0.AddMinutes(9);
                     t.CompletedAt = t0.AddMinutes(13).AddSeconds(24);
                     t.Result = "3 failures, all in Antiphon.Tests.Application.CardServiceTests — "
@@ -276,7 +276,7 @@ public class ContractSnapshotTests
                     t.ModelLevel = Server.Domain.Enums.AgentModelLevel.Medium;
                     t.Status = Server.Domain.Enums.AgentTaskStatus.Blocked;
                     t.Workspace = Server.Domain.Enums.WorkspaceMode.ReadOnly;
-                    t.ScopeGlob = "docs/setup.md";
+                    t.Scope = "docs/setup.md";
                     t.DispatchedAt = t0.AddMinutes(3);
                     t.Result = "Rewrote \"## Windows install\" in docs/setup.md — 34 lines changed, "
                         + "every command now pwsh 7.\n\nOne decision is yours: should the old cmd "

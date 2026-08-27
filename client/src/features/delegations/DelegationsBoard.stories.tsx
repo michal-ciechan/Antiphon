@@ -72,7 +72,7 @@ export const Delegate: StoryObj<typeof DelegateModal> = {
       prefill={{
         goal: 'In docs/setup.md: ',
         workingDirectory: 'C:\\src\\antiphon',
-        scopeGlob: 'docs/setup.md',
+        scope: 'docs/setup.md',
       }}
     />
   ),
