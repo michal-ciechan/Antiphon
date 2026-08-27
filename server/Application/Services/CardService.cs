@@ -494,6 +494,71 @@ public sealed class CardService
         return await GetByIdAsync(card.Id, ct);
     }
 
+    /// <summary>
+    /// Moves a card because DELEGATED WORK said so (CARD-0040) — the sweep's only writer.
+    /// </summary>
+    /// <remarks>
+    /// Shaped like <see cref="ReopenAsync"/> and deliberately NOT like <see cref="MoveAsync"/>:
+    /// spawn knowledge lives only in <c>MoveAsync</c> (CARD-0051), so calling
+    /// <see cref="ApplyColumnMove"/> directly makes an automated move structurally incapable of
+    /// starting an agent. It takes no concurrency token — the sweep is the writer, and a human
+    /// racing it loses or wins on <c>DbUpdateConcurrencyException</c> exactly as two humans do,
+    /// after which the next sweep re-evaluates from the rows.
+    ///
+    /// <para>The guards here are the SECOND lock. <see cref="CardWorkTransitionService"/> has
+    /// already filtered archived, owned, terminal and NeedsDecision cards; this refuses them again
+    /// so a future caller cannot route around the rule by not knowing about it.</para>
+    /// </remarks>
+    /// <returns>True when a row was written; false when there was nothing to do or the card was ineligible.</returns>
+    internal async Task<bool> ApplyAutomatedMoveAsync(
+        Guid cardId, CardStatus target, string reason, string movedBy, CancellationToken ct)
+    {
+        var card = await LoadCardForUpdateAsync(cardId, ct);
+
+        if (card.ArchivedAt is not null)
+            return false;
+        // A card a human parked on a decision, or already closed, is not the automation's to move.
+        if (card.Status is CardStatus.NeedsDecision or CardStatus.Done or CardStatus.Canceled)
+            return false;
+        // The RunAttempt / card-spawn path owns a card session's card. Two writers on one card is
+        // how flapping starts.
+        if (card.OwnerSessionId is not null)
+            return false;
+        // Already where the evidence says it should be. Compared by STATUS, not column id: a board
+        // with two columns of the same status must not have its cards shuffled between them.
+        if (card.Status == target)
+            return false;
+
+        var targetColumn = card.Board.Columns
+            .OrderBy(c => c.ColumnOrder)
+            .FirstOrDefault(c => c.CardStatus == target);
+        if (targetColumn is null)
+        {
+            _logger?.LogWarning(
+                "Card {Identifier}'s board has no {Status} column, so the automated move was skipped.",
+                card.Identifier, target);
+            return false;
+        }
+
+        ApplyColumnMove(card, targetColumn, enforceStateMachine: true, reason: reason, movedBy: movedBy);
+        var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
+
+        // Hold in the SAME write as the move (CARD-0087): an automated landing in an active column
+        // spawns nothing, so without the hold the orchestrator tick would start a card session on
+        // top of the delegate that caused the move.
+        if (!targetColumn.IsActive)
+            card.AutoDispatchHeldAt = null;
+        else if (card.OwnerSessionId is null)
+            card.AutoDispatchHeldAt = UtcNow();
+
+        await SaveCardWriteAsync(card, ct);
+
+        if (queueRemoval is not null)
+            await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return true;
+    }
+
     private static BoardColumn ResolveReopenTarget(Card card, Guid? requestedColumnId)
     {
         if (requestedColumnId is Guid columnId)

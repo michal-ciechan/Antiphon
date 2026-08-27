@@ -1,4 +1,4 @@
-﻿using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -614,6 +614,66 @@ public class CardCorrectionIntegrationTests
                     Description: new string('x', CardService.MaxDescriptionLength - 1)),
                 CancellationToken.None);
             updated.Description.Length.ShouldBe(CardService.MaxDescriptionLength - 1);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    // CARD-0040: a move the transition sweep made reads back as history like any other, with an
+    // actor that names the automation. `card-transitions` rather than `system` on purpose - that
+    // name already means the RunAttempt / card-spawn path, and 234 of 262 live Move rows have a
+    // blank EditedBy (the human via card.ps1), which is what makes a named actor legible at all.
+    [Test]
+    public async Task An_automated_transition_reads_back_as_a_move_revision_by_card_transitions()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Transition history board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Automated"), CancellationToken.None);
+
+            var movedIn = await harness.CardService.ApplyAutomatedMoveAsync(
+                card.Id,
+                CardStatus.InProgress,
+                "Task 242a7647 (Code, High) dispatched against this card.",
+                CardService.TransitionActor,
+                CancellationToken.None);
+            var movedOn = await harness.CardService.ApplyAutomatedMoveAsync(
+                card.Id,
+                CardStatus.Review,
+                "Task 242a7647 (Code) settled Succeeded; no other task is open against this card.",
+                CardService.TransitionActor,
+                CancellationToken.None);
+
+            movedIn.ShouldBeTrue();
+            movedOn.ShouldBeTrue();
+
+            var history = await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None);
+            history.Count.ShouldBe(2);
+            history.ShouldAllBe(r => r.Kind == CardRevisionKind.Move);
+            history.ShouldAllBe(r => r.EditedBy == "card-transitions");
+            history[0].ToStatus.ShouldBe(CardStatus.Review);
+            history[0].Reason.ShouldNotBeNull();
+            history[0].Reason!.ShouldContain("settled Succeeded");
+            history[1].ToStatus.ShouldBe(CardStatus.InProgress);
+            history[1].Reason!.ShouldContain("dispatched against this card");
+
+            // A second call with the card already there is a no-op, not a duplicate row - which is
+            // what makes the 60s sweep idempotent.
+            (await harness.CardService.ApplyAutomatedMoveAsync(
+                card.Id, CardStatus.Review, "again", CardService.TransitionActor, CancellationToken.None))
+                .ShouldBeFalse();
+            (await harness.CardService.GetRevisionsAsync(card.Id, CancellationToken.None)).Count.ShouldBe(2);
         }
         finally
         {

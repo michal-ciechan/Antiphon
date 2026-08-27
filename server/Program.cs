@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -145,6 +145,8 @@ try
     }
     builder.Services.Configure<WatchdogSettings>(builder.Configuration.GetSection("Watchdog"));
     builder.Services.Configure<SessionReconciliationSettings>(builder.Configuration.GetSection("SessionReconciliation"));
+    // CARD-0040: cards move themselves from the delegated work bound to them.
+    builder.Services.Configure<CardWorkTransitionSettings>(builder.Configuration.GetSection("CardTransitions"));
     builder.Services.Configure<SupervisionSettings>(builder.Configuration.GetSection("Supervision"));
     builder.Services.Configure<SubscriptionUsageMonitoringSettings>(
         builder.Configuration.GetSection("SubscriptionUsageMonitoring"));
@@ -315,6 +317,7 @@ try
     builder.Services.AddSingleton<WatchdogCooldownStore>();
     builder.Services.AddScoped<WatchdogService>();
     builder.Services.AddScoped<SessionReconciliationService>();
+    builder.Services.AddScoped<CardWorkTransitionService>();
     builder.Services.AddScoped<AgentSupervisorService>();
     builder.Services.AddScoped<DataRetentionService>();
     builder.Services.AddScoped<SessionHealthService>();
@@ -463,6 +466,8 @@ try
     builder.Services.AddHostedService<RunAttemptStallHostedService>();
     builder.Services.AddHostedService<WatchdogHostedService>();
     builder.Services.AddHostedService<SessionReconciliationHostedService>();
+    builder.Services.AddHostedService<
+        Antiphon.Server.Infrastructure.Orchestration.CardWorkTransitionHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AgentSupervisorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SubscriptionUsageMonitorHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionHealthHostedService>();
