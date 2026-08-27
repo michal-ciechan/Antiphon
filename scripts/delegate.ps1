@@ -1,6 +1,12 @@
 # Hand a piece of work to another agent. Invoked by the antiphon-delegate skill from inside a
 # running agent session; identity comes from the ANTIPHON_* environment, never from arguments.
 #
+# BIND THE CARD (CARD-0040). Pass -Card CARD-nnnn, or lead -Title with the identifier, and the card
+# moves itself: In Progress when this task dispatches, Review when it settles Succeeded with nothing
+# else open, within 60s, recorded on the card's history as `card-transitions`. Creation echoes
+# "- bound to CARD-nnnn"; an explicit -Card that names no card is refused 422 rather than ignored.
+# A move a human makes afterwards is never overridden, and Review -> Done is never automated.
+#
 # ASCII-only on purpose: daemon/agent scripts must parse under Windows PowerShell 5.1, which reads
 # a no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
 [CmdletBinding(DefaultParameterSetName = 'Create')]

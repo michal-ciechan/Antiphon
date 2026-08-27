@@ -97,6 +97,18 @@ public enum AttentionKind
 
     /// <summary>A card is parked until a human makes and records a decision.</summary>
     CardNeedsDecision = 13,
+
+    /// <summary>
+    /// A card that has sat In Progress with nobody on it past <c>CardTransitions:StaleAfterDays</c>
+    /// (CARD-0040 §2.5): no open bound task, no live session, not owned by a card session. Computed
+    /// at read time from rows that already exist — no storage, and no alert sink, because it is a
+    /// state rather than an incident.
+    ///
+    /// <para>DETECTION ONLY, the CARD-0153 rule: nothing here moves the card, kills anything or
+    /// dispatches anything. Warning, so it lands in the <c>suspect</c> group rather than demanding
+    /// an answer now.</para>
+    /// </summary>
+    CardStalled = 14,
 }
 
 /// <summary>

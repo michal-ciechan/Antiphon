@@ -53,6 +53,11 @@ export type AttentionKind =
   | 'ProgressStalled'
   /** A card is parked until a human makes and records a decision. */
   | 'CardNeedsDecision'
+  /**
+   * A card has sat In Progress past the stale threshold with no open bound task, no live session
+   * and no owning card session (CARD-0040). Detection only - nothing un-stalls it automatically.
+   */
+  | 'CardStalled'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

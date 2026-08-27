@@ -89,6 +89,10 @@ public sealed class AttentionService
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AttentionService> _logger;
     private readonly AgentFilesService? _files;
+    // CARD-0040 S3: only StaleAfterDays is read here. Optional for the same reason _files is —
+    // every harness that predates this card keeps constructing this service unchanged; production
+    // registers the options section, so DI always supplies it.
+    private readonly CardWorkTransitionSettings _cardTransitions;
 
     public AttentionService(
         AppDbContext db,
@@ -100,7 +104,8 @@ public sealed class AttentionService
         IOptions<DelegationSettings> delegation,
         TimeProvider timeProvider,
         ILogger<AttentionService> logger,
-        AgentFilesService? files = null)
+        AgentFilesService? files = null,
+        IOptions<CardWorkTransitionSettings>? cardTransitions = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -109,6 +114,7 @@ public sealed class AttentionService
         _timeProvider = timeProvider;
         _logger = logger;
         _files = files;
+        _cardTransitions = cardTransitions?.Value ?? new CardWorkTransitionSettings();
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct)
@@ -140,6 +146,7 @@ public sealed class AttentionService
 
         items.AddRange(await BuildBlockedAsync(blocked, costs, checkDigests, ct));
         items.AddRange(await BuildCardNeedsDecisionAsync(ct));
+        items.AddRange(await BuildCardStalledAsync(now, ct));
         var openItems = await BuildOpenTaskItemsAsync(open, now, costs, checkDigests, attachedIncidents, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
@@ -258,6 +265,117 @@ public sealed class AttentionService
                 r.CardId,
                 r.Card.BoardId))
             .ToList();
+    }
+
+    // ---- a card in In Progress with nobody on it (CARD-0040) ------------------------------------
+
+    /// <summary>
+    /// In Progress, past <c>StaleAfterDays</c>, with no open bound task, no live session and no
+    /// owning card session. Every input is a durable row, so this is a read-time projection with
+    /// nothing stored — the <see cref="BuildCardNeedsDecisionAsync"/> precedent.
+    /// </summary>
+    /// <remarks>
+    /// Detection only (CARD-0153's rule): the row exists to be seen, and nothing here un-stalls
+    /// anything. It is deliberately NOT in the away digest — a Warning is not "needs you now".
+    /// </remarks>
+    private async Task<List<AttentionItemDto>> BuildCardStalledAsync(DateTime now, CancellationToken ct)
+    {
+        var threshold = now.AddDays(-Math.Max(1, _cardTransitions.StaleAfterDays));
+
+        var candidates = await _db.Cards.AsNoTracking()
+            .Where(c => c.Status == CardStatus.InProgress
+                && c.ArchivedAt == null
+                // The RunAttempt / card-spawn path owns this one; its own liveness rules apply.
+                && c.OwnerSessionId == null
+                && !_db.AgentTasks.Any(t => t.CardId == c.Id
+                    && t.Role != AgentTaskRole.Check
+                    && (t.Status == AgentTaskStatus.Dispatched
+                        || t.Status == AgentTaskStatus.Working
+                        || t.Status == AgentTaskStatus.Blocked))
+                && !_db.AgentSessions.Any(s => s.CardId == c.Id
+                    && (s.Status == SessionStatus.Created
+                        || s.Status == SessionStatus.Starting
+                        || s.Status == SessionStatus.Running
+                        || s.Status == SessionStatus.Stopping)))
+            .Select(c => new { c.Id, c.BoardId, c.Identifier, c.Title, c.StartedAt, c.UpdatedAt })
+            .ToListAsync(ct);
+        if (candidates.Count == 0)
+            return [];
+
+        var cardIds = candidates.Select(c => c.Id).ToList();
+
+        // "Entered In Progress at": the latest Move/Reopen INTO In Progress. Without history the
+        // card's StartedAt is the first active landing, which is the honest answer for a card
+        // nobody has moved since the revision log began; UpdatedAt is the last resort.
+        var enteredAt = (await _db.CardRevisions.AsNoTracking()
+                .Where(r => cardIds.Contains(r.CardId)
+                    && (r.Kind == CardRevisionKind.Move || r.Kind == CardRevisionKind.Reopen)
+                    && r.ToStatus == CardStatus.InProgress)
+                .Select(r => new { r.CardId, r.CreatedAt })
+                .ToListAsync(ct))
+            .GroupBy(r => r.CardId)
+            .ToDictionary(g => g.Key, g => g.Max(r => r.CreatedAt));
+
+        var lastTasks = (await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.CardId != null && cardIds.Contains(t.CardId!.Value) && t.Role != AgentTaskRole.Check)
+                .Select(t => new
+                {
+                    t.Id,
+                    CardId = t.CardId!.Value,
+                    t.Status,
+                    t.CompletedAt,
+                    t.DispatchedAt,
+                    t.CreatedAt,
+                    t.FailureReason,
+                })
+                .ToListAsync(ct))
+            .GroupBy(t => t.CardId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(t => t.CompletedAt ?? t.DispatchedAt ?? t.CreatedAt).First());
+
+        var items = new List<AttentionItemDto>();
+        foreach (var card in candidates)
+        {
+            var since = enteredAt.TryGetValue(card.Id, out var moved)
+                ? moved
+                : card.StartedAt ?? card.UpdatedAt;
+            if (since > threshold)
+                continue;
+
+            string evidence;
+            if (lastTasks.TryGetValue(card.Id, out var task))
+            {
+                var at = task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt;
+                evidence = $"last task {DelegationReportFormatter.Short(task.Id)} {task.Status} "
+                    + $"on {at:dd MMM}";
+                if (!string.IsNullOrWhiteSpace(task.FailureReason))
+                    evidence += $": {Excerpt(task.FailureReason)}";
+            }
+            else
+            {
+                evidence = "no task has ever been bound to this card";
+            }
+
+            var days = Math.Max(1, (int)Math.Floor((now - since).TotalDays));
+            items.Add(new AttentionItemDto(
+                AttentionKind.CardStalled,
+                AlertSeverity.Warning,
+                null,
+                null,
+                null,
+                null,
+                $"{card.Identifier} — {card.Title}",
+                $"In Progress for {days} days with nobody on it.",
+                evidence,
+                since,
+                null,
+                [AttentionAction.OpenCard],
+                card.Id,
+                card.BoardId));
+        }
+
+        return items;
     }
 
     // ---- conditions 3-8: the open-task conditions, first match wins ------------------------------

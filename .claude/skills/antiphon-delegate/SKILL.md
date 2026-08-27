@@ -79,7 +79,16 @@ A sub-orchestrator defaults to `Plan` and never runs below opus.
 | `-AllowDirectEdits` | don't arm the deny hook in a sub-orchestrator's worktree (it needs to write a plan file itself) |
 | `-Scope "<areas>"` | what this task owns: area names from `antiphon.areas.json` and/or path globs, comma-separated. Two **Shared** tasks whose scopes intersect are serialised — the waiting one gets a visible `Held` event; a worktree on either side runs anyway with a `Warning`. `-ListAreas` prints the names |
 | `-Title "<text>"` | a short label for the board; defaults to the goal's first line |
+| `-Card <id>` | which CARD this work is against — `CARD-0040`, `card-40`, `#40`, `40`, or the guid. Omitted, the server derives it: your own task's card, else the first `CARD-nnnn` in `-Title` |
 | `-ExpectAbout <minutes>` | how long the work should honestly take (1-1440) — schedules the first automatic check-in. Defaults to 10 when omitted |
+
+**Bind the card, and the card moves itself (CARD-0040).** A bound task drags its card to In Progress
+when it dispatches and to Review when it settles `Succeeded` with nothing else open — within 60 s,
+with `card-transitions` on the revision. Leading `-Title` with `CARD-nnnn` is enough; `-Card` is the
+explicit form and is refused 422 if it names no card. Creation echoes `- bound to CARD-nnnn`, so
+check that line rather than discovering a mis-binding on the board a week later. A `Failed` task moves
+the card nowhere, and a move you make by hand is never overridden — the sweep only acts on evidence
+newer than your last move. **Review → Done is still yours.**
 
 **Workers default to shared** — the delegate runs right in the directory, like you would yourself.
 That default is only safe when it is the only write-capable worker in there. Decide explicitly, every

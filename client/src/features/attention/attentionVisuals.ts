@@ -2,6 +2,7 @@ import type { IconType } from 'react-icons'
 import {
   TbAlertTriangle,
   TbClockExclamation,
+  TbClockPause,
   TbEyeOff,
   TbHelpCircle,
   TbHourglassHigh,
@@ -116,6 +117,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'danger',
     icon: TbHelpCircle,
     hint: 'A card is parked on a decision only a person can make. Move it when you have decided.',
+  },
+  CardStalled: {
+    label: 'Stalled card',
+    color: 'warning',
+    icon: TbClockPause,
+    hint: 'In Progress with no open task and no live session. Move it, or start something.',
   },
 }
 

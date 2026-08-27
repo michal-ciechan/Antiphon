@@ -800,6 +800,114 @@ public class AttentionServiceTests
             order.IndexOf(broken), "Critical outranks Error whatever the ages");
     }
 
+    // ---- CARD-0040: a card in In Progress with nobody on it ---------------------------------------
+
+    [Test]
+    public async Task A_card_in_progress_past_the_threshold_with_nobody_on_it_is_a_warning_row()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, boardId, enteredAt) = await scenario.AddInProgressCardAsync(daysAgo: 9);
+        await scenario.AddCardBoundTaskAsync(
+            cardId, AgentTaskStatus.Failed, completedDaysAgo: 8, failureReason: "the delegate never reported");
+
+        var item = (await ItemsForAsync(scenario, staleAfterDays: 7)).Single(i => i.Kind == AttentionKind.CardStalled);
+
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.CardId.ShouldBe(cardId);
+        item.BoardId.ShouldBe(boardId);
+        item.Headline.ShouldContain("In Progress for 9 days");
+        item.Evidence.ShouldContain("Failed");
+        item.Evidence.ShouldContain("the delegate never reported");
+        // SinceUtc is the moment it ENTERED In Progress, which is the revision, not the card row.
+        item.SinceUtc!.Value.ShouldBeInRange(enteredAt.AddSeconds(-2), enteredAt.AddSeconds(2));
+        item.Actions.ShouldBe([AttentionAction.OpenCard]);
+    }
+
+    [Test]
+    public async Task A_stale_card_that_never_had_a_task_says_so()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 20);
+        // Its only bound row is a Check task, which is about a task and never about a card.
+        await scenario.AddCardBoundTaskAsync(
+            cardId, AgentTaskStatus.Dispatched, completedDaysAgo: 1, role: AgentTaskRole.Check);
+
+        var item = (await ItemsForAsync(scenario, staleAfterDays: 7)).Single(i => i.Kind == AttentionKind.CardStalled);
+
+        item.CardId.ShouldBe(cardId);
+        item.Evidence.ShouldBe("no task has ever been bound to this card");
+    }
+
+    [Test]
+    public async Task A_card_with_an_open_bound_task_is_not_stale()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 30);
+        await scenario.AddCardBoundTaskAsync(cardId, AgentTaskStatus.Working);
+
+        (await ItemsForAsync(scenario, staleAfterDays: 7))
+            .ShouldNotContain(i => i.Kind == AttentionKind.CardStalled && i.CardId == cardId);
+    }
+
+    [Test]
+    public async Task A_card_with_a_live_session_is_not_stale()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 30);
+        var sessionId = await scenario.AddSessionAsync(SessionStatus.Running);
+        await scenario.BindSessionToCardAsync(sessionId, cardId);
+
+        (await ItemsForAsync(scenario, staleAfterDays: 7))
+            .ShouldNotContain(i => i.Kind == AttentionKind.CardStalled && i.CardId == cardId);
+    }
+
+    [Test]
+    public async Task A_card_owned_by_a_card_session_is_not_stale()
+    {
+        await using var scenario = new Scenario();
+        var sessionId = await scenario.AddSessionAsync(SessionStatus.Stopped);
+        // The RunAttempt / card-spawn path owns this one; two writers on one card is out of scope.
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 30, ownerSessionId: sessionId);
+
+        (await ItemsForAsync(scenario, staleAfterDays: 7))
+            .ShouldNotContain(i => i.Kind == AttentionKind.CardStalled && i.CardId == cardId);
+    }
+
+    [Test]
+    public async Task A_card_under_the_threshold_is_not_stale()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddInProgressCardAsync(daysAgo: 3);
+        await scenario.AddCardBoundTaskAsync(cardId, AgentTaskStatus.Succeeded, completedDaysAgo: 2);
+
+        (await ItemsForAsync(scenario, staleAfterDays: 7))
+            .ShouldNotContain(i => i.Kind == AttentionKind.CardStalled && i.CardId == cardId);
+    }
+
+    [Test]
+    public async Task A_stale_card_with_no_history_dates_itself_from_started_at()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, enteredAt) = await scenario.AddInProgressCardAsync(daysAgo: 11, withHistory: false);
+        await scenario.AddCardBoundTaskAsync(cardId, AgentTaskStatus.Succeeded, completedDaysAgo: 10);
+
+        var item = (await ItemsForAsync(scenario, staleAfterDays: 7)).Single(i => i.Kind == AttentionKind.CardStalled);
+
+        item.CardId.ShouldBe(cardId);
+        item.SinceUtc!.Value.ShouldBeInRange(enteredAt.AddSeconds(-2), enteredAt.AddSeconds(2));
+    }
+
+    [Test]
+    public async Task A_card_in_review_is_never_stale()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, _, _) = await scenario.AddNeedsDecisionCardAsync("not this one", minutesAgo: 5);
+
+        // The condition is In Progress alone. A card waiting on a reviewer is not abandoned work.
+        (await ItemsForAsync(scenario, staleAfterDays: 7))
+            .ShouldNotContain(i => i.Kind == AttentionKind.CardStalled && i.CardId == cardId);
+    }
+
     // ---- harness ------------------------------------------------------------------------------------
 
     /// <summary>Only the rows this test created — the shared-database rule, mechanised.</summary>
@@ -811,15 +919,23 @@ public class AttentionServiceTests
         return result.Items.Where(scenario.Owns).ToList();
     }
 
+    /// <summary>The same id-scoped read, with the CARD-0040 stale threshold pushed in.</summary>
+    private static async Task<List<AttentionItemDto>> ItemsForAsync(Scenario scenario, int staleAfterDays)
+    {
+        var result = await BuildService(new FakeRunnerClient(), staleAfterDays).GetAsync(CancellationToken.None);
+        return result.Items.Where(scenario.Owns).ToList();
+    }
+
     /// <summary>What the runner says when it is running a session — the only status that can differ.</summary>
     private static SessionRunnerSessionDto Running(Guid sessionId, int? pid = 1234, int? hostPid = null) =>
         new(sessionId, pid, DateTime.UtcNow.AddMinutes(-45), "Running", null, AgentExitReason.Unknown,
             LastSequence: 900, HostPid: hostPid);
 
-    private static AttentionService BuildService(ISessionRunnerClient runner) =>
+    private static AttentionService BuildService(ISessionRunnerClient runner, int staleAfterDays = 7) =>
         new(CreateContext(), runner, Options.Create(new SupervisionSettings()),
             Options.Create(new DelegationSettings()), TimeProvider.System,
-            NullLogger<AttentionService>.Instance);
+            NullLogger<AttentionService>.Instance,
+            cardTransitions: Options.Create(new CardWorkTransitionSettings { StaleAfterDays = staleAfterDays }));
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
@@ -1078,6 +1194,124 @@ public class AttentionServiceTests
             return id;
         }
 
+        /// <summary>
+        /// CARD-0040: a card sitting In Progress, with an "entered In Progress" Move revision at a
+        /// chosen age. Returns the card and the moment it entered, which is what the row's
+        /// <c>SinceUtc</c> must report.
+        /// </summary>
+        public async Task<(Guid CardId, Guid BoardId, DateTime EnteredAt)> AddInProgressCardAsync(
+            int daysAgo, bool withHistory = true, Guid? ownerSessionId = null)
+        {
+            var now = DateTime.UtcNow;
+            var enteredAt = now.AddDays(-daysAgo);
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var backlogId = Guid.NewGuid();
+            var progressId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = $"stale-project-{projectId:N}"[..30],
+                GitRepositoryUrl = "https://example.test/stale.git",
+                LocalRepositoryPath = Path.Combine(Path.GetTempPath(), $"stale-{projectId:N}"),
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = $"stale-board-{boardId:N}"[..30],
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.BoardColumns.AddRange(
+                new BoardColumn { Id = backlogId, BoardId = boardId, StateKey = "backlog", Name = "Backlog", ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now },
+                new BoardColumn { Id = progressId, BoardId = boardId, StateKey = "in-progress", Name = "In Progress", ColumnOrder = 1, CardStatus = CardStatus.InProgress, IsActive = true, CreatedAt = now, UpdatedAt = now });
+            db.Cards.Add(new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = progressId,
+                Identifier = $"STAL-{cardId:N}"[..16],
+                Title = "Nobody is on this",
+                Status = CardStatus.InProgress,
+                OwnerSessionId = ownerSessionId,
+                // A card with no history dates its entry from StartedAt - the first active landing.
+                StartedAt = enteredAt,
+                CreatedAt = enteredAt.AddHours(-1),
+                UpdatedAt = enteredAt,
+                RevisionCount = withHistory ? 1 : 0,
+            });
+            if (withHistory)
+            {
+                db.CardRevisions.Add(new CardRevision
+                {
+                    Id = Guid.NewGuid(),
+                    CardId = cardId,
+                    RevisionNumber = 1,
+                    Kind = CardRevisionKind.Move,
+                    FromColumnId = backlogId,
+                    ToColumnId = progressId,
+                    FromStatus = CardStatus.Backlog,
+                    ToStatus = CardStatus.InProgress,
+                    Reason = "starting work",
+                    CreatedAt = enteredAt,
+                });
+            }
+
+            await db.SaveChangesAsync();
+            _projects.Add(projectId);
+            _boards.Add(boardId);
+            _cards.Add(cardId);
+            return (cardId, boardId, enteredAt);
+        }
+
+        /// <summary>A task bound to a card (CARD-0040), at whatever status the test needs.</summary>
+        public async Task<Guid> AddCardBoundTaskAsync(
+            Guid cardId,
+            AgentTaskStatus status,
+            int completedDaysAgo = 1,
+            string? failureReason = null,
+            AgentTaskRole role = AgentTaskRole.Code)
+        {
+            var id = Guid.NewGuid();
+            var at = DateTime.UtcNow.AddDays(-completedDaysAgo);
+            await using var db = CreateContext();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Depth = 0,
+                Title = "Bound to a stale card",
+                Goal = "Stale card test.",
+                Kind = AgentTaskKind.Worker,
+                Role = role,
+                CardId = cardId,
+                ModelLevel = AgentModelLevel.High,
+                WorkingDirectory = Path.GetTempPath(),
+                Status = status,
+                DispatchedAt = at,
+                CompletedAt = AgentTaskService.IsSettled(status) ? at : null,
+                FailureReason = failureReason,
+                CreatedAt = at,
+            });
+            await db.SaveChangesAsync();
+            _tasks.Add(id);
+            return id;
+        }
+
+        /// <summary>Points an existing session row at a card, so the card looks alive.</summary>
+        public async Task BindSessionToCardAsync(Guid sessionId, Guid cardId)
+        {
+            await using var db = CreateContext();
+            await db.AgentSessions.Where(s => s.Id == sessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.CardId, cardId));
+        }
+
         public async Task<(Guid CardId, Guid BoardId, DateTime MovedAt)> AddNeedsDecisionCardAsync(
             string reason, int minutesAgo, CardRevisionKind kind = CardRevisionKind.Move)
         {
@@ -1190,6 +1424,9 @@ public class AttentionServiceTests
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => _agents.Contains(i.AgentId)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
+            // A session pointed at one of our cards would block the card delete (CARD-0040 tests).
+            await db.AgentSessions.Where(s => s.CardId != null && _cards.Contains(s.CardId!.Value))
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.CardId, (Guid?)null));
             await db.CardRevisions.Where(r => _cards.Contains(r.CardId)).ExecuteDeleteAsync();
             await db.Cards.Where(c => _cards.Contains(c.Id)).ExecuteDeleteAsync();
             await db.BoardColumns.Where(c => _boards.Contains(c.BoardId)).ExecuteDeleteAsync();

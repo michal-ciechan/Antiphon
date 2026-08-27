@@ -249,6 +249,14 @@ Split by what each part actually is:
 
 - **A terminal move preserves its `reason`; use it as the verdict** — what shipped, what was
   corrected, what is still open, with commit hashes.
+- **In Progress and Review are no longer yours to move by hand (CARD-0040).** A task bound to a card
+  moves it: to In Progress when the task dispatches, to Review when the last open task settles
+  `Succeeded`, within 60 s either way, with `card-transitions` as the actor on the revision. Bind it
+  by leading the brief's title with `CARD-nnnn` or by passing `delegate.ps1 -Card CARD-nnnn`, which
+  prints `- bound to CARD-nnnn` at dispatch so a mis-binding is visible immediately.
+- **Done is still yours**, and so is any move you make on purpose: the sweep only acts on evidence
+  NEWER than your last move, so dragging a card back with a reason is respected until the next
+  dispatch. Nothing automates Review → Done.
 - **A move into an active column used to spawn an agent silently — CARD-0051 made that opt-in.**
   Two dead sessions and a stray worktree came from one such PATCH before the fix. `card.ps1 move`
   (and the API underneath it) now only starts a session when `-Spawn` / `spawn: true` is passed, and
