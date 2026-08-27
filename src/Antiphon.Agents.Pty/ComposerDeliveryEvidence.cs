@@ -148,6 +148,27 @@ public static class ComposerDeliveryEvidence
     }
 
     /// <summary>
+    /// True when the body's head fragment is visible. Unlike <see cref="IsVisible"/>, this
+    /// deliberately excludes tail and paste-placeholder evidence: post-submit Codex evidence uses
+    /// the disappearance of the fragment that was visibly standing in its composer.
+    /// </summary>
+    public static bool HeadFragmentIsVisible(string screen, string body)
+    {
+        var normalizedBody = Normalize(body);
+        if (normalizedBody.Length == 0)
+            return false;
+
+        var normalizedScreen = Normalize(screen);
+        if (normalizedScreen.Length == 0)
+            return false;
+
+        var head = normalizedBody.Length <= FragmentSpan
+            ? normalizedBody
+            : normalizedBody[..FragmentSpan];
+        return FragmentVisible(normalizedScreen, head);
+    }
+
+    /// <summary>
     /// The <c>#N</c> of every <c>[Pasted text #N +M lines]</c> on a rendered screen. Read from the
     /// RAW screen, not the whitespace-stripped form, because the number is what identifies the
     /// paste and the surrounding spaces are what delimit it. Tolerant of the composer's wrapping:

@@ -33,6 +33,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     // SubmitAck="" → the submitting Enter produces no output.
     public bool EchoTypedInputToScreen { get; set; } = true;
     public string SubmitAck { get; set; } = "\n";
+    /// <summary>
+    /// Extra renderer frames emitted after a body becomes visible. Models Codex finishing a paste
+    /// over several frames after composer evidence first appears.
+    /// </summary>
+    public IReadOnlyList<string> ComposerFramesAfterEvidence { get; set; } = [];
+    public int ComposerFrameDelayMs { get; set; } = 10;
     private readonly StringBuilder _composer = new();
 
     /// <summary>
@@ -264,6 +270,18 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
             // DeliverAsync wraps multi-line bodies in bracketed paste; the markers never appear
             // as composer text on a real TUI, so strip them before echoing.
             _composer.Append(StripBracketedPasteMarkers(input));
+            if (ComposerFramesAfterEvidence.Count > 0)
+            {
+                var frames = ComposerFramesAfterEvidence.ToArray();
+                _ = Task.Run(async () =>
+                {
+                    foreach (var frame in frames)
+                    {
+                        await Task.Delay(Math.Max(0, ComposerFrameDelayMs));
+                        Emit(frame);
+                    }
+                });
+            }
         }
     }
 

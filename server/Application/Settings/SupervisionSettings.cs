@@ -152,6 +152,14 @@ public sealed class DeliveryVerificationSettings
     public int PollIntervalMs { get; set; } = 500;
 
     /// <summary>
+    /// After the composer first shows the typed body, require its output sequence to stay unchanged
+    /// for this long before taking the post-submit baseline. This excludes the body's own trailing
+    /// render frames from being mistaken for evidence that the following Enter submitted it.
+    /// Bounded to three seconds by the delivery path.
+    /// </summary>
+    public int PostEvidenceSettleMs { get; set; } = 500;
+
+    /// <summary>
     /// After the submitting Enter, the output sequence must advance within this window
     /// (a real submit redraws the screen immediately; this is wedge detection, not
     /// reply detection).

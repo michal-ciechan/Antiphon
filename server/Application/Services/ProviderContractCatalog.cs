@@ -170,7 +170,7 @@ public static class ProviderContractCatalog
             HasScreenFallback: true),
         DeliveryVerification: new DeliveryVerificationContract(
             AgentTuiCapabilityState.Supported,
-            "Composer echo measured on codex-cli 0.147.0 TUI (a typed body renders in the composer row; a typed \\n is a literal newline and does not submit) plus CARD-0055 transcript-confirmed delivery against the rollout's UserMessage rows. The re-press contract holds: Enter on an empty composer was measured submitting nothing five times over. Bracketed-paste and large-body behaviour are still unmeasured (CARD-0099 S2), so the conservative spill policy applies."),
+            "Composer echo measured on codex-cli 0.147.0 TUI (a typed body renders in the composer row; a typed \\n is a literal newline and does not submit) plus CARD-0055 transcript-confirmed delivery against the rollout's UserMessage rows. The re-press contract holds: Enter on an empty composer was measured submitting nothing five times over. A submit is proven by the Working indicator or an emptied composer; sequence advance alone is the body's own render and is not evidence. Bracketed-paste and large-body behaviour are still unmeasured (CARD-0099 S2), so the conservative spill policy applies."),
         SessionResume: new SessionResumeContract(
             AgentTuiCapabilityState.Unknown,
             "Installed-client resume support has not been probed."),

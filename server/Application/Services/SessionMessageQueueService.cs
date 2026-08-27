@@ -1632,9 +1632,9 @@ public sealed class SessionMessageQueueService
             }
         }
 
-        long? sequenceBeforeSubmit = null;
-        if (verify && _runtime.TryGetLiveMetadata(sessionId, out var meta))
-            sequenceBeforeSubmit = meta.LastSequence;
+        var submitBaseline = verify
+            ? await SettlePostEvidenceAsync(sessionId, ct)
+            : default;
 
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
         try
@@ -1649,11 +1649,12 @@ public sealed class SessionMessageQueueService
         if (confirmTranscript)
         {
             return await WaitForTranscriptConfirmAsync(
-                sessionId, trimmed, baseline, sequenceBeforeSubmit, ct, ceilings, unobservableConfirmFrom);
+                sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
+                ct, ceilings, unobservableConfirmFrom);
         }
 
         // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
-        if (sequenceBeforeSubmit is { } advanceFrom
+        if (submitBaseline.Sequence is { } advanceFrom
             && !await WaitForSequenceAdvanceAsync(sessionId, advanceFrom, ct))
         {
             _logger.LogWarning(
@@ -1688,7 +1689,8 @@ public sealed class SessionMessageQueueService
     /// match, so the re-press submits ours and the next record matches.
     /// </summary>
     private async Task<DeliveryOutcome> WaitForTranscriptConfirmAsync(
-        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit, CancellationToken ct,
+        Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
+        string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
@@ -1698,6 +1700,7 @@ public sealed class SessionMessageQueueService
         var lastEnter = UtcNow();
         var entersSent = 1; // the caller's submitting Enter
         var sawSequenceAdvance = false;
+        var sawPositiveSubmit = false;
         // CARD-0164: pull cadence for the unobservable branch — CatchUpTranscriptAsync, never
         // SyncTranscriptAsync (turn-boundary flush re-enters the queue under the caller's lock).
         var pullEvery = TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs));
@@ -1743,6 +1746,24 @@ public sealed class SessionMessageQueueService
                 sawSequenceAdvance = true;
             }
 
+            if (!sawPositiveSubmit)
+            {
+                if (kind == AgentKind.Codex)
+                {
+                    if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+                    {
+                        sawPositiveSubmit = SubmitEvidence.IsPositive(
+                            SubmitEvidenceKind.Codex, screenBeforeSubmit, snapshot.RenderedScreen, body);
+                    }
+                }
+                else
+                {
+                    // Claude and Grok retain the existing advance-based screen fallback. The
+                    // baseline is now settled before Enter, so their proof is strictly stronger.
+                    sawPositiveSubmit = sawSequenceAdvance;
+                }
+            }
+
             if (UtcNow() >= deadline)
             {
                 if (!observable)
@@ -1750,7 +1771,7 @@ public sealed class SessionMessageQueueService
                     // NoTranscriptRecord is deliberately NOT produced here: its post-verdict grace
                     // would re-pull what this loop already pulled, and its meaning presupposes a
                     // bound transcript the session may not have.
-                    if (sawSequenceAdvance)
+                    if (sawPositiveSubmit)
                     {
                         _logger.LogWarning(
                             "Delivery to session {SessionId} confirmed by degraded screen-only verdict "
@@ -1792,7 +1813,7 @@ public sealed class SessionMessageQueueService
             // schedule unconditionally (stale-body recovery needs the re-press even after a redraw).
             var mayReEnter = entersSent < _verification.SubmitAttempts
                 && UtcNow() - lastEnter >= reEnterAfter
-                && (observable || !sawSequenceAdvance);
+                && (observable || !sawPositiveSubmit);
             if (mayReEnter)
             {
                 // CARD-0161 B4: withhold re-press Enter while herdr reports blocked (CARD-0141
@@ -2041,6 +2062,46 @@ public sealed class SessionMessageQueueService
                 return false;
 
             await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+        }
+    }
+
+    private readonly record struct SubmitBaseline(long? Sequence, string Screen);
+
+    /// <summary>
+    /// Lets the composer's final render frames finish before taking the output mark that the
+    /// following Enter must beat. The bounded settle is intentionally shared by every verified
+    /// provider; Codex is the measured case, but no provider benefits from crediting its body's
+    /// own redraw to the submit key.
+    /// </summary>
+    private async Task<SubmitBaseline> SettlePostEvidenceAsync(Guid sessionId, CancellationToken ct)
+    {
+        var settleFor = TimeSpan.FromMilliseconds(Math.Clamp(_verification.PostEvidenceSettleMs, 0, 3_000));
+        var deadline = UtcNow() + TimeSpan.FromSeconds(3);
+        var lastChange = UtcNow();
+        long? lastSequence = null;
+        var screen = string.Empty;
+
+        while (true)
+        {
+            if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+                screen = snapshot.RenderedScreen;
+
+            if (!_runtime.TryGetLiveMetadata(sessionId, out var metadata))
+                return new SubmitBaseline(null, screen);
+
+            if (lastSequence != metadata.LastSequence)
+            {
+                lastSequence = metadata.LastSequence;
+                lastChange = UtcNow();
+            }
+
+            var now = UtcNow();
+            if (now - lastChange >= settleFor || now >= deadline)
+                return new SubmitBaseline(lastSequence, screen);
+
+            var remaining = deadline - now;
+            var pollFor = TimeSpan.FromMilliseconds(Math.Max(1, _verification.PollIntervalMs));
+            await Task.Delay(remaining < pollFor ? remaining : pollFor, _timeProvider, ct);
         }
     }
 

@@ -576,6 +576,71 @@ public class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.Killed.ShouldBeFalse();
     }
 
+    [Test]
+    public async Task Codex_unobservable_body_trailing_frames_are_not_submit_evidence_and_re_enter_until_no_submit_output()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+        h.Adapter.ComposerFramesAfterEvidence = [" frame one", " frame two", " frame three"];
+
+        var ex = await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(
+            h.SessionId, "codex body that keeps rendering after evidence", MessageSendMode.Now,
+            CancellationToken.None));
+
+        h.Adapter.Inputs.ShouldBe([
+            "codex body that keeps rendering after evidence", "\r", "\r", "\r"],
+            "Codex must not credit the body's trailing frames to the submitting Enter");
+        ex.Message.ShouldContain("submitting Enter produced no output");
+    }
+
+    [Test]
+    public async Task Codex_unobservable_no_post_enter_output_returns_no_submit_output_after_three_enters()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "";
+
+        var ex = await Should.ThrowAsync<ConflictException>(() => h.Queue.EnqueueAsync(
+            h.SessionId, "codex enter produces nothing", MessageSendMode.Now, CancellationToken.None));
+
+        h.Adapter.Inputs.ShouldBe(["codex enter produces nothing", "\r", "\r", "\r"]);
+        ex.Message.ShouldContain("submitting Enter produced no output");
+    }
+
+    [Test]
+    public async Task Codex_unobservable_working_indicator_confirms_by_screen()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        await SetKindAsync(h.SessionId, AgentKind.Codex);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "\n• Working (0s • esc to interrupt)";
+
+        var receipt = await h.Queue.EnqueueAsync(
+            h.SessionId, "codex working indicator confirms submit", MessageSendMode.Now,
+            CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["codex working indicator confirms submit", "\r"]);
+        receipt.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
+    }
+
+    [Test]
+    public async Task Claude_unobservable_keeps_advance_based_screen_verdict_after_settled_baseline()
+    {
+        await using var h = await CreateHarnessAsync(alwaysOn: true);
+        h.Adapter.SwallowSubmits = 99;
+        h.Adapter.SubmitAck = "\nclaude submit redraw";
+        h.Adapter.ComposerFramesAfterEvidence = [" body frame one", " body frame two", " body frame three"];
+
+        var receipt = await h.Queue.EnqueueAsync(
+            h.SessionId, "claude body that finishes rendering", MessageSendMode.Now, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["claude body that finishes rendering", "\r"]);
+        receipt.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
+    }
+
     // CARD-0201: the mirror of the test above, and the distinction it turns on. The same
     // pre-first-turn session (zero transcript rows, so CARD-0164's unobservable-baseline loop),
     // but the submitted prompt DOES land as a TIMESTAMPED UserPrompt row — the shape a bound
