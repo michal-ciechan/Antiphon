@@ -181,7 +181,7 @@ public class ProjectDeletionTests
             (await verify.Projects.AnyAsync(p => p.Id == keeper.Id)).ShouldBeTrue();
             (await verify.Boards.AnyAsync(b => b.Id == keptBoard.Id)).ShouldBeTrue();
             (await verify.Cards.AnyAsync(c => c.Id == keptCard.Id)).ShouldBeTrue();
-            (await verify.BoardColumns.CountAsync(c => c.BoardId == keptBoard.Id)).ShouldBe(4);
+            (await verify.BoardColumns.CountAsync(c => c.BoardId == keptBoard.Id)).ShouldBe(5);
         }
         finally
         {

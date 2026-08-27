@@ -41,6 +41,22 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class AttentionServiceTests
 {
+    [Test]
+    public async Task A_needs_decision_card_is_a_critical_row_whose_evidence_is_the_move_reason()
+    {
+        await using var scenario = new Scenario();
+        var (cardId, boardId, movedAt) = await scenario.AddNeedsDecisionCardAsync("Which queue should own this?", minutesAgo: 12);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.CardId == cardId);
+
+        item.Kind.ShouldBe(AttentionKind.CardNeedsDecision);
+        item.Severity.ShouldBe(AlertSeverity.Critical);
+        item.Evidence.ShouldBe("Which queue should own this?");
+        item.SinceUtc!.Value.ShouldBeInRange(movedAt.AddTicks(-10), movedAt.AddTicks(10));
+        item.BoardId.ShouldBe(boardId);
+        item.Actions.ShouldBe([AttentionAction.OpenCard]);
+    }
+
     // ---- 1. BlockedQuestion ---------------------------------------------------------------------
 
     [Test]
@@ -790,11 +806,15 @@ public class AttentionServiceTests
         private readonly List<Guid> _sessions = [];
         private readonly List<Guid> _agents = [];
         private readonly List<Guid> _messages = [];
+        private readonly List<Guid> _cards = [];
+        private readonly List<Guid> _boards = [];
+        private readonly List<Guid> _projects = [];
 
         public bool Owns(AttentionItemDto item) =>
             (item.TaskId is { } t && _tasks.Contains(t))
             || (item.MessageId is { } m && _messages.Contains(m))
             || (item.TaskId is null && item.MessageId is null && item.AgentId is { } a && _agents.Contains(a))
+            || (item.CardId is { } c && _cards.Contains(c))
             // Session-scoped rows (SessionDisagreement) may carry no task, message or agent at all —
             // an unclaimed runner session is by definition owned by nothing the database knows.
             || (item.TaskId is null && item.MessageId is null && item.SessionId is { } s && _sessions.Contains(s));
@@ -1030,6 +1050,70 @@ public class AttentionServiceTests
             return id;
         }
 
+        public async Task<(Guid CardId, Guid BoardId, DateTime MovedAt)> AddNeedsDecisionCardAsync(
+            string reason, int minutesAgo)
+        {
+            var now = DateTime.UtcNow;
+            var projectId = Guid.NewGuid();
+            var boardId = Guid.NewGuid();
+            var backlogId = Guid.NewGuid();
+            var decisionId = Guid.NewGuid();
+            var cardId = Guid.NewGuid();
+            var movedAt = now.AddMinutes(-minutesAgo);
+            await using var db = CreateContext();
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = $"attention-project-{projectId:N}"[..30],
+                GitRepositoryUrl = "https://example.test/attention.git",
+                LocalRepositoryPath = Path.Combine(Path.GetTempPath(), $"attention-{projectId:N}"),
+                BaseBranch = "main",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = $"attention-board-{boardId:N}"[..30],
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            db.BoardColumns.AddRange(
+                new BoardColumn { Id = backlogId, BoardId = boardId, StateKey = "backlog", Name = "Backlog", ColumnOrder = 0, CardStatus = CardStatus.Backlog, CreatedAt = now, UpdatedAt = now },
+                new BoardColumn { Id = decisionId, BoardId = boardId, StateKey = "needs-decision", Name = "Needs decision", ColumnOrder = 4, CardStatus = CardStatus.NeedsDecision, CreatedAt = now, UpdatedAt = now });
+            db.Cards.Add(new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = decisionId,
+                Identifier = $"ATTN-{cardId:N}"[..16],
+                Title = "Needs an operator decision",
+                Status = CardStatus.NeedsDecision,
+                CreatedAt = now.AddHours(-1),
+                UpdatedAt = movedAt,
+                RevisionCount = 1,
+            });
+            db.CardRevisions.Add(new CardRevision
+            {
+                Id = Guid.NewGuid(),
+                CardId = cardId,
+                RevisionNumber = 1,
+                Kind = CardRevisionKind.Move,
+                FromColumnId = backlogId,
+                ToColumnId = decisionId,
+                FromStatus = CardStatus.Backlog,
+                ToStatus = CardStatus.NeedsDecision,
+                Reason = reason,
+                CreatedAt = movedAt,
+            });
+            await db.SaveChangesAsync();
+            _projects.Add(projectId);
+            _boards.Add(boardId);
+            _cards.Add(cardId);
+            return (cardId, boardId, movedAt);
+        }
+
         public async Task AddIncidentAsync(
             Guid agentId, Guid? sessionId, AgentIncidentKind kind, AlertSeverity severity,
             string message, int minutesAgo)
@@ -1056,6 +1140,11 @@ public class AttentionServiceTests
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => _agents.Contains(i.AgentId)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
+            await db.CardRevisions.Where(r => _cards.Contains(r.CardId)).ExecuteDeleteAsync();
+            await db.Cards.Where(c => _cards.Contains(c.Id)).ExecuteDeleteAsync();
+            await db.BoardColumns.Where(c => _boards.Contains(c.BoardId)).ExecuteDeleteAsync();
+            await db.Boards.Where(b => _boards.Contains(b.Id)).ExecuteDeleteAsync();
+            await db.Projects.Where(p => _projects.Contains(p.Id)).ExecuteDeleteAsync();
             await db.ChatChannels.Where(c => c.AgentId != null && _agents.Contains(c.AgentId!.Value))
                 .ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();

@@ -359,9 +359,9 @@ switch ($Verb) {
             if (-not [string]::IsNullOrWhiteSpace($reasonText)) {
                 Assert-WithinLimit -Field 'Reason' -Value $reasonText -Limit (Get-CardLimits).maxReasonLength
             }
-            $needle = $To.Trim().ToLowerInvariant()
+            $needle = $To.Trim()
             $target = @($columns | Where-Object {
-                    $_.id -eq $To -or $_.name.ToLowerInvariant() -eq $needle -or $_.stateKey.ToLowerInvariant() -eq $needle
+                    $_.id -eq $To -or $_.name -ieq $needle -or $_.stateKey -ieq $needle -or $_.cardStatus -ieq $needle
                 })[0]
             if ($null -eq $target) {
                 Write-Error ("No column '{0}' on this board. It has: {1}" -f $To, `

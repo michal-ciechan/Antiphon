@@ -313,7 +313,8 @@ public sealed class BoardService
             NewColumn(board, "backlog", "Backlog", 0, CardStatus.Backlog, isActive: false, isTerminal: false, utcNow),
             NewColumn(board, "in-progress", "In Progress", 1, CardStatus.InProgress, isActive: true, isTerminal: false, utcNow),
             NewColumn(board, "review", "Review", 2, CardStatus.Review, isActive: false, isTerminal: false, utcNow),
-            NewColumn(board, "done", "Done", 3, CardStatus.Done, isActive: false, isTerminal: true, utcNow)
+            NewColumn(board, "done", "Done", 3, CardStatus.Done, isActive: false, isTerminal: true, utcNow),
+            NewColumn(board, "needs-decision", "Needs decision", 4, CardStatus.NeedsDecision, isActive: false, isTerminal: false, utcNow)
         ];
     }
 

@@ -139,6 +139,7 @@ public sealed class AttentionService
         var checkDigests = await LoadLatestCheckDigestsAsync(subjects, ct);
 
         items.AddRange(await BuildBlockedAsync(blocked, costs, checkDigests, ct));
+        items.AddRange(await BuildCardNeedsDecisionAsync(ct));
         var openItems = await BuildOpenTaskItemsAsync(open, now, costs, checkDigests, attachedIncidents, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
@@ -225,6 +226,37 @@ public sealed class AttentionService
         }
 
         return items;
+    }
+
+    // ---- condition 2: a card is parked on a human decision --------------------------------------
+
+    private async Task<List<AttentionItemDto>> BuildCardNeedsDecisionAsync(CancellationToken ct)
+    {
+        var moves = await _db.CardRevisions.AsNoTracking()
+            .Where(r => r.Kind == CardRevisionKind.Move && r.ToStatus == CardStatus.NeedsDecision)
+            .Include(r => r.Card)
+            .Where(r => r.Card.Status == CardStatus.NeedsDecision && r.Card.ArchivedAt == null)
+            .ToListAsync(ct);
+
+        return moves
+            .GroupBy(r => r.CardId)
+            .Select(g => g.OrderByDescending(r => r.RevisionNumber).First())
+            .Select(r => new AttentionItemDto(
+                AttentionKind.CardNeedsDecision,
+                AlertSeverity.Critical,
+                null,
+                null,
+                null,
+                null,
+                $"{r.Card.Identifier} — {r.Card.Title}",
+                "Needs a decision — nobody can move this but you.",
+                r.Reason ?? "No decision question was recorded.",
+                r.CreatedAt,
+                null,
+                [AttentionAction.OpenCard],
+                r.CardId,
+                r.Card.BoardId))
+            .ToList();
     }
 
     // ---- conditions 3-8: the open-task conditions, first match wins ------------------------------

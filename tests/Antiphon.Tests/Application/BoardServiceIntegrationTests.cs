@@ -25,7 +25,7 @@ namespace Antiphon.Tests.Application;
 public class BoardServiceIntegrationTests
 {
     [Test]
-    public async Task Board_create_card_and_detail_round_trip_returns_ordered_columns_and_labels()
+    public async Task A_new_board_has_a_needs_decision_column_after_done()
     {
         await using var db = CreateContext();
         var tempRoot = NewTempRoot();
@@ -58,9 +58,14 @@ public class BoardServiceIntegrationTests
 
             var detail = await harness.BoardService.GetByIdAsync(board.Id, CancellationToken.None);
 
-            detail.Columns.Select(c => c.StateKey).ShouldBe(["backlog", "in-progress", "review", "done"]);
+            detail.Columns.Select(c => c.StateKey).ShouldBe(["backlog", "in-progress", "review", "done", "needs-decision"]);
             detail.Columns.Single(c => c.StateKey == "in-progress").IsActive.ShouldBeTrue();
             detail.Columns.Single(c => c.StateKey == "done").IsTerminal.ShouldBeTrue();
+            var needsDecision = detail.Columns.Single(c => c.StateKey == "needs-decision");
+            needsDecision.CardStatus.ShouldBe(CardStatus.NeedsDecision);
+            needsDecision.IsActive.ShouldBeFalse();
+            needsDecision.IsTerminal.ShouldBeFalse();
+            needsDecision.ColumnOrder.ShouldBe(4);
             var backlogCard = detail.Columns.Single(c => c.StateKey == "backlog").Cards.Single();
             backlogCard.Id.ShouldBe(card.Id);
             backlogCard.Labels.ShouldBe(["ui", "e08"]);
@@ -488,6 +493,7 @@ public class BoardServiceIntegrationTests
         {
             InternalTrackerRepositoryPathPrefix = tempRoot
         }));
+        services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
         {
             DefaultDefinition = "fake",
@@ -501,6 +507,7 @@ public class BoardServiceIntegrationTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<AgentSessionService>();
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();

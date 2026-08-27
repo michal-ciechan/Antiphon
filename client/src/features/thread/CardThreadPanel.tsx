@@ -337,7 +337,8 @@ function ApprovePlanButton({
 
   if (targets.length === 0) return null
   const target = targets.find((column) => column.id === (targetId ?? defaultTarget?.id)) ?? null
-  const effectiveReason = reason ?? `plan approved: ${planPath}`
+  const needsDecisionReason = target?.cardStatus === 'NeedsDecision'
+  const effectiveReason = needsDecisionReason ? (reason ?? '') : (reason ?? `plan approved: ${planPath}`)
 
   const close = () => {
     setOpened(false)
@@ -346,7 +347,7 @@ function ApprovePlanButton({
   }
 
   const submit = () => {
-    if (!target) return
+    if (!target || (needsDecisionReason && !effectiveReason.trim())) return
     moveCard.mutate(
       {
         cardId: card.id,
@@ -402,8 +403,15 @@ function ApprovePlanButton({
               Moving a card into {target.name} spawns an agent session on it.
             </Alert>
           )}
+          {needsDecisionReason && (
+            <Alert color="warning" variant="light" icon={<TbAlertTriangle size={18} />} title="This waits for a human">
+              This card will leave every agent's reach until a human moves it again.
+            </Alert>
+          )}
           <Textarea
             label="Reason"
+            placeholder={needsDecisionReason ? 'What decision is needed?' : undefined}
+            withAsterisk={needsDecisionReason}
             autosize
             minRows={2}
             value={effectiveReason}
@@ -411,7 +419,7 @@ function ApprovePlanButton({
           />
           <Group justify="flex-end">
             <Button variant="subtle" onClick={close}>Cancel</Button>
-            <Button onClick={submit} loading={moveCard.isPending}>Move</Button>
+            <Button onClick={submit} loading={moveCard.isPending} disabled={needsDecisionReason && !effectiveReason.trim()}>Move</Button>
           </Group>
         </Stack>
       </Modal>

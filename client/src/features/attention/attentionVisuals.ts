@@ -111,6 +111,12 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbRepeat,
     hint: 'Working, but nothing novel has landed for a while. Detection only — nothing is killed.',
   },
+  CardNeedsDecision: {
+    label: 'Needs decision',
+    color: 'danger',
+    icon: TbHelpCircle,
+    hint: 'A card is parked on a decision only a person can make. Move it when you have decided.',
+  },
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'
@@ -181,6 +187,7 @@ export const SEVERITY_COLOR: Record<AlertSeverity, string> = {
  * view lives on the Orchestrator page at all.
  */
 export function targetOf(item: AttentionItemDto): string | null {
+  if (item.cardId && item.boardId) return `/boards/${item.boardId}?card=${item.cardId}`
   if (item.taskId) return `/orchestrator?tab=delegations&task=${item.taskId}`
   // `?agent=` is how AgentsPage takes a selection — the incident drawer opens on the agent it names.
   if (item.agentId) return `/agents?agent=${item.agentId}`
@@ -206,5 +213,5 @@ export function ageSeconds(item: AttentionItemDto, now: number = Date.now()): nu
  * headline, which counts elapsed time and would remount the row every fifteen seconds.
  */
 export function keyOf(item: AttentionItemDto): string {
-  return [item.kind, item.taskId, item.sessionId, item.messageId, item.agentId, item.sinceUtc].join('|')
+  return [item.kind, item.cardId, item.taskId, item.sessionId, item.messageId, item.agentId, item.sinceUtc].join('|')
 }

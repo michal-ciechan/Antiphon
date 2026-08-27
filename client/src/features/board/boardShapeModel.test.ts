@@ -232,7 +232,7 @@ describe('legal move targets (lockstep with CardStateMachine)', () => {
     expect(canMoveTo('Done', 'Backlog')).toBe(false)
     expect(canMoveTo('Canceled', 'Review')).toBe(false)
     expect(canMoveTo('Review', 'Backlog')).toBe(true)
-    expect(canMoveTo('Blocked', 'Done')).toBe(true)
+    expect(canMoveTo('NeedsDecision', 'Done')).toBe(true)
   })
 
   // The case the lockstep claim above is easiest to break on: the server excludes self from every
@@ -245,7 +245,7 @@ describe('legal move targets (lockstep with CardStateMachine)', () => {
     expect(canReopenFrom('Backlog')).toBe(false)
     expect(canReopenFrom('InProgress')).toBe(false)
     expect(canReopenFrom('Review')).toBe(false)
-    expect(canReopenFrom('Blocked')).toBe(false)
+    expect(canReopenFrom('NeedsDecision')).toBe(false)
   })
 
   it('refuses a self-move, even between two columns sharing one status', () => {

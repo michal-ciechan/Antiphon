@@ -1,4 +1,5 @@
 import { Badge, Box, Group, Paper, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { TbHelpCircle } from 'react-icons/tb'
 import { describeSignal, type StateShape } from './boardShapeModel'
 import { priorityFill, stateAccent, stateColor } from './boardVisuals'
 
@@ -62,6 +63,9 @@ export function StateNode({ state, selected, filtered, onSelect }: StateNodeProp
             </Text>
             {state.isActive && <Badge size="xs" variant="outline" color="gray">active</Badge>}
             {state.isTerminal && <Badge size="xs" variant="outline" color="gray">terminal</Badge>}
+            {state.cardStatus === 'NeedsDecision' && (
+              <Badge size="xs" variant="outline" color="danger" leftSection={<TbHelpCircle size={12} />}>needs a human</Badge>
+            )}
           </Group>
 
           <Group gap={6} align="baseline" wrap="nowrap">

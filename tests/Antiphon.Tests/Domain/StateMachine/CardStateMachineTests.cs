@@ -35,7 +35,7 @@ public class CardStateMachineTests
     [Arguments(CardStatus.Backlog)]
     [Arguments(CardStatus.InProgress)]
     [Arguments(CardStatus.Review)]
-    [Arguments(CardStatus.Blocked)]
+    [Arguments(CardStatus.NeedsDecision)]
     public void Every_live_state_reaches_every_other_directly(CardStatus from)
     {
         foreach (var to in Enum.GetValues<CardStatus>())
@@ -73,7 +73,7 @@ public class CardStateMachineTests
     [Arguments(CardStatus.Backlog, false)]
     [Arguments(CardStatus.InProgress, false)]
     [Arguments(CardStatus.Review, false)]
-    [Arguments(CardStatus.Blocked, false)]
+    [Arguments(CardStatus.NeedsDecision, false)]
     public void CanReopenFrom_is_true_for_exactly_the_terminal_statuses(CardStatus from, bool expected)
     {
         CardStateMachine.CanReopenFrom(from).ShouldBe(expected);

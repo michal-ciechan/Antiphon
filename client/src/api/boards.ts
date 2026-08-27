@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
-export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'Blocked' | 'Canceled'
+export type CardStatus = 'Backlog' | 'InProgress' | 'Review' | 'Done' | 'NeedsDecision' | 'Canceled'
 export type AgentKind = 'Raw' | 'ClaudeCode' | 'Codex' | 'OpenCode' | 'Grok'
 export type SessionStatus = 'Created' | 'Starting' | 'Running' | 'Stopping' | 'Stopped' | 'Failed'
 export type CardWorkflowRunStatus = 'Queued' | 'Running' | 'WaitingForHumanReview' | 'Completed' | 'Failed' | 'Canceled'

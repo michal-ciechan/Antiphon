@@ -451,9 +451,14 @@ public sealed class AgentControlService
                 if (IsSpawnable(current))
                     return current;
 
-                _logger.LogWarning(
-                    "Agent {AgentName} ({AgentId}): current card {CardIdentifier} ({CardId}) is in status {Status} — work is finished, not respawning on it",
-                    agent.Name, agent.Id, current.Identifier, current.Id, current.Status);
+                if (current.Status == CardStatus.NeedsDecision)
+                    _logger.LogDebug(
+                        "Agent {AgentName} ({AgentId}): current card {CardIdentifier} ({CardId}) is waiting on a human decision, not respawning on it",
+                        agent.Name, agent.Id, current.Identifier, current.Id);
+                else
+                    _logger.LogWarning(
+                        "Agent {AgentName} ({AgentId}): current card {CardIdentifier} ({CardId}) is in status {Status} — work is finished, not respawning on it",
+                        agent.Name, agent.Id, current.Identifier, current.Id, current.Status);
             }
         }
 
@@ -468,9 +473,14 @@ public sealed class AgentControlService
             if (IsSpawnable(candidate))
                 return candidate;
 
-            _logger.LogWarning(
-                "Agent {AgentName} ({AgentId}): skipping queued card {CardIdentifier} ({CardId}) in status {Status} — finished cards should have been dequeued (stale queue row)",
-                agent.Name, agent.Id, candidate.Identifier, candidate.Id, candidate.Status);
+            if (candidate.Status == CardStatus.NeedsDecision)
+                _logger.LogDebug(
+                    "Agent {AgentName} ({AgentId}): skipping queued card {CardIdentifier} ({CardId}) — waiting on a human decision",
+                    agent.Name, agent.Id, candidate.Identifier, candidate.Id);
+            else
+                _logger.LogWarning(
+                    "Agent {AgentName} ({AgentId}): skipping queued card {CardIdentifier} ({CardId}) in status {Status} — finished cards should have been dequeued (stale queue row)",
+                    agent.Name, agent.Id, candidate.Identifier, candidate.Id, candidate.Status);
         }
 
         return null;
@@ -478,7 +488,7 @@ public sealed class AgentControlService
 
     private static bool IsSpawnable(Card card) =>
         !card.BoardColumn.IsTerminal
-        && card.Status is not (CardStatus.Review or CardStatus.Done or CardStatus.Canceled)
+        && card.Status is not (CardStatus.Review or CardStatus.NeedsDecision or CardStatus.Done or CardStatus.Canceled)
         // An archived card is off the board. Left spawnable, one sitting at an agent's queue head
         // would be respawned on at every agent start — the CARD-0001 loop, on a card someone had
         // just taken out of play.

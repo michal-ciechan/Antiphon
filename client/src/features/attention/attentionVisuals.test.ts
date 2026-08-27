@@ -29,6 +29,7 @@ const ALL_KINDS: AttentionKind[] = [
   'RecentFailure',
   'Overdue',
   'ProgressStalled',
+  'CardNeedsDecision',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -87,7 +88,10 @@ describe('attentionVisuals', () => {
     expect(ATTENTION_GROUPS.filter((group) => group.collapsed).map((g) => g.key)).toEqual(['failures'])
   })
 
-  it('sends a task row to the drawer on the sibling tab and an agent row to its incidents', () => {
+  it('sends a card row to its board, a task row to the drawer, and an agent row to incidents', () => {
+    expect(targetOf(item({ kind: 'CardNeedsDecision', cardId: 'card-1', boardId: 'board-1' }))).toBe(
+      '/boards/board-1?card=card-1',
+    )
     expect(targetOf(item({ kind: 'BlockedQuestion', taskId: 'task-1' }))).toBe(
       '/orchestrator?tab=delegations&task=task-1',
     )

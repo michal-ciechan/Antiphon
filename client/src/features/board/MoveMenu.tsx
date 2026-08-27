@@ -51,6 +51,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
   // An archived card cannot move — the server refuses with "unarchive it before…", so offering
   // targets would only produce a 409 the operator has to read to understand.
   const targets = archived ? [] : legalMoveTargets(card, columns)
+  const needsDecisionReason = target?.cardStatus === 'NeedsDecision'
 
   const close = () => {
     setTarget(null)
@@ -60,7 +61,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
   }
 
   const submit = () => {
-    if (!target) return
+    if (!target || (needsDecisionReason && !reason.trim())) return
     const chosen = target
     moveCard.mutate(
       {
@@ -273,9 +274,15 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
               Moving a card into {target.name} spawns an agent session on it.
             </Alert>
           )}
+          {needsDecisionReason && (
+            <Alert color="warning" variant="light" icon={<TbAlertTriangle size={18} />} title="This waits for a human">
+              This card will leave every agent's reach until a human moves it again.
+            </Alert>
+          )}
           <Textarea
             label="Reason"
-            placeholder="Why this card is moving"
+            placeholder={needsDecisionReason ? 'What decision is needed?' : 'Why this card is moving'}
+            withAsterisk={needsDecisionReason}
             autosize
             minRows={2}
             value={reason}
@@ -287,7 +294,7 @@ export function MoveMenu({ boardId, card, columns, variant = 'kebab', onArchived
           </Text>
           <Group justify="flex-end">
             <Button variant="subtle" onClick={close}>Cancel</Button>
-            <Button onClick={submit} loading={moveCard.isPending}>Move</Button>
+            <Button onClick={submit} loading={moveCard.isPending} disabled={needsDecisionReason && !reason.trim()}>Move</Button>
           </Group>
         </Stack>
       </Modal>

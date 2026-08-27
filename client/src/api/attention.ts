@@ -51,6 +51,8 @@ export type AttentionKind =
    * cancel it, or open the session; nothing automatic kills it.
    */
   | 'ProgressStalled'
+  /** A card is parked until a human makes and records a decision. */
+  | 'CardNeedsDecision'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =
@@ -63,6 +65,7 @@ export type AttentionAction =
   | 'OpenDrawer'
   | 'KillSession'
   | 'OpenAgent'
+  | 'OpenCard'
 
 export interface AttentionItemDto {
   kind: AttentionKind
@@ -72,6 +75,8 @@ export interface AttentionItemDto {
   sessionId: string | null
   agentId: string | null
   messageId: string | null
+  cardId?: string | null
+  boardId?: string | null
   title: string
   /** One server-computed line naming the condition in this row's own numbers. */
   headline: string

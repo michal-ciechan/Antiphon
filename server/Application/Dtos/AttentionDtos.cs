@@ -94,6 +94,9 @@ public enum AttentionKind
     /// <see cref="Overdue"/>. Detection only: Reply, Cancel, OpenDrawer; never a kill.
     /// </summary>
     ProgressStalled = 12,
+
+    /// <summary>A card is parked until a human makes and records a decision.</summary>
+    CardNeedsDecision = 13,
 }
 
 /// <summary>
@@ -129,6 +132,9 @@ public enum AttentionAction
 
     /// <summary>Open the agent's incident drawer.</summary>
     OpenAgent = 8,
+
+    /// <summary>Open the card that is waiting on a decision.</summary>
+    OpenCard = 9,
 }
 
 /// <summary>
@@ -160,7 +166,9 @@ public sealed record AttentionItemDto(
     string Evidence,
     DateTime? SinceUtc,
     decimal? SubtreeCostUsd,
-    IReadOnlyList<AttentionAction> Actions);
+    IReadOnlyList<AttentionAction> Actions,
+    Guid? CardId = null,
+    Guid? BoardId = null);
 
 /// <param name="RunnerConsulted">
 /// Whether the session runner answered this sweep. False means the runner-derived condition

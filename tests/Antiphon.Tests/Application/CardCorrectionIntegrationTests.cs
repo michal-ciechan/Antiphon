@@ -200,6 +200,73 @@ public class CardCorrectionIntegrationTests
         }
     }
 
+    [Test]
+    public async Task A_move_into_needs_decision_without_a_reason_is_refused()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Decision reason board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Ask an operator"), CancellationToken.None);
+            var needsDecision = board.Columns.Single(c => c.CardStatus == CardStatus.NeedsDecision);
+
+            var ex = await Should.ThrowAsync<ValidationException>(() => harness.CardService.MoveAsync(
+                card.Id, new MoveCardRequest(needsDecision.Id, card.ConcurrencyToken), CancellationToken.None));
+
+            ex.Errors[nameof(MoveCardRequest.Reason)].Single()
+                .ShouldBe("A move into Needs decision must say what decision is needed.");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task A_move_into_needs_decision_records_the_reason_and_a_move_out_needs_no_reason()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            db.Projects.Add(project);
+            await db.SaveChangesAsync();
+            await using var harness = BuildHarness(tempRoot);
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Decision history board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Record the question"), CancellationToken.None);
+            var needsDecision = board.Columns.Single(c => c.CardStatus == CardStatus.NeedsDecision);
+            var backlog = board.Columns.Single(c => c.CardStatus == CardStatus.Backlog);
+
+            var moved = await harness.CardService.MoveAsync(
+                card.Id, new MoveCardRequest(needsDecision.Id, card.ConcurrencyToken, "Which provider should we use?"),
+                CancellationToken.None);
+            var returned = await harness.CardService.MoveAsync(
+                card.Id, new MoveCardRequest(backlog.Id, moved.Card.ConcurrencyToken), CancellationToken.None);
+
+            returned.Card.Status.ShouldBe(CardStatus.Backlog);
+            await using var verify = CreateContext();
+            var revision = await verify.CardRevisions
+                .SingleAsync(r => r.CardId == card.Id && r.ToStatus == CardStatus.NeedsDecision);
+            revision.Reason.ShouldBe("Which provider should we use?");
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     // Before CARD-0019 a non-terminal move's reason was accepted and then dropped: TerminalReason
     // was the only place a reason could go, and it means something else. This is the fix.
     [Test]
@@ -1574,6 +1641,7 @@ public class CardCorrectionIntegrationTests
         {
             InternalTrackerRepositoryPathPrefix = tempRoot
         }));
+        services.AddSingleton<IOptions<DelegationSettings>>(Options.Create(new DelegationSettings()));
         services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(new OptionsMonitorStub<AgentRegistrySettings>(
             new AgentRegistrySettings
             {
@@ -1595,6 +1663,7 @@ public class CardCorrectionIntegrationTests
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddScoped<AgentSessionService>();
+        services.AddScoped<AgentSessionLaunchComposer>();
         services.AddScoped<RetryScheduler>();
         services.AddScoped<ExternalTrackerSyncService>();
         services.AddSingleton<OrchestratorControlState>();

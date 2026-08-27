@@ -12,6 +12,7 @@ import { CardEditModal } from './CardEditModal'
 import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
+import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
 import { CardThreadPanel } from '../thread/CardThreadPanel'
 import './CardModal.css'
@@ -115,7 +116,7 @@ export function CardModal({ boardId, card, columns = [], opened, onClose }: Card
                   archived
                 </Badge>
               )}
-              <Badge variant="light">{card.status}</Badge>
+              <Badge variant="light">{stateLabel(card.status)}</Badge>
               <Badge color="gray" variant="outline">P{card.priority}</Badge>
               {activeSessionCount > 0 && (
                 <Badge color="green" variant="light">

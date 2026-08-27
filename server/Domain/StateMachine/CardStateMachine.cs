@@ -26,7 +26,7 @@ public static class CardStateMachine
     private static readonly CardStatus[] AnyLiveState =
     [
         CardStatus.Backlog, CardStatus.InProgress, CardStatus.Review,
-        CardStatus.Blocked, CardStatus.Done, CardStatus.Canceled,
+        CardStatus.NeedsDecision, CardStatus.Done, CardStatus.Canceled,
     ];
 
     private static readonly Dictionary<CardStatus, CardStatus[]> Transitions = new()
@@ -34,7 +34,7 @@ public static class CardStateMachine
         [CardStatus.Backlog] = Without(CardStatus.Backlog),
         [CardStatus.InProgress] = Without(CardStatus.InProgress),
         [CardStatus.Review] = Without(CardStatus.Review),
-        [CardStatus.Blocked] = Without(CardStatus.Blocked),
+        [CardStatus.NeedsDecision] = Without(CardStatus.NeedsDecision),
         // Terminal states stay terminal for the MOVE verb. Reopening a closed card is a different
         // verb (CardService.ReopenAsync / POST /cards/{id}/reopen), not a transition: CompletedAt,
         // TerminalReason and the review checkpoint captured on completion all mean something once

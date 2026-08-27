@@ -85,7 +85,7 @@ public static partial class TrackerSyncMarkers
             Domain.Enums.CardStatus.InProgress => "in-progress",
             Domain.Enums.CardStatus.Review => "review",
             Domain.Enums.CardStatus.Done => "done",
-            Domain.Enums.CardStatus.Blocked => "blocked",
+            Domain.Enums.CardStatus.NeedsDecision => "needs-decision",
             Domain.Enums.CardStatus.Canceled => "canceled",
             _ => status.ToString().ToLowerInvariant()
         };

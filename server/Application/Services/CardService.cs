@@ -281,6 +281,8 @@ public sealed class CardService
             ?? throw new NotFoundException(nameof(BoardColumn), request.BoardColumnId);
         if (targetColumn.BoardId != card.BoardId)
             throw new ValidationException(nameof(request.BoardColumnId), "Target column belongs to a different board.");
+        if (targetColumn.CardStatus == CardStatus.NeedsDecision && string.IsNullOrWhiteSpace(request.Reason))
+            throw new ValidationException(nameof(request.Reason), "A move into Needs decision must say what decision is needed.");
 
         var wasTerminal = card.BoardColumn.IsTerminal;
         // The dequeue below clears AssignedAgentId — capture it first so the completion

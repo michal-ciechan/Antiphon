@@ -10,7 +10,7 @@ const STATE_COLORS: Record<CardStatus, string> = {
   InProgress: 'active',
   Review: 'warning',
   Done: 'success',
-  Blocked: 'danger',
+  NeedsDecision: 'danger',
   Canceled: 'gray',
 }
 
@@ -20,6 +20,10 @@ export function stateColor(status: CardStatus): string {
 
 export function stateAccent(status: CardStatus): string {
   return `var(--mantine-color-${stateColor(status)}-5)`
+}
+
+export function stateLabel(status: CardStatus): string {
+  return status === 'NeedsDecision' ? 'Needs decision' : status
 }
 
 /** A single-hue ramp: P0 solid, later priorities progressively faded. Legible on a dark ground. */

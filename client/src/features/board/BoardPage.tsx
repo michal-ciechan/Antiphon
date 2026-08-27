@@ -72,7 +72,7 @@ const ALL_CARD_COLUMNS: Array<{
   { stateKey: 'in-progress', name: 'In Progress', cardStatus: 'InProgress', isActive: true, isTerminal: false },
   { stateKey: 'review', name: 'Review', cardStatus: 'Review', isActive: false, isTerminal: false },
   { stateKey: 'done', name: 'Done', cardStatus: 'Done', isActive: false, isTerminal: true },
-  { stateKey: 'blocked', name: 'Blocked', cardStatus: 'Blocked', isActive: false, isTerminal: false },
+  { stateKey: 'needs-decision', name: 'Needs decision', cardStatus: 'NeedsDecision', isActive: false, isTerminal: false },
   { stateKey: 'canceled', name: 'Canceled', cardStatus: 'Canceled', isActive: false, isTerminal: true },
 ]
 

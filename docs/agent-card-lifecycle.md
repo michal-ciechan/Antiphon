@@ -2,7 +2,7 @@
 
 Antiphon tracks two related but separate states:
 
-- **Card status** is the board workflow location: `Backlog`, `InProgress`, `Review`, `Done`, `Blocked`, or `Canceled`.
+- **Card status** is the board workflow location: `Backlog`, `InProgress`, `Review`, `Done`, `NeedsDecision`, or `Canceled`.
 - **Agent session status** is the runtime process state: `Starting`, `Running`, `Stopping`, `Stopped`, or `Failed`.
 
 ## Status Rules

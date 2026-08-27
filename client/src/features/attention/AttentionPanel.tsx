@@ -305,6 +305,7 @@ const ACTION_LABEL: Record<AttentionAction, string> = {
   OpenDrawer: 'Read it first',
   KillSession: 'Kill session',
   OpenAgent: 'Open agent',
+  OpenCard: 'Open card',
 }
 
 /** Verbs that destroy work. Colour is the only warning a one-click button gets. */
@@ -392,6 +393,7 @@ function AttentionRowActions({
         return
       case 'OpenDrawer':
       case 'OpenAgent':
+      case 'OpenCard':
         if (target) onOpen(target)
         return
       case 'KillSession':
