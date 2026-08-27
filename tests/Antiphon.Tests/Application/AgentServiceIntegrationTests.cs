@@ -104,7 +104,7 @@ public class AgentServiceIntegrationTests
         board.Columns
             .Select(c => c.StateKey)
             .OrderBy(s => s)
-            .ShouldBe(["backlog", "done", "in-progress", "review"]);
+            .ShouldBe(["backlog", "done", "in-progress", "needs-decision", "review"]);
         eventBus.PublishedEvents.Any(e => e.EventName == "BoardChanged").ShouldBeTrue();
     }
 
