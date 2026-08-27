@@ -103,7 +103,6 @@ $logFile = "$root\logs\apphost.log"
 $pidFile = "$root\logs\apphost.pid"
 
 Write-Host "`n▶ Starting Aspire AppHost (background)..." -ForegroundColor Cyan
-Write-Host "  Control : http://localhost:17207/control/{server|client}/restart" -ForegroundColor DarkGray
 Write-Host "  OTLP    : http://localhost:17206" -ForegroundColor DarkGray
 Write-Host "  Log     : $logFile" -ForegroundColor DarkGray
 Write-Host ""

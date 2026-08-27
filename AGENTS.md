@@ -128,6 +128,21 @@ Simple-mode fallback (no Aspire): `.\dev-start.ps1` / `.\restart.ps1`, ports
 17281 (API) / 17282 (Vite) / 17204 (session-runner, the always-on daemon). Postgres is still 17280.
 `pwsh -File verify-dev-stack.ps1 -SimpleMode`.
 
+### Client serving mode: built bundle by default (CARD-0216)
+
+Under Aspire, port 17203 (both `localhost:17203` and the remote domains it fronts,
+`antiphon.{desktop,laptop}.codeperf.net`) is `npm run serve` → `client/scripts/serve.mjs`, not a
+raw `vite` dev server. The shim reads `logs/client.mode` (default **built** when the file is
+missing) and runs one of two modes on that same port: **built** does a clean `vite build`, starts
+`vite preview` on the result, and keeps a `vite build --watch` running (`emptyOutDir` off) so a
+merge or a local edit shows up within one rebuild without ever wiping `dist/` out from under a
+live page; **dev** runs plain `vite` — HMR, `/@vite/client`, source maps — exactly like `npm run
+dev` did before this card. Switch or inspect it with `pwsh -File scripts/client-mode.ps1 -Mode
+dev|built` or `-Status` (also `-Rebuild` to force a clean rebuild in built mode without a mode
+switch); the choice persists across AppHost restarts. `ANTIPHON_CLIENT_WATCH=0` turns the watcher
+off. Simple mode (`dev-start.ps1`, port 17282) is unaffected — it always runs `npm run dev`
+directly and has no mode concept.
+
 ### Manual backend fallback (ASP.NET Core — port 17281)
 
 ```
@@ -208,7 +223,7 @@ Open **http://localhost:17282** in your browser.
 | 17200   | AppHost resource service  |
 | 17280   | PostgreSQL (always-on external container `antiphon-postgres`) |
 | 17202   | .NET server (API)         |
-| 17203   | Vite dev client           |
+| 17203   | Vite client (built bundle by default; `client-mode.ps1 -Mode dev` for HMR) |
 | 17204   | Session runner            |
 | 17205   | Aspire dashboard UI       |
 | 17206   | OTLP telemetry endpoint   |
@@ -275,6 +290,12 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
 
 ## Gotchas
 
+- **`localhost:17203` and the remote domain serve the built bundle; a client change appears after
+  the watcher's rebuild (seconds), not instantly** (CARD-0216) — `client-mode.ps1 -Status` shows
+  `lastBuildAt`, and `-Mode dev` gives HMR. A delegate that fires a browser check against 17203
+  inside the rebuild window after pushing a client change is testing the OLD code; check
+  `lastBuildAt` moved past the change's own commit time before trusting what the page shows, or
+  switch to `-Mode dev` for the check.
 - **A card's decision question lives on its move/reopen revision and the attention feed — never add a column for it, and never route a decision through the alert sinks.**
 
 - **A parked message whose session has no open task is discarded by a sweep, never retried** (CARD-0091): after `ParkedMessages:MinParkedMinutes` (10 by default), a machine-origin parked row is marked `Canceled` on purpose and leaves attention; Ui/Channel rows, completion notes, and rows on sessions with open tasks stay parked for a human decision. `ParkedMessages:DryRun` logs candidates without writing them.

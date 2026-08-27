@@ -179,6 +179,12 @@ Never `wt new-tab` (fails `0x80070002` when the title has a space). Never
 the session ends). The script exits after ~60s; the AppHost continues in
 the background (`logs/apphost.pid`).
 
+Port 17203 serves the built bundle by default (CARD-0216) — the client
+resource's first start builds it itself via `client/scripts/serve.mjs`;
+nothing extra to run beyond step 5's `npm install`. See AGENTS.md's
+"Client serving mode" note if you want live HMR instead
+(`client-mode.ps1 -Mode dev`).
+
 ### 8. Self-check
 
 ```
