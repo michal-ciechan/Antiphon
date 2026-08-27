@@ -684,6 +684,111 @@ public class DelegationScopeLeaseTests
         // Cross-repo tasks must run concurrently — that is the point of agent-per-repo.
         AgentTaskDispatcher.ScopesIntersect((DirA, "docs/**"), (DirB, "docs/**")).ShouldBeFalse();
     }
+
+    // ---- CARD-0063: the list is a list, and a name is a name ---------------------------------
+
+    [Test]
+    public void comma_lists_intersect_when_they_share_one_element()
+    {
+        // The five holds the old single-token rule MISSED, in shape: callers have written lists
+        // since 2026-08-17, and a list only string-prefixes another list by accident.
+        AgentTaskDispatcher.ScopesIntersect(
+            (DirA, "server/Application/Services/SessionMessageQueueService.cs,docs/delivery.md"),
+            (DirA, "AGENTS.md,server/Application/Services/SessionMessageQueueService.cs"))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void comma_lists_that_share_no_element_do_not_intersect()
+    {
+        AgentTaskDispatcher.ScopesIntersect(
+            (DirA, "server/Migrations/**,docs/schema.md"),
+            (DirA, "client/src/features/home/**,docs/home.md"))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void a_label_is_matched_exactly_not_by_string_prefix()
+    {
+        // The ONE hold in 623 live tasks was this pair: CARD-0054 slice 3 waited 579 seconds
+        // behind slice 2 because "card-reopen-client".StartsWith("card-reopen-cli").
+        AgentTaskDispatcher.ScopesIntersect((DirA, "card-reopen-cli"), (DirA, "card-reopen-client"))
+            .ShouldBeFalse();
+    }
+
+    [Test]
+    public void identical_labels_intersect_regardless_of_case()
+    {
+        AgentTaskDispatcher.ScopesIntersect((DirA, "delivery"), (DirA, "Delivery")).ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_label_inside_a_list_intersects_the_same_label_in_another_list()
+    {
+        AgentTaskDispatcher.ScopesIntersect((DirA, "merge,deploy"), (DirA, "deploy,planning"))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_path_element_intersects_a_path_under_it()
+    {
+        AgentTaskDispatcher.ScopesIntersect((DirA, "a.cs,tests/**"), (DirA, "tests/Foo.cs"))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_label_never_intersects_a_path_without_an_area_map()
+    {
+        // With no map a name resolves to itself as an opaque label; it cannot claim a subtree.
+        AgentTaskDispatcher.ScopesIntersect((DirA, "docs"), (DirA, "docs/setup.md")).ShouldBeFalse();
+    }
+
+    [Test]
+    public void a_blank_scope_intersects_nothing()
+    {
+        AgentTaskDispatcher.ScopesIntersect((DirA, ""), (DirA, "docs/**")).ShouldBeFalse();
+        AgentTaskDispatcher.ScopesIntersect((DirA, " , "), (DirA, " , ")).ShouldBeFalse();
+    }
+
+    [Test]
+    public void the_lease_key_is_the_repo_not_the_declared_working_directory()
+    {
+        // A task dispatched with `-Dir <repo>/client` used to compare with nothing at all, because
+        // the old rule keyed on WorkingDirectory. Both tasks are in one checkout.
+        var subdirectory = Path.Combine(DirA, "client");
+        ScopeResolver.KeyFor(DirA, subdirectory).ShouldBe(DirA);
+        AgentTaskDispatcher.ScopesIntersect(
+            (ScopeResolver.KeyFor(DirA, subdirectory), "client/**"),
+            (ScopeResolver.KeyFor(DirA, DirA), "client/src/App.tsx"))
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void a_non_git_directory_falls_back_to_its_working_directory_as_the_key()
+    {
+        ScopeResolver.KeyFor(null, DirB).ShouldBe(DirB);
+        ScopeResolver.KeyFor("   ", DirB).ShouldBe(DirB);
+    }
+
+    [Test]
+    public void read_only_is_outside_the_lease_in_both_directions()
+    {
+        ScopeResolver.ParticipatesInLease(WorkspaceMode.ReadOnly).ShouldBeFalse();
+        ScopeResolver.ParticipatesInLease(WorkspaceMode.Shared).ShouldBeTrue();
+        ScopeResolver.ParticipatesInLease(WorkspaceMode.Worktree).ShouldBeTrue();
+    }
+
+    [Test]
+    public void parsing_classifies_names_and_paths()
+    {
+        var tokens = ScopeResolver.Parse("delivery, server/Migrations/**, a.cs , merge");
+
+        tokens.Count.ShouldBe(4);
+        tokens[0].ShouldBe(new ScopeToken("delivery", IsPath: false));
+        tokens[1].ShouldBe(new ScopeToken("server/Migrations/**", IsPath: true));
+        tokens[2].ShouldBe(new ScopeToken("a.cs", IsPath: true));
+        tokens[3].ShouldBe(new ScopeToken("merge", IsPath: false));
+    }
 }
 
 /// <summary>

@@ -137,4 +137,12 @@ public enum AgentTaskEventType
 
     /// <summary>A digest channel was told this blocked task needs a human answer.</summary>
     HumanNotified = 17,
+
+    /// <summary>
+    /// The dispatcher declined to start this task because its declared scope intersects a running
+    /// task's (CARD-0063). Written ONCE, on the tick the hold begins — a re-hold on the next tick
+    /// is silent, and a hold that resolves is not an event (the dispatch is). Before this the wait
+    /// was invisible: the one real hold in 623 tasks left nothing behind but its own queue time.
+    /// </summary>
+    Held = 18,
 }

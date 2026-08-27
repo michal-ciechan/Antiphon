@@ -225,17 +225,38 @@ public sealed class AgentTaskDispatcher
         if (queued.Count == 0)
             return new TickResult(0, 0, 0, 0, 0, sweepFailures);
 
-        // Shared tasks that declare overlapping file scopes must not run concurrently — the second
-        // waits rather than racing on read-modify-write. This is the cost of Shared being the
-        // default, and the mitigation for it.
+        // Tasks that declare overlapping file scopes must not run concurrently — the second waits
+        // rather than racing on read-modify-write. This is the cost of Shared being the default,
+        // and the mitigation for it.
+        //
+        // ReadOnly is outside the lease in BOTH directions (CARD-0063 §2.3): it writes nothing, so
+        // it can neither corrupt a writer nor be corrupted by one, and holding it only ever cost a
+        // wait for no reason. The key is the REPO, not the declared working directory — a task
+        // dispatched with `-Dir <repo>/client` used to compare with nothing.
         var busyScopes = await _db.AgentTasks
             .Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
-                && t.ScopeGlob != null)
-            .Select(t => new { t.WorkingDirectory, t.ScopeGlob })
+                && t.ScopeGlob != null
+                && t.Workspace != WorkspaceMode.ReadOnly)
+            .Select(t => new { t.Id, t.Title, t.WorkingDirectory, t.RepoPath, t.ScopeGlob })
             .ToListAsync(ct);
         var heldScopes = busyScopes
-            .Select(s => (s.WorkingDirectory, Glob: s.ScopeGlob!))
+            .Select(s => new ScopeHolder(
+                s.Id,
+                s.Title,
+                ScopeResolver.KeyFor(s.RepoPath, s.WorkingDirectory),
+                ScopeResolver.Parse(s.ScopeGlob)))
             .ToList();
+
+        // A hold leaves a trace exactly once. Before CARD-0063 it left none at all: the single
+        // 579-second hold in 623 tasks was indistinguishable, from the board, from a tick that had
+        // not yet reached the task. Loaded once per tick so a re-hold on the next tick is silent.
+        var queuedIds = queued.Select(t => t.Id).ToList();
+        var everHeld = (await _db.AgentTaskEvents
+                .Where(e => queuedIds.Contains(e.AgentTaskId) && e.Type == AgentTaskEventType.Held)
+                .Select(e => e.AgentTaskId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
 
         var dispatched = 0;
         // Only process-spawning dispatches count against the cap — see the `active` query above.
@@ -255,9 +276,34 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
-            if (task.ScopeGlob is { } glob && heldScopes.Any(h => ScopesIntersect(h, (task.WorkingDirectory, glob))))
+            var taskKey = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+            var taskScope = ScopeResolver.ParticipatesInLease(task.Workspace)
+                ? ScopeResolver.Parse(task.ScopeGlob)
+                : [];
+            if (taskScope.Count > 0
+                && heldScopes.FirstOrDefault(h => h.Intersects(taskKey, taskScope)) is { } holder)
             {
                 skippedScope++;
+                if (everHeld.Add(task.Id))
+                {
+                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentTaskId = task.Id,
+                        Type = AgentTaskEventType.Held,
+                        Detail = $"Held: scope '{task.ScopeGlob}' intersects running task "
+                            + $"{DelegationReportFormatter.Short(holder.TaskId)} \"{holder.Title}\"",
+                        At = UtcNow(),
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    // Information, and only on the transition into held — a per-tick line would
+                    // write twelve an hour per waiting task and say nothing new after the first.
+                    _logger.LogInformation(
+                        "Task {ShortId} held: scope '{Scope}' intersects running task {HolderShortId}",
+                        DelegationReportFormatter.Short(task.Id), task.ScopeGlob,
+                        DelegationReportFormatter.Short(holder.TaskId));
+                }
+
                 continue;
             }
 
@@ -276,8 +322,15 @@ public sealed class AgentTaskDispatcher
                     dispatched++;
                     if (task.Role != AgentTaskRole.Check)
                         dispatchedAgainstCap++;
-                    if (task.ScopeGlob is { } held)
-                        heldScopes.Add((task.WorkingDirectory, held));
+                    if (taskScope.Count > 0)
+                        heldScopes.Add(new ScopeHolder(task.Id, task.Title, taskKey, taskScope));
+                    // The other half of the transition: a task that was held and now runs.
+                    if (everHeld.Contains(task.Id))
+                    {
+                        _logger.LogInformation(
+                            "Task {ShortId} released: its scope '{Scope}' no longer intersects a running task",
+                            DelegationReportFormatter.Short(task.Id), task.ScopeGlob);
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -2688,30 +2741,29 @@ public sealed class AgentTaskDispatcher
         && (task.DenyDirectEdits ?? settings.OrchestratorDenyHookEnabled);
 
     /// <summary>
-    /// Advisory lease check: same directory and overlapping globs. Deliberately coarse — a prefix
-    /// match up to the first wildcard catches the real case (two tasks both owning "docs/**")
-    /// without pretending to be a glob engine.
+    /// A running task's claim on part of a repo, as the tick sees it. Carries the task's identity
+    /// because a hold that leaves no trace is the defect CARD-0063 measured — the event text names
+    /// who is being waited for.
     /// </summary>
-    internal static bool ScopesIntersect((string Dir, string Glob) a, (string Dir, string Glob) b)
+    private sealed record ScopeHolder(Guid TaskId, string Title, string Key, IReadOnlyList<ScopeToken> Scope)
     {
-        if (!string.Equals(
-                DelegationWorkspaceResolver.NormalizeSeparators(a.Dir),
-                DelegationWorkspaceResolver.NormalizeSeparators(b.Dir),
-                StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var left = LiteralPrefix(a.Glob);
-        var right = LiteralPrefix(b.Glob);
-        return left.StartsWith(right, StringComparison.OrdinalIgnoreCase)
-            || right.StartsWith(left, StringComparison.OrdinalIgnoreCase);
+        public bool Intersects(string key, IReadOnlyList<ScopeToken> scope) =>
+            SameRepo(Key, key) && ScopeResolver.Intersects(Scope, scope);
     }
 
-    private static string LiteralPrefix(string glob)
-    {
-        var normalized = glob.Replace('\\', '/').TrimStart('.', '/');
-        var wildcard = normalized.IndexOfAny(['*', '?', '[']);
-        return wildcard < 0 ? normalized : normalized[..wildcard];
-    }
+    /// <summary>
+    /// Advisory lease check: same repo and overlapping scopes. Kept as a two-tuple entry point for
+    /// the unit tests that exercise the comparison alone; the parse-and-compare rules live in
+    /// <see cref="ScopeResolver"/>.
+    /// </summary>
+    internal static bool ScopesIntersect((string Key, string Scope) a, (string Key, string Scope) b) =>
+        SameRepo(a.Key, b.Key) && ScopeResolver.Intersects(a.Scope, b.Scope);
+
+    private static bool SameRepo(string a, string b) =>
+        string.Equals(
+            DelegationWorkspaceResolver.NormalizeSeparators(a),
+            DelegationWorkspaceResolver.NormalizeSeparators(b),
+            StringComparison.OrdinalIgnoreCase);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
