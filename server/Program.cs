@@ -287,6 +287,8 @@ try
     // The "what is stuck" projection (CARD-0035). Read-only — every verb it names is an endpoint
     // that already exists, and it is scoped because it is one query burst per request.
     builder.Services.AddScoped<AttentionService>();
+    builder.Services.AddSingleton<AttentionSummaryCache>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<AttentionSummaryCache>());
     builder.Services.AddScoped<DiagnosticsBundleService>();
     // The read-only projection over the plan files in the repo (mobile-thread spec §D1). A
     // singleton because its 30s catalog cache is the whole point — a phone polling a thread must
@@ -424,6 +426,7 @@ try
     builder.Services.AddSingleton<WorkspaceInfoService>();
     builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<WorkspaceInfoService>());
     builder.Services.AddScoped<AgentFilesService>();
+    builder.Services.AddScoped<IWorkspaceProgressProbe>(sp => sp.GetRequiredService<AgentFilesService>());
     builder.Services.AddScoped<AgentReviewCheckpointService>();
     builder.Services.AddScoped<ReviewThreadService>();
     builder.Services.AddSingleton<ReviewReplyDispatcher>();

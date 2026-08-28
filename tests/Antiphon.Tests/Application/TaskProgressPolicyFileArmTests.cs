@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -25,7 +26,7 @@ public class TaskProgressPolicyFileArmTests
     {
         await using var scenario = new Scenario();
         var task = await scenario.SeedLoopAsync();
-        var arm = new TaskProgressPolicy.WorkspaceArm(
+        var arm = new WorkspaceProgressArm(
             true, LastFileChangeAt: DateTime.UtcNow.AddMinutes(-3), LastCommitAt: null, SharedCheckout: false);
 
         (await scenario.EvaluateAsync(task, arm)).ShouldBeNull();
@@ -36,7 +37,7 @@ public class TaskProgressPolicyFileArmTests
     {
         await using var scenario = new Scenario();
         var task = await scenario.SeedLoopAsync();
-        var arm = new TaskProgressPolicy.WorkspaceArm(
+        var arm = new WorkspaceProgressArm(
             true, LastFileChangeAt: null, LastCommitAt: DateTime.UtcNow.AddMinutes(-3), SharedCheckout: false);
 
         (await scenario.EvaluateAsync(task, arm)).ShouldBeNull();
@@ -47,7 +48,7 @@ public class TaskProgressPolicyFileArmTests
     {
         await using var scenario = new Scenario();
         var task = await scenario.SeedLoopAsync();
-        var arm = new TaskProgressPolicy.WorkspaceArm(
+        var arm = new WorkspaceProgressArm(
             true, LastFileChangeAt: DateTime.UtcNow.AddMinutes(-50), LastCommitAt: null, SharedCheckout: false);
 
         var verdict = await scenario.EvaluateAsync(task, arm);
@@ -63,7 +64,7 @@ public class TaskProgressPolicyFileArmTests
         var task = await scenario.SeedLoopAsync();
 
         var missing = await scenario.EvaluateAsync(
-            task, new TaskProgressPolicy.WorkspaceArm(false, null, null, false));
+            task, new WorkspaceProgressArm(false, null, null, false));
         missing.ShouldNotBeNull();
         missing.Summary.ShouldContain("no workspace arm");
 
@@ -77,7 +78,7 @@ public class TaskProgressPolicyFileArmTests
     {
         await using var scenario = new Scenario();
         var task = await scenario.SeedLoopAsync();
-        var quiet = new TaskProgressPolicy.WorkspaceArm(
+        var quiet = new WorkspaceProgressArm(
             true, LastFileChangeAt: DateTime.UtcNow.AddMinutes(-50), LastCommitAt: DateTime.UtcNow.AddMinutes(-80),
             SharedCheckout: true);
         var busy = quiet with { LastFileChangeAt = DateTime.UtcNow.AddMinutes(-3) };
@@ -184,7 +185,7 @@ public class TaskProgressPolicyFileArmTests
         }
 
         public async Task<TaskProgressPolicy.Verdict?> EvaluateAsync(
-            AgentTask task, TaskProgressPolicy.WorkspaceArm? workspace)
+            AgentTask task, WorkspaceProgressArm? workspace)
         {
             await using var db = CreateContext();
             return await TaskProgressPolicy.EvaluateAsync(

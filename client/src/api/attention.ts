@@ -105,8 +105,15 @@ export interface AttentionDto {
   items: AttentionItemDto[]
 }
 
+export interface AttentionSummaryDto {
+  open: number
+  decisions: number
+  generatedAt: string
+}
+
 export const attentionKeys = {
   all: ['attention'] as const,
+  summary: ['attention', 'summary'] as const,
 }
 
 /**
@@ -121,5 +128,14 @@ export function useAttention(enabled = true) {
     queryFn: () => apiGet<AttentionDto>('/attention'),
     refetchInterval: 15_000,
     enabled,
+  })
+}
+
+/** Counts-only variant for the global nav badge; attention panels still use the full projection. */
+export function useAttentionSummary() {
+  return useQuery({
+    queryKey: attentionKeys.summary,
+    queryFn: () => apiGet<AttentionSummaryDto>('/attention/summary'),
+    refetchInterval: 15_000,
   })
 }

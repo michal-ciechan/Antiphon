@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
@@ -18,7 +19,7 @@ namespace Antiphon.Server.Application.Services;
 /// Content reads are workspace-rooted; the only paths served from outside the workspace are ones
 /// the agent itself touched (they're listed flagged as external).
 /// </summary>
-public sealed class AgentFilesService
+public sealed class AgentFilesService : IWorkspaceProgressProbe
 {
     private const long MaxContentBytes = 2 * 1024 * 1024;
     private const int MaxTreePaths = 20_000;
@@ -49,14 +50,14 @@ public sealed class AgentFilesService
     /// alone. The arm can only ever withhold a stall (a colleague's edits on a shared checkout
     /// make the detector quieter, never louder).
     /// </summary>
-    internal async Task<TaskProgressPolicy.WorkspaceArm> ProbeProgressAsync(
+    public async Task<WorkspaceProgressArm> ProbeProgressAsync(
         string? workingDirectory, DateTime since, bool sharedCheckout, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory) || !Directory.Exists(workingDirectory))
-            return new TaskProgressPolicy.WorkspaceArm(false, null, null, sharedCheckout);
+            return new WorkspaceProgressArm(false, null, null, sharedCheckout);
 
         if (!await _git.IsRepositoryAsync(workingDirectory, ct))
-            return new TaskProgressPolicy.WorkspaceArm(false, null, null, sharedCheckout);
+            return new WorkspaceProgressArm(false, null, null, sharedCheckout);
 
         DateTime? lastFile = null;
         try
@@ -92,7 +93,7 @@ public sealed class AgentFilesService
             _logger.LogDebug(ex, "Workspace commit probe failed in {Dir}", workingDirectory);
         }
 
-        return new TaskProgressPolicy.WorkspaceArm(true, lastFile, lastCommit, sharedCheckout);
+        return new WorkspaceProgressArm(true, lastFile, lastCommit, sharedCheckout);
     }
 
     /// <param name="At">Checkpoint timestamp, surfaced to the UI caption. Checkpoints only.</param>

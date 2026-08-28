@@ -88,10 +88,10 @@ public sealed class AttentionService
     private readonly DelegationSettings _delegation;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<AttentionService> _logger;
-    private readonly AgentFilesService? _files;
-    // CARD-0040 S3: only StaleAfterDays is read here. Optional for the same reason _files is —
-    // every harness that predates this card keeps constructing this service unchanged; production
-    // registers the options section, so DI always supplies it.
+    private readonly IWorkspaceProgressProbe? _workspaceProgress;
+    // CARD-0040 S3: only StaleAfterDays is read here. Optional for the same reason
+    // _workspaceProgress is — every harness that predates this card keeps constructing this
+    // service unchanged; production registers the options section, so DI always supplies it.
     private readonly CardWorkTransitionSettings _cardTransitions;
 
     public AttentionService(
@@ -104,7 +104,7 @@ public sealed class AttentionService
         IOptions<DelegationSettings> delegation,
         TimeProvider timeProvider,
         ILogger<AttentionService> logger,
-        AgentFilesService? files = null,
+        IWorkspaceProgressProbe? workspaceProgress = null,
         IOptions<CardWorkTransitionSettings>? cardTransitions = null)
     {
         _db = db;
@@ -113,11 +113,11 @@ public sealed class AttentionService
         _delegation = delegation.Value;
         _timeProvider = timeProvider;
         _logger = logger;
-        _files = files;
+        _workspaceProgress = workspaceProgress;
         _cardTransitions = cardTransitions?.Value ?? new CardWorkTransitionSettings();
     }
 
-    public async Task<AttentionDto> GetAsync(CancellationToken ct)
+    public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
     {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var since = now - RecencyWindow;
@@ -147,7 +147,8 @@ public sealed class AttentionService
         items.AddRange(await BuildBlockedAsync(blocked, costs, checkDigests, ct));
         items.AddRange(await BuildCardNeedsDecisionAsync(ct));
         items.AddRange(await BuildCardStalledAsync(now, ct));
-        var openItems = await BuildOpenTaskItemsAsync(open, now, costs, checkDigests, attachedIncidents, ct);
+        var openItems = await BuildOpenTaskItemsAsync(
+            open, now, costs, checkDigests, attachedIncidents, includeProgressProbe, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildParkedMessageItemsAsync(ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
@@ -177,6 +178,13 @@ public sealed class AttentionService
 
         return new AttentionDto(now, runnerSessions is not null, ordered);
     }
+
+    /// <summary>
+    /// Lightweight badge counts. It preserves every normal attention predicate except the workspace
+    /// progress probe, which the badge neither displays nor needs to trigger.
+    /// </summary>
+    public async Task<AttentionSummaryDto> GetSummaryAsync(CancellationToken ct) =>
+        AttentionSummaryDto.From(await GetAsync(ct, includeProgressProbe: false));
 
     // ---- condition 1: a delegate asked a question ------------------------------------------------
 
@@ -386,6 +394,7 @@ public sealed class AttentionService
         IReadOnlyDictionary<Guid, decimal> costs,
         IReadOnlyDictionary<Guid, CheckExplanation> checkDigests,
         HashSet<Guid> attachedIncidents,
+        bool includeProgressProbe,
         CancellationToken ct)
     {
         var items = new List<AttentionItemDto>();
@@ -579,13 +588,24 @@ public sealed class AttentionService
             // 8. ProgressStalled (CARD-0153) — working, rows still landing, none of them novel.
             // After PastExpectedIdle (which declines the mid-turn case) and before Overdue, so a
             // working session with a stall verdict gets the more explanatory row.
-            TaskProgressPolicy.WorkspaceArm? workspace = null;
-            if (_files is not null && task.DispatchedAt is DateTime dispatchedAt)
+            // CARD-0216 §4 / CARD-0217 S8: the git probe is skipped until StallMinutes have
+            // elapsed (a task dispatched a few minutes ago cannot be stalled yet) and is never
+            // run for the badge summary. EvaluateAsync itself stays, so summary counts still
+            // match a full sweep.
+            WorkspaceProgressArm? workspace = null;
+            var stallSettings = _delegation.StallDetection;
+            if (includeProgressProbe
+                && _workspaceProgress is not null
+                && stallSettings.Enabled
+                && stallSettings.StallMinutes > 0
+                && task.DispatchedAt is DateTime dispatchedAt
+                && now - dispatchedAt >= TimeSpan.FromMinutes(stallSettings.StallMinutes))
             {
-                workspace = await _files.ProbeProgressAsync(
+                workspace = await _workspaceProgress.ProbeProgressAsync(
                     task.WorkingDirectory, dispatchedAt,
                     task.Workspace == WorkspaceMode.Shared, ct);
             }
+
             var stall = await TaskProgressPolicy.EvaluateAsync(
                 _db, task, now, _delegation, ct, workspace);
             if (stall is not null)

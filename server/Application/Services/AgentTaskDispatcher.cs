@@ -1273,7 +1273,7 @@ public sealed class AgentTaskDispatcher
     }
 
     /// <summary>
-    private async Task<TaskProgressPolicy.WorkspaceArm?> ProbeWorkspaceAsync(
+    private async Task<WorkspaceProgressArm?> ProbeWorkspaceAsync(
         AgentTask task, CancellationToken ct)
     {
         if (_files is null || task.DispatchedAt is not DateTime dispatched)

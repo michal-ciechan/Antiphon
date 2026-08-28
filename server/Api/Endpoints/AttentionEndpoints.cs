@@ -16,5 +16,10 @@ public static class AttentionEndpoints
         attention.MapGet("/", async (
             AttentionService service,
             CancellationToken ct) => Results.Ok(await service.GetAsync(ct)));
+
+        attention.MapGet("/summary", async (
+            AttentionService service,
+            AttentionSummaryCache cache,
+            CancellationToken ct) => Results.Ok(await cache.GetOrCreateAsync(() => service.GetSummaryAsync(ct))));
     }
 }

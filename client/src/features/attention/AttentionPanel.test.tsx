@@ -51,6 +51,29 @@ describe('AttentionPanel', () => {
     expect(screen.getByText('0 open')).toBeInTheDocument()
   })
 
+  it('requests the full /attention projection, never the summary', async () => {
+    const seen: string[] = []
+    server.use(
+      http.get('/api/attention', ({ request }) => {
+        seen.push(new URL(request.url).pathname)
+        return HttpResponse.json<AttentionDto>({
+          generatedAt: '2026-08-17T10:00:00Z',
+          runnerConsulted: true,
+          items: [],
+        })
+      }),
+      http.get('/api/attention/summary', ({ request }) => {
+        seen.push(new URL(request.url).pathname)
+        return HttpResponse.json({ open: 0, decisions: 0, generatedAt: '2026-08-17T10:00:00Z' })
+      }),
+    )
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText('Nothing is stuck.')).toBeInTheDocument()
+    expect(seen).toEqual(['/api/attention'])
+  })
+
   it('groups rows by severity, most urgent first', async () => {
     serve({
       items: [

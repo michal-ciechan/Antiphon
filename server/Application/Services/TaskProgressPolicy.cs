@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -52,25 +53,18 @@ internal static class TaskProgressPolicy
         string Summary,
         string FailureReason);
 
-    /// <summary>
-    /// File/commit activity since dispatch (CARD-0153 S2). Either timestamp newer than
-    /// <c>lastProgressAt</c> replaces it — the arm can only ever withhold a stall, never create
-    /// one. <see cref="Available"/> false means the directory is missing or not a git repo; the
-    /// transcript arm stands alone.
-    /// </summary>
-    internal sealed record WorkspaceArm(
-        bool Available,
-        DateTime? LastFileChangeAt,
-        DateTime? LastCommitAt,
-        bool SharedCheckout);
-
+    /// <param name="workspace">
+    /// Optional file/commit activity since dispatch (CARD-0153 S2). Either timestamp newer than
+    /// lastProgressAt replaces it — the arm can only ever withhold a stall, never create one.
+    /// Unavailable workspace information leaves the transcript arm standing alone.
+    /// </param>
     internal static async Task<Verdict?> EvaluateAsync(
         AppDbContext db,
         AgentTask task,
         DateTime now,
         DelegationSettings settings,
         CancellationToken ct,
-        WorkspaceArm? workspace = null)
+        WorkspaceProgressArm? workspace = null)
     {
         var stall = settings.StallDetection;
         if (!stall.Enabled || stall.StallMinutes <= 0)
@@ -219,7 +213,7 @@ internal static class TaskProgressPolicy
         }
     }
 
-    private static string DescribeWorkspace(WorkspaceArm arm, DateTime now)
+    private static string DescribeWorkspace(WorkspaceProgressArm arm, DateTime now)
     {
         var parts = new List<string>();
         if (arm.LastFileChangeAt is DateTime fileAt)

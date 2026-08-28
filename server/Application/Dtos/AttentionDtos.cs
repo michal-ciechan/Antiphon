@@ -191,3 +191,15 @@ public sealed record AttentionDto(
     DateTime GeneratedAt,
     bool RunnerConsulted,
     IReadOnlyList<AttentionItemDto> Items);
+
+/// <summary>Counts for the global navigation badge, without returning the attention rows.</summary>
+public sealed record AttentionSummaryDto(
+    int Open,
+    int Decisions,
+    DateTime GeneratedAt)
+{
+    public static AttentionSummaryDto From(AttentionDto attention) => new(
+        attention.Items.Count(item => item.Kind != AttentionKind.RecentFailure),
+        attention.Items.Count(item => item.Kind == AttentionKind.CardNeedsDecision),
+        attention.GeneratedAt);
+}

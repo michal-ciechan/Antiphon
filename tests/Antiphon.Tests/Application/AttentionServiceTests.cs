@@ -411,6 +411,109 @@ public class AttentionServiceTests
         item.Headline.ShouldContain("1 refinement waiting");
     }
 
+    [Test]
+    public async Task a_task_dispatched_under_stall_minutes_does_not_run_the_workspace_probe()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var dir = Path.Combine(Path.GetTempPath(), $"attn-probe-{Guid.NewGuid():N}");
+        await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working, dispatchedMinutesAgo: 2, expectedMinutes: 240,
+            workingDirectory: dir);
+        var probe = new RecordingWorkspaceProbe();
+
+        await ItemsForAsync(scenario, probe);
+
+        probe.Directories.ShouldNotContain(d => d == dir);
+    }
+
+    [Test]
+    public async Task a_task_past_stall_minutes_runs_the_workspace_probe()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var dir = Path.Combine(Path.GetTempPath(), $"attn-probe-{Guid.NewGuid():N}");
+        await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working,
+            dispatchedMinutesAgo: new DelegationSettings().StallDetection.StallMinutes + 1,
+            expectedMinutes: 240,
+            workingDirectory: dir);
+        var probe = new RecordingWorkspaceProbe();
+
+        await ItemsForAsync(scenario, probe);
+
+        probe.Directories.ShouldContain(dir);
+    }
+
+    [Test]
+    public async Task the_summary_never_runs_the_workspace_probe()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Working,
+            dispatchedMinutesAgo: new DelegationSettings().StallDetection.StallMinutes + 1,
+            expectedMinutes: 240);
+        var probe = new RecordingWorkspaceProbe();
+
+        await BuildService(new FakeRunnerClient(), workspaceProgress: probe)
+            .GetSummaryAsync(CancellationToken.None);
+
+        probe.Calls.ShouldBe(0, "the badge path sets includeProgressProbe: false");
+    }
+
+    [Test]
+    public async Task summary_counts_match_a_full_sweep_for_the_same_rows()
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Blocked, dispatchedMinutesAgo: 20);
+        await scenario.AddTaskEventAsync(task, AgentTaskEventType.Blocked, "Which branch?", minutesAgo: 5);
+        var (cardId, _, _) = await scenario.AddNeedsDecisionCardAsync("Ship tonight?", minutesAgo: 8);
+
+        var service = BuildService(new FakeRunnerClient());
+        var full = await service.GetAsync(CancellationToken.None, includeProgressProbe: true);
+        var withoutProbe = await service.GetAsync(CancellationToken.None, includeProgressProbe: false);
+
+        // Fleet-global totals race with other suites on the shared database; the property is
+        // that skipping the workspace probe does not change THIS fixture's open/decision rows.
+        var fullOwned = full.Items.Where(scenario.Owns).ToList();
+        var summaryOwned = withoutProbe.Items.Where(scenario.Owns).ToList();
+        fullOwned.ShouldContain(i => i.TaskId == task);
+        fullOwned.ShouldContain(i => i.CardId == cardId);
+        summaryOwned.Count(i => i.Kind != AttentionKind.RecentFailure)
+            .ShouldBe(fullOwned.Count(i => i.Kind != AttentionKind.RecentFailure));
+        summaryOwned.Count(i => i.Kind == AttentionKind.CardNeedsDecision)
+            .ShouldBe(fullOwned.Count(i => i.Kind == AttentionKind.CardNeedsDecision));
+
+        var live = await service.GetSummaryAsync(CancellationToken.None);
+        live.Decisions.ShouldBeGreaterThanOrEqualTo(1);
+        live.Open.ShouldBeGreaterThanOrEqualTo(2);
+    }
+
+    [Test]
+    public void summary_open_drops_recent_failures_and_counts_every_other_row()
+    {
+        var now = DateTime.UtcNow;
+        var items = new AttentionItemDto[]
+        {
+            Row(AttentionKind.CardNeedsDecision),
+            Row(AttentionKind.CardNeedsDecision),
+            Row(AttentionKind.ParkedMessage),
+            Row(AttentionKind.RecentFailure),
+        };
+        var summary = AttentionSummaryDto.From(new AttentionDto(now, true, items));
+
+        summary.Open.ShouldBe(3);
+        summary.Decisions.ShouldBe(2);
+        summary.GeneratedAt.ShouldBe(now);
+    }
+
+    private static AttentionItemDto Row(AttentionKind kind) =>
+        new(kind, AlertSeverity.Warning, null, null, null, null,
+            "row", "headline", "evidence", DateTime.UtcNow, null, []);
+
     // ---- 7. Overdue (CARD-0020 S2/S3) -----------------------------------------------------------
 
     [Test]
@@ -919,6 +1022,15 @@ public class AttentionServiceTests
         return result.Items.Where(scenario.Owns).ToList();
     }
 
+    /// <summary>The same id-scoped read, with a recording workspace probe.</summary>
+    private static async Task<List<AttentionItemDto>> ItemsForAsync(
+        Scenario scenario, IWorkspaceProgressProbe workspaceProgress)
+    {
+        var result = await BuildService(new FakeRunnerClient(), workspaceProgress: workspaceProgress)
+            .GetAsync(CancellationToken.None);
+        return result.Items.Where(scenario.Owns).ToList();
+    }
+
     /// <summary>The same id-scoped read, with the CARD-0040 stale threshold pushed in.</summary>
     private static async Task<List<AttentionItemDto>> ItemsForAsync(Scenario scenario, int staleAfterDays)
     {
@@ -931,10 +1043,14 @@ public class AttentionServiceTests
         new(sessionId, pid, DateTime.UtcNow.AddMinutes(-45), "Running", null, AgentExitReason.Unknown,
             LastSequence: 900, HostPid: hostPid);
 
-    private static AttentionService BuildService(ISessionRunnerClient runner, int staleAfterDays = 7) =>
+    private static AttentionService BuildService(
+        ISessionRunnerClient runner,
+        int staleAfterDays = 7,
+        IWorkspaceProgressProbe? workspaceProgress = null) =>
         new(CreateContext(), runner, Options.Create(new SupervisionSettings()),
             Options.Create(new DelegationSettings()), TimeProvider.System,
             NullLogger<AttentionService>.Instance,
+            workspaceProgress: workspaceProgress,
             cardTransitions: Options.Create(new CardWorkTransitionSettings { StaleAfterDays = staleAfterDays }));
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -1049,7 +1165,8 @@ public class AttentionServiceTests
             DateTime? nextCheckAt = null,
             int? completedMinutesAgo = null,
             string? failureReason = null,
-            decimal costUsd = 0m)
+            decimal costUsd = 0m,
+            string? workingDirectory = null)
         {
             var id = Guid.NewGuid();
             var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
@@ -1064,7 +1181,7 @@ public class AttentionServiceTests
                 Role = AgentTaskRole.Code,
                 ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared,
-                WorkingDirectory = Path.GetTempPath(),
+                WorkingDirectory = workingDirectory ?? Path.GetTempPath(),
                 AgentSessionId = sessionId,
                 Status = status,
                 ReplyTo = AgentTaskReplyTo.Session,
@@ -1439,6 +1556,21 @@ public class AttentionServiceTests
         }
     }
 
+    private sealed class RecordingWorkspaceProbe : IWorkspaceProgressProbe
+    {
+        public int Calls { get; private set; }
+        public List<string> Directories { get; } = [];
+
+        public Task<WorkspaceProgressArm> ProbeProgressAsync(
+            string? workingDirectory, DateTime since, bool sharedCheckout, CancellationToken ct)
+        {
+            Calls++;
+            if (workingDirectory is not null)
+                Directories.Add(workingDirectory);
+            return Task.FromResult(new WorkspaceProgressArm(false, null, null, sharedCheckout));
+        }
+    }
+
     private sealed class FakeRunnerClient : ISessionRunnerClient
     {
         public IReadOnlyList<SessionRunnerSessionDto> Sessions { get; init; } = [];
@@ -1502,6 +1634,9 @@ public class AttentionApiTests
 
     public AttentionApiTests(AntiphonWebAppFactory factory) => _factory = factory;
 
+    [Before(Test)]
+    public Task ResetAsync() => _factory.ResetAsync();
+
     [After(Test)]
     public async Task CleanupAsync()
     {
@@ -1549,5 +1684,47 @@ public class AttentionApiTests
         // suites' work by design.
         payload!.Items.Single(i => i.TaskId == _taskId).Kind.ShouldBe(AttentionKind.BlockedQuestion);
         payload.GeneratedAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(-5));
+    }
+
+    [Test]
+    public async Task the_summary_route_returns_counts_matching_the_full_projection()
+    {
+        _taskId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = _taskId,
+                RootTaskId = _taskId,
+                Title = "summary wiring probe",
+                Goal = "prove the counts route exists",
+                Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code,
+                ModelLevel = AgentModelLevel.High,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = Path.GetTempPath(),
+                Status = AgentTaskStatus.Blocked,
+                ReplyTo = AgentTaskReplyTo.None,
+                FailureReason = "Which branch should this land on?",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-20),
+                DispatchedAt = DateTime.UtcNow.AddMinutes(-20),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var client = _factory.CreateClient();
+        var fullResponse = await client.GetAsync("/api/attention");
+        var summaryResponse = await client.GetAsync("/api/attention/summary");
+
+        fullResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        summaryResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var full = await fullResponse.Content.ReadFromJsonAsync<AttentionDto>(Json);
+        var summary = await summaryResponse.Content.ReadFromJsonAsync<AttentionSummaryDto>(Json);
+        full.ShouldNotBeNull();
+        summary.ShouldNotBeNull();
+        full!.Items.ShouldContain(i => i.TaskId == _taskId);
+        summary!.Open.ShouldBeGreaterThanOrEqualTo(1);
+        summary.GeneratedAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(-5));
     }
 }

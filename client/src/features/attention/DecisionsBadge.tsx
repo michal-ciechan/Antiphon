@@ -1,12 +1,12 @@
 import { Badge, Anchor } from '@mantine/core'
 import { TbHelpCircle } from 'react-icons/tb'
 import { Link } from 'react-router'
-import { useAttention } from '../../api/attention'
+import { useAttentionSummary } from '../../api/attention'
 
 /** A separate, decision-only signal: the general attention count includes diagnostic rows. */
 export function DecisionsBadge() {
-  const attention = useAttention()
-  const count = (attention.data?.items ?? []).filter((item) => item.kind === 'CardNeedsDecision').length
+  const attention = useAttentionSummary()
+  const count = attention.data?.decisions ?? 0
 
   if (count === 0) return null
 
