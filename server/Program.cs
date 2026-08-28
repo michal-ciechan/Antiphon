@@ -111,6 +111,7 @@ try
 
     // Typed settings — IOptions<T> pattern (never inject IConfiguration into services)
     builder.Services.Configure<GitSettings>(builder.Configuration.GetSection("Git"));
+    builder.Services.Configure<ProjectsSettings>(builder.Configuration.GetSection("Projects"));
     builder.Services.Configure<LlmSettings>(builder.Configuration.GetSection("Llm"));
     builder.Services.Configure<SignalRSettings>(builder.Configuration.GetSection("SignalR"));
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
@@ -412,6 +413,9 @@ try
     builder.Services.AddSingleton<GitProcessGate>(sp =>
         new GitProcessGate(Math.Max(1, sp.GetRequiredService<IOptions<GitSettings>>().Value.MaxConcurrentProcesses)));
     builder.Services.AddSingleton<GitWorkspaceService>();
+    builder.Services.AddMemoryCache();
+    builder.Services.AddSingleton<ProjectReadinessCache>();
+    builder.Services.AddSingleton<IResettableCache>(sp => sp.GetRequiredService<ProjectReadinessCache>());
     // CARD-0085: positive-evidence gate before a zero-transcript Failed. Singleton — no DB of
     // its own; the dispatcher (scoped) calls it with the task + session it already loaded.
     builder.Services.AddOptions<DelegateBindRefusalRecoverySettings>();

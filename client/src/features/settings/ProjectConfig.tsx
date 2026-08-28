@@ -17,6 +17,7 @@ import {
   Alert,
   Divider,
   Loader,
+  Pagination,
   Combobox,
   InputBase,
   useCombobox,
@@ -81,8 +82,6 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const { data: boards } = useBoards()
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
-  const readinessQueries = useProjectReadinessList(projects.map((project) => project.id))
-
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [setupModalOpen, setSetupModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
@@ -102,6 +101,26 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const [formNotificationsEnabled, setFormNotificationsEnabled] = useState(false)
   const [formDefaultLaunchEnvText, setFormDefaultLaunchEnvText] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+
+  const filteredProjects = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return projects
+    return projects.filter((project) =>
+      [project.name, project.gitRepositoryUrl, project.localRepositoryPath]
+        .filter((value): value is string => !!value)
+        .some((value) => value.toLowerCase().includes(query)),
+    )
+  }, [projects, search])
+  const totalPages = Math.max(1, Math.ceil(filteredProjects.length / 25))
+  const currentPage = Math.min(page, totalPages)
+  const visibleProjects = filteredProjects.slice((currentPage - 1) * 25, currentPage * 25)
+  const readinessQuery = useProjectReadinessList(visibleProjects.map((project) => project.id))
+  const readinessByProject = useMemo(
+    () => new Map((readinessQuery.data ?? []).map((readiness) => [readiness.projectId, readiness])),
+    [readinessQuery.data],
+  )
 
   const combobox = useCombobox({
     onDropdownClose: () => combobox.resetSelectedOption(),
@@ -208,6 +227,21 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 
       {projects.length > 0 ? (
         <Paper withBorder>
+          <Group justify="space-between" p="sm" pb={0}>
+            <TextInput
+              aria-label="Search projects"
+              placeholder="Search projects"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.currentTarget.value)
+                setPage(1)
+              }}
+              w={{ base: '100%', sm: 300 }}
+            />
+            <Text size="sm" c="dimmed">
+              {filteredProjects.length} project{filteredProjects.length === 1 ? '' : 's'}
+            </Text>
+          </Group>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -220,7 +254,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {projects.map((project, index) => (
+              {visibleProjects.map((project) => (
                 <Table.Tr key={project.id}>
                   <Table.Td fw={500}>{project.name}</Table.Td>
                   <Table.Td>
@@ -237,7 +271,11 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <ProjectReadinessCell query={readinessQueries[index]} />
+                    <ProjectReadinessCell
+                      readiness={readinessByProject.get(project.id)}
+                      isLoading={readinessQuery.isLoading}
+                      isError={readinessQuery.isError}
+                    />
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
@@ -266,6 +304,11 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
               ))}
             </Table.Tbody>
           </Table>
+          {filteredProjects.length > 25 && (
+            <Group justify="center" p="sm">
+              <Pagination value={currentPage} onChange={setPage} total={totalPages} />
+            </Group>
+          )}
         </Paper>
       ) : (
         <Paper withBorder p="xl">
@@ -460,14 +503,18 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
 }
 
 function ProjectReadinessCell({
-  query,
+  readiness,
+  isLoading,
+  isError,
 }: {
-  query: { data?: ProjectReadinessDto; isLoading: boolean; isError: boolean }
+  readiness?: ProjectReadinessDto
+  isLoading: boolean
+  isError: boolean
 }) {
-  if (query.isLoading) {
+  if (isLoading) {
     return <Loader size="xs" />
   }
-  if (query.isError || !query.data) {
+  if (isError || !readiness) {
     return (
       <Text size="sm" c="dimmed">
         --
@@ -475,8 +522,8 @@ function ProjectReadinessCell({
     )
   }
 
-  const missing = missingRequiredCount(query.data)
-  const label = query.data.canDispatch
+  const missing = missingRequiredCount(readiness)
+  const label = readiness.canDispatch
     ? 'Ready to dispatch'
     : `${missing} thing${missing === 1 ? '' : 's'} missing`
   return (
@@ -484,16 +531,16 @@ function ProjectReadinessCell({
       <Popover.Target>
         <Badge
           variant="light"
-          color={query.data.canDispatch ? 'green' : 'red'}
+          color={readiness.canDispatch ? 'green' : 'red'}
           style={{ cursor: 'pointer' }}
           aria-label={label}
           title={label}
         >
-          {query.data.canDispatch ? 'Ready' : `${missing} missing`}
+          {readiness.canDispatch ? 'Ready' : `${missing} missing`}
         </Badge>
       </Popover.Target>
       <Popover.Dropdown>
-        <ProjectReadinessPanel readiness={query.data} />
+        <ProjectReadinessPanel readiness={readiness} />
       </Popover.Dropdown>
     </Popover>
   )

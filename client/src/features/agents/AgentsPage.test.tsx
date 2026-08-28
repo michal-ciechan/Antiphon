@@ -1,4 +1,5 @@
 import { HttpResponse, http } from 'msw'
+import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../../api/agents'
 import type { ProjectReadinessDto } from '../../api/projectSetup'
@@ -6,7 +7,7 @@ import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
-import { AgentsPage } from './AgentsPage'
+import { AgentCard, AgentsPage } from './AgentsPage'
 
 vi.mock('@mantine/notifications', () => ({
   notifications: {
@@ -193,7 +194,10 @@ function agentHandlers(summary: AgentSummaryDto[] = [agentSummary], detail: Agen
     http.get('/api/agent-tui/profiles', () => HttpResponse.json([agentTuiProfile])),
     http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
     http.get('/api/boards', () => HttpResponse.json([boardSummary])),
-    http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
+    http.get('/api/projects/readiness', ({ request }) => {
+      const ids = (new URL(request.url).searchParams.get('ids') ?? '').split(',').filter(Boolean)
+      return HttpResponse.json(ids.map((id) => ({ ...readyReadiness, projectId: id })))
+    }),
   ]
 }
 
@@ -493,7 +497,7 @@ describe('AgentsPage', () => {
         HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
       ),
       http.get('/api/boards', () => HttpResponse.json([boardSummary])),
-      http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
+      http.get('/api/projects/readiness', () => HttpResponse.json([readyReadiness])),
     )
 
     renderWithProviders(<AgentsPage />)
@@ -537,7 +541,7 @@ describe('AgentsPage', () => {
         HttpResponse.json(params.id === 'agent-2' ? backendDetail : agentDetail),
       ),
       http.get('/api/boards', () => HttpResponse.json([boardSummary])),
-      http.get('/api/projects/:id/readiness', () => HttpResponse.json(readyReadiness)),
+      http.get('/api/projects/readiness', () => HttpResponse.json([readyReadiness])),
     )
 
     renderWithProviders(<AgentsPage />)
@@ -847,8 +851,8 @@ describe('AgentsPage', () => {
 
   it('chips directory missing from the project readiness checks', async () => {
     server.use(
-      http.get('/api/projects/:id/readiness', () =>
-        HttpResponse.json({
+      http.get('/api/projects/readiness', () =>
+        HttpResponse.json([{
           ...readyReadiness,
           canDispatch: false,
           checks: [
@@ -860,13 +864,81 @@ describe('AgentsPage', () => {
             },
             { key: 'agent-runner', level: 'Required', status: 'Ok', summary: 'Runner profile is enabled' },
           ],
-        } satisfies ProjectReadinessDto),
+        } satisfies ProjectReadinessDto]),
       ),
       ...agentHandlers(),
     )
 
     renderWithProviders(<AgentsPage />)
 
-    expect(await screen.findByTestId('agent-readiness-agent-1')).toHaveTextContent('directory missing')
+    await waitFor(() =>
+      expect(screen.getByTestId('agent-readiness-agent-1')).toHaveTextContent('directory missing'),
+    )
+  })
+
+  it('requests readiness only for the selected agent project', async () => {
+    const agents = Array.from({ length: 49 }, (_, index) => ({
+      ...agentSummary,
+      id: `agent-${index + 1}`,
+      name: `Agent ${index + 1}`,
+      boardId: `board-${index + 1}`,
+    }))
+    const boards = agents.map((_, index) => ({
+      ...boardSummary,
+      id: `board-${index + 1}`,
+      projectId: `project-${index + 1}`,
+    }))
+    const requests: string[] = []
+    server.use(
+      http.get('/api/projects/readiness', ({ request }) => {
+        requests.push(new URL(request.url).searchParams.get('ids') ?? '')
+        return HttpResponse.json([{ ...readyReadiness, projectId: 'project-1' }])
+      }),
+      http.get('/api/boards', () => HttpResponse.json(boards)),
+      ...agentHandlers(agents, { ...agentDetail, id: 'agent-1' }),
+    )
+
+    renderWithProviders(<AgentsPage />)
+
+    await waitFor(() => expect(requests).toEqual(['project-1']))
+  })
+
+  it('memoises cards so a readiness update renders only the changed row', async () => {
+    const agents = Array.from({ length: 49 }, (_, index) => ({
+      ...agentSummary,
+      id: `memo-agent-${index + 1}`,
+      name: `Memo agent ${index + 1}`,
+    }))
+    const renders: string[] = []
+    const noopAgent = () => undefined
+    const trackRender = (agentId: string) => renders.push(agentId)
+
+    function Roster() {
+      const [readiness, setReadiness] = useState<ProjectReadinessDto | undefined>()
+      return (
+        <>
+          <button onClick={() => setReadiness(readyReadiness)}>Load readiness</button>
+          {agents.map((agent, index) => (
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              isSelected={index === 0}
+              projectId={index === 0 ? 'project-1' : undefined}
+              readiness={index === 0 ? readiness : undefined}
+              onSelect={noopAgent}
+              onOpenTerminal={noopAgent}
+              onEditSettings={noopAgent}
+              onRendered={trackRender}
+            />
+          ))}
+        </>
+      )
+    }
+
+    renderWithProviders(<Roster />)
+    renders.length = 0
+    await userEvent.click(screen.getByRole('button', { name: 'Load readiness' }))
+
+    await waitFor(() => expect(renders).toEqual(['memo-agent-1']))
   })
 })

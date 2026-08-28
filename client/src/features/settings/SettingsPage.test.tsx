@@ -36,9 +36,10 @@ describe('SettingsPage', () => {
       ),
       http.get('/api/boards', () => HttpResponse.json([])),
       http.get('/api/github/repos', () => HttpResponse.json([])),
-      http.get('/api/projects/:id/readiness', ({ params }) => {
+      http.get('/api/projects/readiness', ({ request }) => {
         readinessRequests += 1
-        return HttpResponse.json({ projectId: params.id, canDispatch: true, checks: [] })
+        const ids = (new URL(request.url).searchParams.get('ids') ?? '').split(',').filter(Boolean)
+        return HttpResponse.json(ids.map((id) => ({ projectId: id, canDispatch: true, checks: [] })))
       }),
     )
 

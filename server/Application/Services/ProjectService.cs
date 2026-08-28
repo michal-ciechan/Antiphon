@@ -16,17 +16,20 @@ public class ProjectService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly GithubSettings _githubSettings;
     private readonly ILogger<ProjectService> _logger;
+    private readonly ProjectReadinessCache? _readinessCache;
 
     public ProjectService(
         AppDbContext db,
         IHttpClientFactory httpClientFactory,
         IOptions<GithubSettings> githubSettings,
-        ILogger<ProjectService> logger)
+        ILogger<ProjectService> logger,
+        ProjectReadinessCache? readinessCache = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _githubSettings = githubSettings.Value;
         _logger = logger;
+        _readinessCache = readinessCache;
     }
 
     public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken)
@@ -74,6 +77,7 @@ public class ProjectService
 
         _db.Projects.Add(project);
         await _db.SaveChangesAsync(cancellationToken);
+        _readinessCache?.Remove(project.Id);
 
         _logger.LogInformation("Created project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
@@ -107,6 +111,7 @@ public class ProjectService
         project.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
+        _readinessCache?.Remove(project.Id);
 
         _logger.LogInformation("Updated project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
@@ -164,6 +169,7 @@ public class ProjectService
         await ProjectCascade.DeleteBoardsAsync(_db, boardIds, cancellationToken);
         await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        _readinessCache?.Remove(id);
 
         _logger.LogInformation(
             "Deleted project {ProjectName} ({ProjectId}) with {BoardCount} board(s) and {CardCount} card(s)",

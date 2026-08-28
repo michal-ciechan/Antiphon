@@ -36,6 +36,16 @@ public static class ProjectEndpoints
             return Results.Ok(readiness);
         });
 
+        projects.MapGet("/readiness", async (
+            string? ids,
+            ProjectSetupService service,
+            CancellationToken cancellationToken) =>
+        {
+            var projectIds = ParseReadinessIds(ids);
+            var readiness = await service.GetReadinessBatchAsync(projectIds, cancellationToken);
+            return Results.Ok(readiness);
+        });
+
         projects.MapGet("/setup-catalog", async (
             ProjectSetupService service,
             CancellationToken cancellationToken) =>
@@ -101,6 +111,25 @@ public static class ProjectEndpoints
             var result = await service.TestGitConnectivityAsync(request.GitRepositoryUrl, cancellationToken);
             return Results.Ok(result);
         });
+    }
+
+    private static List<Guid> ParseReadinessIds(string? ids)
+    {
+        var values = (ids ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (values.Length > 100)
+            throw new Antiphon.Server.Application.Exceptions.ValidationException(
+                "ids", "At most 100 project ids may be requested at once.");
+
+        var parsed = new List<Guid>(values.Length);
+        foreach (var value in values)
+        {
+            if (!Guid.TryParse(value, out var id))
+                throw new Antiphon.Server.Application.Exceptions.ValidationException(
+                    "ids", "ids must be a comma-separated list of project ids.");
+            parsed.Add(id);
+        }
+        return parsed;
     }
 }
 

@@ -20,6 +20,9 @@ public sealed class ProjectSetupService
 {
     private readonly AppDbContext _db;
     private readonly DelegationWorkspaceResolver _resolver;
+    private readonly GitWorkspaceService _git;
+    private readonly ProjectReadinessCache _readinessCache;
+    private readonly IServiceScopeFactory? _scopeFactory;
     private readonly DelegationSettings _delegation;
     private readonly ILogger<ProjectSetupService> _logger;
     private readonly ProjectService? _projectService;
@@ -37,10 +40,18 @@ public sealed class ProjectSetupService
         BoardService? boardService = null,
         AgentService? agentService = null,
         AgentControlService? agentControlService = null,
-        IDirectoryWriter? directoryWriter = null)
+        IDirectoryWriter? directoryWriter = null,
+        GitWorkspaceService? git = null,
+        ProjectReadinessCache? readinessCache = null,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _db = db;
         _resolver = resolver;
+        _git = git ?? new GitWorkspaceService(Microsoft.Extensions.Logging.Abstractions.NullLogger<GitWorkspaceService>.Instance);
+        _readinessCache = readinessCache ?? new ProjectReadinessCache(
+            new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()),
+            Options.Create(new ProjectsSettings()));
+        _scopeFactory = scopeFactory;
         _delegation = delegation.Value;
         _logger = logger;
         _projectService = projectService;
@@ -50,7 +61,43 @@ public sealed class ProjectSetupService
         _directoryWriter = directoryWriter;
     }
 
-    public async Task<ProjectReadinessDto> GetReadinessAsync(Guid projectId, CancellationToken ct)
+    public Task<ProjectReadinessDto> GetReadinessAsync(Guid projectId, CancellationToken ct) =>
+        _readinessCache.GetOrCreateAsync(projectId, () => ComputeReadinessAsync(projectId, ct));
+
+    /// <summary>
+    /// Computes a bounded batch without sharing this scoped DbContext between parallel workers.
+    /// One bad project deliberately becomes one bad row rather than failing the whole list.
+    /// </summary>
+    public async Task<IReadOnlyList<ProjectReadinessDto>> GetReadinessBatchAsync(
+        IReadOnlyList<Guid> projectIds, CancellationToken ct)
+    {
+        var results = new ProjectReadinessDto[projectIds.Count];
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, projectIds.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
+            async (index, token) =>
+            {
+                var projectId = projectIds[index];
+                try
+                {
+                    results[index] = _scopeFactory is null
+                        ? await GetReadinessAsync(projectId, token)
+                        : await _readinessCache.GetOrCreateAsync(projectId, async () =>
+                        {
+                            await using var scope = _scopeFactory.CreateAsyncScope();
+                            var service = scope.ServiceProvider.GetRequiredService<ProjectSetupService>();
+                            return await service.ComputeReadinessAsync(projectId, token);
+                        });
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !token.IsCancellationRequested)
+                {
+                    results[index] = ErrorReadiness(projectId, ex);
+                }
+            });
+        return results;
+    }
+
+    internal async Task<ProjectReadinessDto> ComputeReadinessAsync(Guid projectId, CancellationToken ct)
     {
         var project = await _db.Projects
             .AsNoTracking()
@@ -210,7 +257,7 @@ public sealed class ProjectSetupService
         var gitUrl = request.GitRepositoryUrl?.Trim();
         if (string.IsNullOrWhiteSpace(gitUrl) && toplevel is not null)
         {
-            gitUrl = await TryGetOriginUrlAsync(toplevel, ct);
+            gitUrl = await _git.GetOriginUrlAsync(toplevel, ct);
             if (!string.IsNullOrWhiteSpace(gitUrl))
                 notes.Add("Git remote read from the checkout.");
         }
@@ -300,37 +347,6 @@ public sealed class ProjectSetupService
         return new ProjectSetupResultDto(project, board, agent, readiness, notes);
     }
 
-    private static async Task<string?> TryGetOriginUrlAsync(string directory, CancellationToken ct)
-    {
-        try
-        {
-            var info = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = directory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            info.ArgumentList.Add("remote");
-            info.ArgumentList.Add("get-url");
-            info.ArgumentList.Add("origin");
-            using var process = System.Diagnostics.Process.Start(info);
-            if (process is null)
-                return null;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            var output = await process.StandardOutput.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output) ? output.Trim() : null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-        {
-            return null;
-        }
-    }
-
     private static IReadOnlyList<ModelLevelDto> ModelLevelCatalog()
     {
         var kinds = new[] { AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex };
@@ -415,7 +431,7 @@ public sealed class ProjectSetupService
                 null);
         }
 
-        var toplevel = await _resolver.GetRepoToplevelAsync(project.LocalRepositoryPath, ct);
+        var toplevel = await _git.GetRepoToplevelAsync(project.LocalRepositoryPath, ct);
         if (toplevel is null)
         {
             return Check(
@@ -785,4 +801,19 @@ public sealed class ProjectSetupService
         string? detail,
         ReadinessFixDto? fix) =>
         new(key, level, status, summary, detail, fix);
+
+    private static ProjectReadinessDto ErrorReadiness(Guid projectId, Exception exception) =>
+        new(
+            projectId,
+            CanDispatch: false,
+            Checks:
+            [
+                Check(
+                    ReadinessKeys.GitRepository,
+                    ReadinessLevel.Recommended,
+                    ReadinessStatus.Warning,
+                    "Readiness could not be checked for this project.",
+                    exception.Message,
+                    null),
+            ]);
 }

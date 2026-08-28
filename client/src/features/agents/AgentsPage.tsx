@@ -19,7 +19,7 @@ import {
   UnstyledButton,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   TbAlertCircle,
   TbDotsVertical,
@@ -47,7 +47,7 @@ import {
   useStopAgent,
 } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
-import { useBoards, type BoardSummaryDto } from '../../api/boards'
+import { useBoards } from '../../api/boards'
 import { useProjectReadinessList, type ProjectReadinessDto } from '../../api/projectSetup'
 import { AgentActivityBadge } from './AgentActivityBadge'
 import { HerdrStatusBadge } from './HerdrStatusBadge'
@@ -62,24 +62,21 @@ import { ProjectSetupModal } from '../settings/ProjectSetupModal'
 export function AgentsPage() {
   const agents = useAgentList()
   const boards = useBoards()
-  const projectIds = [
-    ...new Set(
-      (agents.data ?? [])
-        .map((agent) => boards.data?.find((board) => board.id === agent.boardId)?.projectId)
-        .filter((id): id is string => !!id),
-    ),
-  ]
-  const readinessQueries = useProjectReadinessList(projectIds)
-  const readinessByProject = new Map<string, ProjectReadinessDto>()
-  projectIds.forEach((id, index) => {
-    const data = readinessQueries[index]?.data
-    if (data) readinessByProject.set(id, data)
-  })
   // ?agent=<id> deep-links a specific agent — how the delegations board points at the delegate
   // that ran a task.
   const [searchParams] = useSearchParams()
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(searchParams.get('agent'))
-  const selected = useAgent(selectedAgentId)
+  const effectiveSelectedAgentId = selectedAgentId ?? agents.data?.[0]?.id ?? null
+  const selected = useAgent(effectiveSelectedAgentId)
+  const projectIdByBoard = useMemo(
+    () => new Map((boards.data ?? []).map((board) => [board.id, board.projectId])),
+    [boards.data],
+  )
+  const selectedProjectId = projectIdByBoard.get(
+    (agents.data ?? []).find((agent) => agent.id === effectiveSelectedAgentId)?.boardId ?? '',
+  )
+  const readinessQuery = useProjectReadinessList(selectedProjectId ? [selectedProjectId] : [])
+  const selectedReadiness = readinessQuery.data?.find((readiness) => readiness.projectId === selectedProjectId)
   const [createOpen, setCreateOpen] = useState(false)
   const [setupProjectOpen, setSetupProjectOpen] = useState(false)
   const [addWorkOpen, setAddWorkOpen] = useState(false)
@@ -101,6 +98,7 @@ export function AgentsPage() {
       setSelectedAgentId(null)
     }
   }
+  const selectAgent = useCallback((agentId: string) => setSelectedAgentId(agentId), [])
 
   return (
     <Box p="md">
@@ -137,122 +135,18 @@ export function AgentsPage() {
           </Paper>
         )}
 
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
           {(agents.data ?? []).map((agent) => (
-            <Box key={agent.id} pos="relative">
-              <UnstyledButton
-                aria-label={`Agent ${agent.name}`}
-                aria-pressed={selectedAgentId === agent.id}
-                onClick={() => setSelectedAgentId(agent.id)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                }}
-              >
-                <Paper
-                  withBorder
-                  p="md"
-                  style={{
-                    outline: selectedAgentId === agent.id ? '1px solid var(--mantine-color-active-5)' : undefined,
-                  }}
-                >
-                  <Stack gap="xs">
-                    <Group justify="space-between" align="flex-start" wrap="nowrap" pr={56}>
-                      <Text fw={700} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
-                        {agent.name}
-                      </Text>
-                      <Group gap={4} style={{ flexShrink: 0 }}>
-                        <ReplyStyleBadge agent={agent} />
-                        <BundleDriftBadge agent={agent} />
-                        <SupervisionBadge agent={agent} compact />
-                        <AgentReadinessChip
-                          agent={agent}
-                          boards={boards.data}
-                          readinessByProject={readinessByProject}
-                        />
-                        {agent.liveSession?.agentKind === 'ClaudeCode' && (
-                          <SessionContextBadge
-                            fullness={agent.liveSession.contextFullness}
-                            state={agent.liveSession.contextFullnessState}
-                            size="xs"
-                          />
-                        )}
-                        <AgentActivityBadge agent={agent} />
-                        {agent.liveSession && <HerdrStatusBadge session={agent.liveSession} working={agent.working} size="xs" />}
-                      </Group>
-                    </Group>
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {agent.workingDirectory}
-                    </Text>
-                    <Text size="sm">{agent.queueLength} queued</Text>
-                  </Stack>
-                </Paper>
-              </UnstyledButton>
-              {/* Liveness lives in the terminal icon colour: green = running, yellow = starting/
-                  stopping, gray = no session. The status badge is reserved for real activity. */}
-              <Tooltip
-                label={
-                  agent.liveSession?.status === 'Running'
-                    ? 'Terminal — live now'
-                    : agent.liveSession
-                      ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
-                      : 'No terminal — start agent'
-                }
-                openDelay={400}
-                withArrow
-              >
-                <ActionIcon
-                  variant="subtle"
-                  color={
-                    agent.liveSession?.status === 'Running' ? 'green' : agent.liveSession ? 'yellow' : 'gray'
-                  }
-                  aria-label={`Terminal ${agent.name}`}
-                  onClick={() => setTerminalAgent(agent)}
-                  pos="absolute"
-                  top={8}
-                  right={36}
-                >
-                  <TbTerminal2 size={18} />
-                </ActionIcon>
-              </Tooltip>
-              <Menu shadow="md" position="bottom-end" withinPortal>
-                <Menu.Target>
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    aria-label={`Agent menu ${agent.name}`}
-                    pos="absolute"
-                    top={8}
-                    right={8}
-                  >
-                    <TbDotsVertical size={18} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item
-                    leftSection={<TbFiles size={14} />}
-                    component="a"
-                    href={`/agents/${agent.id}/files`}
-                    target="_blank"
-                  >
-                    Open files view
-                  </Menu.Item>
-                  {agent.boardId && (
-                    <Menu.Item
-                      leftSection={<TbLayoutKanban size={14} />}
-                      component={Link}
-                      to={`/boards/${agent.boardId}`}
-                    >
-                      Open board
-                    </Menu.Item>
-                  )}
-                  <Menu.Divider />
-                  <Menu.Item leftSection={<TbSettings size={14} />} onClick={() => setSettingsAgent(agent)}>
-                    Edit settings
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            </Box>
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              isSelected={selectedAgentId === agent.id}
+              projectId={projectIdByBoard.get(agent.boardId ?? '')}
+              readiness={selectedProjectId === projectIdByBoard.get(agent.boardId ?? '') ? selectedReadiness : undefined}
+              onSelect={selectAgent}
+              onOpenTerminal={setTerminalAgent}
+              onEditSettings={setSettingsAgent}
+            />
           ))}
         </SimpleGrid>
 
@@ -451,6 +345,132 @@ const SEVERITY_COLORS: Record<string, string> = {
   Critical: 'red',
 }
 
+export const AgentCard = memo(function AgentCard({
+  agent,
+  isSelected,
+  projectId,
+  readiness,
+  onSelect,
+  onOpenTerminal,
+  onEditSettings,
+  onRendered,
+}: {
+  agent: AgentSummaryDto
+  isSelected: boolean
+  projectId?: string
+  readiness?: ProjectReadinessDto
+  onSelect: (agentId: string) => void
+  onOpenTerminal: (agent: AgentSummaryDto) => void
+  onEditSettings: (agent: AgentSummaryDto) => void
+  /** Test instrumentation for verifying memoized row updates. */
+  onRendered?: (agentId: string) => void
+}) {
+  onRendered?.(agent.id)
+  return (
+    <Box pos="relative">
+      <UnstyledButton
+        aria-label={`Agent ${agent.name}`}
+        aria-pressed={isSelected}
+        onClick={() => onSelect(agent.id)}
+        style={{ display: 'block', width: '100%' }}
+      >
+        <Paper
+          withBorder
+          p="md"
+          style={{ outline: isSelected ? '1px solid var(--mantine-color-active-5)' : undefined }}
+        >
+          <Stack gap="xs">
+            <Group justify="space-between" align="flex-start" wrap="nowrap" pr={56}>
+              <Text fw={700} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
+                {agent.name}
+              </Text>
+              <Group gap={4} style={{ flexShrink: 0 }}>
+                <ReplyStyleBadge agent={agent} />
+                <BundleDriftBadge agent={agent} />
+                <SupervisionBadge agent={agent} compact />
+                <AgentReadinessChip projectId={projectId} readiness={readiness} agentId={agent.id} />
+                {agent.liveSession?.agentKind === 'ClaudeCode' && (
+                  <SessionContextBadge
+                    fullness={agent.liveSession.contextFullness}
+                    state={agent.liveSession.contextFullnessState}
+                    size="xs"
+                  />
+                )}
+                <AgentActivityBadge agent={agent} />
+                {agent.liveSession && <HerdrStatusBadge session={agent.liveSession} working={agent.working} size="xs" />}
+              </Group>
+            </Group>
+            <Text size="xs" c="dimmed" lineClamp={1}>
+              {agent.workingDirectory}
+            </Text>
+            <Text size="sm">{agent.queueLength} queued</Text>
+          </Stack>
+        </Paper>
+      </UnstyledButton>
+      <Tooltip
+        label={
+          agent.liveSession?.status === 'Running'
+            ? 'Terminal — live now'
+            : agent.liveSession
+              ? `Terminal ${agent.liveSession.status.toLowerCase()}…`
+              : 'No terminal — start agent'
+        }
+        openDelay={400}
+        withArrow
+      >
+        <ActionIcon
+          variant="subtle"
+          color={agent.liveSession?.status === 'Running' ? 'green' : agent.liveSession ? 'yellow' : 'gray'}
+          aria-label={`Terminal ${agent.name}`}
+          onClick={() => onOpenTerminal(agent)}
+          pos="absolute"
+          top={8}
+          right={36}
+        >
+          <TbTerminal2 size={18} />
+        </ActionIcon>
+      </Tooltip>
+      <Menu shadow="md" position="bottom-end" withinPortal>
+        <Menu.Target>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            aria-label={`Agent menu ${agent.name}`}
+            pos="absolute"
+            top={8}
+            right={8}
+          >
+            <TbDotsVertical size={18} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            leftSection={<TbFiles size={14} />}
+            component="a"
+            href={`/agents/${agent.id}/files`}
+            target="_blank"
+          >
+            Open files view
+          </Menu.Item>
+          {agent.boardId && (
+            <Menu.Item
+              leftSection={<TbLayoutKanban size={14} />}
+              component={Link}
+              to={`/boards/${agent.boardId}`}
+            >
+              Open board
+            </Menu.Item>
+          )}
+          <Menu.Divider />
+          <Menu.Item leftSection={<TbSettings size={14} />} onClick={() => onEditSettings(agent)}>
+            Edit settings
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </Box>
+  )
+})
+
 function IncidentRow({ incident }: { incident: AgentIncidentDto }) {
   return (
     <Paper withBorder p="xs">
@@ -482,18 +502,22 @@ function IncidentRow({ incident }: { incident: AgentIncidentDto }) {
  * every agent in the list.
  */
 function AgentReadinessChip({
-  agent,
-  boards,
-  readinessByProject,
+  agentId,
+  projectId,
+  readiness,
 }: {
-  agent: AgentSummaryDto
-  boards: BoardSummaryDto[] | undefined
-  readinessByProject: Map<string, ProjectReadinessDto>
+  agentId: string
+  projectId?: string
+  readiness?: ProjectReadinessDto
 }) {
-  const projectId = boards?.find((board) => board.id === agent.boardId)?.projectId
   if (!projectId) return null
-  const readiness = readinessByProject.get(projectId)
-  if (!readiness) return null
+  if (!readiness) {
+    return (
+      <Badge size="sm" color="gray" variant="light" data-testid={`agent-readiness-${agentId}`}>
+        readiness unknown
+      </Badge>
+    )
+  }
   const directory = readiness.checks.find((c) => c.key === 'agent-directory')
   const runner = readiness.checks.find((c) => c.key === 'agent-runner')
   const label =
@@ -508,7 +532,7 @@ function AgentReadinessChip({
       size="sm"
       color="red"
       variant="light"
-      data-testid={`agent-readiness-${agent.id}`}
+      data-testid={`agent-readiness-${agentId}`}
       title={label}
     >
       {label}

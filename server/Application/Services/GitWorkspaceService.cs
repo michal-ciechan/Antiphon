@@ -40,6 +40,22 @@ public sealed class GitWorkspaceService
         return code == 0 && stdout.Trim() == "true";
     }
 
+    /// <summary>The checkout root for a directory, or null when git cannot resolve one.</summary>
+    public async Task<string?> GetRepoToplevelAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "rev-parse", "--show-toplevel");
+        var toplevel = stdout.Trim();
+        return code == 0 && toplevel.Length > 0 ? Path.GetFullPath(toplevel) : null;
+    }
+
+    /// <summary>The origin URL for a checkout, or null when no origin is configured.</summary>
+    public async Task<string?> GetOriginUrlAsync(string workingDirectory, CancellationToken ct)
+    {
+        var (code, stdout, _) = await RunAsync(workingDirectory, ct, "remote", "get-url", "origin");
+        var origin = stdout.Trim();
+        return code == 0 && origin.Length > 0 ? origin : null;
+    }
+
     /// <summary>Working tree + index changes vs HEAD (porcelain v1 -z), untracked included.</summary>
     public async Task<IReadOnlyList<GitChange>> GetChangesAsync(string workingDirectory, CancellationToken ct)
     {

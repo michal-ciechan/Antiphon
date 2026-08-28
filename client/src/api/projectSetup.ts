@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet, apiPost } from './client'
 import type { AgentDetailDto, AgentModelLevel, AgentReplyStyle, InstructionBundleDto } from './agents'
 import type { BoardSummaryDto } from './boards'
@@ -115,6 +115,7 @@ export interface ProjectSetupResultDto {
 export const projectSetupKeys = {
   catalog: ['projects', 'setup-catalog'] as const,
   readiness: (id: string) => ['projects', id, 'readiness'] as const,
+  readinessList: (ids: string[]) => ['projects', 'readiness', ids] as const,
 }
 
 export function useProjectReadiness(id: string | undefined) {
@@ -126,11 +127,11 @@ export function useProjectReadiness(id: string | undefined) {
 }
 
 export function useProjectReadinessList(ids: string[]) {
-  return useQueries({
-    queries: ids.map((id) => ({
-      queryKey: projectSetupKeys.readiness(id),
-      queryFn: () => apiGet<ProjectReadinessDto>(`/projects/${id}/readiness`),
-    })),
+  return useQuery({
+    queryKey: projectSetupKeys.readinessList(ids),
+    queryFn: () => apiGet<ProjectReadinessDto[]>(`/projects/readiness?ids=${encodeURIComponent(ids.join(','))}`),
+    enabled: ids.length > 0,
+    retry: 1,
   })
 }
 

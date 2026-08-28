@@ -48,7 +48,7 @@ describe('ProjectConfig default launch environment', () => {
       http.get('/api/projects', () => HttpResponse.json([project])),
       http.get('/api/boards', () => HttpResponse.json([])),
       http.get('/api/github/repos', () => HttpResponse.json([])),
-      http.get('/api/projects/:id/readiness', () => HttpResponse.json(emptyReadiness)),
+      http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])),
       http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
       http.put('/api/projects/:id', async ({ request }) => {
         submitted = (await request.json()) as UpdateProjectRequest
@@ -86,7 +86,7 @@ describe('ProjectConfig readiness column', () => {
       http.get('/api/projects', () => HttpResponse.json([project])),
       http.get('/api/boards', () => HttpResponse.json([])),
       http.get('/api/github/repos', () => HttpResponse.json([])),
-      http.get('/api/projects/:id/readiness', () => HttpResponse.json(emptyReadiness)),
+      http.get('/api/projects/readiness', () => HttpResponse.json([emptyReadiness])),
     )
 
     renderWithProviders(<ProjectConfig />)
