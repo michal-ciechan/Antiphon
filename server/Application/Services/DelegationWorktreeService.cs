@@ -83,16 +83,22 @@ public sealed class DelegationWorktreeService
         {
             info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, ct);
         }
-        catch (ConflictException)
+        catch (ConflictException ex)
         {
             // A crashed or requeued earlier attempt left its worktree behind. Same task, same
             // branch — reusing it preserves whatever the last attempt committed, which is exactly
-            // what the handoff wants.
+            // what the handoff wants. If the directory is gone, include the inner diagnosis
+            // (CARD-0220 heal failure names the commands tried) instead of replacing it.
             var existing = (await _worktrees.ListAsync(repoPath, ct))
-                .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path))
-                ?? throw new ConflictException(
+                .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path));
+            if (existing is null)
+            {
+                throw new ConflictException(
                     $"Worktree for task {DelegationReportFormatter.Short(task.Id)} exists but its "
-                    + "directory is gone — remove the stale branch and retry.");
+                    + $"directory is gone. {ex.Message}",
+                    ex);
+            }
+
             info = existing;
         }
 

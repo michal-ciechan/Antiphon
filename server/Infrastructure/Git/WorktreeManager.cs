@@ -51,34 +51,38 @@ public sealed class WorktreeManager : IWorktreeManager
         var worktreePath = Path.GetFullPath(Path.Combine(worktreeRoot, BuildDirectoryName(validatedCardId)));
         EnsurePathUnderRoot(worktreePath, worktreeRoot, nameof(worktreePath));
 
+        var healed = await TryHealStaleRegistrationAsync(repoFullPath, worktreePath, ct);
+
         if (Directory.Exists(worktreePath))
             throw new ConflictException($"Worktree path already exists: {worktreePath}");
 
-        if (await BranchExistsAsync(repoFullPath, branch, ct))
+        var branchExistedBefore = await BranchExistsAsync(repoFullPath, branch, ct);
+        if (branchExistedBefore && !healed)
             throw new ConflictException($"Worktree branch already exists: {branch}");
 
         await EnsureRefExistsAsync(repoFullPath, baseRef, ct);
 
         try
         {
-            await RunGitAsync(repoFullPath, ["worktree", "add", "-b", branch, worktreePath, baseRef], ct);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException)
-        {
-            if (Directory.Exists(worktreePath))
+            if (branchExistedBefore)
             {
-                try
-                {
-                    Directory.Delete(worktreePath, recursive: true);
-                }
-                catch (Exception cleanupEx)
-                {
-                    _logger.LogWarning(cleanupEx, "Failed to clean up partially-created worktree {Path}", worktreePath);
-                }
+                // Re-attach the existing branch (CARD-0220): whatever a previous attempt committed
+                // is preserved. Same rule as DelegationWorktreeService's adopt arm.
+                await RunGitAsync(repoFullPath, ["worktree", "add", worktreePath, branch], ct);
             }
-
+            else
+            {
+                await RunGitAsync(repoFullPath, ["worktree", "add", "-b", branch, worktreePath, baseRef], ct);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException or TimeoutException)
+        {
+            await RollbackFailedAddAsync(repoFullPath, worktreePath, branch, branchExistedBefore);
             throw;
         }
+
+        if (healed)
+            await DeleteMetadataForPathAsync(worktreeRoot, worktreePath, ct);
 
         var now = _timeProvider.GetUtcNow();
         var info = new WorktreeInfo(
@@ -286,8 +290,14 @@ public sealed class WorktreeManager : IWorktreeManager
         var entries = new List<WorktreePorcelainEntry>();
         string? path = null;
         string? branch = null;
+        var locked = false;
+        string? lockReason = null;
+        var prunable = false;
+        string? prunableReason = null;
 
-        foreach (var rawLine in stdout.Split(['\r', '\n'], StringSplitOptions.None))
+        foreach (var rawLine in stdout.Replace("\r\n", "\n", StringComparison.Ordinal)
+                     .Replace('\r', '\n')
+                     .Split('\n'))
         {
             var line = rawLine.TrimEnd();
             if (line.Length == 0)
@@ -300,6 +310,22 @@ public sealed class WorktreeManager : IWorktreeManager
                 path = line["worktree ".Length..];
             else if (line.StartsWith("branch ", StringComparison.Ordinal))
                 branch = line["branch ".Length..];
+            else if (line.Equals("locked", StringComparison.Ordinal)
+                     || line.StartsWith("locked ", StringComparison.Ordinal))
+            {
+                locked = true;
+                lockReason = line.Equals("locked", StringComparison.Ordinal)
+                    ? string.Empty
+                    : line["locked ".Length..];
+            }
+            else if (line.Equals("prunable", StringComparison.Ordinal)
+                     || line.StartsWith("prunable ", StringComparison.Ordinal))
+            {
+                prunable = true;
+                prunableReason = line.Equals("prunable", StringComparison.Ordinal)
+                    ? string.Empty
+                    : line["prunable ".Length..];
+            }
         }
 
         AddEntry();
@@ -308,10 +334,22 @@ public sealed class WorktreeManager : IWorktreeManager
         void AddEntry()
         {
             if (!string.IsNullOrWhiteSpace(path))
-                entries.Add(new WorktreePorcelainEntry(path, branch ?? string.Empty));
+            {
+                entries.Add(new WorktreePorcelainEntry(
+                    path,
+                    branch ?? string.Empty,
+                    locked,
+                    lockReason,
+                    prunable,
+                    prunableReason));
+            }
 
             path = null;
             branch = null;
+            locked = false;
+            lockReason = null;
+            prunable = false;
+            prunableReason = null;
         }
     }
 
@@ -536,14 +574,217 @@ public sealed class WorktreeManager : IWorktreeManager
         metadata.CreatedAt,
         metadata.LastTouchedAt);
 
+    private TimeSpan TimeoutFor(IReadOnlyList<string> arguments)
+    {
+        if (arguments.Count >= 2
+            && arguments[0].Equals("worktree", StringComparison.Ordinal)
+            && arguments[1].Equals("add", StringComparison.Ordinal))
+        {
+            var seconds = _settings.WorktreeAddTimeoutSeconds > 0
+                ? _settings.WorktreeAddTimeoutSeconds
+                : 180;
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        return GitTimeout;
+    }
+
+    /// <summary>
+    /// A registered worktree whose directory is gone is a dead end for every future dispatch of
+    /// that task id (CARD-0220). Heal it before the path/branch conflict checks so create can
+    /// proceed: delete any leftover directory, <c>remove --force --force</c>, then prune.
+    /// The branch is re-attached by the caller, never deleted here.
+    /// </summary>
+    private async Task<bool> TryHealStaleRegistrationAsync(
+        string repoPath, string worktreePath, CancellationToken ct)
+    {
+        var list = await RunGitAsync(repoPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
+        if (list.ExitCode != 0)
+            return false;
+
+        var stale = ParseWorktreeList(list.Stdout)
+            .FirstOrDefault(entry => PathsEqual(entry.Path, worktreePath));
+        if (stale is null || Directory.Exists(worktreePath))
+            return false;
+
+        var commands = new List<string>();
+        try
+        {
+            TryDeleteDirectory(worktreePath);
+            commands.Add("delete directory");
+
+            var remove = await RunGitAsync(
+                repoPath,
+                ["worktree", "remove", "--force", "--force", worktreePath],
+                CancellationToken.None,
+                throwOnError: false);
+            commands.Add(DescribeGitStep("worktree remove --force --force", remove));
+            if (remove.ExitCode != 0)
+                throw new InvalidOperationException(remove.Stderr.Trim());
+
+            var prune = await RunGitAsync(
+                repoPath,
+                ["worktree", "prune"],
+                CancellationToken.None,
+                throwOnError: false);
+            commands.Add(DescribeGitStep("worktree prune", prune));
+            if (prune.ExitCode != 0)
+                throw new InvalidOperationException(prune.Stderr.Trim());
+
+            var lockReason = stale.Locked
+                ? (string.IsNullOrEmpty(stale.LockReason) ? "(no reason)" : stale.LockReason)
+                : "unlocked";
+            var killedAdd = string.Equals(stale.LockReason, "initializing", StringComparison.Ordinal)
+                ? " — a killed add"
+                : string.Empty;
+            _logger.LogWarning(
+                "Healed stale worktree registration at {Path} (lock: {LockReason}{KilledAdd}); ran: {Commands}",
+                worktreePath,
+                lockReason,
+                killedAdd,
+                string.Join(" → ", commands));
+            return true;
+        }
+        catch (Exception ex) when (ex is not ConflictException)
+        {
+            var diagnosis = $"Worktree '{worktreePath}' is registered"
+                + (stale.Locked
+                    ? $" and locked ({(string.IsNullOrEmpty(stale.LockReason) ? "no reason" : stale.LockReason)})"
+                    : "")
+                + " but its directory is gone";
+            throw new ConflictException(
+                $"{diagnosis}. Heal attempted: {string.Join("; ", commands)}. {ex.Message}",
+                ex);
+        }
+    }
+
+    /// <summary>
+    /// Full rollback of a failed <c>worktree add</c>, on a fresh token so a cancelled caller cannot
+    /// abort cleanup halfway. Each step is logged; a rollback failure is Warning and the original
+    /// exception still propagates.
+    /// </summary>
+    private async Task RollbackFailedAddAsync(
+        string repoPath,
+        string worktreePath,
+        string branch,
+        bool branchExistedBefore)
+    {
+        var ct = CancellationToken.None;
+        _logger.LogInformation(
+            "Rolling back failed worktree add at {Path} (branch {Branch}, existedBefore={ExistedBefore})",
+            worktreePath,
+            branch,
+            branchExistedBefore);
+
+        TryDeleteDirectory(worktreePath);
+
+        try
+        {
+            if (await IsRegisteredAsync(repoPath, worktreePath, ct))
+            {
+                var remove = await RunGitAsync(
+                    repoPath,
+                    ["worktree", "remove", "--force", "--force", worktreePath],
+                    ct,
+                    throwOnError: false);
+                if (remove.ExitCode != 0)
+                {
+                    _logger.LogWarning(
+                        "Rollback worktree remove --force --force failed for {Path}: {StdErr}",
+                        worktreePath,
+                        remove.Stderr);
+                }
+                else
+                {
+                    _logger.LogInformation("Rollback removed worktree registration {Path}", worktreePath);
+                }
+            }
+
+            var prune = await RunGitAsync(repoPath, ["worktree", "prune"], ct, throwOnError: false);
+            if (prune.ExitCode != 0)
+            {
+                _logger.LogWarning(
+                    "Rollback worktree prune failed in {RepoPath}: {StdErr}",
+                    repoPath,
+                    prune.Stderr);
+            }
+            else
+            {
+                _logger.LogInformation("Rollback pruned worktree registrations in {RepoPath}", repoPath);
+            }
+
+            if (!branchExistedBefore && await BranchExistsAsync(repoPath, branch, ct))
+            {
+                var deleteBranch = await RunGitAsync(repoPath, ["branch", "-D", branch], ct, throwOnError: false);
+                if (deleteBranch.ExitCode != 0)
+                {
+                    _logger.LogWarning(
+                        "Rollback branch -D {Branch} failed: {StdErr}",
+                        branch,
+                        deleteBranch.Stderr);
+                }
+                else
+                {
+                    _logger.LogInformation("Rollback deleted branch {Branch}", branch);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Rollback of failed worktree add at {Path} failed; the original exception still propagates",
+                worktreePath);
+        }
+    }
+
+    private async Task<bool> IsRegisteredAsync(string repoPath, string worktreePath, CancellationToken ct)
+    {
+        var result = await RunGitAsync(repoPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
+        if (result.ExitCode != 0)
+            return false;
+        return ParseWorktreeList(result.Stdout).Any(entry => PathsEqual(entry.Path, worktreePath));
+    }
+
+    private void TryDeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); }
+                catch (Exception) { /* best-effort; Delete will report if it still cannot */ }
+            }
+
+            Directory.Delete(path, recursive: true);
+            _logger.LogInformation("Deleted leftover worktree directory {Path}", path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete worktree directory {Path}", path);
+        }
+    }
+
+    private static string DescribeGitStep(string command, GitCommandResult result)
+    {
+        var stderr = result.Stderr.Trim();
+        return string.IsNullOrEmpty(stderr)
+            ? $"{command} (exit {result.ExitCode})"
+            : $"{command} (exit {result.ExitCode}): {stderr}";
+    }
+
     private async Task<GitCommandResult> RunGitAsync(
         string workingDirectory,
         IReadOnlyList<string> arguments,
         CancellationToken ct,
         bool throwOnError = true)
     {
+        var budget = TimeoutFor(arguments);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(GitTimeout);
+        cts.CancelAfter(budget);
 
         var psi = new ProcessStartInfo
         {
@@ -558,7 +799,11 @@ public sealed class WorktreeManager : IWorktreeManager
         foreach (var argument in arguments)
             psi.ArgumentList.Add(argument);
 
-        _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", string.Join(" ", arguments), workingDirectory);
+        _logger.LogDebug(
+            "Running git {Arguments} in {WorkingDirectory} (timeout {TimeoutSeconds}s)",
+            string.Join(" ", arguments),
+            workingDirectory,
+            budget.TotalSeconds);
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git process.");
@@ -569,6 +814,12 @@ public sealed class WorktreeManager : IWorktreeManager
         try
         {
             await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
+            throw new TimeoutException(
+                $"git {string.Join(" ", arguments)} timed out after {budget.TotalSeconds:0}s in {workingDirectory}");
         }
         catch (OperationCanceledException)
         {
@@ -594,7 +845,13 @@ public sealed class WorktreeManager : IWorktreeManager
         return result;
     }
 
-    internal sealed record WorktreePorcelainEntry(string Path, string Branch);
+    internal sealed record WorktreePorcelainEntry(
+        string Path,
+        string Branch,
+        bool Locked = false,
+        string? LockReason = null,
+        bool Prunable = false,
+        string? PrunableReason = null);
 
     private sealed record WorktreeMetadata(
         int SchemaVersion,

@@ -45,6 +45,131 @@ public class DelegationWorktreeTests
     }
 
     [Test]
+    public async Task a_locked_registration_whose_directory_is_gone_is_healed_and_the_task_dispatches()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var (service, manager) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        var (branch, worktreePath) = ExpectedCoordinates(repo, task);
+
+        await repo.GitAsync("worktree", "add", "--lock", "-b", branch, worktreePath);
+        DeleteTree(worktreePath);
+        Directory.Exists(worktreePath).ShouldBeFalse();
+
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        task.WorktreePath.ShouldBe(worktreePath);
+        task.WorktreeBranch.ShouldBe(branch);
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).Count.ShouldBe(1);
+        var ours = WorktreeManager.ParseWorktreeList(await repo.GitReadAsync("worktree", "list", "--porcelain"))
+            .Where(e => PathsEqual(e.Path, worktreePath))
+            .ToList();
+        ours.ShouldHaveSingleItem();
+        ours[0].Locked.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task an_unlocked_registration_whose_directory_is_gone_is_healed_too()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var (service, manager) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        var (branch, worktreePath) = ExpectedCoordinates(repo, task);
+
+        await repo.GitAsync("worktree", "add", "-b", branch, worktreePath);
+        DeleteTree(worktreePath);
+        Directory.Exists(worktreePath).ShouldBeFalse();
+
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        Directory.Exists(task.WorktreePath).ShouldBeTrue();
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).Count.ShouldBe(1);
+        var ours = WorktreeManager.ParseWorktreeList(await repo.GitReadAsync("worktree", "list", "--porcelain"))
+            .Where(e => PathsEqual(e.Path, worktreePath))
+            .ToList();
+        ours.ShouldHaveSingleItem();
+        ours[0].Locked.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task healing_re_attaches_the_task_branch_and_keeps_its_commits()
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "feat/parent");
+
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: "feat/parent");
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "kept.md"), "keep me\n");
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "kept.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "commit", "-m", "keep")).Ok.ShouldBeTrue();
+        var before = (await ScratchGitRepo.GitInAsync(
+            task.WorktreePath!, "rev-list", "--count", "feat/parent..HEAD")).StdOut.Trim();
+        before.ShouldBe("1");
+
+        DeleteTree(task.WorktreePath!);
+        task.WorktreePath = null;
+        task.WorktreeBranch = null;
+
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+
+        var after = (await ScratchGitRepo.GitInAsync(
+            task.WorktreePath!, "rev-list", "--count", "feat/parent..HEAD")).StdOut.Trim();
+        after.ShouldBe(before);
+        (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "show", "HEAD:kept.md"))
+            .StdOut.ReplaceLineEndings("\n").ShouldBe("keep me\n");
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task a_failed_worktree_add_leaves_no_registration_branch_or_directory(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+
+        var hooks = Path.Combine(repo.Path, ".git-hooks-fail");
+        Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nexit 1\n");
+        await repo.GitAsync("config", "core.hooksPath", hooks);
+
+        var (service, manager) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        var (branch, worktreePath) = ExpectedCoordinates(repo, task);
+
+        var failed = await Should.ThrowAsync<Exception>(
+            () => service.CreateForTaskAsync(task, ct));
+        failed.ShouldNotBeOfType<TimeoutException>();
+
+        Directory.Exists(worktreePath).ShouldBeFalse();
+        (await manager.ListAsync(repo.Path, CancellationToken.None)).ShouldBeEmpty();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{branch}"))
+            .Ok.ShouldBeFalse("the task branch must not survive a failed add");
+
+        // Timeout arm: the same hook with sleep, a 1 s add budget, TimeoutException (not OCE),
+        // and the same clean post-state.
+        await File.WriteAllTextAsync(Path.Combine(hooks, "post-checkout"), "#!/bin/sh\nsleep 30\nexit 0\n");
+        var (timeoutService, timeoutManager) = CreateService(repo, worktreeAddTimeoutSeconds: 1);
+        var timeoutTask = NewTask(repo.Path, mergeTarget: null);
+        var (timeoutBranch, timeoutPath) = ExpectedCoordinates(repo, timeoutTask);
+
+        var timedOut = await Should.ThrowAsync<TimeoutException>(
+            () => timeoutService.CreateForTaskAsync(timeoutTask, ct));
+        timedOut.ShouldNotBeOfType<OperationCanceledException>();
+
+        Directory.Exists(timeoutPath).ShouldBeFalse();
+        (await timeoutManager.ListAsync(repo.Path, CancellationToken.None)).ShouldBeEmpty();
+        (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", $"refs/heads/{timeoutBranch}"))
+            .Ok.ShouldBeFalse("a timed-out add must not leave the branch");
+    }
+
+    [Test]
     public async Task a_leftover_worktree_from_a_previous_attempt_is_adopted_not_an_error()
     {
         // A requeued task (retry, escalation) dispatches again with the same id. Its old worktree
@@ -359,7 +484,9 @@ public class DelegationWorktreeTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateService(ScratchGitRepo repo)
+    private static (DelegationWorktreeService Service, WorktreeManager Manager) CreateService(
+        ScratchGitRepo repo,
+        int? worktreeAddTimeoutSeconds = null)
     {
         var manager = new WorktreeManager(
             Options.Create(new GitSettings
@@ -367,6 +494,7 @@ public class DelegationWorktreeTests
                 WorktreeBasePath = repo.WorktreeRoot,
                 WorktreeStaleAfterDays = 7,
                 WorktreeJanitorIntervalHours = 24,
+                WorktreeAddTimeoutSeconds = worktreeAddTimeoutSeconds ?? 180,
             }),
             TimeProvider.System,
             NullLogger<WorktreeManager>.Instance);
@@ -375,6 +503,25 @@ public class DelegationWorktreeTests
             new GitService(NullLogger<GitService>.Instance),
             NullLogger<DelegationWorktreeService>.Instance);
         return (service, manager);
+    }
+
+    private static (string Branch, string WorktreePath) ExpectedCoordinates(ScratchGitRepo repo, AgentTask task)
+    {
+        var identifier = $"task-{DelegationReportFormatter.Short(task.Id)}";
+        return (
+            WorktreeManager.BuildBranchName(identifier),
+            Path.GetFullPath(Path.Combine(repo.WorktreeRoot, WorktreeManager.BuildDirectoryName(identifier))));
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Equals(
+                Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                comparison);
     }
 
     /// <summary>

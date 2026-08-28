@@ -11,6 +11,62 @@ using TUnit.Core.Exceptions;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Unit")]
+public class WorktreeManagerTests
+{
+    [Test]
+    public void ParseWorktreeList_captures_locked_reason_and_prunable_reason()
+    {
+        const string porcelain = """
+            worktree /repo
+            HEAD abcdef
+            branch refs/heads/master
+
+            worktree /trees/card-task-1
+            HEAD 111
+            branch refs/heads/feat/card-task-1
+            locked initializing
+
+            worktree /trees/card-task-2
+            HEAD 222
+            branch refs/heads/feat/card-task-2
+            prunable gitdir file points to non-existent location
+
+            """;
+
+        var entries = WorktreeManager.ParseWorktreeList(porcelain);
+        entries.Count.ShouldBe(3);
+
+        var locked = entries.Single(e => e.Path == "/trees/card-task-1");
+        locked.Locked.ShouldBeTrue();
+        locked.LockReason.ShouldBe("initializing");
+        locked.Prunable.ShouldBeFalse();
+
+        var prunable = entries.Single(e => e.Path == "/trees/card-task-2");
+        prunable.Prunable.ShouldBeTrue();
+        prunable.PrunableReason.ShouldBe("gitdir file points to non-existent location");
+        prunable.Locked.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ParseWorktreeList_captures_a_bare_locked_line()
+    {
+        const string porcelain = """
+            worktree /trees/card-task-3
+            HEAD 333
+            branch refs/heads/feat/card-task-3
+            locked
+
+            """;
+
+        var entries = WorktreeManager.ParseWorktreeList(porcelain);
+        entries.ShouldHaveSingleItem();
+        entries[0].Locked.ShouldBeTrue();
+        entries[0].LockReason.ShouldBe("");
+        entries[0].Prunable.ShouldBeFalse();
+    }
+}
+
+[Category("Unit")]
 public class WorktreeManagerSafetyTests
 {
     [Test]

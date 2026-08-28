@@ -398,11 +398,15 @@ public sealed class AgentTaskDispatcher
                     }
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Failed to dispatch task {ShortId}",
                     DelegationReportFormatter.Short(task.Id));
-                await FailAsync(task, ex.Message, ct);
+                await FailAndNotifyAsync(
+                    task,
+                    $"Dispatch failed before a session existed: {ex.Message}",
+                    "dispatch",
+                    ct);
                 failures++;
             }
         }
