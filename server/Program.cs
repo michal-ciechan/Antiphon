@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -495,6 +496,16 @@ try
     builder.Services.AddSignalR();
     builder.Services.AddSingleton<IEventBus, EventBus>();
 
+    // API payloads can be large over the phone connection, but streaming paths must never be
+    // buffered. Keep the MIME allowlist deliberately narrow; static assets are served by Vite/Caddy.
+    builder.Services.AddResponseCompression(options =>
+    {
+        options.EnableForHttps = true;
+        options.Providers.Add<BrotliCompressionProvider>();
+        options.Providers.Add<GzipCompressionProvider>();
+        options.MimeTypes = ["application/json", "application/problem+json"];
+    });
+
     // OpenTelemetry tracing (NFR20)
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(resource => resource.AddService("Antiphon"))
@@ -530,6 +541,11 @@ try
     app.UseMiddleware<CurrentUserMiddleware>();
     app.UseMiddleware<ExceptionMiddleware>();
     app.UseMiddleware<AuditMiddleware>();
+    // SignalR includes long-lived streaming transports. Exclude the whole hub route, including
+    // negotiate, rather than depending on its current content type to keep it unbuffered.
+    app.UseWhen(
+        context => !context.Request.Path.StartsWithSegments("/hubs"),
+        branch => branch.UseResponseCompression());
 
     // Create database if it doesn't exist, then migrate and seed.
     // Wrapped in try-catch: in managed environments (k8s, shared postgres) the app user
