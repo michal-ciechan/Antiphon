@@ -172,7 +172,15 @@ try {
     Write-Host "re-dispatch: delegate.ps1 -Role Code -Goal `"resume from checkpoint $sha`" -Dir `"$dir`""
 
     if ($Push) {
-        git push
+        # A Worktree task's branch is typically local-only until now - a bare "git push" has no
+        # upstream to push to and fails (found live, CARD-0217 S8 checkpoint, 2026-08-28).
+        $branch = (git rev-parse --abbrev-ref HEAD).Trim()
+        git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            git push
+        } else {
+            git push --set-upstream origin $branch
+        }
         if ($LASTEXITCODE -ne 0) { Write-Fail 1 "git push failed" }
     }
     exit 0
