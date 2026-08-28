@@ -28,5 +28,7 @@ public class HerdrClientSurfaceTests
         methods.ShouldContain("PaneSendKeysAsync");
         methods.ShouldContain("PaneGetAsync");
         methods.ShouldContain("AgentStartAsync");
+        methods.ShouldContain("AgentListAsync");
+        methods.ShouldContain("AgentRenameAsync");
     }
 }

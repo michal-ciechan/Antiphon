@@ -1971,18 +1971,6 @@ public class TranscriptAdoptionSafetyTests
         }
     }
 
-    /// <summary>Drains the runner event hub so a test can wait for a specific published event.</summary>
-    private sealed class ListLogger<T>(List<string> sink) : ILogger<T>
-    {
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            lock (sink)
-                sink.Add($"[{logLevel}] {formatter(state, exception)}");
-        }
-    }
-
     private sealed class HubEvents : IAsyncDisposable
     {
         private readonly CancellationTokenSource _cts = new();

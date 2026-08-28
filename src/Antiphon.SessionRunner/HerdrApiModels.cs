@@ -176,6 +176,11 @@ public sealed record HerdrAgentStartParams(
     [property: JsonPropertyName("args"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Args = null,
     [property: JsonPropertyName("timeout_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? TimeoutMs = null);
 
+/// <summary>CARD-0211: <c>agent.rename</c> — <paramref name="Name"/> null clears the live name.</summary>
+public sealed record HerdrAgentRenameParams(
+    [property: JsonPropertyName("target")] string Target,
+    [property: JsonPropertyName("name")] string? Name);
+
 public sealed record HerdrPaneTargetParams(
     [property: JsonPropertyName("pane_id")] string PaneId);
 
@@ -232,6 +237,9 @@ internal sealed record HerdrPaneReadEnvelope(
 internal sealed record HerdrAgentStartedEnvelope(
     [property: JsonPropertyName("agent")] HerdrAgentInfo Agent,
     [property: JsonPropertyName("argv")] IReadOnlyList<string>? Argv = null);
+
+internal sealed record HerdrAgentListEnvelope(
+    [property: JsonPropertyName("agents")] IReadOnlyList<HerdrAgentInfo> Agents);
 
 // --- subscription event payloads (CARD-0162; unknown fields ignored) ---
 

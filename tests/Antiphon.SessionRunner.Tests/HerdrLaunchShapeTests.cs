@@ -1,6 +1,7 @@
 using System.Text;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -222,13 +223,142 @@ public class HerdrLaunchShapeTests
         HerdrAgentKinds.IsSupported("Claude").ShouldBeFalse();
     }
 
+    [Test]
+    public async Task AgentSlug_is_sanitised_renamed_on_the_launched_pane_after_detection()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var slug = "PM-Orchestrator-Grok-" + new string('x', 19);
+        slug.Length.ShouldBeGreaterThan(32);
+        var expected = HerdrPaneChild.SanitizeAgentName(slug);
+        expected.Length.ShouldBe(32);
+
+        await using var runtime = BuildRuntime(settings, fake);
+        var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, agentSlug: slug);
+        dto.Status.ShouldBe("Running");
+
+        var paneId = fake.RequireAgentPaneId();
+        var methods = fake.Requests.Select(r => r.GetProperty("method").GetString()).ToList();
+        var renameIdx = methods.IndexOf("agent.rename");
+        renameIdx.ShouldBeGreaterThan(-1);
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "agent.rename").ShouldBe(1);
+        var lastGetBeforeRename = methods.FindLastIndex(renameIdx, m => m == "pane.get");
+        lastGetBeforeRename.ShouldBeGreaterThanOrEqualTo(0);
+        methods.IndexOf("agent.list").ShouldBeLessThan(renameIdx);
+        methods.Skip(renameIdx + 1).ShouldContain("pane.process_info");
+
+        var rename = fake.Requests.First(r => r.GetProperty("method").GetString() == "agent.rename");
+        rename.GetProperty("params").GetProperty("target").GetString().ShouldBe(paneId);
+        rename.GetProperty("params").GetProperty("name").GetString().ShouldBe(expected);
+
+        var pane = fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .Single(p => p.PaneId == paneId);
+        pane.AgentName.ShouldBe(expected);
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeTrue();
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Collision_suffixes_minus_2_and_warns_without_stealing()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        fake.SeedDetectedAgent("w-held:p1", HerdrAgentKinds.Claude, "pm-orchestrator-grok");
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var logs = new List<string>();
+
+        await using var runtime = BuildRuntime(settings, fake, logger: new ListLogger<SessionRunnerRuntime>(logs));
+        var dto = await StartAsync(
+            runtime, sessionId, settings.SessionLogPath, agentSlug: "pm-orchestrator-grok");
+        dto.Status.ShouldBe("Running");
+
+        var holder = fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .Single(p => p.PaneId == "w-held:p1");
+        holder.AgentName.ShouldBe("pm-orchestrator-grok");
+
+        var launched = fake.Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .Single(p => p.Agent is not null && p.PaneId != "w-held:p1");
+        launched.AgentName.ShouldBe("pm-orchestrator-grok-2");
+
+        logs.ShouldContain(l =>
+            l.Contains("[Warning]", StringComparison.Ordinal)
+            && l.Contains("pm-orchestrator-grok", StringComparison.Ordinal)
+            && l.Contains("w-held:p1", StringComparison.Ordinal));
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Null_AgentSlug_does_not_list_or_rename()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using var runtime = BuildRuntime(settings, fake);
+        var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, agentSlug: null);
+        dto.Status.ShouldBe("Running");
+
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "agent.list").ShouldBeFalse();
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "agent.rename").ShouldBeFalse();
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task RejectAgentRename_still_completes_the_launch_with_a_Warning()
+    {
+        await using var fake = new FakeHerdrServer { RejectAgentRename = "agent_name_taken" };
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        var scriptPath = HerdrLaunchScript.PathFor(settings.SessionLogPath, sessionId);
+        var logs = new List<string>();
+
+        await using var runtime = BuildRuntime(settings, fake, logger: new ListLogger<SessionRunnerRuntime>(logs));
+        var dto = await StartAsync(
+            runtime, sessionId, settings.SessionLogPath, agentSlug: "pm-orchestrator-grok");
+        dto.Status.ShouldBe("Running");
+        File.Exists(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId)).ShouldBeTrue();
+        File.Exists(scriptPath).ShouldBeFalse();
+        logs.ShouldContain(l =>
+            l.Contains("[Warning]", StringComparison.Ordinal)
+            && l.Contains("agent_name_taken", StringComparison.Ordinal));
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public void SanitizeAgentName_and_Suffix_respect_herdr_rules()
+    {
+        HerdrPaneChild.SanitizeAgentName("PM-Orchestrator-Grok").ShouldBe("pm-orchestrator-grok");
+        HerdrPaneChild.SanitizeAgentName(new string('a', 40)).ShouldBe(new string('a', 32));
+        HerdrPaneChild.SanitizeAgentName("2pm").ShouldBe("a2pm");
+        var thirtyTwo = new string('b', 32);
+        HerdrPaneChild.Suffix(thirtyTwo, 2).ShouldBe(new string('b', 30) + "-2");
+    }
+
     private static SessionRunnerRuntime BuildRuntime(
         SessionRunnerSettings settings,
         FakeHerdrServer fake,
-        int launchDetectTimeoutMs = 5_000) =>
+        int launchDetectTimeoutMs = 5_000,
+        ILogger<SessionRunnerRuntime>? logger = null) =>
         new(
             Options.Create(settings),
-            NullLogger<SessionRunnerRuntime>.Instance,
+            logger ?? NullLogger<SessionRunnerRuntime>.Instance,
             new HerdrClient(new HerdrSettings
             {
                 Enabled = true,
@@ -248,7 +378,8 @@ public class HerdrLaunchShapeTests
         Guid sessionId,
         string cwd,
         IReadOnlyDictionary<string, string>? env = null,
-        string? agentKind = null) =>
+        string? agentKind = null,
+        string? agentSlug = null) =>
         runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
@@ -264,7 +395,8 @@ public class HerdrLaunchShapeTests
                     WorkspaceLabel: "card0187-launch",
                     WorkspaceCwd: cwd,
                     PaneTitle: "card0187-launch",
-                    AgentKind: agentKind)),
+                    AgentKind: agentKind,
+                    AgentSlug: agentSlug)),
             CancellationToken.None);
 
     private static void AssertTornDown(FakeHerdrServer fake, string scriptPath)

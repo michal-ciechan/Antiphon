@@ -103,7 +103,15 @@ identity only — TTL is capped at 24 h and restart survival is unverified.
 
 The server does supply the *placement context* on the launch request (`HerdrLaunchOptions`), since
 the runner has no DB: a `WorkspaceKey` (`project:<guid>`, or `none`), a `WorkspaceLabel`, a
-`WorkspaceCwd`, and the `PaneTitle` the operator should see.
+`WorkspaceCwd`, the `PaneTitle` the operator should see — **the agent's name, never the TUI
+profile id** (CARD-0225; fallback is `Agent.Slug`, then `DefinitionName`, then `"agent"`) — and
+`AgentSlug` (CARD-0211), the sanitised Antiphon slug applied as the herdr agent name after
+detection. `PaneTitle` and `AgentSlug` are independent: tab `PM-Orchestrator-Grok` can answer to
+`herdr agent get pm-orchestrator-grok`. Null `AgentSlug` means do not rename (old-server compat,
+or a session with no owning agent).
+
+Renaming an agent in Antiphon mid-life does not rename its live herdr agent or tab; the next
+launch does. Herdr forgets the agent name when that occupant exits.
 
 ## 4. Where a pane lands
 
@@ -125,10 +133,13 @@ Launch sequence: ensure workspace → allocate pane (`tab.create` / `pane.split`
 `pane.rename` → `pane.report_metadata` → check the pane shell is PowerShell → write
 `<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`) → type
 `& '<path>'` via `pane.send_text` + `pane.send_keys ["enter"]` → poll `pane.get` until
-`Agent` matches the expected kind (`claude` / `grok` / `codex`) → `pane.process_info` for the
-child pid → write the sidecar → delete the script. A wrong detected kind, a non-PowerShell
-shell, or a detection timeout fails the launch (existing catch kills then disposes); the script
-is left in place for diagnosis. **Never `agent.start`.**
+`Agent` matches the expected kind (`claude` / `grok` / `codex`) → `agent.list` → `agent.rename
+<paneId> <slug>` (suffixed `-2`… if a live agent holds it; skipped, Warning, if the list or
+rename fails) → `pane.process_info` for the child pid → write the sidecar → delete the script.
+A wrong detected kind, a non-PowerShell shell, or a detection timeout fails the launch
+(existing catch kills then disposes); the script is left in place for diagnosis. A rename
+failure never fails the launch. **Never `agent.start`.** Target the rename by pane id, never
+by name — a name target could resolve to another live agent.
 
 **Never call `tab.close`.** Herdr auto-removes empty tabs, and closing one ourselves was measured
 to be the wrong move (probe P3). `KillAsync` also refuses to close a pane that has *unexpected*
@@ -249,6 +260,7 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Ceilings suddenly 900/3 000/1 024 | the runner is not advertising `herdr` | check `SessionRunner:Herdr:Enabled` and `GET :17204/capabilities` |
 | `HerdrStatusDisagreement` Warning | corroboration hint only | look at the pane; nothing is auto-corrected |
 | Empty tabs accumulating | not ours — herdr auto-removes them | do not add a `tab.close` |
+| herdr agent is `<slug>-2` | another live agent (often the previous incarnation's pane) holds `<slug>`; nothing is stolen | look at `herdr agent list`; the Warning names the holder pane. Close or rename the holder if you want the unsuffixed name back on the next launch |
 
 ## 9. Deferred / out of scope
 

@@ -114,6 +114,8 @@ internal sealed class HerdrPaneChild : ISessionChild
 
         await WaitForExpectedAgentAsync(paneId, expectedKind, ct);
 
+        await TryApplyAgentNameAsync(paneId, opts.AgentSlug, ct);
+
         var launchedAt = DateTime.UtcNow;
         int? childPid = null;
         try
@@ -449,6 +451,92 @@ internal sealed class HerdrPaneChild : ISessionChild
         Exited?.Invoke(new ChildExit(ExitCode: null, reason));
     }
 
+    /// <summary>
+    /// CARD-0211: apply <paramref name="agentSlug"/> as the herdr agent name after detection.
+    /// Never throws except on cancellation — a name is identity for the operator's convenience,
+    /// and the launch has already succeeded by the time this runs.
+    /// </summary>
+    private async Task TryApplyAgentNameAsync(string paneId, string? agentSlug, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(agentSlug))
+        {
+            _logger.LogDebug("herdr agent.list/rename skipped for pane {PaneId}: no AgentSlug", paneId);
+            return;
+        }
+
+        var desired = SanitizeAgentName(agentSlug);
+        IReadOnlyList<HerdrAgentInfo> live;
+        try
+        {
+            live = await _client.AgentListAsync(ct);
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            _logger.LogWarning(
+                ex,
+                "herdr agent.list failed; not renaming pane {PaneId} — cannot prove '{Desired}' is free",
+                paneId, desired);
+            return;
+        }
+
+        var others = live.Where(a => a.PaneId != paneId && a.Name is not null).ToList();
+        var heldNames = others.Select(a => a.Name!).ToHashSet(StringComparer.Ordinal);
+        var holder = others.FirstOrDefault(a => string.Equals(a.Name, desired, StringComparison.Ordinal));
+
+        var name = desired;
+        if (heldNames.Contains(name))
+        {
+            string? suffixed = null;
+            for (var n = 2; n <= 9; n++)
+            {
+                var candidate = Suffix(desired, n);
+                if (!heldNames.Contains(candidate))
+                {
+                    suffixed = candidate;
+                    break;
+                }
+            }
+
+            if (suffixed is null)
+            {
+                _logger.LogWarning(
+                    "herdr agent name '{Desired}' is held by pane {HolderPaneId}; not renaming pane {PaneId} — no free suffix within 9 attempts",
+                    desired, holder?.PaneId, paneId);
+                return;
+            }
+
+            _logger.LogWarning(
+                "herdr agent name '{Desired}' is held by pane {HolderPaneId}; renaming pane {PaneId} to '{Name}'",
+                desired, holder?.PaneId, paneId, suffixed);
+            name = suffixed;
+        }
+
+        try
+        {
+            await _client.AgentRenameAsync(paneId, name, ct);
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException)
+        {
+            var code = ex is HerdrApiException api ? api.Code : "unavailable";
+            _logger.LogWarning(
+                ex,
+                "herdr agent.rename to '{Name}' refused ({Code}) for pane {PaneId}; agent stays unnamed",
+                name, code, paneId);
+            return;
+        }
+
+        if (string.Equals(name, desired, StringComparison.Ordinal))
+        {
+            _logger.LogInformation("herdr agent on pane {PaneId} named '{Name}'", paneId, name);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "herdr agent on pane {PaneId} named '{Name}' (from '{Desired}')",
+                paneId, name, desired);
+        }
+    }
+
     /// <summary>Herdr agent names: <c>[a-z][a-z0-9_-]{0,31}</c>.</summary>
     internal static string SanitizeAgentName(string title)
     {
@@ -461,5 +549,22 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (s.Length > 32)
             s = s[..32];
         return s;
+    }
+
+    /// <summary>
+    /// CARD-0211 D2: <c>UniqueSlugAsync</c> transposed to herdr's 32-char cap — trim the base
+    /// to <c>32 - "-n".Length</c> before appending.
+    /// </summary>
+    internal static string Suffix(string desired, int n)
+    {
+        var suffix = $"-{n}";
+        var budget = 32 - suffix.Length;
+        var trimmed = desired.Length <= budget ? desired : desired[..budget];
+        trimmed = trimmed.TrimEnd('-');
+        if (trimmed.Length == 0 || !char.IsAsciiLetter(trimmed[0]))
+            trimmed = "a" + trimmed;
+        if (trimmed.Length > budget)
+            trimmed = trimmed[..budget];
+        return trimmed + suffix;
     }
 }

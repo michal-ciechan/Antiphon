@@ -19,6 +19,19 @@ public sealed class HerdrLaunchContextResolver
     }
 
     /// <summary>
+    /// CARD-0225: the title the operator sees on the tab/pane. The agent's name, never the
+    /// shared TUI profile id — one profile serves many agents, so its DisplayName cannot label
+    /// any one of them. DefinitionName survives only for a session that has no agent at all.
+    /// </summary>
+    public static string PaneTitleFor(Agent? agent, AgentSession session)
+    {
+        if (!string.IsNullOrWhiteSpace(agent?.Name)) return agent.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(agent?.Slug)) return agent.Slug;
+        if (!string.IsNullOrWhiteSpace(session.DefinitionName)) return session.DefinitionName;
+        return "agent";
+    }
+
+    /// <summary>
     /// Card session → Board.ProjectId; interactive standing agent → Agent.BoardId → Project;
     /// delegate → task project / PoolProjectId; nothing resolvable → catch-all
     /// (<c>WorkspaceKey = "none"</c>, label "Antiphon", cwd null).

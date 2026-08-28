@@ -317,6 +317,28 @@ public class HerdrAlwaysOnChannelParityTests
             var firstPane = fake.RequireAgentPaneId();
             firstPane.ShouldNotBeNull();
 
+            string? definitionName;
+            await using (var titleVerify = CreateContext())
+            {
+                var row = await titleVerify.AgentSessions.SingleAsync(s => s.Id == firstSessionId);
+                definitionName = row.DefinitionName;
+            }
+
+            definitionName.ShouldNotBe(agent.Name);
+            var tabCreate = fake.Requests.First(r => r.GetProperty("method").GetString() == "tab.create");
+            tabCreate.GetProperty("params").GetProperty("label").GetString().ShouldBe(agent.Name);
+            tabCreate.GetProperty("params").GetProperty("label").GetString().ShouldNotBe(definitionName);
+            var paneRename = fake.Requests.First(r => r.GetProperty("method").GetString() == "pane.rename");
+            paneRename.GetProperty("params").GetProperty("label").GetString().ShouldBe(agent.Name);
+            paneRename.GetProperty("params").GetProperty("label").GetString().ShouldNotBe(definitionName);
+
+            var agentRename = fake.Requests
+                .Where(r => r.GetProperty("method").GetString() == "agent.rename")
+                .ShouldHaveSingleItem();
+            agentRename.GetProperty("params").GetProperty("target").GetString().ShouldBe(firstPane);
+            agentRename.GetProperty("params").GetProperty("name").GetString()
+                .ShouldBe(agent.Slug, "CARD-0211: herdr agent name is the sanitised Agent.Slug");
+
             await harness.Runner.SimulateRunnerRestartAsync();
             var adopted = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
             adopted.Status.ShouldBe("Running", "R1: pane still lists the child");

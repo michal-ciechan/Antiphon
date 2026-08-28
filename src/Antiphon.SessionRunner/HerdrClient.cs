@@ -246,6 +246,26 @@ public sealed class HerdrClient
         return DeserializeRequired<HerdrAgentStartedEnvelope>(result, "agent.start").Agent;
     }
 
+    /// <summary>CARD-0211: live agents only. A name-less (K5 passively-detected) agent deserialises with <c>Name = null</c>.</summary>
+    public async Task<IReadOnlyList<HerdrAgentInfo>> AgentListAsync(CancellationToken cancellationToken)
+    {
+        var result = await SendRequestAsync("agent.list", new { }, cancellationToken);
+        return DeserializeRequired<HerdrAgentListEnvelope>(result, "agent.list").Agents;
+    }
+
+    /// <summary>
+    /// CARD-0211: rename (or clear with <paramref name="name"/> null) the live agent identified
+    /// by pane id or unique live name. Result envelope is opaque.
+    /// </summary>
+    public async Task AgentRenameAsync(string target, string? name, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        await SendRequestAsync(
+            "agent.rename",
+            new HerdrAgentRenameParams(target, name),
+            cancellationToken);
+    }
+
     public async Task<HerdrPaneInfo> PaneGetAsync(string paneId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(paneId);

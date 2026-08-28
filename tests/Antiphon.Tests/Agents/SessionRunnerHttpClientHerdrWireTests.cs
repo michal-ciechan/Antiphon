@@ -41,6 +41,45 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task AgentSlug_appears_on_the_POST_body()
+    {
+        var launched = await CaptureLaunchAsync(
+            new AgentLaunchSpec(
+                "grok",
+                AgentKind.Grok,
+                "grok.exe",
+                [],
+                new Dictionary<string, string>(),
+                Path.GetTempPath(),
+                120,
+                30,
+                Backend: SessionBackend.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    "none", "Antiphon", null, "PM-Orchestrator-Grok",
+                    AgentKind: HerdrAgentKinds.Grok,
+                    AgentSlug: "pm-orchestrator-grok")));
+
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.AgentSlug.ShouldBe("pm-orchestrator-grok");
+        launched.Herdr.PaneTitle.ShouldBe("PM-Orchestrator-Grok");
+    }
+
+    [Test]
+    public void Old_launch_body_without_agentSlug_deserialises_AgentSlug_null()
+    {
+        const string json = """
+            {"sessionId":"00000000-0000-0000-0000-000000000001","exe":"grok.exe","args":[],"env":{},"cwd":"c:\\\\tmp","cols":120,"rows":30,"herdr":{"workspaceKey":"none","workspaceLabel":"Antiphon","workspaceCwd":null,"paneTitle":"g","agentKind":"grok"}}
+            """;
+
+        var launched = JsonSerializer.Deserialize<RunnerLaunchRequest>(
+            json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        launched.ShouldNotBeNull();
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.AgentSlug.ShouldBeNull();
+        launched.Herdr.AgentKind.ShouldBe(HerdrAgentKinds.Grok);
+    }
+
+    [Test]
     public async Task Claude_spec_on_herdr_posts_agent_kind_claude_and_null_transcript_format()
     {
         var launched = await CaptureLaunchAsync(

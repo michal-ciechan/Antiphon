@@ -41,11 +41,16 @@ public sealed record HerdrLaunchOptions(
     string WorkspaceLabel,
     // workspace.create cwd — project.LocalRepositoryPath; null for the catch-all workspace.
     string? WorkspaceCwd,
-    // pane.rename label — the agent/definition name the operator should see on the pane.
+    // pane.rename / tab.create label — the agent's name the operator should see (CARD-0225),
+    // never the shared TUI profile id. Independent of <see cref="AgentSlug"/>.
     string PaneTitle,
     // Herdr agent-manifest kind (see <see cref="HerdrAgentKinds"/>). Null keeps the pre-CARD-0187
     // meaning of "claude" so a new runner in front of an old server behaves exactly as today.
-    string? AgentKind = null);
+    string? AgentKind = null,
+    // CARD-0211: Antiphon Agent.Slug; the runner applies it as the herdr agent name after
+    // detection (sanitised to herdr's [a-z][a-z0-9_-]{0,31}, never stolen from a live agent).
+    // Null = do not rename — an old server in front of a new runner launches exactly as today.
+    string? AgentSlug = null);
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
 public static class TranscriptFormats

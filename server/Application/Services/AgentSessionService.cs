@@ -1081,15 +1081,19 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (backend == SessionBackend.Herdr)
         {
             var agent = await ResolveOwningAgentAsync(session, ct);
-            var paneTitle = string.IsNullOrWhiteSpace(session.DefinitionName)
-                ? (agent?.Name ?? "agent")
-                : session.DefinitionName;
+            var paneTitle = HerdrLaunchContextResolver.PaneTitleFor(agent, session);
             herdr = await new HerdrLaunchContextResolver(_db)
                 .ResolveAsync(session, agent, paneTitle, ct);
             // Session-row kind, the same value the tailer format is derived from — the two cannot
             // disagree. Null AgentKind on the wire still means Claude (old-server compat).
             if (HerdrAgentKindMap.TryMap(session.AgentKind, out var herdrKind))
                 herdr = herdr with { AgentKind = herdrKind };
+            // CARD-0211: slug is the herdr-addressable identity, independent of PaneTitle.
+            // Null when the session has no owning agent (D3) — the runner then does not rename.
+            herdr = herdr with
+            {
+                AgentSlug = string.IsNullOrWhiteSpace(agent?.Slug) ? null : agent.Slug,
+            };
         }
 
         var spec = launchSpec with

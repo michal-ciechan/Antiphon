@@ -256,6 +256,48 @@ public class HerdrClientTests
     }
 
     [Test]
+    public async Task Agent_rename_sends_target_and_allows_null_name()
+    {
+        JsonElement? captured = null;
+        var pipeName = NewPipeName();
+        var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            request.GetProperty("method").GetString().ShouldBe("agent.rename");
+            captured = request.GetProperty("params").Clone();
+            await WriteLineAsync(writer,
+                $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"type\":\"ok\"}}}}", ct);
+        });
+
+        await ClientFor(pipeName).AgentRenameAsync("w1:p1", name: null, CancellationToken.None);
+        await server;
+
+        captured.ShouldNotBeNull();
+        captured.Value.GetProperty("target").GetString().ShouldBe("w1:p1");
+        captured.Value.GetProperty("name").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Test]
+    public async Task Agent_list_deserialises_nameless_K5_agents()
+    {
+        var pipeName = NewPipeName();
+        var server = ServeOnceAsync(pipeName, async (request, writer, ct) =>
+        {
+            request.GetProperty("method").GetString().ShouldBe("agent.list");
+            await WriteLineAsync(writer,
+                $"{{\"id\":\"{request.GetProperty("id").GetString()}\",\"result\":{{\"type\":\"agent_list\",\"agents\":[{{\"pane_id\":\"w2:p9\",\"tab_id\":\"w2:t4\",\"workspace_id\":\"w2\",\"agent\":\"codex\",\"agent_status\":\"idle\"}}]}}}}",
+                ct);
+        });
+
+        var agents = await ClientFor(pipeName).AgentListAsync(CancellationToken.None);
+        await server;
+
+        agents.ShouldHaveSingleItem();
+        agents[0].PaneId.ShouldBe("w2:p9");
+        agents[0].Agent.ShouldBe("codex");
+        agents[0].Name.ShouldBeNull();
+    }
+
+    [Test]
     public void HerdrSubscription_serializes_pane_id_and_omits_it_when_null()
     {
         var withPane = new HerdrSubscription(HerdrEventTypes.PaneAgentStatusChangedSubscribe, "w1:p1");

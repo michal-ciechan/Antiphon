@@ -58,6 +58,12 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// <summary>CARD-0187: delay before the launch-script send_text is reflected in pane.agent.</summary>
     public int LaunchScriptDetectDelayMs { get; set; }
 
+    /// <summary>
+    /// CARD-0211: when set, <c>agent.rename</c> fails with this code (measured live collision is
+    /// <c>agent_name_taken</c>). The launch itself must still succeed.
+    /// </summary>
+    public string? RejectAgentRename { get; set; }
+
     public FakeHerdrServer(string? session = null)
     {
         _session = session ?? $"antiphon-herdr-test-{Guid.NewGuid():N}";
@@ -329,6 +335,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
                 "pane.send_keys" => OkJson(),
                 "pane.close" => PaneCloseJson(parameters),
                 "agent.start" => AgentStartJson(parameters),
+                "agent.list" => AgentListJson(),
+                "agent.rename" => AgentRenameJson(parameters),
                 _ => throw new InvalidOperationException($"FakeHerdrServer has no handler for '{method}'.")
             };
             return $"{{\"id\":\"{id}\",\"result\":{resultJson}}}";
@@ -654,6 +662,56 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// CARD-0211: stamp a live detected agent (and optional name) onto an existing pane, or
+    /// create a stub workspace/tab/pane with <paramref name="paneId"/>. Tests that seed a
+    /// colliding holder must not call <see cref="RequireAgentPaneId"/>.
+    /// </summary>
+    public PaneState SeedDetectedAgent(string paneId, string kind, string? name)
+    {
+        foreach (var ws in Workspaces)
+        {
+            foreach (var tab in ws.Tabs)
+            {
+                var existing = tab.Panes.FirstOrDefault(p => p.PaneId == paneId);
+                if (existing is not null)
+                {
+                    existing.Agent = kind;
+                    existing.AgentName = name;
+                    return existing;
+                }
+            }
+        }
+
+        var workspaceId = paneId.Contains(':') ? paneId.Split(':')[0] : paneId;
+        var wsState = Workspaces.FirstOrDefault(w => w.WorkspaceId == workspaceId);
+        if (wsState is null)
+        {
+            wsState = new WorkspaceState(
+                workspaceId, "seeded", 99, $"{workspaceId}:t-seed", [], new Dictionary<string, string>());
+            Workspaces.Add(wsState);
+        }
+
+        var tabId = $"{workspaceId}:t-seed";
+        var tabState = wsState.Tabs.FirstOrDefault(t => t.TabId == tabId);
+        if (tabState is null)
+        {
+            tabState = new TabState(tabId, workspaceId, "seed", wsState.Tabs.Count + 1, []);
+            wsState.Tabs.Add(tabState);
+            if (string.IsNullOrEmpty(wsState.ActiveTabId))
+                wsState.ActiveTabId = tabId;
+        }
+
+        var pane = new PaneState(
+            paneId, tabState.TabId, workspaceId, "term_seed", cwd: null, label: name, title: null,
+            agent: kind, env: null)
+        {
+            AgentName = name,
+        };
+        tabState.Panes.Add(pane);
+        return pane;
+    }
+
+    /// <summary>
     /// Resolve the pane that <c>agent.start</c> bound (workspace.create also leaves a root pane).
     /// </summary>
     public string RequireAgentPaneId()
@@ -694,11 +752,110 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         var (_, _, pane) = RequirePane(paneId);
         pane.Agent = kind;
         pane.Label = name;
+        pane.AgentName = name;
         // CARD-0164: sticky revision is the fake's default (measured 0.8.2). Screen text may change
         // on agent.start; revision does NOT auto-bump — tests that need it call SetPaneRevision.
         pane.ScreenText = $"agent:{kind} env={FormatEnv(pane.Env)}";
         return
             $"{{\"type\":\"agent_started\",\"agent\":{{\"pane_id\":\"{pane.PaneId}\",\"tab_id\":\"{pane.TabId}\",\"workspace_id\":\"{pane.WorkspaceId}\",\"terminal_id\":\"{pane.TerminalId}\",\"name\":{JsonSerializer.Serialize(name)},\"agent\":{JsonSerializer.Serialize(kind)},\"agent_status\":\"idle\",\"cwd\":{JsonSerializer.Serialize(pane.Cwd)},\"revision\":{pane.Revision},\"focused\":false,\"interactive_ready\":true,\"launch_pending\":false}},\"argv\":[]}}";
+    }
+
+    /// <summary>
+    /// CARD-0211: live agents = panes with <see cref="PaneState.Agent"/> set. Name is omitted when
+    /// null so the K5 nameless shape deserialises as <c>HerdrAgentInfo.Name == null</c>.
+    /// </summary>
+    private string AgentListJson()
+    {
+        var agents = Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes)).ToList();
+        foreach (var pane in agents)
+            ApplyLaunchDetection(pane);
+
+        var items = agents
+            .Where(p => p.Agent is not null)
+            .Select(AgentListItemJson);
+        return $"{{\"type\":\"agent_list\",\"agents\":[{string.Join(",", items)}]}}";
+    }
+
+    private static string AgentListItemJson(PaneState p)
+    {
+        var nameJson = p.AgentName is null ? "" : $",\"name\":{JsonSerializer.Serialize(p.AgentName)}";
+        return
+            $"{{\"pane_id\":\"{p.PaneId}\",\"tab_id\":\"{p.TabId}\",\"workspace_id\":\"{p.WorkspaceId}\",\"terminal_id\":\"{p.TerminalId}\"{nameJson},\"agent\":{JsonSerializer.Serialize(p.Agent)},\"agent_status\":\"idle\",\"cwd\":{JsonSerializer.Serialize(p.Cwd)},\"revision\":{p.Revision},\"focused\":false,\"interactive_ready\":true,\"launch_pending\":false}}";
+    }
+
+    /// <summary>
+    /// CARD-0211: target is pane id or unique live name. Collision code is the measured
+    /// <c>agent_name_taken</c> (2026-08-28 scratch-pane probe). <c>name: null</c> clears.
+    /// </summary>
+    private string AgentRenameJson(JsonElement parameters)
+    {
+        var target = parameters.GetProperty("target").GetString()
+                     ?? throw new FakeHerdrApiException("invalid_params", "agent.rename requires target");
+        if (RejectAgentRename is { } rejectCode)
+            throw new FakeHerdrApiException(rejectCode, $"agent.rename rejected ({rejectCode})");
+
+        string? name;
+        if (!parameters.TryGetProperty("name", out var nameEl) || nameEl.ValueKind == JsonValueKind.Null)
+            name = null;
+        else if (nameEl.ValueKind == JsonValueKind.String)
+            name = nameEl.GetString();
+        else
+            throw new FakeHerdrApiException("invalid_params", "agent.rename name must be a string or null");
+
+        var pane = ResolveAgentTarget(target);
+        if (name is null)
+        {
+            pane.AgentName = null;
+            return $"{{\"type\":\"agent_info\",\"agent\":{AgentListItemJson(pane)}}}";
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^[a-z][a-z0-9_-]{0,31}$"))
+        {
+            throw new FakeHerdrApiException(
+                "invalid_agent_name",
+                "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)");
+        }
+
+        var taken = Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .FirstOrDefault(p =>
+                p.PaneId != pane.PaneId
+                && p.Agent is not null
+                && string.Equals(p.AgentName, name, StringComparison.Ordinal));
+        if (taken is not null)
+        {
+            throw new FakeHerdrApiException(
+                "agent_name_taken",
+                $"agent name {name} is already used; candidates: pane_id={taken.PaneId}");
+        }
+
+        pane.AgentName = name;
+        return $"{{\"type\":\"agent_info\",\"agent\":{AgentListItemJson(pane)}}}";
+    }
+
+    private PaneState ResolveAgentTarget(string target)
+    {
+        foreach (var ws in Workspaces)
+        {
+            foreach (var tab in ws.Tabs)
+            {
+                var byId = tab.Panes.FirstOrDefault(p => p.PaneId == target);
+                if (byId is not null)
+                {
+                    if (byId.Agent is null)
+                        throw new FakeHerdrApiException("not_found", $"pane '{target}' has no live agent");
+                    return byId;
+                }
+            }
+        }
+
+        var byName = Workspaces.SelectMany(w => w.Tabs.SelectMany(t => t.Panes))
+            .Where(p => p.Agent is not null && string.Equals(p.AgentName, target, StringComparison.Ordinal))
+            .ToList();
+        if (byName.Count == 1)
+            return byName[0];
+        if (byName.Count > 1)
+            throw new FakeHerdrApiException("agent_name_taken", $"agent name {target} is not unique");
+        throw new FakeHerdrApiException("not_found", $"agent target '{target}' not found");
     }
 
     private static string OkJson() => """{"type":"ok"}""";
@@ -842,6 +999,8 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public string? Label { get; set; } = label;
         public string? Title { get; set; } = title;
         public string? Agent { get; set; } = agent;
+        /// <summary>CARD-0211: herdr live agent name (null = unnamed, the K5 passively-detected shape).</summary>
+        public string? AgentName { get; set; }
         public Dictionary<string, string>? Env { get; } = env;
         public Dictionary<string, string>? Tokens { get; set; }
         public Dictionary<string, string>? StateLabels { get; set; }
