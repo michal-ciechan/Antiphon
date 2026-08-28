@@ -1,13 +1,17 @@
 import { ActionIcon, Alert, Badge, Box, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useMemo, useState } from 'react'
+import { lazy, useMemo, useState } from 'react'
 import { TbAlertCircle, TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import type { AgentSessionResumeMode } from '../../api/sessions'
 import { useResumeSession, useStopSession } from '../../api/sessions'
 import { SessionContextBadge } from '../agents/SessionContextBadge'
-import { SessionTerminal } from './SessionTerminal'
+import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
+
+const SessionTerminal = lazy(() =>
+  import('./SessionTerminal').then((m) => ({ default: m.SessionTerminal })),
+)
 
 interface SessionTabsProps {
   boardId: string
@@ -241,7 +245,9 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
       )}
       {selectedSession && (
         <Box style={{ flex: fill ? 1 : undefined, minHeight: fill ? 0 : undefined }}>
-          <SessionTerminal session={selectedSession} fill={fill} />
+          <SuspenseBoundary variant="panel">
+            <SessionTerminal session={selectedSession} fill={fill} />
+          </SuspenseBoundary>
         </Box>
       )}
     </Stack>

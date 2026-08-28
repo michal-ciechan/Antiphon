@@ -1,7 +1,12 @@
 import { Box, Text, Stack, ThemeIcon, Loader } from '@mantine/core'
-import { ArtifactViewer } from '../artifact'
+import { lazy } from 'react'
 import type { ArtifactVersion } from '../artifact'
+import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
 import type { ArtifactDto } from './types'
+
+const ArtifactViewer = lazy(() =>
+  import('../artifact/ArtifactViewer').then((m) => ({ default: m.ArtifactViewer })),
+)
 
 interface GateViewProps {
   stageName: string | null
@@ -87,16 +92,18 @@ export function GateView({
         minHeight: 0,
       }}
     >
-      <ArtifactViewer
-        content={artifact.content}
-        revisions={artifact.version}
-        createdAt={artifact.createdAt}
-        constrainedWidth={true}
-        versions={versions}
-        currentVersion={artifact.version}
-        onSelectVersion={onSelectVersion}
-        onViewConversation={onViewConversation}
-      />
+      <SuspenseBoundary variant="panel">
+        <ArtifactViewer
+          content={artifact.content}
+          revisions={artifact.version}
+          createdAt={artifact.createdAt}
+          constrainedWidth={true}
+          versions={versions}
+          currentVersion={artifact.version}
+          onSelectVersion={onSelectVersion}
+          onViewConversation={onViewConversation}
+        />
+      </SuspenseBoundary>
     </Box>
   )
 }

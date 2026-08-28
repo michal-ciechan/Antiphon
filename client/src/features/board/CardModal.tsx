@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Group, Modal, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { useMemo, useState } from 'react'
+import { lazy, useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
 import { CARD_LIMITS, useCard, useCardDiscussion, useCardRevisions, useCreateCard, useSpawnCard } from '../../api/boards'
@@ -9,14 +9,18 @@ import { useAttention } from '../../api/attention'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
 import { CardDiscussionPanel } from './CardDiscussionPanel'
-import { CardEditModal } from './CardEditModal'
 import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
 import { CardThreadPanel } from '../thread/CardThreadPanel'
+import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
 import './CardModal.css'
+
+const CardEditModal = lazy(() =>
+  import('./CardEditModal').then((m) => ({ default: m.CardEditModal })),
+)
 
 interface CardModalProps {
   boardId: string
@@ -287,7 +291,9 @@ export function CardModal({ boardId, card: summaryCard, columns = [], opened, on
       </Box>
 
       {editing && (
-        <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
+        <SuspenseBoundary variant="card">
+          <CardEditModal boardId={boardId} card={card} onClose={() => setEditing(false)} />
+        </SuspenseBoundary>
       )}
     </Modal>
   )

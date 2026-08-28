@@ -1,16 +1,21 @@
 import { Button, Group, Modal, Stack, Tabs, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { lazy } from 'react'
 import { TbListDetails, TbPlayerPlay, TbSend, TbTerminal2 } from 'react-icons/tb'
 import type { AgentSummaryDto } from '../../api/agents'
 import { useAgent, useStartAgent } from '../../api/agents'
 import { getApiErrorMessage } from '../../api/client'
-import { SessionTerminal } from '../board/SessionTerminal'
+import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
 import { SessionMessageQueue } from './SessionMessageQueue'
 import { SessionContextBadge } from './SessionContextBadge'
 import { SessionWorkingBadge } from './SessionWorkingBadge'
 import { HerdrStatusBadge } from './HerdrStatusBadge'
 import { SmartComposer } from './SmartComposer'
 import { SessionTranscriptPanel } from './SessionTranscriptPanel'
+
+const SessionTerminal = lazy(() =>
+  import('../board/SessionTerminal').then((m) => ({ default: m.SessionTerminal })),
+)
 
 interface AgentCliModalProps {
   agent: AgentSummaryDto
@@ -79,7 +84,9 @@ export function AgentCliModal({ agent, remoteControl, opened, onClose }: AgentCl
           </Tabs.List>
           <Tabs.Panel value="terminal">
             <Stack gap="xs">
-              <SessionTerminal session={liveSession} />
+              <SuspenseBoundary variant="panel">
+                <SessionTerminal session={liveSession} />
+              </SuspenseBoundary>
               <SmartComposer sessionId={liveSession.id} variant="terminal" defaultMode="raw" />
             </Stack>
           </Tabs.Panel>

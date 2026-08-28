@@ -3,6 +3,7 @@ import '@mantine/notifications/styles.css'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { lazy } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router'
 import { useSignalR } from './hooks/useSignalR'
 import { useSignalRInvalidation } from './hooks/useSignalRInvalidation'
@@ -13,17 +14,40 @@ import { theme } from './theme'
 import { Layout } from './shared/Layout'
 import { ErrorBoundary } from './shared/ErrorBoundary'
 import { SuspenseBoundary } from './shared/SuspenseBoundary'
-import { DashboardPage } from './features/dashboard/DashboardPage'
-import { HomePage } from './features/home/HomePage'
-import { WorkflowDetailPage } from './features/workflow/WorkflowDetailPage'
-import { SettingsPage } from './features/settings/SettingsPage'
-import { BoardPage } from './features/board/BoardPage'
-import { OrchestratorPage } from './features/orchestrator/OrchestratorPage'
-import { AgentsPage } from './features/agents/AgentsPage'
-import { AgentFilesPage } from './features/agents/AgentFilesPage'
-import { ChannelsPage } from './features/channels/ChannelsPage'
-import { PlanReaderPage } from './features/plans/PlanReaderPage'
-import { CardThreadPage } from './features/thread/CardThreadPage'
+
+const HomePage = lazy(() =>
+  import('./features/home/HomePage').then((m) => ({ default: m.HomePage })),
+)
+const DashboardPage = lazy(() =>
+  import('./features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+)
+const WorkflowDetailPage = lazy(() =>
+  import('./features/workflow/WorkflowDetailPage').then((m) => ({ default: m.WorkflowDetailPage })),
+)
+const SettingsPage = lazy(() =>
+  import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+)
+const BoardPage = lazy(() =>
+  import('./features/board/BoardPage').then((m) => ({ default: m.BoardPage })),
+)
+const OrchestratorPage = lazy(() =>
+  import('./features/orchestrator/OrchestratorPage').then((m) => ({ default: m.OrchestratorPage })),
+)
+const AgentsPage = lazy(() =>
+  import('./features/agents/AgentsPage').then((m) => ({ default: m.AgentsPage })),
+)
+const AgentFilesPage = lazy(() =>
+  import('./features/agents/AgentFilesPage').then((m) => ({ default: m.AgentFilesPage })),
+)
+const ChannelsPage = lazy(() =>
+  import('./features/channels/ChannelsPage').then((m) => ({ default: m.ChannelsPage })),
+)
+const PlanReaderPage = lazy(() =>
+  import('./features/plans/PlanReaderPage').then((m) => ({ default: m.PlanReaderPage })),
+)
+const CardThreadPage = lazy(() =>
+  import('./features/thread/CardThreadPage').then((m) => ({ default: m.CardThreadPage })),
+)
 
 const queryClient = new QueryClient()
 

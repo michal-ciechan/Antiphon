@@ -76,7 +76,32 @@ export default defineConfig({
   },
   server: sharedServerConfig,
   preview: sharedServerConfig,
-  build: buildConfig,
+  build: {
+    ...buildConfig,
+    // Vite 8 / Rolldown: `manualChunks` object form is gone and the function form is
+    // deprecated. `codeSplitting.groups` is the replacement that pins vendor packages
+    // so a feature-code change does not invalidate the react/mantine/tanstack cache.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'vendor-react',
+              test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler|react-router)(?:[\\/]|$)/,
+            },
+            {
+              name: 'vendor-mantine',
+              test: /[\\/]node_modules[\\/]@mantine[\\/]/,
+            },
+            {
+              name: 'vendor-tanstack',
+              test: /[\\/]node_modules[\\/]@tanstack[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

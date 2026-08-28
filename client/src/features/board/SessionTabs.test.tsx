@@ -51,7 +51,7 @@ describe('SessionTabs', () => {
     )
 
     expect(getSessionSelectInput()).toHaveValue('Session 2 - Running')
-    expect(screen.getByTestId('session-terminal')).toHaveTextContent('terminal session-new')
+    expect(await screen.findByTestId('session-terminal')).toHaveTextContent('terminal session-new')
     expect(screen.getByTestId('hidden-session-count')).toHaveTextContent(
       'Hidden 1 preparing session without a terminal.',
     )
@@ -60,7 +60,7 @@ describe('SessionTabs', () => {
     await userEvent.click(await screen.findByText('Session 1 - Stopped'))
 
     expect(getSessionSelectInput()).toHaveValue('Session 1 - Stopped')
-    expect(screen.getByTestId('session-terminal')).toHaveTextContent('terminal session-old')
+    expect(await screen.findByTestId('session-terminal')).toHaveTextContent('terminal session-old')
   })
 
   it('does not render a terminal for sessions without a cwd', () => {

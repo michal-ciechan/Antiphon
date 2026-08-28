@@ -42,7 +42,7 @@ import {
 } from '../../api/boards'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { BoardColumn } from './BoardColumn'
-import { LimitCounter } from './CardEditModal'
+import { LimitCounter } from './LimitCounter'
 import { CardListSection } from './CardListSection'
 import { CardModal } from './CardModal'
 import { ShapeStrip } from './ShapeStrip'
