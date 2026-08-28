@@ -189,7 +189,7 @@ describe('HomePage', () => {
     expect(requestedPaths).toEqual(['C:\\src\\antiphon', 'C:\\wt\\card-216'])
   })
 
-  it('does not refetch agent tasks when the Tasks panel mounts inside the stale window', async () => {
+  it('loads the unbounded task panel separately from the home page’s recent-task window', async () => {
     let taskRequests = 0
     seed({ tasks: [task({})] })
     server.use(
@@ -204,7 +204,7 @@ describe('HomePage', () => {
     await waitFor(() => expect(taskRequests).toBe(1))
     await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }))
     expect(await screen.findByText('tighten the deploy doc')).toBeInTheDocument()
-    expect(taskRequests).toBe(1)
+    expect(taskRequests).toBe(2)
   })
 
   it('shows the project, its agents, and the files pane for the picked agent', async () => {

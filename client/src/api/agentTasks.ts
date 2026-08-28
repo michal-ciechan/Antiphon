@@ -147,6 +147,14 @@ export interface AgentTaskDetailDto {
   events: AgentTaskEventDto[]
 }
 
+/** Fleet-wide header counters; unlike the board list, these never use its history window. */
+export interface AgentTaskListSummaryDto {
+  active: number
+  blocked: number
+  runs: number
+  byStatus: Partial<Record<AgentTaskStatus, number>>
+}
+
 export interface CreateAgentTaskRequest {
   goal: string
   title?: string | null
@@ -210,8 +218,34 @@ export const AGENT_TASK_ROLES: Array<{
 ]
 
 export const agentTaskKeys = {
-  list: (includeChecks = false) => ['agentTasks', 'list', includeChecks] as const,
+  list: (includeChecks = false, options: AgentTaskListOptions = {}) =>
+    ['agentTasks', 'list', includeChecks, options.since ?? null, options.status?.join(',') ?? null] as const,
+  summary: () => ['agentTasks', 'summary'] as const,
   detail: (id: string) => ['agentTasks', 'detail', id] as const,
+}
+
+/** Seven days is the shipped Delegation:DefaultWindowDays setting. */
+export const DELEGATIONS_DEFAULT_WINDOW_DAYS = 7
+
+export interface AgentTaskListOptions {
+  /** `default` resolves when each request runs, keeping the recent window rolling without cache-key churn. */
+  since?: string | 'default'
+  status?: AgentTaskStatus[]
+}
+
+function queryForAgentTasks(includeChecks: boolean, options: AgentTaskListOptions): string {
+  const query = new URLSearchParams()
+  if (includeChecks) query.set('includeChecks', 'true')
+  if (options.since) {
+    const since =
+      options.since === 'default'
+        ? new Date(Date.now() - DELEGATIONS_DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
+        : options.since
+    query.set('since', since)
+  }
+  if (options.status?.length) query.set('status', options.status.join(','))
+  const suffix = query.toString()
+  return suffix ? `/agent-tasks?${suffix}` : '/agent-tasks'
 }
 
 /**
@@ -219,14 +253,20 @@ export const agentTaskKeys = {
  * which the server hides by default — one exists per interpreted check-in and none of them is
  * anybody's delegated work, so the board would otherwise drown in them on a busy fleet.
  */
-export function useAgentTasks(includeChecks = false) {
+export function useAgentTasks(includeChecks = false, options: AgentTaskListOptions = {}) {
   return useQuery({
-    queryKey: agentTaskKeys.list(includeChecks),
-    queryFn: () =>
-      apiGet<AgentTaskSummaryDto[]>(
-        includeChecks ? '/agent-tasks?includeChecks=true' : '/agent-tasks',
-      ),
+    queryKey: agentTaskKeys.list(includeChecks, options),
+    queryFn: () => apiGet<AgentTaskSummaryDto[]>(queryForAgentTasks(includeChecks, options)),
     // SignalR invalidates on every task change; this only covers a dropped connection.
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  })
+}
+
+export function useAgentTaskListSummary() {
+  return useQuery({
+    queryKey: agentTaskKeys.summary(),
+    queryFn: () => apiGet<AgentTaskListSummaryDto>('/agent-tasks/summary'),
     refetchInterval: 15_000,
     staleTime: 5_000,
   })
@@ -251,6 +291,7 @@ function useTaskMutation<TVariables, TResult>(
       // The PREFIX, not agentTaskKeys.list() — that would invalidate only the default board and
       // leave an open includeChecks view stale.
       queryClient.invalidateQueries({ queryKey: ['agentTasks', 'list'] })
+      queryClient.invalidateQueries({ queryKey: agentTaskKeys.summary() })
       queryClient.invalidateQueries({ queryKey: ['agentTasks', 'detail'] })
     },
   })

@@ -282,6 +282,51 @@ public class AgentTaskCardBindingTests
         listed.ShouldContain(t => t.Id == created.Id && t.CardIdentifier == "CARD-0110");
     }
 
+    [Test]
+    public async Task a_history_window_hides_old_terminal_tasks_but_keeps_old_open_work()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var since = DateTime.UtcNow.AddDays(-7);
+        var oldTerminal = TaskRow(AgentTaskStatus.Succeeded, since.AddDays(-1), since.AddDays(-1));
+        var oldBlocked = TaskRow(AgentTaskStatus.Blocked, since.AddDays(-21), null);
+        var recentTerminal = TaskRow(AgentTaskStatus.Failed, since.AddMinutes(1), since.AddMinutes(1));
+        db.AgentTasks.AddRange(oldTerminal, oldBlocked, recentTerminal);
+        await db.SaveChangesAsync();
+
+        var listed = await CreateService(db, workspace).ListAsync(
+            rootId: null, statuses: null, includeChecks: false, since, CancellationToken.None);
+
+        listed.Select(task => task.Id).ShouldNotContain(oldTerminal.Id);
+        listed.Select(task => task.Id).ShouldContain(oldBlocked.Id);
+        listed.Select(task => task.Id).ShouldContain(recentTerminal.Id);
+    }
+
+    [Test]
+    public async Task fleet_summary_matches_the_unfiltered_delegations_list()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var root = Guid.NewGuid();
+        db.AgentTasks.AddRange(
+            TaskRow(AgentTaskStatus.Working, DateTime.UtcNow, null, root),
+            TaskRow(AgentTaskStatus.Blocked, DateTime.UtcNow, null, root),
+            TaskRow(AgentTaskStatus.Succeeded, DateTime.UtcNow, DateTime.UtcNow));
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db, workspace);
+        var full = await service.ListAsync(null, null, includeChecks: false, CancellationToken.None);
+        var summary = await service.GetListSummaryAsync(CancellationToken.None);
+
+        summary.Runs.ShouldBe(full.Select(task => task.RootTaskId).Distinct().Count());
+        summary.Active.ShouldBe(full.Count(task => task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working));
+        summary.Blocked.ShouldBe(full.Count(task => task.Status == AgentTaskStatus.Blocked));
+        foreach (var group in full.GroupBy(task => task.Status))
+            summary.ByStatus[group.Key.ToString()].ShouldBe(group.Count());
+    }
+
     // ---- helpers -------------------------------------------------------------------------------
 
     private static CreateAgentTaskRequest Request(string workingDirectory) => new(
@@ -291,6 +336,26 @@ public class AgentTaskCardBindingTests
         WorkingDirectory: workingDirectory);
 
     private static AgentTaskService.Caller Manual(string workingDirectory) => new(null, null, workingDirectory);
+
+    private static AgentTask TaskRow(
+        AgentTaskStatus status,
+        DateTime createdAt,
+        DateTime? completedAt,
+        Guid? rootTaskId = null)
+    {
+        var id = Guid.NewGuid();
+        return new AgentTask
+        {
+            Id = id,
+            RootTaskId = rootTaskId ?? id,
+            Title = "List test task",
+            Goal = "Exercise the list projection.",
+            WorkingDirectory = "C:\\list-test",
+            Status = status,
+            CreatedAt = createdAt,
+            CompletedAt = completedAt,
+        };
+    }
 
     private static AgentTaskService CreateService(AppDbContext db, TempWorkspace workspace) => new(
         db,

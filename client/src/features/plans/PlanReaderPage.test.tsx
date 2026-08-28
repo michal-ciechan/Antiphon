@@ -109,6 +109,28 @@ describe('PlanReaderPage', () => {
     expect(screen.queryByText(/three new files/)).not.toBeInTheDocument()
   })
 
+  it('loads only the task named in the URL, never the task collection', async () => {
+    const requested: string[] = []
+    server.use(
+      http.get('/api/agent-tasks/:id', ({ params }) => {
+        requested.push(`/api/agent-tasks/${params.id}`)
+        return HttpResponse.json({ summary: { id: params.id, role: 'Plan' } })
+      }),
+      http.get('/api/agent-tasks', () => {
+        requested.push('/api/agent-tasks')
+        return HttpResponse.json([])
+      }),
+      http.post('/api/agent-tasks/:id/read', () => HttpResponse.json({})),
+    )
+    seedCatalog()
+    seedContent()
+    renderPlansRoute(`${READER_URL}&task=12345678-1234-1234-1234-123456789abc`)
+
+    await screen.findByTestId('plan-header')
+    expect(requested).toContain('/api/agent-tasks/12345678-1234-1234-1234-123456789abc')
+    expect(requested).not.toContain('/api/agent-tasks')
+  })
+
   it('a section expands in place and collapses again', async () => {
     seedContent()
     renderPlansRoute(READER_URL)

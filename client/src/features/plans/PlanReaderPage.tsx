@@ -17,7 +17,7 @@ import {
 import { TbArrowLeft, TbChevronDown, TbChevronRight } from 'react-icons/tb'
 import { ApiError, getApiErrorMessage } from '../../api/client'
 import { usePlanCatalog, usePlanContent, type PlanSummaryDto } from '../../api/plans'
-import { useAgentTasks, useMarkAgentTaskRead } from '../../api/agentTasks'
+import { useAgentTask, useMarkAgentTaskRead } from '../../api/agentTasks'
 import { splitSections } from '../agents/markdownSections'
 import { SelectionComposer, SelectionDelegate } from '../agents/SelectionDelegate'
 import { RenderedMarkdown } from '../../shared/RenderedMarkdown'
@@ -203,7 +203,7 @@ function PlanReader({
 }) {
   const content = usePlanContent(path, file, refName)
   const catalog = usePlanCatalog(path)
-  const tasks = useAgentTasks()
+  const task = useAgentTask(taskId)
   const markRead = useMarkAgentTaskRead()
   const stampedTask = useRef<string | null>(null)
   const [selection, setSelection] = useState<string | null>(null)
@@ -215,7 +215,6 @@ function PlanReader({
     [content.data],
   )
 
-  const task = taskId ? (tasks.data ?? []).find((candidate) => candidate.id === taskId) : undefined
   const goalContext = taskId
     ? `Re ${content.data?.plan.cards[0] ?? 'this plan'} (task ${taskId.slice(0, 8)}):`
     : undefined
@@ -344,7 +343,7 @@ function PlanReader({
             filePath={file}
             workingDirectory={catalog.data?.root ?? path ?? ''}
             selection={selection}
-            defaultRole={task?.role === 'Plan' ? 'Plan' : 'Docs'}
+            defaultRole={task.data?.summary.role === 'Plan' ? 'Plan' : 'Docs'}
             goalContext={goalContext}
             onClose={() => setSelection(null)}
           />

@@ -139,6 +139,13 @@ public sealed record AgentTaskSummaryDto(
     /// <summary>Denormalised at read time so a row can name its card without a second request.</summary>
     string? CardIdentifier = null);
 
+/// <summary>Fleet-wide counters for the delegations board, independent of its history window.</summary>
+public sealed record AgentTaskListSummaryDto(
+    int Active,
+    int Blocked,
+    int Runs,
+    IReadOnlyDictionary<string, int> ByStatus);
+
 public sealed record AgentTaskDetailDto(
     AgentTaskSummaryDto Summary,
     string Goal,

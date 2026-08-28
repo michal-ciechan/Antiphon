@@ -73,7 +73,7 @@ export function HomePage() {
  */
 function DesktopHomePage() {
   const agents = useAgentList()
-  const tasks = useAgentTasks()
+  const tasks = useAgentTasks(false, { since: 'default' })
   const [delegateOpen, delegate] = useDisclosure(false)
   const [params, setParams] = useSearchParams()
 
@@ -368,7 +368,7 @@ function NeedsAttentionBadge() {
 
 /** A pull signal, not an attention state: only recent successful deliverables count. */
 function ToReadBadge({ dirKeys }: { dirKeys: string[] }) {
-  const tasks = useAgentTasks()
+  const tasks = useAgentTasks(false, { since: 'default' })
   const count = (tasks.data ?? []).filter(
     (task) => taskIsInProject(task, dirKeys) && isUnreadDeliverable(task),
   ).length

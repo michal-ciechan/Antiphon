@@ -31,11 +31,19 @@ public static class AgentTaskEndpoints
         // machinery, one per interpreted check, and the board is for delegated work.
         tasks.MapGet("/", async (
             Guid? rootId,
-            AgentTaskStatus? status,
+            DateTime? since,
+            string? status,
             bool? includeChecks,
             AgentTaskService service,
             CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(rootId, status, includeChecks ?? false, ct)));
+            Results.Ok(await service.ListAsync(
+                rootId, ParseStatuses(status), includeChecks ?? false, since, ct)));
+
+        // These are deliberately calculated over the whole fleet, not the board's current history
+        // window. The headline must not imply an old blocked task stopped existing.
+        tasks.MapGet("/summary", async (
+            AgentTaskService service,
+            CancellationToken ct) => Results.Ok(await service.GetListSummaryAsync(ct)));
 
         // The repo's named areas (CARD-0063). Declared BEFORE /{id} so "areas" is never read as a
         // task id. A read-only listing: the caller needs it to write a -Scope, so a missing or
@@ -160,5 +168,24 @@ public static class AgentTaskEndpoints
         {
             return null;
         }
+    }
+
+    private static IReadOnlyCollection<AgentTaskStatus>? ParseStatuses(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var statuses = new List<AgentTaskStatus>();
+        foreach (var name in value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!Enum.TryParse<AgentTaskStatus>(name, ignoreCase: true, out var status)
+                || !Enum.IsDefined(status))
+            {
+                throw new ValidationException("status", $"'{name}' is not a valid agent task status.");
+            }
+
+            statuses.Add(status);
+        }
+
+        return statuses.Distinct().ToArray();
     }
 }

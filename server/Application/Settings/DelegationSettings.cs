@@ -13,6 +13,9 @@ public sealed class DelegationSettings
 
     public int PollIntervalSeconds { get; set; } = 5;
 
+    /// <summary>Recent-history window requested by delegations list clients unless they choose Show all.</summary>
+    public int DefaultWindowDays { get; set; } = 7;
+
     /// <summary>How many tasks may be Dispatched/Working at once across all roots.</summary>
     public int MaxConcurrentTasks { get; set; } = 6;
 

@@ -488,17 +488,62 @@ public sealed class AgentTaskService
     /// interpretation's title names the checked task, and the checked task's <c>Check</c> event
     /// names the interpretation's short id and cost.
     /// </param>
+    public Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
+        Guid? rootId, AgentTaskStatus? status, bool includeChecks, CancellationToken ct) =>
+        ListAsync(rootId, status is { } singleStatus ? [singleStatus] : null, includeChecks, since: null, ct);
+
+    /// <summary>
+    /// Lists delegated work. A history window only trims settled rows: queued, dispatched,
+    /// working, and blocked tasks always remain visible, even when their run began long ago.
+    /// </summary>
     public async Task<IReadOnlyList<AgentTaskSummaryDto>> ListAsync(
-        Guid? rootId, AgentTaskStatus? status, bool includeChecks, CancellationToken ct)
+        Guid? rootId,
+        IReadOnlyCollection<AgentTaskStatus>? statuses,
+        bool includeChecks,
+        DateTime? since,
+        CancellationToken ct)
     {
         var query = _db.AgentTasks.AsNoTracking();
         if (rootId is { } root) query = query.Where(t => t.RootTaskId == root);
-        if (status is { } s) query = query.Where(t => t.Status == s);
+        if (statuses is { Count: > 0 })
+        {
+            var requested = statuses.ToArray();
+            query = query.Where(t => requested.Contains(t.Status));
+        }
         if (!includeChecks) query = query.Where(t => t.Role != AgentTaskRole.Check);
+
+        // AgentTask has no mutable UpdatedAt column. A settled row's CompletedAt is its final
+        // state transition, and every not-yet-settled state is retained irrespective of age.
+        if (since is { } windowStart)
+        {
+            query = query.Where(t => t.CompletedAt >= windowStart
+                || (t.Status != AgentTaskStatus.Succeeded
+                    && t.Status != AgentTaskStatus.Failed
+                    && t.Status != AgentTaskStatus.Canceled));
+        }
 
         var tasks = await query.OrderBy(t => t.CreatedAt).ToListAsync(ct);
         var cardIdentifiers = await LoadCardIdentifiersAsync(tasks, ct);
         return tasks.Select(t => ToSummary(t, tasks, cardIdentifiers)).ToList();
+    }
+
+    /// <summary>Fleet counters for the board header. Check interpretation machinery stays hidden.</summary>
+    public async Task<AgentTaskListSummaryDto> GetListSummaryAsync(CancellationToken ct)
+    {
+        var tasks = _db.AgentTasks.AsNoTracking().Where(t => t.Role != AgentTaskRole.Check);
+        var byStatus = await tasks
+            .GroupBy(t => t.Status)
+            .Select(group => new { Status = group.Key, Count = group.Count() })
+            .ToListAsync(ct);
+        var runs = await tasks.Select(t => t.RootTaskId).Distinct().CountAsync(ct);
+
+        var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
+        return new AgentTaskListSummaryDto(
+            Active: byStatus.Where(group => group.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+                .Sum(group => group.Count),
+            Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
+            Runs: runs,
+            ByStatus: counts);
     }
 
     public async Task<AgentTaskDetailDto> GetAsync(Guid id, CancellationToken ct, Guid? pollingSessionId = null)

@@ -1,6 +1,6 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentTaskDetailDto, AgentTaskSummaryDto } from '../../api/agentTasks'
+import type { AgentTaskDetailDto, AgentTaskListSummaryDto, AgentTaskSummaryDto } from '../../api/agentTasks'
 import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { DelegationsBoard } from './DelegationsBoard'
@@ -135,8 +135,17 @@ function detailFor(task: AgentTaskSummaryDto): AgentTaskDetailDto {
 }
 
 function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
+  const summary: AgentTaskListSummaryDto = {
+    active: tasks.filter((task) => task.status === 'Dispatched' || task.status === 'Working').length,
+    blocked: tasks.filter((task) => task.status === 'Blocked').length,
+    runs: new Set(tasks.map((task) => task.rootTaskId)).size,
+    byStatus: Object.fromEntries(
+      tasks.map((task) => task.status).map((status) => [status, tasks.filter((task) => task.status === status).length]),
+    ),
+  }
   server.use(
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
+    http.get('/api/agent-tasks/summary', () => HttpResponse.json(summary)),
     http.get('/api/agent-tasks/:id', ({ params }) => {
       const found = tasks.find((t) => t.id === params.id)
       return found ? HttpResponse.json(detailFor(found)) : new HttpResponse(null, { status: 404 })
@@ -147,6 +156,50 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
 const shortId = (id: string) => id.replace(/-/g, '').slice(0, 8)
 
 describe('DelegationsBoard', () => {
+  it('requests the configured recent window by default, then the complete history on Show all', async () => {
+    const sinceParameters: Array<string | null> = []
+    server.use(
+      http.get('/api/agent-tasks', ({ request }) => {
+        sinceParameters.push(new URL(request.url).searchParams.get('since'))
+        return HttpResponse.json(RUN)
+      }),
+      http.get('/api/agent-tasks/summary', () =>
+        HttpResponse.json({ active: 2, blocked: 1, runs: 2, byStatus: {} }),
+      ),
+    )
+    renderWithProviders(<DelegationsBoard />)
+
+    await screen.findByTestId('lane-working')
+    expect(sinceParameters).toHaveLength(1)
+    expect(sinceParameters[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show all' }))
+    await waitFor(() => expect(sinceParameters).toContain(null))
+  })
+
+  it('virtualizes a large lane instead of rendering every task card', async () => {
+    const ids = Array.from(
+      { length: 600 },
+      (_, index) => `${String(index + 1).padStart(8, '0')}-1111-1111-1111-111111111111`,
+    )
+    const tasks = ids.map((id, index) =>
+      summary({
+        id,
+        rootTaskId: ids[0],
+        parentTaskId: index === 0 ? null : ids[index - 1],
+        status: 'Working',
+      }),
+    )
+    serveTasks(tasks)
+    renderWithProviders(<DelegationsBoard />)
+
+    const working = await screen.findByTestId('lane-working')
+    await waitFor(() =>
+      expect(working.querySelectorAll('[data-testid^="task-chip-"]').length).toBeGreaterThan(0),
+    )
+    expect(working.querySelectorAll('[data-testid^="task-chip-"]').length).toBeLessThan(80)
+  })
+
   it('lands each task in the lane that says what it needs', async () => {
     serveTasks()
     renderWithProviders(<DelegationsBoard />)

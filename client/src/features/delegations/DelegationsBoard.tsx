@@ -7,7 +7,6 @@ import {
   Group,
   Loader,
   Paper,
-  ScrollArea,
   SimpleGrid,
   Stack,
   Switch,
@@ -15,15 +14,20 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core'
-import { useMemo, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { useMemo, useRef, useState } from 'react'
 import { TbAlertCircle, TbPlus, TbRefresh } from 'react-icons/tb'
 import { useSearchParams } from 'react-router'
-import { useAgentTasks, type AgentTaskSummaryDto } from '../../api/agentTasks'
+import {
+  useAgentTaskListSummary,
+  useAgentTasks,
+  type AgentTaskSummaryDto,
+} from '../../api/agentTasks'
 import { DelegateModal } from './DelegateModal'
 import { TaskChip } from './TaskChip'
 import { TaskDrawer } from './TaskDrawer'
 import { TaskTree } from './TaskTree'
-import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode } from './taskVisuals'
+import { LANES, buildTaskForest, laneOf, subtreeIds, type TaskNode } from './taskVisuals'
 
 /**
  * The delegations board: the fan-out on the left, what is happening right now on the right.
@@ -33,7 +37,9 @@ import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode }
  * you walk a tree to find it.
  */
 export function DelegationsBoard() {
-  const tasks = useAgentTasks()
+  const [showAll, setShowAll] = useState(false)
+  const tasks = useAgentTasks(false, { since: showAll ? undefined : 'default' })
+  const summary = useAgentTaskListSummary()
   // ?task=<id> opens the drawer on arrival — how the home page's task rows land here.
   const [searchParams] = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('task'))
@@ -63,15 +69,7 @@ export function DelegationsBoard() {
     [all, selectedRun],
   )
 
-  const totals = useMemo(
-    () => ({
-      runs: forest.length,
-      active: all.filter((t) => t.status === 'Dispatched' || t.status === 'Working').length,
-      blocked: all.filter((t) => t.status === 'Blocked').length,
-      spend: all.reduce((sum, t) => sum + t.costUsd, 0),
-    }),
-    [all, forest.length],
-  )
+  const totals = summary.data
 
   const toggle = (id: string) => {
     setExpanded((previous) => {
@@ -110,21 +108,18 @@ export function DelegationsBoard() {
         <Group gap="xs">
           <Title order={4}>Delegations</Title>
           <Badge variant="light" color="gray">
-            {totals.runs} run{totals.runs === 1 ? '' : 's'}
+            {totals?.runs ?? 0} run{totals?.runs === 1 ? '' : 's'}
           </Badge>
-          {totals.active > 0 && (
+          {(totals?.active ?? 0) > 0 && (
             <Badge variant="light" color="active">
-              {totals.active} working
+              {totals?.active} working
             </Badge>
           )}
-          {totals.blocked > 0 && (
+          {(totals?.blocked ?? 0) > 0 && (
             <Badge variant="light" color="warning">
-              {totals.blocked} blocked
+              {totals?.blocked} blocked
             </Badge>
           )}
-          <Badge variant="default" style={{ fontVariantNumeric: 'tabular-nums' }}>
-            {formatCost(totals.spend)}
-          </Badge>
         </Group>
         <Group gap="xs">
           {selectedId && (
@@ -135,6 +130,9 @@ export function DelegationsBoard() {
               onChange={(event) => setOnlyThisRun(event.currentTarget.checked)}
             />
           )}
+          <Button size="xs" variant="default" onClick={() => setShowAll((current) => !current)}>
+            {showAll ? 'Show recent' : 'Show all'}
+          </Button>
           <Tooltip label="Refresh">
             <ActionIcon variant="subtle" onClick={() => tasks.refetch()} loading={tasks.isFetching}>
               <TbRefresh />
@@ -178,24 +176,12 @@ export function DelegationsBoard() {
                     {laneTasks.length}
                   </Badge>
                 </Group>
-                <ScrollArea.Autosize mah={560}>
-                  <Stack gap={6}>
-                    {laneTasks.length === 0 ? (
-                      <Text size="xs" c="dimmed">
-                        {lane.hint}
-                      </Text>
-                    ) : (
-                      laneTasks.map((task) => (
-                        <TaskChip
-                          key={task.id}
-                          task={task}
-                          selected={selectedId === task.id}
-                          onOpen={open}
-                        />
-                      ))
-                    )}
-                  </Stack>
-                </ScrollArea.Autosize>
+                <VirtualTaskLane
+                  tasks={laneTasks}
+                  hint={lane.hint}
+                  selectedId={selectedId}
+                  onOpen={open}
+                />
               </Paper>
             )
           })}
@@ -205,6 +191,68 @@ export function DelegationsBoard() {
       <TaskDrawer taskId={drawerId} onClose={() => setDrawerId(null)} />
       <DelegateModal opened={createOpen} onClose={() => setCreateOpen(false)} />
     </Stack>
+  )
+}
+
+function VirtualTaskLane({
+  tasks,
+  hint,
+  selectedId,
+  onOpen,
+}: {
+  tasks: AgentTaskSummaryDto[]
+  hint: string
+  selectedId: string | null
+  onOpen: (task: AgentTaskSummaryDto | string) => void
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // TanStack Virtual returns imperative scroll/measurement functions; this component deliberately
+  // owns them and does not memoize or pass the virtualizer object across a memoization boundary.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 118,
+    overscan: 3,
+    // Render the first viewport immediately. ResizeObserver replaces this with the actual size
+    // after mount; without it a cold render can briefly show an empty lane.
+    initialRect: { width: 0, height: 560 },
+  })
+  // A real browser populates virtual items synchronously once the scroll element mounts. Keep a
+  // first viewport available during that hand-off (and in DOM test environments with no layout).
+  const virtualItems = virtualizer.getVirtualItems()
+  const rows =
+    virtualItems.length > 0
+      ? virtualItems
+      : tasks.slice(0, 8).map((_, index) => ({ index, start: index * 118 }))
+
+  if (tasks.length === 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        {hint}
+      </Text>
+    )
+  }
+
+  return (
+    <Box ref={scrollRef} style={{ height: 560, overflowY: 'auto' }}>
+      <Box style={{ height: virtualizer.getTotalSize() || tasks.length * 118, position: 'relative' }}>
+        {rows.map((row) => {
+          const task = tasks[row.index]
+          return (
+            <Box
+              key={task.id}
+              data-index={row.index}
+              ref={virtualizer.measureElement}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}
+              pb={6}
+            >
+              <TaskChip task={task} selected={selectedId === task.id} onOpen={onOpen} />
+            </Box>
+          )
+        })}
+      </Box>
+    </Box>
   )
 }
 
