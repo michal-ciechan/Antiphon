@@ -27,7 +27,7 @@ import { DelegateModal } from './DelegateModal'
 import { TaskChip } from './TaskChip'
 import { TaskDrawer } from './TaskDrawer'
 import { TaskTree } from './TaskTree'
-import { LANES, buildTaskForest, laneOf, subtreeIds, type TaskNode } from './taskVisuals'
+import { LANES, buildTaskForest, formatCost, laneOf, subtreeIds, type TaskNode } from './taskVisuals'
 
 /**
  * The delegations board: the fan-out on the left, what is happening right now on the right.
@@ -120,6 +120,9 @@ export function DelegationsBoard() {
               {totals?.blocked} blocked
             </Badge>
           )}
+          <Badge variant="default" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatCost(totals?.totalCostUsd ?? 0)}
+          </Badge>
         </Group>
         <Group gap="xs">
           {selectedId && (

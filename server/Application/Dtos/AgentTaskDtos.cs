@@ -144,6 +144,7 @@ public sealed record AgentTaskListSummaryDto(
     int Active,
     int Blocked,
     int Runs,
+    decimal TotalCostUsd,
     IReadOnlyDictionary<string, int> ByStatus);
 
 public sealed record AgentTaskDetailDto(

@@ -536,6 +536,7 @@ public sealed class AgentTaskService
             .Select(group => new { Status = group.Key, Count = group.Count() })
             .ToListAsync(ct);
         var runs = await tasks.Select(t => t.RootTaskId).Distinct().CountAsync(ct);
+        var totalCostUsd = await tasks.SumAsync(t => t.CostUsd, ct);
 
         var counts = byStatus.ToDictionary(group => group.Status.ToString(), group => group.Count);
         return new AgentTaskListSummaryDto(
@@ -543,6 +544,7 @@ public sealed class AgentTaskService
                 .Sum(group => group.Count),
             Blocked: byStatus.Where(group => group.Status == AgentTaskStatus.Blocked).Sum(group => group.Count),
             Runs: runs,
+            TotalCostUsd: totalCostUsd,
             ByStatus: counts);
     }
 

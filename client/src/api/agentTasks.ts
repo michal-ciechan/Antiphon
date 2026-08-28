@@ -152,6 +152,7 @@ export interface AgentTaskListSummaryDto {
   active: number
   blocked: number
   runs: number
+  totalCostUsd: number
   byStatus: Partial<Record<AgentTaskStatus, number>>
 }
 

@@ -139,6 +139,7 @@ function serveTasks(tasks: AgentTaskSummaryDto[] = RUN) {
     active: tasks.filter((task) => task.status === 'Dispatched' || task.status === 'Working').length,
     blocked: tasks.filter((task) => task.status === 'Blocked').length,
     runs: new Set(tasks.map((task) => task.rootTaskId)).size,
+    totalCostUsd: tasks.reduce((sum, task) => sum + task.costUsd, 0),
     byStatus: Object.fromEntries(
       tasks.map((task) => task.status).map((status) => [status, tasks.filter((task) => task.status === status).length]),
     ),
@@ -164,7 +165,7 @@ describe('DelegationsBoard', () => {
         return HttpResponse.json(RUN)
       }),
       http.get('/api/agent-tasks/summary', () =>
-        HttpResponse.json({ active: 2, blocked: 1, runs: 2, byStatus: {} }),
+        HttpResponse.json({ active: 2, blocked: 1, runs: 2, totalCostUsd: 0, byStatus: {} }),
       ),
     )
     renderWithProviders(<DelegationsBoard />)
@@ -215,6 +216,9 @@ describe('DelegationsBoard', () => {
     const done = screen.getByTestId('lane-done')
     expect(within(done).getByText('Run the suite')).toBeInTheDocument()
     expect(within(done).getByText('Fix the flaky channel test')).toBeInTheDocument()
+
+    // Fleet-wide spend from the summary endpoint, independent of the board's history window.
+    expect(screen.getByText('$0.09')).toBeInTheDocument()
   })
 
   it('shows the tier as its own badge, per task', async () => {

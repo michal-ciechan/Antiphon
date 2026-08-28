@@ -311,9 +311,9 @@ public class AgentTaskCardBindingTests
         using var workspace = new TempWorkspace();
         var root = Guid.NewGuid();
         db.AgentTasks.AddRange(
-            TaskRow(AgentTaskStatus.Working, DateTime.UtcNow, null, root),
-            TaskRow(AgentTaskStatus.Blocked, DateTime.UtcNow, null, root),
-            TaskRow(AgentTaskStatus.Succeeded, DateTime.UtcNow, DateTime.UtcNow));
+            TaskRow(AgentTaskStatus.Working, DateTime.UtcNow, null, root, costUsd: 0.05m),
+            TaskRow(AgentTaskStatus.Blocked, DateTime.UtcNow, null, root, costUsd: 0.01m),
+            TaskRow(AgentTaskStatus.Succeeded, DateTime.UtcNow, DateTime.UtcNow, costUsd: 1.23m));
         await db.SaveChangesAsync();
 
         var service = CreateService(db, workspace);
@@ -323,6 +323,7 @@ public class AgentTaskCardBindingTests
         summary.Runs.ShouldBe(full.Select(task => task.RootTaskId).Distinct().Count());
         summary.Active.ShouldBe(full.Count(task => task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working));
         summary.Blocked.ShouldBe(full.Count(task => task.Status == AgentTaskStatus.Blocked));
+        summary.TotalCostUsd.ShouldBe(full.Sum(task => task.CostUsd));
         foreach (var group in full.GroupBy(task => task.Status))
             summary.ByStatus[group.Key.ToString()].ShouldBe(group.Count());
     }
@@ -341,7 +342,8 @@ public class AgentTaskCardBindingTests
         AgentTaskStatus status,
         DateTime createdAt,
         DateTime? completedAt,
-        Guid? rootTaskId = null)
+        Guid? rootTaskId = null,
+        decimal costUsd = 0m)
     {
         var id = Guid.NewGuid();
         return new AgentTask
@@ -354,6 +356,7 @@ public class AgentTaskCardBindingTests
             Status = status,
             CreatedAt = createdAt,
             CompletedAt = completedAt,
+            CostUsd = costUsd,
         };
     }
 
