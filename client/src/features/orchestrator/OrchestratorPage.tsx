@@ -31,6 +31,7 @@ export function OrchestratorPage() {
   return (
     <Tabs
       value={tab}
+      keepMounted={false}
       onChange={(value) => {
         const next = new URLSearchParams(params)
         if (value && value !== 'cards') next.set('tab', value)

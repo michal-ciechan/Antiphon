@@ -54,8 +54,8 @@ export function planForMode(mode, env = process.env) {
     return { mode: 'dev', steps: [{ id: 'dev', args: [VITE_BIN], persistent: true, env: {} }] }
   }
   const steps = [
-    { id: 'build', args: [VITE_BIN, 'build'], persistent: false, env: {} },
-    { id: 'preview', args: [VITE_BIN, 'preview'], persistent: true, env: {} },
+    { id: 'build', args: [VITE_BIN, 'build'], persistent: false, env: { NODE_ENV: 'production' } },
+    { id: 'preview', args: [VITE_BIN, 'preview'], persistent: true, env: { NODE_ENV: 'production' } },
   ]
   if (env.ANTIPHON_CLIENT_WATCH !== '0') {
     steps.push({
@@ -63,7 +63,7 @@ export function planForMode(mode, env = process.env) {
       args: [VITE_BIN, 'build', '--watch'],
       persistent: true,
       // Read by vite.config.ts: the watcher must rebuild in place, never wipe dist/ mid-load.
-      env: { ANTIPHON_VITE_KEEP_OUTDIR: '1' },
+      env: { ANTIPHON_VITE_KEEP_OUTDIR: '1', NODE_ENV: 'production' },
     })
   }
   return { mode: 'built', steps }
@@ -224,6 +224,12 @@ export class ServeSupervisor {
     this.status = mode === 'built' ? 'building' : 'starting'
     this.persist()
 
+    if (mode === 'built') {
+      this.log(
+        `[serve] built mode: inherited NODE_ENV=${this.env.NODE_ENV ?? '(unset)'}; setting child NODE_ENV=production`,
+      )
+    }
+
     const plan = planForMode(mode, this.env)
     for (const step of plan.steps) {
       const child = await this.runStep(step)
@@ -242,7 +248,12 @@ export class ServeSupervisor {
   async runRebuild() {
     this.status = 'building'
     this.persist()
-    await this.runStep({ id: 'build', args: [VITE_BIN, 'build'], persistent: false, env: {} })
+    await this.runStep({
+      id: 'build',
+      args: [VITE_BIN, 'build'],
+      persistent: false,
+      env: { NODE_ENV: 'production' },
+    })
     this.status = 'serving'
     this.persist()
   }

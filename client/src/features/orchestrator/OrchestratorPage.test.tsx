@@ -26,6 +26,8 @@ function stuck(overrides: Partial<AttentionItemDto>): AttentionItemDto {
 }
 
 function serve(items: AttentionItemDto[]) {
+  let agentTaskRequests = 0
+  let orchestratorStateRequests = 0
   server.use(
     http.get('/api/attention', () =>
       HttpResponse.json<AttentionDto>({
@@ -34,12 +36,16 @@ function serve(items: AttentionItemDto[]) {
         items,
       }),
     ),
-    http.get('/api/agent-tasks', () => HttpResponse.json([])),
+    http.get('/api/agent-tasks', () => {
+      agentTaskRequests += 1
+      return HttpResponse.json([])
+    }),
     http.get('/api/boards', () => HttpResponse.json([])),
     // The Cards tab renders eagerly alongside the others, so its own endpoint has to answer with a
     // real shape — an empty object throws inside OrchestratorPanel and takes the page down with it.
-    http.get('/api/orchestrator/state', () =>
-      HttpResponse.json({
+    http.get('/api/orchestrator/state', () => {
+      orchestratorStateRequests += 1
+      return HttpResponse.json({
         paused: false,
         enabled: true,
         generatedAt: '2026-08-17T10:00:00Z',
@@ -55,12 +61,29 @@ function serve(items: AttentionItemDto[]) {
         },
         running: [],
         retryQueue: [],
-      }),
-    ),
+      })
+    }),
   )
+
+  return {
+    agentTaskRequests: () => agentTaskRequests,
+    orchestratorStateRequests: () => orchestratorStateRequests,
+  }
 }
 
 describe('OrchestratorPage', () => {
+  it('defers the delegations request until its tab is opened', async () => {
+    const requests = serve([])
+
+    renderWithProviders(<OrchestratorPage />)
+
+    await waitFor(() => expect(requests.orchestratorStateRequests()).toBe(1))
+    expect(requests.agentTaskRequests()).toBe(0)
+
+    await userEvent.click(screen.getByRole('tab', { name: /delegations/i }))
+    await waitFor(() => expect(requests.agentTaskRequests()).toBe(1))
+  })
+
   it('carries the count of open conditions on the tab', async () => {
     // The signal has to be visible from the tab strip — a diagnostic list nobody opens on a bad day
     // is the same as no list. Settled failures are excluded so a healthy fleet reads as zero.

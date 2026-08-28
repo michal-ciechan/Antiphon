@@ -19,7 +19,7 @@ export function SettingsPage() {
         Settings
       </Title>
       <Paper p="md" radius="md" withBorder>
-        <Tabs defaultValue={tab}>
+        <Tabs defaultValue={tab} keepMounted={false}>
           <Tabs.List>
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>

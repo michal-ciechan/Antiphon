@@ -50,13 +50,14 @@ describe('readMode', () => {
 })
 
 describe('planForMode', () => {
-  it('dev mode: one persistent step, plain vite, no watch env', () => {
+  it('dev mode: one persistent step, plain vite, no production override', () => {
     const plan = planForMode('dev', {})
     expect(plan.mode).toBe('dev')
     expect(plan.steps).toHaveLength(1)
     expect(plan.steps[0].persistent).toBe(true)
     expect(plan.steps[0].args).toHaveLength(1) // just vite.js, no subcommand
     expect(plan.steps[0].args[0].endsWith('vite.js')).toBe(true)
+    expect(plan.steps[0].env.NODE_ENV).toBeUndefined()
   })
 
   it('built mode with the watcher on by default: build, preview, watch', () => {
@@ -67,11 +68,13 @@ describe('planForMode', () => {
     expect(plan.steps[1].persistent).toBe(true) // preview stays up
     expect(plan.steps[2].persistent).toBe(true) // watcher stays up
     expect(plan.steps[2].env.ANTIPHON_VITE_KEEP_OUTDIR).toBe('1') // must not wipe dist/ on rebuild
+    expect(plan.steps.every((step) => step.env.NODE_ENV === 'production')).toBe(true)
   })
 
   it('ANTIPHON_CLIENT_WATCH=0 drops the watch step entirely, not just its logging', () => {
     const plan = planForMode('built', { ANTIPHON_CLIENT_WATCH: '0' })
     expect(plan.steps.map((s) => s.id)).toEqual(['build', 'preview'])
+    expect(plan.steps.every((step) => step.env.NODE_ENV === 'production')).toBe(true)
   })
 
   it('build and preview steps never carry ANTIPHON_VITE_KEEP_OUTDIR', () => {
@@ -129,9 +132,9 @@ describe('ServeSupervisor.pollOnce swap behaviour', () => {
       env,
       log: () => {},
       waitForPortClosedFn: async () => true,
-      spawnFn: (execPath, args) => {
+      spawnFn: (execPath, args, options) => {
         const child = fakeChild()
-        spawned.push({ args, child })
+        spawned.push({ args, child, options })
         // The non-persistent 'build' step awaits an 'exit' event before the caller proceeds.
         if (args.includes('build') && !args.includes('--watch')) {
           queueMicrotask(() => child.emit('exit', 0))
@@ -154,6 +157,19 @@ describe('ServeSupervisor.pollOnce swap behaviour', () => {
     await supervisor.pollOnce()
     expect(spawned).toHaveLength(2)
     expect(supervisor.children).toHaveLength(1) // preview only
+  })
+
+  it('overrides an inherited development NODE_ENV for every built child, including a requested rebuild', async () => {
+    const supervisor = makeSupervisor({ NODE_ENV: 'development', ANTIPHON_CLIENT_WATCH: '0' })
+
+    await supervisor.pollOnce()
+    expect(spawned).toHaveLength(2)
+    expect(spawned.every((entry) => entry.options.env.NODE_ENV === 'production')).toBe(true)
+
+    spawned.length = 0
+    await supervisor.runRebuild()
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0].options.env.NODE_ENV).toBe('production')
   })
 
   // Real vite output, captured live from `vite build --watch`: the completion line is wrapped in
