@@ -13,6 +13,14 @@ public class ConflictException : HttpException
     {
     }
 
+    public ConflictException(
+        string message,
+        string code,
+        IReadOnlyDictionary<string, object?> extensions)
+        : base(409, message, code, extensions)
+    {
+    }
+
     /// <summary>
     /// Keeps the underlying failure attached. A 409 raised from a database error is a summary of
     /// something more specific — a unique-index violation names its constraint, a deadlock names

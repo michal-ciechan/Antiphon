@@ -206,21 +206,27 @@ public sealed class CardService
     /// a route that writes.
     ///
     /// <para><c>Identifier</c> is unique PER BOARD (<c>IX_Cards_BoardId_Identifier</c>), not
-    /// globally, so two boards can each hold a CARD-0001. Every card in this deployment sits on one
-    /// board today, which makes the 409 arm look theoretical — it is not: the day a second board
-    /// files its first card it gets CARD-0001 again, and a resolver that took the first row would
-    /// silently address the wrong card.</para>
+    /// globally, so two boards can each hold a CARD-0001. Resolution walks
+    /// <see cref="CardIdentifierScope"/> — explicit board, then caller boards, then repository
+    /// boards by checkout, then everywhere — and demands uniqueness inside the scope that answers.
+    /// A collision that survives that walk is <c>409 card_identifier_ambiguous</c> listing every
+    /// candidate; a fenced board that lacks the identifier is a 404 naming where it does live.</para>
     ///
     /// <para>An input that is neither a guid nor identifier-SHAPED is a 422 rather than a 404: it
     /// is a caller mistake, not a missing card, and the message can say so. The shape is narrow on
     /// purpose (digits, or <c>PREFIX-digits</c>) — it is what makes a literal route segment that
     /// ever stopped outranking <c>{id}</c> fail loudly instead of reporting "no such card".</para>
     /// </remarks>
-    public async Task<Guid> ResolveCardIdAsync(string idOrIdentifier, CancellationToken ct)
+    public Task<Guid> ResolveCardIdAsync(string idOrIdentifier, CancellationToken ct)
+        => ResolveCardIdAsync(idOrIdentifier, CardScopeContext.None, ct);
+
+    internal async Task<Guid> ResolveCardIdAsync(
+        string idOrIdentifier, CardScopeContext scope, CancellationToken ct)
     {
         var raw = (idOrIdentifier ?? string.Empty).Trim();
         if (Guid.TryParse(raw, out var cardId))
         {
+            // A guid is exact; scope is ignored. -Board beside a guid is not a contradiction.
             if (!await _db.Cards.AsNoTracking().AnyAsync(c => c.Id == cardId, ct))
                 throw new NotFoundException(nameof(Card), cardId);
             return cardId;
@@ -235,23 +241,30 @@ public sealed class CardService
                 + "Use the card's guid, or its identifier (CARD-0051, card-51, #51, 51).");
         }
 
-        var lowered = raw.ToLowerInvariant();
-        var canonicalOrRaw = canonical ?? raw;
-        // Canonical form is OUR identifier (CARD-000N / #N / 51). A foreign tracker key
-        // (ANT-12) is resolved through ExternalIssueRef.ExternalKey as well as Identifier, so
-        // import-origin cards that store CARD-nnnn and keep the tracker key on the ref still
-        // answer to `card.ps1 get ANT-12`. #N is deliberately NOT routed to a GitHub key — it
-        // is the canonical CARD-000N form.
-        IQueryable<Card> query = _db.Cards.AsNoTracking()
-            .Where(c => c.Identifier == canonicalOrRaw || c.Identifier.ToLower() == lowered);
-        if (canonical is null)
+        if (canonical is not null)
         {
-            query = query.Union(
-                _db.Cards.AsNoTracking()
-                    .Where(c => c.ExternalIssueRef != null
-                        && (c.ExternalIssueRef.ExternalKey == raw
-                            || c.ExternalIssueRef.ExternalKey.ToLower() == lowered)));
+            var result = await CardIdentifierScope.ResolveAsync(_db, canonical, scope, ct);
+            if (result.Match is { } match)
+                return match.Id;
+            if (result.Candidates.Count > 0 && result.ScopeName == "board")
+                throw await MissingOnFencedBoardAsync(canonical, scope.ExplicitBoardId, result.Candidates, ct);
+            if (result.Candidates.Count > 0)
+                throw AmbiguousIdentifier(canonical, result.Candidates);
+            throw new NotFoundException(nameof(Card), canonical);
         }
+
+        // Foreign tracker key (ANT-12): unique per tracker, so scopes A/B are not applied. An
+        // explicit-board fence still is — the caller named the board.
+        var lowered = raw.ToLowerInvariant();
+        IQueryable<Card> query = _db.Cards.AsNoTracking()
+            .Where(c => c.Identifier == raw || c.Identifier.ToLower() == lowered);
+        query = query.Union(
+            _db.Cards.AsNoTracking()
+                .Where(c => c.ExternalIssueRef != null
+                    && (c.ExternalIssueRef.ExternalKey == raw
+                        || c.ExternalIssueRef.ExternalKey.ToLower() == lowered)));
+        if (scope.ExplicitBoardId is Guid boardId)
+            query = query.Where(c => c.BoardId == boardId);
 
         var matches = await query
             .Select(c => c.Id)
@@ -261,12 +274,58 @@ public sealed class CardService
 
         return matches.Count switch
         {
-            0 => throw new NotFoundException(nameof(Card), canonicalOrRaw),
+            0 => throw new NotFoundException(nameof(Card), raw),
             1 => matches[0],
             _ => throw new ConflictException(
-                $"Card identifier '{canonicalOrRaw}' matches more than one card "
+                $"Card identifier '{raw}' matches more than one card "
                 + "— use the card's guid."),
         };
+    }
+
+    private async Task<NotFoundException> MissingOnFencedBoardAsync(
+        string canonical,
+        Guid? explicitBoardId,
+        IReadOnlyList<CardMatch> candidates,
+        CancellationToken ct)
+    {
+        var boardName = explicitBoardId is Guid boardId
+            ? await _db.Boards.AsNoTracking()
+                .Where(b => b.Id == boardId)
+                .Select(b => (string?)b.Name)
+                .FirstOrDefaultAsync(ct) ?? boardId.ToString()
+            : "unknown";
+        var holders = string.Join(
+            ", ",
+            candidates
+                .OrderBy(c => c.BoardName, StringComparer.OrdinalIgnoreCase)
+                .Select(c => $"{c.BoardName} ({c.Id})"));
+        return new NotFoundException(
+            nameof(Card),
+            canonical,
+            $"No {canonical} on board '{boardName}'. It exists on: {holders}.");
+    }
+
+    private static ConflictException AmbiguousIdentifier(
+        string canonical, IReadOnlyList<CardMatch> candidates)
+    {
+        var payload = candidates
+            .OrderBy(m => m.BoardName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.Identifier, StringComparer.OrdinalIgnoreCase)
+            .Select(m => new Dictionary<string, object?>
+            {
+                ["id"] = m.Id,
+                ["identifier"] = m.Identifier,
+                ["title"] = m.Title,
+                ["status"] = m.Status.ToString(),
+                ["boardId"] = m.BoardId,
+                ["boardName"] = m.BoardName,
+            })
+            .ToList();
+
+        return new ConflictException(
+            CardIdentifierScope.DescribeCandidates(canonical, candidates),
+            CardIdentifierScope.AmbiguousCode,
+            new Dictionary<string, object?> { ["candidates"] = payload });
     }
 
     /// <summary>

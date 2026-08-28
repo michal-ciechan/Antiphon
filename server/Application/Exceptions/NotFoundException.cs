@@ -14,4 +14,11 @@ public class NotFoundException : HttpException
         EntityName = entityName;
         EntityId = id;
     }
+
+    public NotFoundException(string entityName, object id, string message)
+        : base(404, message, "not_found")
+    {
+        EntityName = entityName;
+        EntityId = id;
+    }
 }

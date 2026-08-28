@@ -156,128 +156,32 @@ internal static class AgentTaskCardBinder
 
     /// <summary>
     /// The narrowest scope that resolves wins; inside a scope the identifier must be unique or
-    /// nothing binds. A scope that finds nothing simply falls through to the next.
+    /// nothing binds. A scope that finds nothing simply falls through to the next. Walks the
+    /// same <see cref="CardIdentifierScope"/> the card API uses (CARD-0218) so two spellings of
+    /// "which card is CARD-51" cannot disagree.
     /// </summary>
     private static async Task<AgentTaskCardBinding> ResolveAsync(
         AppDbContext db, string canonical, Context context, CancellationToken ct)
     {
-        var scopeA = await CallerBoardsAsync(db, context, ct);
-        if (scopeA.Count > 0)
-        {
-            var inScope = await MatchesAsync(db, canonical, scopeA, ct);
-            if (inScope.Count == 1)
-                return new AgentTaskCardBinding(inScope[0].Id, inScope[0].Identifier, null);
-        }
+        var result = await CardIdentifierScope.ResolveAsync(
+            db,
+            canonical,
+            new CardScopeContext(
+                ExplicitBoardId: null,
+                InheritedCardId: context.InheritedCardId,
+                CallerSessionId: context.CallerSessionId,
+                Directory: context.RepoPath ?? context.WorkingDirectory),
+            ct);
 
-        var scopeB = await RepositoryBoardsAsync(db, context, ct);
-        if (scopeB.Count > 0)
-        {
-            var inScope = await MatchesAsync(db, canonical, scopeB, ct);
-            if (inScope.Count == 1)
-                return new AgentTaskCardBinding(inScope[0].Id, inScope[0].Identifier, null);
-            if (inScope.Count > 1)
-                return Ambiguous(canonical, inScope);
-        }
+        if (result.Match is { } match)
+            return new AgentTaskCardBinding(match.Id, match.Identifier, null);
 
-        var everywhere = await MatchesAsync(db, canonical, boardIds: null, ct);
-        return everywhere.Count switch
-        {
-            1 => new AgentTaskCardBinding(everywhere[0].Id, everywhere[0].Identifier, null),
-            0 => new AgentTaskCardBinding(
-                null, null, $"Identifier {canonical} matches no card on any board."),
-            _ => Ambiguous(canonical, everywhere),
-        };
-    }
+        if (result.Candidates.Count > 0)
+            return new AgentTaskCardBinding(
+                null, null, CardIdentifierScope.DescribeCandidates(canonical, result.Candidates));
 
-    private static AgentTaskCardBinding Ambiguous(string canonical, IReadOnlyList<CardMatch> matches) =>
-        new(null, null,
-            $"Identifier {canonical} exists on {matches.Count} boards "
-            + $"({string.Join(", ", matches.Select(m => m.BoardName).Order(StringComparer.OrdinalIgnoreCase))}); "
-            + "pass -Card with the card's guid.");
-
-    private sealed record CardMatch(Guid Id, string Identifier, string BoardName);
-
-    private static async Task<List<CardMatch>> MatchesAsync(
-        AppDbContext db, string canonical, IReadOnlyCollection<Guid>? boardIds, CancellationToken ct)
-    {
-        var query = db.Cards.AsNoTracking().Where(c => c.Identifier == canonical);
-        if (boardIds is not null)
-            query = query.Where(c => boardIds.Contains(c.BoardId));
-
-        return await query
-            .Join(db.Boards.AsNoTracking(), c => c.BoardId, b => b.Id, (c, b) => new CardMatch(c.Id, c.Identifier, b.Name))
-            .ToListAsync(ct);
-    }
-
-    /// <summary>
-    /// Scope A: boards this caller demonstrably works on — the inherited card's board, the calling
-    /// session's card's board, and the standing agent that owns the calling session.
-    /// </summary>
-    private static async Task<List<Guid>> CallerBoardsAsync(
-        AppDbContext db, Context context, CancellationToken ct)
-    {
-        var boards = new List<Guid>();
-
-        if (context.InheritedCardId is Guid inheritedId)
-        {
-            var boardId = await db.Cards.AsNoTracking()
-                .Where(c => c.Id == inheritedId).Select(c => (Guid?)c.BoardId).FirstOrDefaultAsync(ct);
-            if (boardId is Guid inheritedBoard)
-                boards.Add(inheritedBoard);
-        }
-
-        if (context.CallerSessionId is Guid sessionId)
-        {
-            var sessionBoard = await (
-                from session in db.AgentSessions.AsNoTracking()
-                join card in db.Cards.AsNoTracking() on session.CardId equals card.Id
-                where session.Id == sessionId
-                select (Guid?)card.BoardId).FirstOrDefaultAsync(ct);
-            if (sessionBoard is Guid fromSession && !boards.Contains(fromSession))
-                boards.Add(fromSession);
-
-            // The same join DeriveCallerProjectAsync already makes: a standing agent claims its
-            // session by id, and its board is the board its orchestrator works.
-            var persistentSessionId = sessionId.ToString("D");
-            var agentBoard = await db.Agents.AsNoTracking()
-                .Where(a => a.PersistentSessionId == persistentSessionId && a.BoardId != null)
-                .Select(a => a.BoardId)
-                .FirstOrDefaultAsync(ct);
-            if (agentBoard is Guid fromAgent && !boards.Contains(fromAgent))
-                boards.Add(fromAgent);
-        }
-
-        return boards;
-    }
-
-    /// <summary>
-    /// Scope B: boards of every project whose local checkout contains this task's repository. Path
-    /// matching is separator- and case-insensitive through the resolver's own rule, because the
-    /// live rows spell the same tree both ways (<c>C:/src/Antiphon</c> vs <c>C:\src\Antiphon</c>).
-    /// </summary>
-    private static async Task<List<Guid>> RepositoryBoardsAsync(
-        AppDbContext db, Context context, CancellationToken ct)
-    {
-        var path = context.RepoPath ?? context.WorkingDirectory;
-        if (string.IsNullOrWhiteSpace(path))
-            return [];
-
-        var projects = await db.Projects.AsNoTracking()
-            .Where(p => p.LocalRepositoryPath != null)
-            .Select(p => new { p.Id, p.LocalRepositoryPath })
-            .ToListAsync(ct);
-
-        var projectIds = projects
-            .Where(p => DelegationWorkspaceResolver.IsWithinRoot(path, p.LocalRepositoryPath!))
-            .Select(p => p.Id)
-            .ToList();
-        if (projectIds.Count == 0)
-            return [];
-
-        return await db.Boards.AsNoTracking()
-            .Where(b => projectIds.Contains(b.ProjectId))
-            .Select(b => b.Id)
-            .ToListAsync(ct);
+        return new AgentTaskCardBinding(
+            null, null, $"Identifier {canonical} matches no card on any board.");
     }
 
     private static string? Join(string? first, string? second) =>

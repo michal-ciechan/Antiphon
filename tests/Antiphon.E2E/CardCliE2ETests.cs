@@ -36,6 +36,7 @@ public class CardCliE2ETests
 
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly List<string> _tempFiles = [];
+    private readonly List<string> _tempDirs = [];
 
     [Before(Test)]
     public Task SetupAsync()
@@ -52,6 +53,11 @@ public class CardCliE2ETests
         foreach (var file in _tempFiles)
         {
             try { File.Delete(file); }
+            catch (IOException) { /* best effort */ }
+        }
+        foreach (var dir in _tempDirs)
+        {
+            try { Directory.Delete(dir, recursive: true); }
             catch (IOException) { /* best effort */ }
         }
     }
@@ -245,7 +251,88 @@ public class CardCliE2ETests
         wrongReopenColumn.All.ShouldContain("Done");
     }
 
-    private CliResult RunCard(params string[] arguments)
+    [Test]
+    public async Task The_cli_resolves_a_colliding_identifier_from_the_checkout_and_from_minus_Board()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repo1 = NewTempDir();
+        var repo2 = NewTempDir();
+        GitInit(repo1);
+        GitInit(repo2);
+        var checkout1 = Path.Combine(repo1, "src");
+        Directory.CreateDirectory(checkout1);
+
+        var board1 = $"CLI Scope Board One {suffix}";
+        var board2 = $"CLI Scope Board Two {suffix}";
+        var emptyBoard = $"CLI Scope Empty {suffix}";
+        var project1 = await CreateProjectAsync($"CLI Scope Project One {suffix}", repo1);
+        var project2 = await CreateProjectAsync($"CLI Scope Project Two {suffix}", repo2);
+        await CreateBoardAsync(project1, board1);
+        await CreateBoardAsync(project2, board2);
+        await CreateBoardAsync(project1, emptyBoard);
+
+        RunCardFrom(checkout1, "new", "-Board", board1, "-Title", "On board one").ExitCode.ShouldBe(0);
+        RunCardFrom(checkout1, "new", "-Board", board2, "-Title", "On board two").ExitCode.ShouldBe(0);
+
+        var fromCheckout = RunCardFrom(checkout1, "get", "CARD-0001", "-Json");
+        fromCheckout.ExitCode.ShouldBe(0, fromCheckout.All);
+        var card1 = JsonDocument.Parse(fromCheckout.Stdout).RootElement;
+        card1.GetProperty("title").GetString().ShouldBe("On board one");
+        var id1 = card1.GetProperty("id").GetGuid();
+
+        var fromBoard = RunCardFrom(checkout1, "get", "CARD-0001", "-Board", board2, "-Json");
+        fromBoard.ExitCode.ShouldBe(0, fromBoard.All);
+        var card2 = JsonDocument.Parse(fromBoard.Stdout).RootElement;
+        card2.GetProperty("title").GetString().ShouldBe("On board two");
+        card2.GetProperty("id").GetGuid().ShouldNotBe(id1);
+
+        var missing = RunCardFrom(checkout1, "get", "CARD-0001", "-Board", emptyBoard);
+        missing.ExitCode.ShouldBe(1);
+        missing.All.ShouldContain(emptyBoard);
+        missing.All.ShouldContain(board1);
+        missing.All.ShouldContain(id1.ToString());
+    }
+
+    [Test]
+    public async Task An_ambiguous_identifier_prints_every_candidate_and_exits_1()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var repo1 = NewTempDir();
+        var repo2 = NewTempDir();
+        var outside = NewTempDir();
+        GitInit(repo1);
+        GitInit(repo2);
+
+        var board1 = $"CLI Ambiguous One {suffix}";
+        var board2 = $"CLI Ambiguous Two {suffix}";
+        var project1 = await CreateProjectAsync($"CLI Ambiguous Project One {suffix}", repo1);
+        var project2 = await CreateProjectAsync($"CLI Ambiguous Project Two {suffix}", repo2);
+        await CreateBoardAsync(project1, board1);
+        await CreateBoardAsync(project2, board2);
+
+        RunCardFrom(outside, "new", "-Board", board1, "-Title", "First collision").ExitCode.ShouldBe(0);
+        RunCardFrom(outside, "new", "-Board", board2, "-Title", "Second collision").ExitCode.ShouldBe(0);
+
+        var fromOne = RunCardFrom(Path.Combine(repo1), "get", "CARD-0001", "-Json");
+        fromOne.ExitCode.ShouldBe(0, fromOne.All);
+        var id1 = JsonDocument.Parse(fromOne.Stdout).RootElement.GetProperty("id").GetGuid();
+        var fromTwo = RunCardFrom(Path.Combine(repo2), "get", "CARD-0001", "-Json");
+        fromTwo.ExitCode.ShouldBe(0, fromTwo.All);
+        var id2 = JsonDocument.Parse(fromTwo.Stdout).RootElement.GetProperty("id").GetGuid();
+
+        var ambiguous = RunCardFrom(outside, "get", "CARD-0001");
+        ambiguous.ExitCode.ShouldBe(1);
+        ambiguous.Stderr.ShouldContain(board1);
+        ambiguous.Stderr.ShouldContain(board2);
+        ambiguous.Stderr.ShouldContain(id1.ToString());
+        ambiguous.Stderr.ShouldContain(id2.ToString());
+        ambiguous.Stderr.ShouldNotContain("\\u2014");
+        ambiguous.Stderr.ShouldContain("code card_identifier_ambiguous");
+    }
+
+    private CliResult RunCard(params string[] arguments) => RunCardFrom(FindRepoRoot(), arguments);
+
+    private CliResult RunCardFrom(string workingDirectory, params string[] arguments)
     {
         var scriptPath = Path.Combine(FindRepoRoot(), "scripts", "card.ps1");
         var startInfo = new ProcessStartInfo("pwsh")
@@ -254,7 +341,7 @@ public class CardCliE2ETests
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = FindRepoRoot(),
+            WorkingDirectory = workingDirectory,
         };
         startInfo.ArgumentList.Add("-NoProfile");
         startInfo.ArgumentList.Add("-NonInteractive");
@@ -264,7 +351,8 @@ public class CardCliE2ETests
             startInfo.ArgumentList.Add(argument);
         // The script's only configuration: where the server is. Same variable delegate.ps1 reads.
         startInfo.Environment["ANTIPHON_API"] = _appFixture.BaseAddress;
-        startInfo.Environment.Remove("ANTIPHON_TASK_TOKEN");
+        // Empty, not removed: an operator's shell token must not leak a scope into the child.
+        startInfo.Environment["ANTIPHON_TASK_TOKEN"] = "";
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("pwsh did not start.");
@@ -290,7 +378,30 @@ public class CardCliE2ETests
         return path;
     }
 
-    private async Task<Guid> CreateProjectAsync(string name)
+    private string NewTempDir()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"antiphon-card-cli-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        _tempDirs.Add(path);
+        return path;
+    }
+
+    private static void GitInit(string directory)
+    {
+        var startInfo = new ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = directory,
+        };
+        startInfo.ArgumentList.Add("init");
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("git did not start.");
+        process.WaitForExit(30_000).ShouldBeTrue("git init did not exit");
+        process.ExitCode.ShouldBe(0, process.StandardError.ReadToEnd());
+    }
+
+    private async Task<Guid> CreateProjectAsync(string name, string? localRepositoryPath = null)
     {
         var response = await _appFixture.HttpClient.PostAsJsonAsync(
             "/api/projects",
@@ -300,7 +411,8 @@ public class CardCliE2ETests
                 gitRepositoryUrl = "https://github.com/example/card-cli-e2e.git",
                 baseBranch = "main",
                 gitHubIntegrationEnabled = false,
-                notificationsEnabled = false
+                notificationsEnabled = false,
+                localRepositoryPath
             },
             JsonOptions);
         response.EnsureSuccessStatusCode();

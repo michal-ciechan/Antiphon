@@ -49,7 +49,7 @@ localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind a
 
 - `code` is present when the exception carried a **stable machine-readable code**. `conflict` and
   `validation_failed` are the generic ones; the specific ones worth branching on are
-  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `channel_disabled`, `profile_not_found`,
+  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `card_identifier_ambiguous`, `channel_disabled`, `profile_not_found`,
   `profile_resolution_unavailable`, `profile_revision_conflict`.
 - `errors` is present on validation failures (422), keyed by field.
 - Additional keys may be spliced in from an exception's `Extensions`.
@@ -79,6 +79,22 @@ Anywhere a card id appears in a route it is a **string**, resolved by `CardServi
 lookup step. A foreign tracker's key (for example a Jira `ANT-12`) resolves through the card's
 external-issue ref; `#N` is always `CARD-000N` and never a GitHub issue number.
 
+`Identifier` is unique per **board**, not globally. Every `{id}` card route walks the same scope
+`delegate.ps1 -Card` uses (CARD-0218), narrowed by two query parameters:
+
+1. explicit `?boardId=` — a fence. One match on that board is the card; zero is a **404** naming
+   the boards that *do* hold it. Never falls through to a different board.
+2. else the caller's own card's board and standing agent's board (from `X-Antiphon-Task-Token`)
+3. else the boards of every project whose `LocalRepositoryPath` contains `?cwd=`
+   (`card.ps1` sends `git rev-parse --show-toplevel`)
+4. else everywhere
+
+Uniqueness is demanded inside the scope that answers. A collision that survives all of that is
+**409 `card_identifier_ambiguous`**, with `detail` listing every candidate (board, guid, status,
+title) and a `candidates` extension of `{ id, identifier, title, status, boardId, boardName }`.
+A guid is exact and ignores scope. `cwd` is a disambiguation hint, never an authorisation, and
+is read on writes as well as reads.
+
 ## 2. The surface
 
 Twenty-two endpoint files under `server/Api/Endpoints/`, mapped in `server/Program.cs`. Each row
@@ -90,17 +106,17 @@ below is a route group; the file named is the authority for its exact bodies.
 
 ```
 GET    /api/cards/limits                     title/description/reason/actor length ceilings
-GET    /api/cards/{id}                       one card
-GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)
-PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)
-PATCH  /api/cards/{id}/content               title/description edit — revision-logged
-GET    /api/cards/{id}/revisions             every content write, with actor and reason
-POST   /api/cards/{id}/spawn                 start an agent on this card (409 `remote_control_refused` when `remoteControlName` is set on a kind whose catalog row is not Supported)
-POST   /api/cards/{id}/archive | /unarchive | /reopen
-GET    /api/cards/{id}/diff                  the card's branch diff
-POST   /api/cards/{id}/comments
-GET    /api/cards/{id}/discussion  POST /api/cards/{id}/discussion
-POST   /api/cards/{id}/pr                    open a pull request for the card
+GET    /api/cards/{id}                       one card  (?boardId=&cwd=)
+GET    /api/cards/{id}/thread                card + its plans, tasks and commits (read-only projection)  (?boardId=&cwd=)
+PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)  (?boardId=&cwd=)
+PATCH  /api/cards/{id}/content               title/description edit — revision-logged  (?boardId=&cwd=)
+GET    /api/cards/{id}/revisions             every content write, with actor and reason  (?boardId=&cwd=)
+POST   /api/cards/{id}/spawn                 start an agent on this card (409 `remote_control_refused` when `remoteControlName` is set on a kind whose catalog row is not Supported)  (?boardId=&cwd=)
+POST   /api/cards/{id}/archive | /unarchive | /reopen  (?boardId=&cwd=)
+GET    /api/cards/{id}/diff                  the card's branch diff  (?boardId=&cwd=)
+POST   /api/cards/{id}/comments  (?boardId=&cwd=)
+GET    /api/cards/{id}/discussion  POST /api/cards/{id}/discussion  (?boardId=&cwd=)
+POST   /api/cards/{id}/pr                    open a pull request for the card  (?boardId=&cwd=)
 
 GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}

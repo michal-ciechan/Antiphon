@@ -6,6 +6,12 @@
 # A card is addressed the way it is NAMED: CARD-0051, card-51, '#51', 51, or its guid. Every verb
 # takes any of those (CARD-0051 slice 1) - there is no id to look up first.
 #
+# When two boards name a card alike (CARD-0011 on Antiphon and Gym Stat today), the checkout
+# (git toplevel sent as cwd) and the delegation token (X-Antiphon-Task-Token) decide which one
+# answers; -Board <name|guid> overrides. A collision that survives all of that is a 409 that
+# lists every candidate (board, guid, status, title). -Board on a card that board does not
+# hold is a 404 naming where it does live.
+#
 # ALL LONG TEXT COMES FROM A FILE. -DescriptionFile and -ReasonFile are read with Get-Content -Raw
 # and sent as-is, so backticks, $(...), quotes, newlines and everything else survive untouched.
 # -Description / -Reason exist for short one-liners; anything with shell metacharacters in it should
@@ -52,8 +58,8 @@ param(
     [Parameter(ParameterSetName = 'Verb', Position = 1)]
     [string]$Card,
 
-    # Board name (case-insensitive) or guid. Only 'new' needs it - every other verb finds the board
-    # from the card.
+    # Board name (case-insensitive) or guid. Required by 'new'; on every other verb it scopes the
+    # identifier when the same number exists on more than one board.
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Board,
 
@@ -131,10 +137,23 @@ function Invoke-Antiphon {
     }
     catch {
         # Surface the server's own message - it names the field, the ceiling and the actual length,
-        # or explains the 409, and that is the actionable part.
-        $detail = $_.ErrorDetails.Message
-        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
-        Write-Error "Antiphon $Method $Path failed: $detail"
+        # or explains the 409, and that is the actionable part. Prefer detail + candidates over
+        # the raw problem-details JSON (CARD-0218).
+        $raw = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($raw)) { $raw = $_.Exception.Message }
+        $parsed = $null
+        try { $parsed = $raw | ConvertFrom-Json } catch { $parsed = $null }
+        if ($null -ne $parsed -and $parsed.detail) {
+            $lines = @($parsed.detail)
+            if ($parsed.code) { $lines += ("code {0}" -f $parsed.code) }
+            foreach ($c in @($parsed.candidates)) {
+                $lines += ("  {0}  {1}  {2}  {3}" -f $c.boardName, $c.id, $c.status, $c.title)
+            }
+            Write-Error ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
+        }
+        else {
+            Write-Error "Antiphon $Method $Path failed: $raw"
+        }
         exit 1
     }
 }
@@ -176,12 +195,58 @@ function Read-TextArgument {
     return $Inline
 }
 
+function Resolve-BoardId {
+    param([string]$NameOrGuid)
+    $parsed = [guid]::Empty
+    if ([guid]::TryParse($NameOrGuid, [ref]$parsed)) {
+        return $NameOrGuid
+    }
+    $all = Invoke-Antiphon -Method GET -Path '/api/boards'
+    $hits = @($all | Where-Object { $_.name -and $_.name.ToLowerInvariant() -eq $NameOrGuid.ToLowerInvariant() })
+    if ($hits.Count -eq 0) {
+        Write-Error ("No board named '{0}'. Known boards: {1}" -f $NameOrGuid, (($all | ForEach-Object { $_.name }) -join ', '))
+        exit 1
+    }
+    if ($hits.Count -gt 1) {
+        Write-Error ("'{0}' names {1} boards - pass the guid instead." -f $NameOrGuid, $hits.Count)
+        exit 1
+    }
+    return $hits[0].id
+}
+
+function Get-CheckoutRoot {
+    try {
+        $toplevel = & git -C $PWD.Path rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($toplevel)) {
+            return ([string]$toplevel).Trim()
+        }
+    }
+    catch {
+        # Outside a repo, or git missing: fall through to $PWD.
+    }
+    return $PWD.Path
+}
+
+function Get-CardScopeQuery {
+    $parts = @()
+    if (-not [string]::IsNullOrWhiteSpace($script:resolvedBoardId)) {
+        $parts += ("boardId={0}" -f $script:resolvedBoardId)
+    }
+    $cwd = Get-CheckoutRoot
+    if (-not [string]::IsNullOrWhiteSpace($cwd)) {
+        $parts += ("cwd={0}" -f [uri]::EscapeDataString($cwd))
+    }
+    if ($parts.Count -eq 0) { return '' }
+    return '?' + ($parts -join '&')
+}
+
 function Get-CardOrFail {
     if ([string]::IsNullOrWhiteSpace($Card)) {
         Write-Error "Which card? Pass it as the first argument: card.ps1 $Verb CARD-0051 ..."
         exit 1
     }
-    return Invoke-Antiphon -Method GET -Path ("/api/cards/{0}" -f [uri]::EscapeDataString($Card.Trim()))
+    return Invoke-Antiphon -Method GET -Path (
+        "/api/cards/{0}{1}" -f [uri]::EscapeDataString($Card.Trim()), (Get-CardScopeQuery))
 }
 
 # By default the token is read immediately before the write; -Token is verbatim. See the header.
@@ -222,6 +287,11 @@ if ($PSCmdlet.ParameterSetName -eq 'Limits') {
     return
 }
 
+$script:resolvedBoardId = $null
+if (-not [string]::IsNullOrWhiteSpace($Board)) {
+    $script:resolvedBoardId = Resolve-BoardId $Board
+}
+
 switch ($Verb) {
     'get' {
         $theCard = Get-CardOrFail
@@ -248,7 +318,7 @@ switch ($Verb) {
             Write-Error 'Which card? Pass it as the first argument: card.ps1 history CARD-0051'
             exit 1
         }
-        $path = "/api/cards/{0}/revisions" -f [uri]::EscapeDataString($Card.Trim())
+        $path = "/api/cards/{0}/revisions{1}" -f [uri]::EscapeDataString($Card.Trim()), (Get-CardScopeQuery)
         $revisions = Invoke-Antiphon -Method GET -Path $path
         if ($Json) { $revisions | ConvertTo-Json -Depth 8; return }
         if (-not $revisions -or $revisions.Count -eq 0) { Write-Output 'No history.'; return }
@@ -270,24 +340,7 @@ switch ($Verb) {
             exit 1
         }
 
-        $boardId = $null
-        $parsed = [guid]::Empty
-        if ([guid]::TryParse($Board, [ref]$parsed)) {
-            $boardId = $Board
-        }
-        else {
-            $all = Invoke-Antiphon -Method GET -Path '/api/boards'
-            $hits = @($all | Where-Object { $_.name -and $_.name.ToLowerInvariant() -eq $Board.ToLowerInvariant() })
-            if ($hits.Count -eq 0) {
-                Write-Error ("No board named '{0}'. Known boards: {1}" -f $Board, (($all | ForEach-Object { $_.name }) -join ', '))
-                exit 1
-            }
-            if ($hits.Count -gt 1) {
-                Write-Error ("'{0}' names {1} boards - pass the guid instead." -f $Board, $hits.Count)
-                exit 1
-            }
-            $boardId = $hits[0].id
-        }
+        $boardId = $script:resolvedBoardId
 
         $desc = Read-TextArgument -Name 'Description' -Inline $Description -Path $DescriptionFile
         $limitSet = Get-CardLimits

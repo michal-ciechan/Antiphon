@@ -140,8 +140,8 @@ public class AgentTaskCardBindingTests
         using var workspace = new TempWorkspace();
         var (_, boardA) = await SeedProjectBoardAsync(db, name: "Antiphon");
         var (_, boardB) = await SeedProjectBoardAsync(db, name: "Gym Stat");
-        await SeedCardAsync(db, boardA.Id, "CARD-0005");
-        await SeedCardAsync(db, boardB.Id, "CARD-0005");
+        var cardA = await SeedCardAsync(db, boardA.Id, "CARD-0005");
+        var cardB = await SeedCardAsync(db, boardB.Id, "CARD-0005");
 
         var created = await CreateService(db, workspace).CreateAsync(
             Request(workspace.Path) with { Title = "CARD-0005 do the thing" },
@@ -150,9 +150,12 @@ public class AgentTaskCardBindingTests
 
         (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id)).CardId.ShouldBeNull();
         created.Warning.ShouldNotBeNull();
-        created.Warning!.ShouldContain("CARD-0005 exists on 2 boards");
+        created.Warning!.ShouldContain("CARD-0005");
+        created.Warning.ShouldContain("matches 2 cards");
         created.Warning.ShouldContain("Antiphon");
         created.Warning.ShouldContain("Gym Stat");
+        created.Warning.ShouldContain(cardA.Id.ToString());
+        created.Warning.ShouldContain(cardB.Id.ToString());
         (await EventsFor(db, created.Id)).ShouldContain(e => e.Type == AgentTaskEventType.Warning);
     }
 
