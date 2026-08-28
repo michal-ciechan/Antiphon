@@ -49,7 +49,7 @@ localhost dev tool only. If Antiphon ever becomes multi-user, gate this behind a
 
 - `code` is present when the exception carried a **stable machine-readable code**. `conflict` and
   `validation_failed` are the generic ones; the specific ones worth branching on are
-  `herdr_refused`, `subscription_quota_low`, `channel_disabled`, `profile_not_found`,
+  `herdr_refused`, `remote_control_refused`, `subscription_quota_low`, `channel_disabled`, `profile_not_found`,
   `profile_resolution_unavailable`, `profile_revision_conflict`.
 - `errors` is present on validation failures (422), keyed by field.
 - Additional keys may be spliced in from an exception's `Extensions`.
@@ -95,7 +95,7 @@ GET    /api/cards/{id}/thread                card + its plans, tasks and commits
 PATCH  /api/cards/{id}                       move (column + concurrencyToken + reason, optional spawn)
 PATCH  /api/cards/{id}/content               title/description edit — revision-logged
 GET    /api/cards/{id}/revisions             every content write, with actor and reason
-POST   /api/cards/{id}/spawn                 start an agent on this card
+POST   /api/cards/{id}/spawn                 start an agent on this card (409 `remote_control_refused` when `remoteControlName` is set on a kind whose catalog row is not Supported)
 POST   /api/cards/{id}/archive | /unarchive | /reopen
 GET    /api/cards/{id}/diff                  the card's branch diff
 POST   /api/cards/{id}/comments
@@ -136,7 +136,7 @@ GET    /api/agents/preamble-preset?provider=  telegram | slack (404 for anything
 GET    /api/agents/bundles                   attachable instruction bundles (read-only; the catalog is code)
 POST   /api/agents        POST /api/agents/draft        PATCH /api/agents/{id}    DELETE /api/agents/{id}
 GET    /api/agents/{id}/incidents
-POST   /api/agents/{id}/start  |  /stop
+POST   /api/agents/{id}/start  |  /stop      start refuses 409 `remote_control_refused` when `remoteControl: true` on a kind whose catalog row is not Supported
 POST   /api/agents/{id}/queue   PATCH /api/agents/{id}/queue   DELETE /api/agents/{id}/queue/{cardId}
 
 POST   /api/sessions                         launch an interactive session
@@ -153,7 +153,11 @@ POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 
 `PATCH /api/agents/{id}` is where `alwaysOn`, `kind`, `tuiProfileId`, `modelId`, `launchEnv`,
 `bundleKeys` and `sessionBackend` are set — and where the herdr pairing gate fires
-(`409 herdr_refused`). See [herdr-sessions.md](herdr-sessions.md).
+(`409 herdr_refused`) and where the remote-control capability gate fires
+(`409 remote_control_refused` on a kind whose catalog row is not Supported — ClaudeCode only
+today). See [herdr-sessions.md](herdr-sessions.md). `POST /api/agents/{id}/start` and
+`POST /api/cards/{id}/spawn` refuse with the same `remote_control_refused` code when the caller
+explicitly asks for remote control on a non-capable kind.
 
 ### Delegation
 

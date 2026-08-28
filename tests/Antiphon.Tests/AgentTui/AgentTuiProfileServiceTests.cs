@@ -829,6 +829,7 @@ public class AgentTuiProfileServiceTests
         Capability(grok, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+        catalog.SupportsRemoteControl(AgentKind.Grok).ShouldBeFalse();
         Capability(grok, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(grok, "permissionBypass").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(catalog.Get(AgentKind.Grok, ["--no-alt-screen"]), "permissionBypass").State
@@ -843,6 +844,7 @@ public class AgentTuiProfileServiceTests
             ProviderContractCatalog.For(AgentKind.OpenCode).TurnCompletion.Reason);
         Capability(openCode, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Unknown);
         Capability(openCode, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
+        catalog.SupportsRemoteControl(AgentKind.OpenCode).ShouldBeFalse();
         Capability(openCode, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Unsupported);
         Capability(openCode, "permissionBypass").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(catalog.Get(AgentKind.OpenCode, ["--mini"]), "permissionBypass").State
@@ -852,6 +854,13 @@ public class AgentTuiProfileServiceTests
         Capability(claude, "structuredActivity").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(claude, "sessionResume").State.ShouldBe(AgentTuiCapabilityState.Supported);
         Capability(claude, "remoteControl").State.ShouldBe(AgentTuiCapabilityState.Supported);
+        catalog.SupportsRemoteControl(AgentKind.ClaudeCode).ShouldBeTrue();
+        Capability(catalog.Get(AgentKind.Codex), "remoteControl").State
+            .ShouldBe(AgentTuiCapabilityState.Unsupported);
+        catalog.SupportsRemoteControl(AgentKind.Codex).ShouldBeFalse();
+        Capability(catalog.Get(AgentKind.Raw), "remoteControl").State
+            .ShouldBe(AgentTuiCapabilityState.Unsupported);
+        catalog.SupportsRemoteControl(AgentKind.Raw).ShouldBeFalse();
         Capability(claude, "systemPromptAppend").State.ShouldBe(AgentTuiCapabilityState.Supported);
         // CARD-0099 S1: Codex's rollout tailer makes task_complete a real structured turn end, so
         // this row is now Supported — derived from TurnCompletion, like every other kind's.

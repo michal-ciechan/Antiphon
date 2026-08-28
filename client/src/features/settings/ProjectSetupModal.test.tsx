@@ -42,6 +42,7 @@ const readiness = {
 function seed(post: (request: ProjectSetupRequest) => Response) {
   server.use(
     http.get('/api/projects/setup-catalog', () => HttpResponse.json(catalog)),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),
     http.get('/api/projects', () => HttpResponse.json([])),
     http.get('/api/filesystem/browse', () => HttpResponse.json({ normalizedPath: directory, exists: true, isDrivesListing: false, suggestions: [] })),
     http.get('/api/filesystem/workspaces', ({ request }) => HttpResponse.json(

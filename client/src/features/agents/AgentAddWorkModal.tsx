@@ -5,6 +5,7 @@ import type { AgentSummaryDto } from '../../api/agents'
 import { useAssignAgentCard, useStartAgent } from '../../api/agents'
 import { useBoards, useCreateCard } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
+import { useRemoteControlSupport } from './useRemoteControlSupport'
 
 interface AgentAddWorkModalProps {
   agent: AgentSummaryDto
@@ -23,21 +24,25 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState(0)
   const [pickedBoardId, setPickedBoardId] = useState<string | null>(agent.boardId)
-  const [remoteControl, setRemoteControl] = useState(true)
+  const rc = useRemoteControlSupport({ tuiProfileId: agent.tuiProfileId, kind: agent.kind })
+  const [remoteControl, setRemoteControl] = useState(rc.supported)
 
   // Each open starts a fresh form — adjusted during render, not in an effect, so the previous
   // card's text can never flash before the reset lands. Keyed on the agent's board too: the
   // default board can arrive after the modal is already open, and must still pre-select.
-  const [prevKey, setPrevKey] = useState({ opened, boardId: agent.boardId })
+  const [prevKey, setPrevKey] = useState({ opened, boardId: agent.boardId, rcSupported: rc.supported })
   if (opened !== prevKey.opened || agent.boardId !== prevKey.boardId) {
-    setPrevKey({ opened, boardId: agent.boardId })
+    setPrevKey({ opened, boardId: agent.boardId, rcSupported: rc.supported })
     if (opened) {
       setTitle('')
       setDescription('')
       setPriority(0)
       setPickedBoardId(agent.boardId)
-      setRemoteControl(true)
+      setRemoteControl(rc.supported)
     }
+  } else if (rc.supported !== prevKey.rcSupported) {
+    setPrevKey({ ...prevKey, rcSupported: rc.supported })
+    if (opened) setRemoteControl(rc.supported)
   }
 
   const targetBoardId = pickedBoardId ?? ''
@@ -68,12 +73,12 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
                 // Boot the agent process (no-op if it's already running). When remote control is
                 // ticked a freshly booted agent is renamed + put into /remote-control first.
                 startAgent.mutate(
-                  { remoteControl },
+                  { remoteControl: rc.supported && remoteControl },
                   {
                     onSuccess: () => {
                       notifications.show({
                         color: 'green',
-                        message: remoteControl ? 'Work added — agent starting (remote control)' : 'Work added — agent starting',
+                        message: rc.supported && remoteControl ? 'Work added — agent starting (remote control)' : 'Work added — agent starting',
                       })
                       onClose()
                     },
@@ -141,12 +146,14 @@ export function AgentAddWorkModal({ agent, opened, onClose }: AgentAddWorkModalP
           disabled={boards.isLoading || boardOptions.length === 0}
           searchable
         />
-        <Checkbox
-          label="Remote control"
-          description="Rename the agent and put it into /remote-control before the work, so you can monitor it."
-          checked={remoteControl}
-          onChange={(event) => setRemoteControl(event.currentTarget.checked)}
-        />
+        {rc.supported && (
+          <Checkbox
+            label="Remote control"
+            description="Rename the agent and put it into /remote-control before the work, so you can monitor it."
+            checked={remoteControl}
+            onChange={(event) => setRemoteControl(event.currentTarget.checked)}
+          />
+        )}
         <Group justify="flex-end">
           <Button variant="subtle" onClick={onClose}>
             Cancel

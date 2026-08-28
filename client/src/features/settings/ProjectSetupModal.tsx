@@ -32,6 +32,8 @@ import { CardModal } from '../board/CardModal'
 import { DelegateModal } from '../delegations/DelegateModal'
 import { normalizeDir } from '../home/projectGrouping'
 import { AgentTuiSelection } from '../agents/AgentTuiSelection'
+import { useRemoteControlSupport } from '../agents/useRemoteControlSupport'
+import { useAgentTuiProfiles } from '../../api/agentTui'
 import { DirectoryAutocomplete } from '../agents/DirectoryAutocomplete'
 import { ModelLevelSelect } from '../agents/ModelLevelSelect'
 import { ReplyStyleControl } from '../agents/ReplyStyleControl'
@@ -62,6 +64,7 @@ function isUnderRoot(directory: string, root: string): boolean {
 
 export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const catalog = useSetupCatalog(opened)
+  const { data: tuiProfiles } = useAgentTuiProfiles()
   const projects = useProjects(opened)
   const setup = useSetupProject()
   const [active, setActive] = useState(0)
@@ -83,6 +86,8 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
   const [alwaysOn, setAlwaysOn] = useState(false)
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false)
+  const defaultTuiProfileId = tuiProfiles?.find((profile) => profile.isDefault)?.id ?? null
+  const rc = useRemoteControlSupport({ tuiProfileId: tuiProfileId ?? defaultTuiProfileId })
   const [bundleKeys, setBundleKeys] = useState<string[]>([])
   const [skipAgent, setSkipAgent] = useState(false)
   const [startAgent, setStartAgent] = useState(false)
@@ -147,7 +152,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
               modelLevel,
               replyStyle,
               alwaysOn,
-              remoteControlEnabled,
+              remoteControlEnabled: rc.supported && remoteControlEnabled,
               bundleKeys,
               name: agentName.trim() || null,
               systemPromptAppend: systemPromptAppend.trim() || null,
@@ -294,7 +299,17 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                       {selectedPreset?.systemPromptTemplate && <Code block>{systemPromptAppend.trim() || suggestedPrompt}</Code>}
                     </Paper>
                     <Switch label="Always on" checked={alwaysOn} onChange={(event) => setAlwaysOn(event.currentTarget.checked)} />
-                    <Switch label="Remote control" checked={remoteControlEnabled} onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)} />
+                    <Switch
+                      label="Remote control"
+                      description={
+                        rc.supported
+                          ? 'Every start arms /remote-control so the session can be driven from claude.ai.'
+                          : (rc.reason ?? 'Not available for this runner.')
+                      }
+                      checked={rc.supported && remoteControlEnabled}
+                      disabled={!rc.supported}
+                      onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
+                    />
                   </>
                 )}
                 <Switch

@@ -791,6 +791,13 @@ public sealed class CardService
             effectiveModelId = resolved.EffectiveModelId;
         }
 
+        // CARD-0212: refuse an explicit remote-control name on a kind that cannot take it
+        // before claiming a session row, so a 409 leaves no session behind.
+        RemoteControlPolicy.Require(
+            spec.Kind,
+            !string.IsNullOrWhiteSpace(request.RemoteControlName),
+            $"spawn of card {card.Identifier}");
+
         var sessionId = await _orchestrator.TryClaimCardAsync(
             card.Id,
             card.ConcurrencyToken,

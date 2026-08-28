@@ -235,7 +235,8 @@ the whole session (reads must share write/delete), and is flushed per update.
 - An **unauthenticated `GROK_HOME` parks on a device-code login that swallows input.** Scope is
   global (per `GROK_HOME`), not per-cwd, so a fresh working directory with existing auth is fine.
   This one is **fail-fast — never auto-answered.**
-- No remote control. No claude.ai session entry.
+- No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
+  and never typed (`RemoteControlPolicy`, CARD-0212). No claude.ai session entry.
 - Context occupancy is Grok's own numbers: `auto_compact_completed.tokens_after` and single-call
   `turn_completed.usage.inputTokens`, against a self-reported **500 000** token window. A multi-call
   turn does not move the badge.
@@ -307,7 +308,8 @@ test helper and must never write into the user's normal Codex home.
 - **`/usage` is FORBIDDEN on Codex.** It opens a `1. Show usage` / `2. Redeem usage limit reset`
   picker, and an auto-confirming send can redeem the account's one usage-limit reset. It is listed
   in `ProviderContractCatalog`'s `Forbidden` map for exactly this reason.
-- No remote control. Compaction is marked (`compacted` + `event_msg/context_compacted`) and happens
+- No remote control. Refused at create/PATCH/start/card-spawn with `409 remote_control_refused`
+  and never typed (`RemoteControlPolicy`, CARD-0212). Compaction is marked (`compacted` + `event_msg/context_compacted`) and happens
   mid-turn as pure housekeeping, so unlike Claude's manual `/compact` it needs no turn-end
   treatment.
 - Bracketed-paste and large-body behaviour are **unmeasured**, so the conservative spill policy
@@ -343,6 +345,9 @@ See [agent-credentials.md](agent-credentials.md).
 ## 8. What is deliberately not supported
 
 - **`OpenCode` and `Raw` as delegates.** Refused at task creation with the reason.
+- **Remote control on Grok / Codex / OpenCode / Raw.** The catalog marks `remoteControl`
+  Unsupported; `RemoteControlPolicy` refuses an explicit ask (`409 remote_control_refused`) at
+  create, PATCH, start and card-spawn, and `SendRemoteControlCommandsAsync` types nothing.
 - **Grok or Codex as an orchestrator.** Refused; the orchestrator contract has only run on Claude.
 - **A fourth delegatable kind without a `ModelLevelAliases` arm.** `For()` falls back to the Claude
   ladder, so a kind admitted to `DelegatableKinds` without its own arm would silently tell its own

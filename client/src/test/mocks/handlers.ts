@@ -1,4 +1,4 @@
-import type { HttpHandler } from 'msw';
+import { HttpResponse, http, type HttpHandler } from 'msw';
 
 /**
  * Default MSW request handlers.
@@ -6,6 +6,7 @@ import type { HttpHandler } from 'msw';
  * Individual tests can override or extend these via server.use().
  */
 export const handlers: HttpHandler[] = [
-  // Add default handlers as needed, e.g.:
-  // http.get('/health', () => HttpResponse.text('Healthy')),
+  // CARD-0212: useRemoteControlSupport always GETs runner-types, including on screens
+  // that never previously asked. Empty list = Unknown-as-Unsupported.
+  http.get('/api/agent-tui/runner-types', () => HttpResponse.json([])),
 ];

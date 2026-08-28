@@ -207,7 +207,7 @@ public class AgentControlServiceIntegrationTests
             // bridge the way the real TUI reports it — the boot sequence waits for this marker
             // before renaming.
             var adapter = new FakeAgentProtocolAdapter { PromptOutput = "/remote-control is active · BOOTED" };
-            await using var harness = BuildHarness(tempRoot, [adapter]);
+            await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
 
             var board = await harness.BoardService.CreateAsync(
                 new CreateBoardRequest(project.Id, "Remote Control Board"), CancellationToken.None);
@@ -239,6 +239,94 @@ public class AgentControlServiceIntegrationTests
             var session = await verify.AgentSessions.SingleAsync(s => s.Id.ToString() == detail.PersistentSessionId);
             session.Status.ShouldBe(SessionStatus.Running);
             session.CardId.ShouldBe(card.Id);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_with_remote_control_on_a_grok_agent_is_refused_and_launches_nothing()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "grok-rc-workspace");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [adapter], includeLaunchResolver: true);
+            var grok = await SeedBlankModelArgumentProfileAsync(db, AgentKind.Grok);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest("Grok RC Refuse", workspace, TuiProfileId: grok.Id),
+                CancellationToken.None);
+
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.Control.StartAsync(
+                    agent.Id,
+                    new StartAgentRequest(RemoteControl: true),
+                    CancellationToken.None));
+            ex.Code.ShouldBe("remote_control_refused");
+
+            adapter.Started.ShouldBeFalse();
+            adapter.Prompts.ShouldBeEmpty();
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.CountAsync(s => s.Cwd == workspace)).ShouldBe(0);
+            (await verify.Agents.SingleAsync(a => a.Id == agent.Id)).Status.ShouldBe(AgentStatus.Idle);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Start_inheriting_a_stale_grok_remote_control_flag_launches_without_typing_it()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
+            db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
+            await db.SaveChangesAsync();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "BOOTED" };
+            await using var harness = BuildHarness(tempRoot, [adapter], includeLaunchResolver: true);
+            var grok = await SeedBlankModelArgumentProfileAsync(db, AgentKind.Grok);
+
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Grok Inherit Board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Grok inherit work"), CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Grok Inherit RC",
+                    Path.Combine(tempRoot, "grok-inherit-workspace"),
+                    DefaultWorkflowTemplateId: template.Id,
+                    TuiProfileId: grok.Id),
+                CancellationToken.None);
+            await db.Agents.Where(a => a.Id == agent.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.RemoteControlEnabled, true));
+            db.ChangeTracker.Clear();
+            harness.Scope.ServiceProvider.GetRequiredService<AppDbContext>().ChangeTracker.Clear();
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(card.Id), CancellationToken.None);
+
+            var detail = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            detail.Status.ShouldBe(AgentStatus.Running);
+            adapter.Prompts.ShouldNotBeEmpty();
+            adapter.Prompts.ShouldNotContain("/remote-control");
+            adapter.Prompts.ShouldNotContain(p => p.StartsWith("/rename", StringComparison.Ordinal));
+            adapter.Prompts[0].ShouldNotBeNullOrWhiteSpace();
         }
         finally
         {

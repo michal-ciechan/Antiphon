@@ -37,6 +37,7 @@ import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { AgentTuiSelection } from './AgentTuiSelection'
+import { useRemoteControlSupport } from './useRemoteControlSupport'
 import { ReplyStyleControl } from './ReplyStyleControl'
 
 const ASSIGNMENT_POLICIES: Array<{ value: AgentAssignmentPolicy; label: string }> = [
@@ -99,6 +100,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   // here forces one. Typing bundles into a live session is the thing this design deliberately does
   // not do, so the notice says what will happen rather than offering to make it happen now.
   const outOfDate = detail.data?.bundlesOutOfDate ?? false
+  const rc = useRemoteControlSupport({ tuiProfileId, kind: agent?.kind })
 
   // Reload the form whenever a different agent is opened. Attachments come from the DETAIL fetch,
   // so they are seeded in their own effect below rather than here.
@@ -173,7 +175,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         assignmentPolicy,
         boardId,
         alwaysOn,
-        remoteControlEnabled,
+        remoteControlEnabled: rc.supported && remoteControlEnabled,
         // Empty / null = use the installation ContextCompactionSettings default.
         autoCompactEnabled,
         autoCompactIdleMinutes,
@@ -268,8 +270,13 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
         />
         <Switch
           label="Remote control"
-          description="Every start arms /remote-control so the session can be driven from claude.ai."
-          checked={remoteControlEnabled}
+          description={
+            rc.supported
+              ? 'Every start arms /remote-control so the session can be driven from claude.ai.'
+              : (rc.reason ?? 'Not available for this runner.')
+          }
+          checked={rc.supported && remoteControlEnabled}
+          disabled={!rc.supported}
           onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
         />
 

@@ -118,7 +118,15 @@ public sealed class AgentControlService
         // branch, so a card spawn gets it too. Never clobbers an unmarked file and never throws.
         _workspace?.Provision(agent);
 
+        var launchKind = kind ?? agent.Kind;
+        RemoteControlPolicy.Require(launchKind, request.RemoteControl == true, $"start of agent '{agent.Name}'");
         var remoteControl = request.RemoteControl ?? agent.RemoteControlEnabled;
+        if (remoteControl && !RemoteControlPolicy.Permits(launchKind))
+        {
+            // Inherited stale flag: ignore, never refuse (D3 / CARD-0212).
+            _logger.LogWarning("{Message}", RemoteControlPolicy.IgnoredMessage(launchKind, $"start of agent '{agent.Name}'"));
+            remoteControl = false;
+        }
         var remoteControlName = remoteControl ? agent.Name : null;
         var card = await ResolveStartCardAsync(agent, ct);
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(

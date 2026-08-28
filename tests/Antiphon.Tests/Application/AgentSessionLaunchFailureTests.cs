@@ -321,7 +321,8 @@ public class AgentSessionLaunchFailureTests
         await using var fixture = await LaunchFixture.CreateAsync(adapter);
         var card = await fixture.CreateCardAsync();
 
-        var start = fixture.StartCardSessionAsync(card, "do the work", remoteControlName: "Card Agent");
+        var start = fixture.StartCardSessionAsync(
+            card, "do the work", remoteControlName: "Card Agent", kind: AgentKind.ClaudeCode);
 
         await Should.ThrowAsync<PromptDeliveryException>(start);
         // The work prompt gets slice 3's retries too, and this session is brand new — no transcript
@@ -573,6 +574,26 @@ public class AgentSessionLaunchFailureTests
         (await db.RunAttempts.SingleAsync(a => a.Id == started.RunAttemptId)).Prompt.ShouldBe(prompt);
     }
 
+    [Test]
+    public async Task A_remote_control_name_on_a_non_capable_kind_types_nothing()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "working" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var card = await fixture.CreateCardAsync();
+
+        var started = await fixture.StartCardSessionAsync(
+            card, "do the work", remoteControlName: "Card Agent", kind: AgentKind.Grok);
+
+        adapter.Prompts.ShouldBe(["do the work"]);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == started.SessionId);
+        session.AgentKind.ShouldBe(AgentKind.Grok);
+        (await db.AgentIncidents.CountAsync(i =>
+            i.Kind == AgentIncidentKind.RcDegraded
+            && (i.SessionId == started.SessionId || i.AgentId == fixture.AgentId))).ShouldBe(0);
+    }
+
     /// <summary>
     /// Creates the worktree, then plants a FILE at <c>.antiphon</c> so the spill helper cannot
     /// create <c>.antiphon/inbox/</c>.
@@ -753,15 +774,15 @@ public class AgentSessionLaunchFailureTests
         }
 
         public Task<AgentSessionStartResult> StartCardSessionAsync(
-            Guid cardId, string prompt, string? remoteControlName = null) =>
+            Guid cardId, string prompt, string? remoteControlName = null, AgentKind kind = AgentKind.Raw) =>
             Services.GetRequiredService<AgentSessionService>().StartAsync(
                 new StartAgentSessionRequest(
-                    cardId, "fake", AgentKind.Raw, prompt, RemoteControlName: remoteControlName),
-                LaunchSpec(Path.Combine(Harness.TempRoot, "repo")),
+                    cardId, "fake", kind, prompt, RemoteControlName: remoteControlName),
+                LaunchSpec(Path.Combine(Harness.TempRoot, "repo"), kind),
                 CancellationToken.None);
 
-        private static AgentLaunchSpec LaunchSpec(string cwd) =>
-            new("fake", AgentKind.Raw, "fake", [], new Dictionary<string, string>(), cwd, 120, 30);
+        private static AgentLaunchSpec LaunchSpec(string cwd, AgentKind kind = AgentKind.Raw) =>
+            new("fake", kind, "fake", [], new Dictionary<string, string>(), cwd, 120, 30);
 
         /// <summary>
         /// Makes the adapter reachable as this session's live terminal and models a whole delivery

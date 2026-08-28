@@ -55,6 +55,11 @@ public sealed class SessionHealthService
     private static readonly SessionStatus[] LiveSessionStatuses =
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
 
+    // CARD-0212: the catalog owns which kinds can take /remote-control. Computed once;
+    // today this is { ClaudeCode }. An IN over the catalog query, not a kind literal.
+    private static readonly AgentKind[] RemoteControlCapableKinds =
+        Enum.GetValues<AgentKind>().Where(k => new AgentTuiRunnerCatalog().SupportsRemoteControl(k)).ToArray();
+
     private readonly AppDbContext _db;
     private readonly ISessionRunnerClient _runner;
     private readonly IRcBridgeProbe _probe;
@@ -281,9 +286,9 @@ public sealed class SessionHealthService
     private async Task<List<(Agent Agent, AgentSession Session)>> LoadCandidatesAsync(CancellationToken ct)
     {
         // Health watch is the RC-bridge scan (WatchRcAsync), not a transcript/delivery gate.
-        // remoteControl is Supported only for Claude and lives on AgentTuiRunnerCatalog — D3
-        // deliberately left it off ProviderContract. Transcript/DeliveryVerification would
-        // pull Grok in and start queueing /remote-control at a kind that has no bridge.
+        // remoteControl lives on AgentTuiRunnerCatalog (CARD-0212); D3 deliberately left it
+        // off ProviderContract. Transcript/DeliveryVerification would pull Grok in and start
+        // queueing /remote-control at a kind that has no bridge.
         var agents = await _db.Agents.AsNoTracking().Where(a => a.AlwaysOn).ToListAsync(ct);
         var result = new List<(Agent, AgentSession)>();
         foreach (var agent in agents)
@@ -295,7 +300,7 @@ public sealed class SessionHealthService
                 .FirstOrDefaultAsync(
                     s => s.Id == sessionId
                         && s.CardId == null
-                        && s.AgentKind == AgentKind.ClaudeCode
+                        && RemoteControlCapableKinds.Contains(s.AgentKind)
                         && LiveSessionStatuses.Contains(s.Status),
                     ct);
             if (session is not null)

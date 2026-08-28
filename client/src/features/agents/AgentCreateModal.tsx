@@ -19,6 +19,7 @@ import { useCreateAgent, useDraftAgent, useInstructionBundles } from '../../api/
 import { getApiErrorMessage } from '../../api/client'
 import { DirectoryAutocomplete } from './DirectoryAutocomplete'
 import { AgentTuiSelection } from './AgentTuiSelection'
+import { useRemoteControlSupport } from './useRemoteControlSupport'
 import { useAgentTuiProfiles } from '../../api/agentTui'
 import { useBoards } from '../../api/boards'
 import { ModelLevelSelect } from './ModelLevelSelect'
@@ -56,6 +57,8 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [creationError, setCreationError] = useState<string | null>(null)
   const { data: profiles } = useAgentTuiProfiles()
+  const defaultProfileId = profiles?.find((profile) => profile.isDefault)?.id ?? null
+  const rc = useRemoteControlSupport({ tuiProfileId: tuiProfileId ?? defaultProfileId })
   const boards = useBoards()
   const bundles = useInstructionBundles(opened)
   const boardOptions = useMemo(
@@ -117,7 +120,7 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         modelLevel,
         replyStyle,
         alwaysOn,
-        remoteControlEnabled,
+        remoteControlEnabled: rc.supported && remoteControlEnabled,
         boardId: boardId ?? undefined,
         bundleKeys,
         systemPromptAppend: systemPromptAppend.trim() || null,
@@ -253,8 +256,13 @@ export function AgentCreateModal({ opened, onClose }: AgentCreateModalProps) {
         />
         <Switch
           label="Remote control"
-          description="Every start arms /remote-control so the session can be driven from claude.ai."
-          checked={remoteControlEnabled}
+          description={
+            rc.supported
+              ? 'Every start arms /remote-control so the session can be driven from claude.ai.'
+              : (rc.reason ?? 'Not available for this runner.')
+          }
+          checked={rc.supported && remoteControlEnabled}
+          disabled={!rc.supported}
           onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
         />
         <Group justify="flex-end">

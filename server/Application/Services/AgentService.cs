@@ -427,6 +427,7 @@ public sealed class AgentService
                 ct);
             // Re-check after the profile may have changed Kind (Herdr is Claude/Grok/Codex only).
             ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
+            RemoteControlPolicy.Require(agent.Kind, agent.RemoteControlEnabled, $"agent '{agent.Name}'");
             _db.Agents.Add(agent);
             if (request.BundleKeys is { } createBundles)
                 await AgentBundleAttachments.SetAsync(_db, agent, createBundles, now, ct);
@@ -484,6 +485,10 @@ public sealed class AgentService
         var finalBackend = request.SessionBackend ?? agent.SessionBackend;
         var finalKind = await ResolveFinalKindAsync(agent, request, ct);
         ValidateSessionBackendPairing(finalBackend, finalKind);
+        RemoteControlPolicy.Require(
+            finalKind,
+            request.RemoteControlEnabled ?? agent.RemoteControlEnabled,
+            $"agent '{agent.Name}'");
 
         agent.Name = request.Name.Trim();
         agent.Slug = await UniqueSlugAsync(Slugify(request.Name), agent.Id, ct);

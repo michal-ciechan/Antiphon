@@ -5,6 +5,18 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTuiRunnerCatalog
 {
+    public const string RemoteControlCapability = "remoteControl";
+
+    /// <summary>
+    /// CARD-0212. True only when the kind's catalog row declares remoteControl Supported.
+    /// Unknown and Degraded read as not-supported for enabling machinery (ProviderContract rule 2).
+    /// </summary>
+    public bool SupportsRemoteControl(AgentKind kind) =>
+        Enum.IsDefined(kind)
+        && Get(kind).Capabilities.Any(c =>
+            string.Equals(c.Name, RemoteControlCapability, StringComparison.Ordinal)
+            && c.State == AgentTuiCapabilityState.Supported);
+
     public IReadOnlyList<AgentTuiRunnerTypeDto> List() =>
     [
         Get(AgentKind.ClaudeCode),
@@ -101,7 +113,7 @@ public sealed class AgentTuiRunnerCatalog
         Unsupported("modelDiscovery", "No stable machine-readable model-list command is assumed."),
         StructuredActivity(AgentKind.ClaudeCode),
         Supported("sessionResume", "Claude sessions can be resumed by conversation identity."),
-        Supported("remoteControl", "Claude supports Antiphon's remote-control launch behaviour."),
+        Supported(RemoteControlCapability, "Claude supports Antiphon's remote-control launch behaviour."),
         Supported("systemPromptAppend", "Claude supports --append-system-prompt."),
         ContainsArgument(arguments, "--dangerously-skip-permissions")
             ? Supported("permissionBypass", "The profile explicitly includes --dangerously-skip-permissions.")
@@ -115,7 +127,7 @@ public sealed class AgentTuiRunnerCatalog
         Unknown("modelDiscovery", "Installed-client model discovery has not been probed."),
         StructuredActivity(AgentKind.Codex),
         Unknown("sessionResume", "Installed-client resume support has not been probed."),
-        Unsupported("remoteControl", "Claude-style remote control is not available."),
+        Unsupported(RemoteControlCapability, "Claude-style remote control is not available."),
         Unsupported("systemPromptAppend", "Claude-style system-prompt append is not available."),
         ContainsArgument(arguments, "--dangerously-bypass-approvals-and-sandbox")
             ? Supported("permissionBypass", "The profile explicitly requests Codex permission bypass.")
@@ -129,7 +141,7 @@ public sealed class AgentTuiRunnerCatalog
         Supported("modelDiscovery", "OpenCode exposes the models operation."),
         StructuredActivity(AgentKind.OpenCode),
         Unknown("sessionResume", "Installed OpenCode session-resume support has not been established."),
-        Unsupported("remoteControl", "Claude-style remote control is not supported."),
+        Unsupported(RemoteControlCapability, "Claude-style remote control is not supported."),
         Unsupported("systemPromptAppend", "Claude-style system-prompt append is not supported."),
         ContainsArgument(arguments, "--auto")
             ? Supported("permissionBypass", "The profile explicitly includes --auto.")
@@ -143,7 +155,7 @@ public sealed class AgentTuiRunnerCatalog
         Supported("modelDiscovery", "Grok exposes the models command."),
         StructuredActivity(AgentKind.Grok),
         Supported("sessionResume", "Grok sessions can be resumed by conversation identity."),
-        Unsupported("remoteControl", "Claude-style remote control is not available."),
+        Unsupported(RemoteControlCapability, "Claude-style remote control is not available."),
         Supported("systemPromptAppend", "Grok accepts extra standing instructions through --rules."),
         ContainsArgument(arguments, "--always-approve")
             || ContainsArgument(arguments, "bypassPermissions")
@@ -157,7 +169,7 @@ public sealed class AgentTuiRunnerCatalog
         Unsupported("modelDiscovery", "Raw commands have no model discovery contract."),
         StructuredActivity(AgentKind.Raw),
         Unknown("sessionResume", "Raw commands have no declared resume contract."),
-        Unsupported("remoteControl", "Raw commands have no declared remote-control contract."),
+        Unsupported(RemoteControlCapability, "Raw commands have no declared remote-control contract."),
         Unsupported("systemPromptAppend", "Raw commands have no declared system-prompt contract."),
         Unknown("permissionBypass", "Raw command permission semantics are not known.")
     ];

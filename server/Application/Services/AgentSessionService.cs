@@ -193,7 +193,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             // Best-effort (it is monitoring here too); the WORK prompt below stays fatal on failure
             // — that prompt is the session's whole purpose.
-            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session.Id, agentId: null, ct);
+            await SendRemoteControlCommandsAsync(adapter, request.RemoteControlName, session, agentId: null, ct);
 
             await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
@@ -385,7 +385,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Interactive: no work prompt — the human drives the agent via the terminal. We only push
             // the agent into remote-control mode if asked, so it can also be monitored from elsewhere.
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
-            await SendRemoteControlCommandsAsync(adapter, remoteControlName, session.Id, agentId, ct);
+            await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, ct);
 
             // Channel-facing agents get a launch note: bootstrap on a fresh conversation (including
             // the resume-not-found fallback, which re-enters here with resumeMode=null), the cheaper
@@ -1280,12 +1280,21 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private async Task SendRemoteControlCommandsAsync(
         IAgentProtocolAdapter adapter,
         string? remoteControlName,
-        Guid sessionId,
+        AgentSession session,
         Guid? agentId,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(remoteControlName))
             return;
+
+        var sessionId = session.Id;
+        if (!RemoteControlPolicy.Permits(session.AgentKind))
+        {
+            _logger.LogWarning(
+                "{Message}",
+                RemoteControlPolicy.IgnoredMessage(session.AgentKind, $"session {sessionId}"));
+            return;
+        }
 
         try
         {

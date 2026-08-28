@@ -150,6 +150,14 @@ export interface AgentTuiValidationRunDto {
   cachedResultsRetained?: boolean
 }
 
+export const REMOTE_CONTROL_CAPABILITY = 'remoteControl'
+
+export function remoteControlCapability(
+  source: { capabilities: AgentTuiCapabilityDto[] } | undefined,
+): AgentTuiCapabilityDto | undefined {
+  return source?.capabilities.find((capability) => capability.name === REMOTE_CONTROL_CAPABILITY)
+}
+
 export const agentTuiKeys = {
   all: ['agent-tui'] as const,
   runnerTypes: () => [...agentTuiKeys.all, 'runner-types'] as const,

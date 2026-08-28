@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -254,6 +255,40 @@ public sealed class CardSpawnModelArgumentTests
 
             adapter.StartedArgs.Count(a => a == "--model").ShouldBe(1);
             ModelPair(adapter.StartedArgs).ShouldBe(["--model", "exact-model"]);
+        }
+        finally
+        {
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Spawn_with_remote_control_name_on_a_grok_card_is_refused_and_creates_no_session()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            await using var db = NewDb(schema.ConnectionString);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "Grok", includeLaunchResolver: true,
+                connectionString: schema.ConnectionString);
+            var profile = await SeedProfileAsync(db, AgentKind.Grok, modelArgumentName: "--model");
+            var card = await SeedAssignedCardAsync(db, harness, tempRoot, profile.Id, AgentKind.Grok,
+                AgentModelLevel.High, modelId: null);
+
+            ClearHarnessTracking(harness);
+            var ex = await Should.ThrowAsync<ConflictException>(() =>
+                harness.CardService.SpawnAsync(
+                    card.Id,
+                    new SpawnCardRequest(RemoteControlName: "Grok Card Agent"),
+                    CancellationToken.None));
+            ex.Code.ShouldBe("remote_control_refused");
+            ex.Message.ShouldContain("Grok");
+
+            adapter.Started.ShouldBeFalse();
+            (await db.AgentSessions.CountAsync(s => s.CardId == card.Id)).ShouldBe(0);
         }
         finally
         {
