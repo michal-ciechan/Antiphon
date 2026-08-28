@@ -37,7 +37,21 @@ function Invoke-AntiphonGet([string]$Path) {
     return Invoke-RestMethod -Method GET -Uri "$api$Path" -Headers $headers
 }
 
+function Get-WorktreePath($task) {
+    if ($null -ne $task.summary -and $task.summary.worktreePath) {
+        return [string]$task.summary.worktreePath
+    }
+    if ($task.worktreePath) { return [string]$task.worktreePath }
+    return $null
+}
+
+# A Worktree task's real edits live in its worktree, not workingDirectory - that field is the
+# CALLER's directory (where delegate.ps1 was invoked from), unrelated to where the agent actually
+# wrote anything. Checking workingDirectory alone silently found "nothing to checkpoint" on a
+# Worktree task with real uncommitted work sitting in its worktreePath (CARD-0217 S5, 2026-08-28).
 function Get-WorkingDirectory($task) {
+    $worktree = Get-WorktreePath $task
+    if (-not [string]::IsNullOrWhiteSpace($worktree)) { return $worktree }
     if ($null -ne $task.summary -and $task.summary.workingDirectory) {
         return [string]$task.summary.workingDirectory
     }
