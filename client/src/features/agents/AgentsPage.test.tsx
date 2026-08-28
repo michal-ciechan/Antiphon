@@ -39,6 +39,10 @@ const agentSummary: AgentSummaryDto = {
   systemPromptAppend: null,
   modelLevel: 'High',
   working: false,
+  // CARD-0212: useRemoteControlSupport resolves via the profile, which needs a matching
+  // Supported capability below - without both, every remote-control default in this file
+  // reads as unsupported and every start call this file asserts on would send `false`.
+  tuiProfileId: 'tui-profile-1',
 }
 
 const agentDetail: AgentDetailDto = {
@@ -78,7 +82,10 @@ const agentTuiProfile: AgentTuiProfileDto = {
   },
   secretEnvironment: [],
   models: [],
-  capabilities: [],
+  // CARD-0212: this fixture's agent is ClaudeCode, which the real catalog marks Supported -
+  // an empty list here would make useRemoteControlSupport read every test's default as
+  // unsupported, contradicting this file's own "remote control is on by default" fixtures.
+  capabilities: [{ name: 'remoteControl', state: 'Supported', reason: 'Claude supports Antiphon\'s remote-control launch behaviour.' }],
   validationSummary: {
     status: 'Succeeded',
     profileRevisionId: 'tui-profile-revision-1',
