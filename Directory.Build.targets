@@ -1,0 +1,40 @@
+<Project>
+  <!--
+    CARD-0222: cap the growth of MSBuild's per-project "file writes" ledger.
+
+    IncrementalClean reads $(IntermediateOutputPath)$(CleanFile), i.e. obj/.../(Project).csproj.FileListAbsolute.txt,
+    the list of every file any previous build of this project wrote; filters it (FindUnderPath twice); and
+    rewrites it, on EVERY build, and it only ever prunes entries under the CURRENT $(OutDir). Every
+    OutputPath=bin-(name)/ build (the way delegates build while the daemons hold bin/) shares this one
+    obj/ and appends its own output paths, which no later build ever removes; and before CARD-0110's
+    bin-*/** exclude (2026-08-21) a bin-X build also swallowed every sibling bin-Y tree as content,
+    recursively. Measured 2026-08-28: Antiphon.SessionRunner's ledger was 228 MB / 770,706 lines and
+    Antiphon.Tests' 97 MB / 520,713 lines; a build of tests/Antiphon.Tests took 21m31s at near-zero CPU,
+    of which ReadLinesFromFile + IncrementalClean on the Tests ledger alone was 157 s (181 s down to 13 s
+    for the same build with the ledger reset). From the outside that is indistinguishable from a hung
+    build (one dotnet process waiting, worker nodes idle), and it was the build half of CARD-0222's
+    "did not reach the test phase" reports.
+
+    This target runs before the SDK reads the ledger and deletes it when it is larger than
+    $(AntiphonCleanFileMaxBytes) (2 MB; a healthy ledger is ~50 KB). The only thing lost is IncrementalClean's
+    ability to delete orphaned outputs from EARLIER builds of this project in this OutDir, which is exactly
+    the state every fresh clone is in. ReadAllText is the one size probe MSBuild property functions allow;
+    on a healthy ledger it is a 50 KB read, on a bloated one it is still cheaper than one second of the
+    ReadLinesFromFile it prevents.
+  -->
+  <PropertyGroup>
+    <AntiphonCleanFileMaxBytes Condition="'$(AntiphonCleanFileMaxBytes)' == ''">2000000</AntiphonCleanFileMaxBytes>
+  </PropertyGroup>
+
+  <Target Name="AntiphonResetBloatedFileWritesLedger"
+          BeforeTargets="_CleanGetCurrentAndPriorFileWrites"
+          Condition="'$(AntiphonCleanFileMaxBytes)' != '0' and Exists('$(IntermediateOutputPath)$(CleanFile)')">
+    <PropertyGroup>
+      <_AntiphonCleanFileChars>$([System.IO.File]::ReadAllText('$(IntermediateOutputPath)$(CleanFile)').Length)</_AntiphonCleanFileChars>
+    </PropertyGroup>
+    <Warning Condition="$(_AntiphonCleanFileChars) &gt; $(AntiphonCleanFileMaxBytes)"
+             Text="CARD-0222: $(IntermediateOutputPath)$(CleanFile) is $(_AntiphonCleanFileChars) chars (limit $(AntiphonCleanFileMaxBytes)); deleting it so IncrementalClean does not spend minutes reading it. Set AntiphonCleanFileMaxBytes=0 to keep it." />
+    <Delete Condition="$(_AntiphonCleanFileChars) &gt; $(AntiphonCleanFileMaxBytes)"
+            Files="$(IntermediateOutputPath)$(CleanFile)" />
+  </Target>
+</Project>
