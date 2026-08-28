@@ -511,12 +511,60 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// <summary>
     /// CARD-0186: script pane.process_info. Default (null override) is the historical
     /// shell 4242 / claude 4243 pair that <see cref="HerdrClientTests"/> pins.
+    /// argv on this overload is <c>[name]</c> (historical).
     /// </summary>
     public void SetPaneProcessInfo(string paneId, int? shellPid, params (int Pid, string Name)[] foreground)
     {
+        SetPaneProcessInfo(
+            paneId,
+            shellPid,
+            (IReadOnlyList<(int Pid, string Name, string[] Argv, string? Cwd)>)
+                foreground.Select(p => (p.Pid, p.Name, new[] { p.Name }, (string?)"C:\\src")).ToArray());
+    }
+
+    /// <summary>CARD-0224: script argv + cwd on each foreground process for identity checks.</summary>
+    public void SetPaneProcessInfo(
+        string paneId,
+        int? shellPid,
+        IReadOnlyList<(int Pid, string Name, string[] Argv, string? Cwd)> foreground)
+    {
         var (_, _, pane) = RequirePane(paneId);
         pane.ShellPidOverride = shellPid;
-        pane.ForegroundOverride = foreground.ToList();
+        pane.ForegroundOverride = foreground
+            .Select(p => new FakeForegroundProcess(p.Pid, p.Name, p.Argv, p.Cwd))
+            .ToList();
+    }
+
+    /// <summary>
+    /// CARD-0224: drop herdr's detected agent so an emptied pane no longer reads as occupied.
+    /// Also clears launch-script detection so <see cref="ApplyLaunchDetection"/> cannot restamp it.
+    /// </summary>
+    public void ClearDetectedAgent(string paneId)
+    {
+        var (_, _, pane) = RequirePane(paneId);
+        pane.Agent = null;
+        pane.AgentName = null;
+        pane.LaunchDetectKind = null;
+        pane.LaunchDetectAtUtc = null;
+        pane.AgentSession = null;
+    }
+
+    /// <summary>CARD-0224: remove a pane from the fake (herdr restart without layout restore).</summary>
+    public void RemovePane(string paneId)
+    {
+        foreach (var ws in Workspaces)
+        {
+            foreach (var tab in ws.Tabs.ToList())
+            {
+                var idx = tab.Panes.FindIndex(p => p.PaneId == paneId);
+                if (idx < 0)
+                    continue;
+                tab.Panes.RemoveAt(idx);
+                if (tab.Panes.Count == 0)
+                    ws.Tabs.Remove(tab);
+                return;
+            }
+        }
     }
 
     private string PaneProcessInfoJson(JsonElement parameters)
@@ -530,7 +578,13 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         {
             shellPid = pane.ShellPidOverride;
             foregroundJson = string.Join(",", fg.Select(p =>
-                $"{{\"pid\":{p.Pid},\"name\":{JsonSerializer.Serialize(p.Name)},\"argv\":[{JsonSerializer.Serialize(p.Name)}],\"cwd\":\"C:\\\\src\"}}"));
+            {
+                var argv = p.Argv is { Length: > 0 }
+                    ? string.Join(",", p.Argv.Select(a => JsonSerializer.Serialize(a)))
+                    : JsonSerializer.Serialize(p.Name);
+                var cwd = JsonSerializer.Serialize(p.Cwd ?? "C:\\src");
+                return $"{{\"pid\":{p.Pid},\"name\":{JsonSerializer.Serialize(p.Name)},\"argv\":[{argv}],\"cwd\":{cwd}}}";
+            }));
         }
         else if (pane.Agent is not null)
         {
@@ -666,7 +720,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     /// create a stub workspace/tab/pane with <paramref name="paneId"/>. Tests that seed a
     /// colliding holder must not call <see cref="RequireAgentPaneId"/>.
     /// </summary>
-    public PaneState SeedDetectedAgent(string paneId, string kind, string? name)
+    public PaneState SeedDetectedAgent(string paneId, string kind, string? name = null)
     {
         foreach (var ws in Workspaces)
         {
@@ -1013,11 +1067,13 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         public long Revision { get; set; }
         /// <summary>CARD-0186: null = default 4242 (+ child after agent detect); set via <c>SetPaneProcessInfo</c>.</summary>
         public int? ShellPidOverride { get; set; }
-        public List<(int Pid, string Name)>? ForegroundOverride { get; set; }
+        public List<FakeForegroundProcess>? ForegroundOverride { get; set; }
         /// <summary>CARD-0187: kind the launch-script send_text will stamp, once due.</summary>
         public string? LaunchDetectKind { get; set; }
         public DateTime? LaunchDetectAtUtc { get; set; }
     }
+
+    internal sealed record FakeForegroundProcess(int Pid, string Name, string[]? Argv = null, string? Cwd = null);
 
     internal sealed record AgentSessionState(string Source, string Agent, string Kind, string Value);
 

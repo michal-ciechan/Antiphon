@@ -360,7 +360,7 @@ See [agent-credentials.md](agent-credentials.md).
   assembled.
 - [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md) — creating and editing runner
   profiles through the UI.
-- [herdr-sessions.md](herdr-sessions.md) — the optional herdr session lane (ClaudeCode only).
+- [herdr-sessions.md](herdr-sessions.md) — the optional herdr session lane (ClaudeCode, Grok, Codex).
 - [orchestration-loop.md](orchestration-loop.md) — picking a tier and a kind when delegating.
 - `docs/adr/0002-modern-conpty-backend.md` — the pseudoconsole these TUIs run in, and the delivery
   ceilings that follow from it.

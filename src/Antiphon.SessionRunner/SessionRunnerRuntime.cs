@@ -404,7 +404,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // re-adopt; restored-but-empty or unknown pane → Exited(HerdrRestartPresumedDead);
         // herdr unreachable + OS-alive → Pending (S3); unreachable + OS-dead → ChildGone.
         if (_herdrClient is not null)
+        {
+            var retentionDays = Math.Max(0, _herdrClient.Settings.LastPaneRetentionDays);
+            if (retentionDays > 0)
+                HerdrLastPane.DeleteOlderThan(_settings.SessionLogPath, TimeSpan.FromDays(retentionDays));
             await AdoptHerdrSessionsAsync(probe, ct);
+        }
 
         var manifestDir = _settings.PtyHostManifestDir;
         if (!Directory.Exists(manifestDir))
@@ -578,14 +583,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 break;
             case HerdrBarVerdict.RestartPresumedDead:
                 session.CompletePendingAsExited(HerdrExitReasons.RestartPresumedDead);
-                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+                HerdrPaneSidecar.Retire(_settings.SessionLogPath, sidecar.SessionId, HerdrExitReasons.RestartPresumedDead);
                 _logger.LogWarning(
                     "Pending herdr session {SessionId} exited ({Reason}) once herdr answered",
                     sidecar.SessionId, HerdrExitReasons.RestartPresumedDead);
                 break;
             case HerdrBarVerdict.ChildGone:
                 session.CompletePendingAsExited(HerdrExitReasons.ChildGone);
-                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+                HerdrPaneSidecar.Retire(_settings.SessionLogPath, sidecar.SessionId, HerdrExitReasons.ChildGone);
                 _logger.LogWarning(
                     "Pending herdr session {SessionId} exited ({Reason}); child is OS-dead",
                     sidecar.SessionId, HerdrExitReasons.ChildGone);
@@ -620,7 +625,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     {
         var exited = RunnerSession.CreateAdoptedHerdrExited(sidecar, _settings, _events, _logger, reason);
         _sessions.TryAdd(sidecar.SessionId, exited);
-        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, sidecar.SessionId);
+        HerdrPaneSidecar.Retire(_settings.SessionLogPath, sidecar.SessionId, reason);
         _logger.LogWarning(
             "Herdr pane {PaneId} for session {SessionId} registered as Exited ({Reason})",
             sidecar.PaneId, sidecar.SessionId, reason);
@@ -1885,9 +1890,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
             if (_herdrChild is not null)
             {
-                // CARD-0186 D4: there is no pty-host to shut down; deleting the sidecar is the
-                // hygiene the allocator and the next adoption sweep need.
-                HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+                // CARD-0224: the pane is still standing — retire to last-pane so the next
+                // launch of this id can target it. KillAsync's pane.close / PaneLeftOpen
+                // paths still plain-delete.
+                HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, "ProcessVanished");
                 _onHerdrPaneSetChanged?.Invoke();
                 return true;
             }

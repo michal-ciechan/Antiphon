@@ -105,12 +105,14 @@ public class HerdrAlwaysOnChannelParityTests
                 row.SessionBackend.ShouldBe(backend);
             }
 
+            string? firstPane = null;
+            var panesBeforeDeath = 0;
             if (backend == SessionBackend.Herdr)
             {
                 fake.ShouldNotBeNull();
                 harness.Runner.ShouldNotBeNull();
-                var firstPane = fake.RequireAgentPaneId();
-                var panesBeforeDeath = CountAgentPanes(fake);
+                firstPane = fake.RequireAgentPaneId();
+                panesBeforeDeath = CountAgentPanes(fake);
 
                 await harness.Runner.SimulateRunnerRestartAsync();
                 var adopted = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
@@ -120,6 +122,7 @@ public class HerdrAlwaysOnChannelParityTests
 
                 // P7 / R2: herdr "restart" restores the pane with a bare shell — child not listed.
                 fake.SetPaneProcessInfo(firstPane, shellPid: 1);
+                fake.ClearDetectedAgent(firstPane);
                 await harness.Runner.SimulateRunnerRestartAsync();
                 var afterEmpty = await harness.Runner.GetAsync(firstSessionId, CancellationToken.None);
                 afterEmpty.Status.ShouldBe("Exited", "emptied pane must not stay Running");
@@ -144,7 +147,7 @@ public class HerdrAlwaysOnChannelParityTests
                     .ShouldBe(SessionStatus.Failed);
             }
 
-            // Tick 1: Crash + RestartScheduled. Tick 2 (past backoff): resume into a new pane.
+            // Tick 1: Crash + RestartScheduled. Tick 2 (past backoff): resume into the same pane.
             await harness.Supervisor().TickAsync(CancellationToken.None);
             harness.Clock.Advance(TimeSpan.FromSeconds(10));
             await harness.Supervisor().TickAsync(CancellationToken.None);
@@ -162,8 +165,10 @@ public class HerdrAlwaysOnChannelParityTests
             if (backend == SessionBackend.Herdr)
             {
                 fake.ShouldNotBeNull();
-                CountAgentPanes(fake).ShouldBeGreaterThan(
-                    1, "resume allocates a new pane; the emptied one is left standing");
+                var resumedPane = fake.RequireAgentPaneId();
+                resumedPane.ShouldBe(firstPane, "CARD-0224: resume reuses the standing pane");
+                CountAgentPanes(fake).ShouldBe(
+                    panesBeforeDeath, "resume reuses the pane; no new tab is allocated");
             }
 
             var chatId = await BindChannelAsync(harness, agent.Id);
@@ -714,6 +719,7 @@ public class HerdrAlwaysOnChannelParityTests
     {
         public bool IsAlive(int pid, DateTime startedAt) => true;
         public string? TryGetProcessName(int pid) => "powershell";
+        public DateTime? TryGetStartTimeUtc(int pid) => DateTime.UtcNow.AddMinutes(-1);
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider

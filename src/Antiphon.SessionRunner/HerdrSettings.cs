@@ -37,6 +37,12 @@ public sealed class HerdrSettings
     /// </summary>
     public int LaunchDetectTimeoutMs { get; set; } = 60_000;
 
+    /// <summary>
+    /// CARD-0224: last-pane records older than this many days are pruned during herdr adoption.
+    /// Default 7. A last-pane whose pane is unknown at the next launch is deleted then, regardless.
+    /// </summary>
+    public int LastPaneRetentionDays { get; set; } = 7;
+
     /// <summary>CARD-0163: display-only transcript-state labels pushed to live herdr panes.</summary>
     public HerdrStatusPushSettings StatusPush { get; set; } = new();
 }

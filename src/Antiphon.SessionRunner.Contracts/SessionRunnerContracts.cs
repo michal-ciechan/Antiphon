@@ -50,7 +50,11 @@ public sealed record HerdrLaunchOptions(
     // CARD-0211: Antiphon Agent.Slug; the runner applies it as the herdr agent name after
     // detection (sanitised to herdr's [a-z][a-z0-9_-]{0,31}, never stolen from a live agent).
     // Null = do not rename — an old server in front of a new runner launches exactly as today.
-    string? AgentSlug = null);
+    string? AgentSlug = null,
+    // CARD-0224: last-pane of a previous session to target when THIS launch has a new id
+    // (FreshAfterResumeFailures). Null on the wire means "session id only" — an old server in
+    // front of a new runner gets the resume-arm behaviour. Never set on card spawns.
+    Guid? ReusePaneOfSessionId = null);
 
 /// <summary>Values for <see cref="RunnerLaunchRequest.TranscriptFormat"/>.</summary>
 public static class TranscriptFormats
@@ -512,6 +516,19 @@ public static class HerdrExitReasons
     /// foreign process — the refusal is ours).
     /// </summary>
     public const string PaneLeftOpen = "HerdrPaneLeftOpen";
+}
+
+/// <summary>
+/// How a herdr pane became ours (CARD-0224 / CARD-0213). Lives on the runner sidecar and
+/// last-pane record — never a DB column.
+/// </summary>
+public static class HerdrPaneOrigins
+{
+    /// <summary>Antiphon typed a launch script into this pane (or adopted a live process in a pane it created).</summary>
+    public const string Launched = "launched";
+
+    /// <summary>CARD-0213: operator attached a pane Antiphon never created. S1 never types into these.</summary>
+    public const string Attached = "attached";
 }
 
 /// <summary>

@@ -466,6 +466,136 @@ public class AgentControlServiceIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Fresh_herdr_arm_sets_ReusePaneOfSessionId_to_the_previous_session()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var freshAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, freshAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Reuse Pane Grok",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr),
+                CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.PersistentSessionId.ShouldNotBeNull();
+            var previousId = Guid.Parse(first.PersistentSessionId);
+
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Failed);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(
+                agent.Id, new StartAgentRequest(Fresh: true, RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldNotBe(first.PersistentSessionId);
+            freshAdapter.StartedHerdr.ShouldNotBeNull();
+            freshAdapter.StartedHerdr!.ReusePaneOfSessionId.ShouldBe(previousId);
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Resume_herdr_arm_leaves_ReusePaneOfSessionId_null()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "agent-workspace");
+            Directory.CreateDirectory(workspace);
+            var firstAdapter = new FakeAgentProtocolAdapter();
+            var resumeAdapter = new FakeAgentProtocolAdapter();
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Resume Pane Claude",
+                    workspace,
+                    SessionBackend: SessionBackend.Herdr),
+                CancellationToken.None);
+
+            var first = await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Failed);
+
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId);
+            resumeAdapter.StartedHerdr.ShouldNotBeNull();
+            resumeAdapter.StartedHerdr!.ReusePaneOfSessionId.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task Card_spawn_leaves_ReusePaneOfSessionId_null()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = NewProject(tempRoot);
+            var template = NewWorkflowTemplate(tempRoot);
+            db.Projects.Add(project);
+            db.WorkflowTemplates.Add(template);
+            await db.SaveChangesAsync();
+            var adapter = new FakeAgentProtocolAdapter { PromptOutput = "BOOTED" };
+            await using var harness = BuildHarness(tempRoot, [adapter], defaultKind: "ClaudeCode");
+
+            var board = await harness.BoardService.CreateAsync(
+                new CreateBoardRequest(project.Id, "Reuse Board"), CancellationToken.None);
+            var card = await harness.CardService.CreateAsync(
+                board.Id, new CreateCardRequest(null, "Card spawn work"), CancellationToken.None);
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(
+                    "Card Spawn Herdr",
+                    Path.Combine(tempRoot, "agent-workspace"),
+                    DefaultWorkflowTemplateId: template.Id,
+                    SessionBackend: SessionBackend.Herdr),
+                CancellationToken.None);
+            await harness.AgentService.AssignCardAsync(
+                agent.Id, new AssignAgentCardRequest(card.Id), CancellationToken.None);
+
+            await harness.Control.StartAsync(
+                agent.Id, new StartAgentRequest(RemoteControl: false), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            adapter.Started.ShouldBeTrue();
+            (adapter.StartedHerdr?.ReusePaneOfSessionId).ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     // The runner's CPU spin watchdog kills an IDLE session whose process was busy-looping a core
     // (incident 2026-08-08). The kill's exit code is non-zero, but it must land as a CLEAN stop —
     // session and agent Stopped, not Failed — and the next start must RESUME the same session id,

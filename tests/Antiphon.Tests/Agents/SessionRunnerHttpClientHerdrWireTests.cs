@@ -65,6 +65,45 @@ public class SessionRunnerHttpClientHerdrWireTests
     }
 
     [Test]
+    public async Task ReusePaneOfSessionId_appears_on_the_POST_body()
+    {
+        var previous = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var launched = await CaptureLaunchAsync(
+            new AgentLaunchSpec(
+                "grok",
+                AgentKind.Grok,
+                "grok.exe",
+                [],
+                new Dictionary<string, string>(),
+                Path.GetTempPath(),
+                120,
+                30,
+                Backend: SessionBackend.Herdr,
+                Herdr: new HerdrLaunchOptions(
+                    "none", "Antiphon", null, "g",
+                    AgentKind: HerdrAgentKinds.Grok,
+                    ReusePaneOfSessionId: previous)));
+
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.ReusePaneOfSessionId.ShouldBe(previous);
+    }
+
+    [Test]
+    public void Old_launch_body_without_reusePaneOfSessionId_deserialises_null()
+    {
+        const string json = """
+            {"sessionId":"00000000-0000-0000-0000-000000000001","exe":"grok.exe","args":[],"env":{},"cwd":"c:\\\\tmp","cols":120,"rows":30,"herdr":{"workspaceKey":"none","workspaceLabel":"Antiphon","workspaceCwd":null,"paneTitle":"g","agentKind":"grok","agentSlug":"g"}}
+            """;
+
+        var launched = JsonSerializer.Deserialize<RunnerLaunchRequest>(
+            json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        launched.ShouldNotBeNull();
+        launched.Herdr.ShouldNotBeNull();
+        launched.Herdr.ReusePaneOfSessionId.ShouldBeNull();
+        launched.Herdr.AgentSlug.ShouldBe("g");
+    }
+
+    [Test]
     public void Old_launch_body_without_agentSlug_deserialises_AgentSlug_null()
     {
         const string json = """

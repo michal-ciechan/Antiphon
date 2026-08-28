@@ -49,8 +49,10 @@ final state, so a Kind change in the same PATCH is caught), channel bind, and la
 (`AgentSessionService`), which also marks the session `Failed` with
 `"Herdr launch refused: {kind} is not supported on herdr."`
 
-Always-on and channel-bound agents are allowed on the lane (CARD-0186): a herdr restart does not
-survive, and an always-on agent is resumed into a new pane by supervision.
+Always-on and channel-bound agents are allowed on the lane (CARD-0186). A herdr restart does not
+survive the **exit** (the session is still `Exited(HerdrRestartPresumedDead)`); the **next launch**
+of that session id relaunches into the restored empty pane when herdr kept the pane id (CARD-0224),
+or allocates a new tab when the pane is unknown.
 
 ## 2. Turning it on
 
@@ -96,6 +98,17 @@ not in database columns.**
 <SessionLogPath>/herdr/<sessionId:N>.json
 ```
 
+An exit that **leaves the pane standing** (pid loss, herdr restart with layout restore) moves that
+sidecar to a **last-pane record** at `<SessionLogPath>/herdr/last-pane/<sessionId:N>.json`
+(CARD-0224) so the next launch of the same session id — or a fresh fallback with
+`ReusePaneOfSessionId` — can target it. `pane.close` success and `PaneLeftOpen` (a foreign process
+owns the pane) still plain-delete. Last-pane records older than 7 days are pruned on adoption.
+`LoadAll`, the allocator, and the event pump never read `last-pane/`.
+
+The sidecar's `Origin` is `launched` (Antiphon created the pane) or `attached` (CARD-0213; S1 never
+produces this). An attached-origin exit writes **no** last-pane record: Antiphon never types a
+launch script into a pane it did not create.
+
 Adoption (Layer A) runs *before* the runner's HTTP API listens, so it structurally cannot read the
 server's database; and the server has no herdr client at all, so DB-resident pane ids would have no
 reader. Herdr's own metadata tokens (`pane.report_metadata`, `antiphon-session`) are best-effort
@@ -129,13 +142,24 @@ Antiphon tab that has fewer than 4 live Antiphon panes; if none has a free slot,
 **Operator tabs — tabs with no Antiphon panes — are never split into.** Gaps left by stopped panes
 are not reflowed; the next launch refills them.
 
-Launch sequence: ensure workspace → allocate pane (`tab.create` / `pane.split`, env on both) →
-`pane.rename` → `pane.report_metadata` → check the pane shell is PowerShell → write
+Launch sequence: ensure workspace → **resolve the target pane** (CARD-0224: last-pane record for
+this session id, or `ReusePaneOfSessionId`) → then either relaunch/adopt in place or allocate
+(`tab.create` / `pane.split`, env on both) → `pane.rename` → `pane.report_metadata` → check the
+pane shell is PowerShell → write
 `<SessionLogPath>/herdr/<sessionId:N>.launch.ps1` (UTF-8 with BOM; `'exe' @(args)`) → type
 `& '<path>'` via `pane.send_text` + `pane.send_keys ["enter"]` → poll `pane.get` until
 `Agent` matches the expected kind (`claude` / `grok` / `codex`) → `agent.list` → `agent.rename
 <paneId> <slug>` (suffixed `-2`… if a live agent holds it; skipped, Warning, if the list or
 rename fails) → `pane.process_info` for the child pid → write the sidecar → delete the script.
+
+**Target resolution** (before the allocator; operator tabs are still never split into):
+
+| Pane state | Decision |
+|---|---|
+| No last-pane record, or pane unknown to `pane.get` | allocator (today's path) |
+| Empty PowerShell pane that was ours (`Origin = launched`) | **relaunch in place** — type the launch script into that pane; no `tab.create` / `pane.split` / `tab.rename` |
+| Live process whose argv names **our** session id (`--session-id` / `--resume` / `-s`/`-r`) and `pane.Agent` matches | **adopt in place** — bind the pid, type nothing |
+| Occupied by a different id, no id, a different kind, or more than one foreground process | **refuse** (`pane_occupied`) — never steal, never fall back to the allocator. The last-pane record is kept so a later backoff can retry once the pane is free. Codex never carries a session id in argv, so an occupied Codex pane is always refused. |
 A wrong detected kind, a non-PowerShell shell, or a detection timeout fails the launch
 (existing catch kills then disposes); the script is left in place for diagnosis. A rename
 failure never fails the launch. **Never `agent.start`.** Target the rename by pane id, never
@@ -196,8 +220,11 @@ refreshes both via `pane.get` + `pane.read`; without that refresh a screen-only 
 
 ## 6. Restarts — the constraint that shapes everything
 
-**A herdr session does not survive a herdr restart.** Antiphon's own `--resume` path owns
-repopulation. An always-on agent is resumed into a new pane by supervision (CARD-0186).
+**A herdr session does not survive a herdr restart** as a live process. Antiphon's own `--resume`
+path owns repopulation. When herdr restores the layout, the empty pane is still ours: the next
+launch **relaunches in place** into that pane (CARD-0224). When the pane id is gone (a restart
+that dropped the layout), the allocator opens a new tab — today's behaviour, unchanged. The
+**exit** is still `Exited(HerdrRestartPresumedDead)`; only the subsequent launch changed.
 
 **A *runner* restart is different** — the pane is still there, and adoption re-binds it, but only
 on positive evidence. The bar (CARD-0056 transposed) is:
@@ -255,7 +282,8 @@ screen-heuristic class as our own probes: disagreement is corroboration for a hu
 | Launch fails: pane shell is not PowerShell | herdr default_shell is not `powershell`/`pwsh` | set herdr `default_shell`, or use PtyHost |
 | Launch fails: detection timeout | `pane.get.agent` never became the expected kind | check the pane / script left on disk; raise `LaunchDetectTimeoutMs` only after measuring |
 | Launch throws instead of falling back | herdr missing/stopped/wrong protocol | start herdr, or set `Enabled: false` and relaunch on `PtyHost` |
-| Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; relaunch/resume from Antiphon |
+| Sessions `Exited(HerdrRestartPresumedDead)` in a batch | herdr restarted | expected; the next launch relaunches into the restored pane if it still exists, else allocates |
+| Launch throws `pane_occupied` | last-pane is held by a foreign / unidentifiable process | free the pane (or attach, CARD-0213); the always-on backoff will retry the same pane, never a new tab |
 | Deliveries silently deferring | `agent_status == "blocked"` — an approval UI has the pane | answer it in the pane, or attach and clear it |
 | Ceilings suddenly 900/3 000/1 024 | the runner is not advertising `herdr` | check `SessionRunner:Herdr:Enabled` and `GET :17204/capabilities` |
 | `HerdrStatusDisagreement` Warning | corroboration hint only | look at the pane; nothing is auto-corrected |

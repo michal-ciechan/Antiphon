@@ -1094,6 +1094,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 AgentSlug = string.IsNullOrWhiteSpace(agent?.Slug) ? null : agent.Slug,
             };
+            // CARD-0224: fresh-arm fallback still lands in the previous session's pane.
+            if (launchSpec.Herdr?.ReusePaneOfSessionId is Guid reuse)
+                herdr = herdr with { ReusePaneOfSessionId = reuse };
         }
 
         var spec = launchSpec with

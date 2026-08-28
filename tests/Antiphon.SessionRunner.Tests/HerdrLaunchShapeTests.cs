@@ -373,13 +373,128 @@ public class HerdrLaunchShapeTests
         PtyHostLingerHours = 0.02,
     };
 
+    [Test]
+    public async Task Resume_with_a_last_pane_must_not_call_tab_create()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+        const string workspaceKey = "card0224-resume";
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath, workspaceKey: workspaceKey);
+        var paneId = fake.RequireAgentPaneId();
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(paneId, shellPid: 1);
+
+        var dto = await StartAsync(runtime, sessionId, settings.SessionLogPath, workspaceKey: workspaceKey);
+        dto.Status.ShouldBe("Running");
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+        HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, sessionId))!
+            .PaneId.ShouldBe(paneId);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task ReusePaneOfSessionId_targets_the_previous_sessions_pane_for_a_fresh_id()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var previousId = Guid.NewGuid();
+        var freshId = Guid.NewGuid();
+        const string workspaceKey = "card0224-reuse";
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, previousId, settings.SessionLogPath, workspaceKey: workspaceKey);
+        var paneId = fake.RequireAgentPaneId();
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(paneId, shellPid: 1);
+
+        var dto = await StartAsync(
+            runtime, freshId, settings.SessionLogPath,
+            workspaceKey: workspaceKey, reusePaneOfSessionId: previousId);
+        dto.Status.ShouldBe("Running");
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+        HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(settings.SessionLogPath, freshId))!
+            .PaneId.ShouldBe(paneId);
+        File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, previousId)).ShouldBeFalse();
+
+        await runtime.KillAsync(freshId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Codex_occupied_pane_is_refused_even_with_the_right_kind()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.LaunchScriptAgentKind = HerdrAgentKinds.Codex;
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Codex);
+        var paneId = fake.RequireAgentPaneId();
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(
+            paneId, shellPid: 1,
+            [(900, "cmd.exe", new[] { "codex.cmd", "--ask-for-approval", "never" }, (string?)null)]);
+        fake.SeedDetectedAgent(paneId, HerdrAgentKinds.Codex);
+
+        var ex = await Should.ThrowAsync<HerdrLaunchException>(() =>
+            StartAsync(runtime, sessionId, settings.SessionLogPath, agentKind: HerdrAgentKinds.Codex));
+        ex.Code.ShouldBe(HerdrLaunchException.CodePaneOccupied);
+        ex.Message.ShouldContain(paneId);
+        File.Exists(HerdrLastPane.PathFor(settings.SessionLogPath, sessionId)).ShouldBeTrue();
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.close").ShouldBeFalse();
+
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
+    [Test]
+    public async Task Relaunch_in_place_never_calls_tab_rename_or_pane_split()
+    {
+        await using var fake = new FakeHerdrServer();
+        fake.Start();
+        await fake.WaitUntilListeningAsync();
+        var settings = BuildSettings();
+        var sessionId = Guid.NewGuid();
+
+        await using var runtime = BuildRuntime(settings, fake);
+        await StartAsync(runtime, sessionId, settings.SessionLogPath);
+        var paneId = fake.RequireAgentPaneId();
+        runtime.SweepVanishedSessions(new DeadProcessProbe());
+        fake.ClearDetectedAgent(paneId);
+        fake.SetPaneProcessInfo(paneId, shellPid: 1);
+
+        await StartAsync(runtime, sessionId, settings.SessionLogPath);
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "tab.rename").ShouldBeFalse();
+        fake.Requests.Any(r => r.GetProperty("method").GetString() == "pane.split").ShouldBeFalse();
+        fake.Requests.Count(r => r.GetProperty("method").GetString() == "tab.create").ShouldBe(1);
+
+        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(2), CancellationToken.None);
+        DeleteLogRoot(settings.SessionLogPath);
+    }
+
     private static Task<RunnerSessionDto> StartAsync(
         SessionRunnerRuntime runtime,
         Guid sessionId,
         string cwd,
         IReadOnlyDictionary<string, string>? env = null,
         string? agentKind = null,
-        string? agentSlug = null) =>
+        string? agentSlug = null,
+        string? workspaceKey = null,
+        Guid? reusePaneOfSessionId = null) =>
         runtime.StartAsync(
             new RunnerLaunchRequest(
                 sessionId,
@@ -391,12 +506,13 @@ public class HerdrLaunchShapeTests
                 Rows: 30,
                 Backend: SessionBackends.Herdr,
                 Herdr: new HerdrLaunchOptions(
-                    WorkspaceKey: $"test-{sessionId:N}"[..32],
+                    WorkspaceKey: workspaceKey ?? $"test-{sessionId:N}"[..32],
                     WorkspaceLabel: "card0187-launch",
                     WorkspaceCwd: cwd,
                     PaneTitle: "card0187-launch",
                     AgentKind: agentKind,
-                    AgentSlug: agentSlug)),
+                    AgentSlug: agentSlug,
+                    ReusePaneOfSessionId: reusePaneOfSessionId)),
             CancellationToken.None);
 
     private static void AssertTornDown(FakeHerdrServer fake, string scriptPath)

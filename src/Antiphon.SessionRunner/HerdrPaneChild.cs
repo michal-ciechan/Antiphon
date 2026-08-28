@@ -63,13 +63,14 @@ internal sealed class HerdrPaneChild : ISessionChild
     }
 
     /// <summary>
-    /// CARD-0162: raise Exited(<paramref name="reason"/>) once after verification fails. Deletes
-    /// the sidecar. Idempotent against MarkVanishedIfDead and repeated close events.
+    /// CARD-0162: raise Exited(<paramref name="reason"/>) once after verification fails. Retires
+    /// the sidecar to a last-pane record (CARD-0224) so the next launch of this id can target
+    /// the standing pane. Idempotent against MarkVanishedIfDead and repeated close events.
     /// </summary>
     public void RaiseVerifiedClosed(string reason = HerdrExitReasons.PaneClosed)
     {
         if (_exited) return;
-        HerdrPaneSidecar.TryDelete(_settings.SessionLogPath, _sessionId);
+        HerdrPaneSidecar.Retire(_settings.SessionLogPath, _sessionId, reason);
         RaiseExited(reason);
     }
 
@@ -93,7 +94,177 @@ internal sealed class HerdrPaneChild : ISessionChild
         await _client.ConnectAndValidateAsync(ct);
 
         var workspaceId = await EnsureWorkspaceAsync(opts, ct);
-        var (tabId, paneId) = await AllocatePaneAsync(workspaceId, opts, request, ct);
+        var target = await ResolveTargetPaneAsync(workspaceId, opts, request, expectedKind, ct);
+
+        if (target.Kind == TargetPaneKind.Adopt)
+            return await AdoptInPlaceAsync(request, opts, expectedKind, target, ct);
+
+        string tabId;
+        string paneId;
+        string sidecarWorkspaceId;
+        if (target.Kind == TargetPaneKind.Relaunch)
+        {
+            tabId = target.TabId;
+            paneId = target.PaneId;
+            sidecarWorkspaceId = target.WorkspaceId;
+        }
+        else
+        {
+            (tabId, paneId) = await AllocatePaneAsync(workspaceId, opts, request, ct);
+            sidecarWorkspaceId = workspaceId;
+        }
+
+        return await CompleteTypedLaunchAsync(
+            request, opts, expectedKind, sidecarWorkspaceId, tabId, paneId, ct);
+    }
+
+    private enum TargetPaneKind { Allocate, Relaunch, Adopt }
+
+    private sealed record TargetPane(
+        TargetPaneKind Kind,
+        string WorkspaceId,
+        string TabId,
+        string PaneId,
+        Guid? LastPaneSessionId = null,
+        HerdrPaneProcess? Occupant = null,
+        int? ShellPid = null);
+
+    /// <summary>
+    /// CARD-0224: decide whether this launch reuses a standing last-pane, adopts a live occupant,
+    /// or falls through to the allocator. Throws <see cref="HerdrLaunchException"/> with
+    /// <see cref="HerdrLaunchException.CodePaneOccupied"/> rather than stealing a foreign pane.
+    /// </summary>
+    private async Task<TargetPane> ResolveTargetPaneAsync(
+        string workspaceId,
+        HerdrLaunchOptions opts,
+        RunnerLaunchRequest request,
+        string expectedKind,
+        CancellationToken ct)
+    {
+        var candidate = HerdrLastPane.TryLoad(_settings.SessionLogPath, request.SessionId);
+        if (candidate is null && opts.ReusePaneOfSessionId is Guid prev)
+            candidate = HerdrLastPane.TryLoad(_settings.SessionLogPath, prev);
+
+        if (candidate is null)
+            return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+
+        if (!string.Equals(candidate.WorkspaceKey, opts.WorkspaceKey, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Last-pane workspace {OldKey} != {NewKey} for session {SessionId}; allocating a new pane",
+                candidate.WorkspaceKey, opts.WorkspaceKey, request.SessionId);
+            HerdrLastPane.TryDelete(_settings.SessionLogPath, candidate.SessionId);
+            return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+        }
+
+        HerdrPaneInfo pane;
+        try
+        {
+            pane = await _client.PaneGetAsync(candidate.PaneId, ct);
+        }
+        catch (HerdrApiException ex) when (IsPaneNotFound(ex))
+        {
+            _logger.LogInformation(
+                "Last-pane {PaneId} is unknown to herdr for session {SessionId}; allocating a new pane",
+                candidate.PaneId, request.SessionId);
+            HerdrLastPane.TryDelete(_settings.SessionLogPath, candidate.SessionId);
+            return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+        }
+
+        var proc = await _client.PaneProcessInfoAsync(candidate.PaneId, ct);
+        var foreground = proc.ForegroundProcesses ?? [];
+        var nonShell = foreground
+            .Where(p => proc.ShellPid is not int shell || p.Pid != shell)
+            .ToList();
+
+        if (nonShell.Count == 0)
+        {
+            // 4a: empty (or only the shell pid).
+            if (string.Equals(candidate.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation(
+                    "Last-pane {PaneId} was attached-origin; not typing into a pane we did not create",
+                    candidate.PaneId);
+                HerdrLastPane.TryDelete(_settings.SessionLogPath, candidate.SessionId);
+                return new TargetPane(TargetPaneKind.Allocate, workspaceId, TabId: "", PaneId: "");
+            }
+
+            await RequirePowerShellShellAsync(candidate.PaneId, ct);
+            return new TargetPane(
+                TargetPaneKind.Relaunch,
+                candidate.WorkspaceId,
+                candidate.TabId,
+                candidate.PaneId,
+                candidate.SessionId,
+                ShellPid: proc.ShellPid);
+        }
+
+        if (string.Equals(pane.Agent, expectedKind, StringComparison.Ordinal)
+            && nonShell.Count == 1
+            && TryReadNativeSessionId(nonShell[0].Argv, out var native)
+            && native == request.SessionId)
+        {
+            return new TargetPane(
+                TargetPaneKind.Adopt,
+                candidate.WorkspaceId,
+                candidate.TabId,
+                candidate.PaneId,
+                candidate.SessionId,
+                Occupant: nonShell[0],
+                ShellPid: proc.ShellPid);
+        }
+
+        // 4c: foreign / unidentifiable / wrong kind / more than one process — refuse, keep the record.
+        var occupant = nonShell[0];
+        var nativeText = TryReadNativeSessionId(occupant.Argv, out var foreignId)
+            ? foreignId.ToString("D")
+            : "no --session-id";
+        throw new HerdrLaunchException(
+            $"pane {candidate.PaneId} is occupied by {occupant.Name} pid {occupant.Pid} ({nativeText}); not stolen — run attach (CARD-0213) or free the pane",
+            HerdrLaunchException.CodePaneOccupied);
+    }
+
+    private static bool IsPaneNotFound(HerdrApiException ex) =>
+        string.Equals(ex.Code, "pane_not_found", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(ex.Code, "not_found", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// CARD-0224 4b: argv names our session via <c>--session-id</c> / <c>--resume</c> / <c>-s</c> /
+    /// <c>-r</c> / <c>--resume=</c>. Codex carries none of these, so 4b never proves identity for it.
+    /// </summary>
+    internal static bool TryReadNativeSessionId(IReadOnlyList<string>? argv, out Guid sessionId)
+    {
+        sessionId = default;
+        if (argv is null || argv.Count == 0)
+            return false;
+
+        for (var i = 0; i < argv.Count; i++)
+        {
+            var arg = argv[i];
+            if (arg.StartsWith("--resume=", StringComparison.OrdinalIgnoreCase))
+                return Guid.TryParse(arg.AsSpan("--resume=".Length), out sessionId);
+            if (IsSessionIdFlag(arg) && i + 1 < argv.Count)
+                return Guid.TryParse(argv[i + 1], out sessionId);
+        }
+
+        return false;
+    }
+
+    private static bool IsSessionIdFlag(string arg) =>
+        arg.Equals("--session-id", StringComparison.OrdinalIgnoreCase)
+        || arg.Equals("--resume", StringComparison.OrdinalIgnoreCase)
+        || arg.Equals("-s", StringComparison.OrdinalIgnoreCase)
+        || arg.Equals("-r", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<ChildStarted> CompleteTypedLaunchAsync(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string expectedKind,
+        string workspaceId,
+        string tabId,
+        string paneId,
+        CancellationToken ct)
+    {
         _paneId = paneId;
 
         await _client.PaneRenameAsync(paneId, opts.PaneTitle, ct);
@@ -131,6 +302,66 @@ internal sealed class HerdrPaneChild : ISessionChild
             _logger.LogWarning(ex, "Herdr pane.process_info failed after launch for session {SessionId}", request.SessionId);
         }
 
+        WriteSidecar(
+            request, opts, expectedKind, workspaceId, tabId, paneId,
+            childPid, shellPid, launchedAt, HerdrPaneOrigins.Launched);
+        HerdrLastPane.TryDelete(_settings.SessionLogPath, request.SessionId);
+        if (opts.ReusePaneOfSessionId is Guid prev && prev != request.SessionId)
+            HerdrLastPane.TryDelete(_settings.SessionLogPath, prev);
+
+        TryDeleteLaunchScript(scriptPath);
+
+        return new ChildStarted(childPid, HostPid: null, launchedAt);
+    }
+
+    private async Task<ChildStarted> AdoptInPlaceAsync(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string expectedKind,
+        TargetPane target,
+        CancellationToken ct)
+    {
+        var occupant = target.Occupant
+            ?? throw new InvalidOperationException("AdoptInPlace requires an occupant.");
+
+        _paneId = target.PaneId;
+
+        await _client.PaneRenameAsync(target.PaneId, opts.PaneTitle, ct);
+        await _client.PaneReportMetadataAsync(
+            target.PaneId,
+            new Dictionary<string, string?> { ["antiphon-session"] = request.SessionId.ToString("D") },
+            title: opts.PaneTitle,
+            ct);
+
+        await TryApplyAgentNameAsync(target.PaneId, opts.AgentSlug, ct);
+
+        var startUtc = _processLiveness.TryGetStartTimeUtc(occupant.Pid) ?? DateTime.UtcNow;
+        WriteSidecar(
+            request, opts, expectedKind, target.WorkspaceId, target.TabId, target.PaneId,
+            occupant.Pid, target.ShellPid, startUtc, HerdrPaneOrigins.Launched);
+        HerdrLastPane.TryDelete(_settings.SessionLogPath, request.SessionId);
+        if (target.LastPaneSessionId is Guid last && last != request.SessionId)
+            HerdrLastPane.TryDelete(_settings.SessionLogPath, last);
+
+        _logger.LogInformation(
+            "Adopted live {Kind} pid {Pid} in pane {PaneId} for session {SessionId} (operator relaunch; nothing typed)",
+            expectedKind, occupant.Pid, target.PaneId, request.SessionId);
+
+        return new ChildStarted(occupant.Pid, HostPid: null, startUtc);
+    }
+
+    private void WriteSidecar(
+        RunnerLaunchRequest request,
+        HerdrLaunchOptions opts,
+        string expectedKind,
+        string workspaceId,
+        string tabId,
+        string paneId,
+        int? childPid,
+        int? shellPid,
+        DateTime launchedAt,
+        string origin)
+    {
         _sidecar = new HerdrPaneSidecar
         {
             SessionId = request.SessionId,
@@ -143,13 +374,10 @@ internal sealed class HerdrPaneChild : ISessionChild
             LaunchedAtUtc = launchedAt,
             Cwd = request.Cwd,
             AgentKind = expectedKind,
+            Origin = origin,
             UpdatedAtUtc = launchedAt,
         };
         _sidecar.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
-
-        TryDeleteLaunchScript(scriptPath);
-
-        return new ChildStarted(childPid, HostPid: null, launchedAt);
     }
 
     /// <summary>
@@ -300,14 +528,16 @@ internal sealed class HerdrPaneChild : ISessionChild
         if (proc.ShellPid is not int shellPid || shellPid <= 0)
         {
             throw new HerdrLaunchException(
-                "pane shell is missing; set herdr default_shell or use PtyHost");
+                "pane shell is missing; set herdr default_shell or use PtyHost",
+                HerdrLaunchException.CodePaneShell);
         }
 
         var name = _processLiveness.TryGetProcessName(shellPid);
         if (!IsPowerShellProcessName(name))
         {
             throw new HerdrLaunchException(
-                $"pane shell '{name ?? $"pid {shellPid}"}' is not PowerShell; set herdr default_shell or use PtyHost");
+                $"pane shell '{name ?? $"pid {shellPid}"}' is not PowerShell; set herdr default_shell or use PtyHost",
+                HerdrLaunchException.CodePaneShell);
         }
 
         return shellPid;

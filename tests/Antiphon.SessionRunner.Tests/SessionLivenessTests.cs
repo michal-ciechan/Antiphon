@@ -195,5 +195,6 @@ public class SessionLivenessTests
     {
         public bool IsAlive(int pid, DateTime startedAt) => alive;
         public string? TryGetProcessName(int pid) => "powershell";
+        public DateTime? TryGetStartTimeUtc(int pid) => DateTime.UtcNow.AddMinutes(-1);
     }
 }

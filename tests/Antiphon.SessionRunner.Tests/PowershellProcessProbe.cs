@@ -9,6 +9,8 @@ internal sealed class PowershellProcessProbe : IProcessLivenessProbe
     public bool IsAlive(int pid, DateTime startedAt) => true;
 
     public string? TryGetProcessName(int pid) => "powershell";
+
+    public DateTime? TryGetStartTimeUtc(int pid) => DateTime.UtcNow.AddMinutes(-1);
 }
 
 internal sealed class NamedProcessProbe(string? name) : IProcessLivenessProbe
@@ -16,4 +18,15 @@ internal sealed class NamedProcessProbe(string? name) : IProcessLivenessProbe
     public bool IsAlive(int pid, DateTime startedAt) => true;
 
     public string? TryGetProcessName(int pid) => name;
+
+    public DateTime? TryGetStartTimeUtc(int pid) => DateTime.UtcNow.AddMinutes(-1);
+}
+
+internal sealed class DeadProcessProbe : IProcessLivenessProbe
+{
+    public bool IsAlive(int pid, DateTime startedAt) => false;
+
+    public string? TryGetProcessName(int pid) => "powershell";
+
+    public DateTime? TryGetStartTimeUtc(int pid) => null;
 }

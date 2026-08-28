@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
 
@@ -29,6 +30,11 @@ public sealed record HerdrPaneSidecar
     public string? Cwd { get; init; }
     /// <summary>Herdr-detected kind at launch (claude/grok/codex); optional, operator/S3 only.</summary>
     public string? AgentKind { get; init; }
+    /// <summary>
+    /// CARD-0224 / CARD-0213: <see cref="HerdrPaneOrigins.Launched"/> (default / pre-field files)
+    /// or <see cref="HerdrPaneOrigins.Attached"/>. Attached exits write no last-pane record.
+    /// </summary>
+    public string? Origin { get; init; }
     public DateTime UpdatedAtUtc { get; init; }
 
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
@@ -74,6 +80,32 @@ public sealed record HerdrPaneSidecar
         {
             // Best-effort cleanup on stop; a stale sidecar is cleaned on the next adoption sweep.
         }
+    }
+
+    /// <summary>
+    /// CARD-0224: move this session's sidecar to a last-pane record (so the next launch of this
+    /// id can target the standing pane) then delete the sidecar. An attached-origin sidecar is
+    /// deleted without a last-pane record — Antiphon never types into a pane it did not create.
+    /// </summary>
+    public static void Retire(string sessionLogPath, Guid sessionId, string exitReason)
+    {
+        var path = PathFor(sessionLogPath, sessionId);
+        var sidecar = TryLoad(path);
+        if (sidecar is not null
+            && !string.Equals(sidecar.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                HerdrLastPane.FromSidecar(sidecar, exitReason)
+                    .SaveAtomic(HerdrLastPane.PathFor(sessionLogPath, sessionId));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort; the next launch will allocate if the record is missing.
+            }
+        }
+
+        TryDelete(sessionLogPath, sessionId);
     }
 
     /// <summary>Every sidecar under a session-log root (the herdr adoption sweep reads these).</summary>

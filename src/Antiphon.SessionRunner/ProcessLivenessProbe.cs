@@ -17,6 +17,13 @@ public interface IProcessLivenessProbe
     /// or <see langword="null"/> if the pid is gone or unreadable.
     /// </summary>
     string? TryGetProcessName(int pid);
+
+    /// <summary>
+    /// CARD-0224: process start time (UTC) for an adopted occupant we did not spawn.
+    /// <see cref="IsAlive"/> PID-reuse tolerance and Claude's C3 both key on it.
+    /// Null if the pid is gone or unreadable.
+    /// </summary>
+    DateTime? TryGetStartTimeUtc(int pid);
 }
 
 public sealed class SystemProcessLivenessProbe : IProcessLivenessProbe
@@ -61,6 +68,30 @@ public sealed class SystemProcessLivenessProbe : IProcessLivenessProbe
         {
             using var process = Process.GetProcessById(pid);
             return process.HasExited ? null : process.ProcessName;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    public DateTime? TryGetStartTimeUtc(int pid)
+    {
+        if (pid <= 0)
+            return null;
+
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.HasExited ? null : process.StartTime.ToUniversalTime();
         }
         catch (ArgumentException)
         {

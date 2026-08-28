@@ -2,6 +2,7 @@ using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Tests.Agents;
 
@@ -91,6 +92,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
     // that precedes the work prompt. SentPrompt still holds the last prompt for older tests.
     public IReadOnlyList<string> Prompts => _prompts;
     public IReadOnlyList<string> StartedArgs { get; private set; } = [];
+    public HerdrLaunchOptions? StartedHerdr { get; private set; }
     public IReadOnlyDictionary<string, string> StartedEnv { get; private set; } =
         new Dictionary<string, string>();
     // The session StartAsync was asked to run (null until then). Lets a factory-made fake record its
@@ -131,6 +133,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter
 
         Started = true;
         StartedArgs = spec.Args.ToArray();
+        StartedHerdr = spec.Herdr;
         StartedEnv = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal);
         StartedSessionId = spec.SessionId;
         Cols = spec.Cols;

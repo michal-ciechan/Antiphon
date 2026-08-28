@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -307,6 +308,25 @@ public sealed class AgentControlService
                 _logger.LogInformation(
                     "Agent {AgentName}: re-pointed {Count} in-flight task(s) from session {Previous} to new session {New}",
                     agent.Name, remapped, previousSessionId, session.Id);
+
+            // CARD-0224 D3: a Fresh (or FreshAfterResumeFailures) new-row launch still targets
+            // the agent's last pane. Capture the previous id NOW — PersistentSessionId is
+            // overwritten to the new row after this method returns, before the queued launch
+            // runs. Never set on the resume arm (same id) or on card spawns.
+            if (agent.SessionBackend == SessionBackend.Herdr)
+            {
+                spec = spec with
+                {
+                    Herdr = new HerdrLaunchOptions(
+                        WorkspaceKey: spec.Herdr?.WorkspaceKey ?? "none",
+                        WorkspaceLabel: spec.Herdr?.WorkspaceLabel ?? "Antiphon",
+                        WorkspaceCwd: spec.Herdr?.WorkspaceCwd,
+                        PaneTitle: spec.Herdr?.PaneTitle ?? "agent",
+                        AgentKind: spec.Herdr?.AgentKind,
+                        AgentSlug: spec.Herdr?.AgentSlug,
+                        ReusePaneOfSessionId: previousSessionId),
+                };
+            }
         }
 
         _launchQueue.EnqueueInteractiveSession(session.Id, agent.Id, spec, remoteControlName, notes: notes);

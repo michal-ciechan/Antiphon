@@ -598,8 +598,16 @@ public sealed class HerdrBackendUnavailableException : Exception
     public HerdrBackendUnavailableException(string message, Exception? innerException = null) : base(message, innerException) { }
 }
 
-/// <summary>CARD-0187: herdr-lane launch failed (wrong kind, detection timeout, non-PowerShell shell).</summary>
+/// <summary>CARD-0187 / CARD-0224: herdr-lane launch failed (wrong kind, detection timeout, non-PowerShell shell, occupied pane).</summary>
 public sealed class HerdrLaunchException : Exception
 {
-    public HerdrLaunchException(string message) : base(message) { }
+    public const string CodePaneOccupied = "pane_occupied";
+    public const string CodePaneShell = "pane_shell";
+
+    public HerdrLaunchException(string message, string? code = null) : base(message)
+    {
+        Code = code;
+    }
+
+    public string? Code { get; }
 }
