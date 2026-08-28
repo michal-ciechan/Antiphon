@@ -585,13 +585,16 @@ public class AgentSupervisionTests
         public IDisposable? OnChange(Action<T, string?> listener) => null;
     }
 
+    /// CARD-0222: an OFFSET over the real clock, not a frozen instant — see
+    /// HerdrAlwaysOnChannelParityTests' identical provider for why a frozen clock deadlocks any
+    /// SessionMessageQueueService poll loop.
     private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider
     {
-        private DateTimeOffset _now = start;
+        private TimeSpan _offset = start - DateTimeOffset.UtcNow;
 
-        public override DateTimeOffset GetUtcNow() => _now;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
 
-        public void Advance(TimeSpan by) => _now += by;
+        public void Advance(TimeSpan by) => _offset += by;
     }
 
     private sealed class QueueAdapterFactory(IEnumerable<IAgentProtocolAdapter> adapters)

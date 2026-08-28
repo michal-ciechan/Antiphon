@@ -722,13 +722,18 @@ public class HerdrAlwaysOnChannelParityTests
         public DateTime? TryGetStartTimeUtc(int pid) => DateTime.UtcNow.AddMinutes(-1);
     }
 
+    /// CARD-0222: an OFFSET over the real clock, not a frozen instant — this is the only
+    /// TimeProvider in the harness, so it also feeds every `deadline = UtcNow() + N` poll loop in
+    /// SessionMessageQueueService, whose Task.Delay(…, _timeProvider) runs in real time. A frozen
+    /// GetUtcNow never reaches the deadline (dumpasync leaf: SettlePostEvidenceAsync → DelayPromise).
+    /// Same lesson as AgentSupervisionTests' identical provider.
     private sealed class MutableTimeProvider(DateTimeOffset start) : TimeProvider
     {
-        private DateTimeOffset _now = start;
+        private TimeSpan _offset = start - DateTimeOffset.UtcNow;
 
-        public override DateTimeOffset GetUtcNow() => _now;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
 
-        public void Advance(TimeSpan by) => _now += by;
+        public void Advance(TimeSpan by) => _offset += by;
     }
 
     private sealed class OptionsMonitorStub<T>(T value) : IOptionsMonitor<T>
