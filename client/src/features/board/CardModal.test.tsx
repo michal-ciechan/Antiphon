@@ -1,5 +1,5 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CardDto } from '../../api/boards'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -79,10 +79,30 @@ function discussionHandler(cardId = 'card-1') {
   return http.get(`/api/cards/${cardId}/discussion`, () => HttpResponse.json([]))
 }
 
+function cardHandler(value: CardDto = card) {
+  return http.get('/api/cards/card-1', () => HttpResponse.json(value))
+}
+
+beforeEach(() => {
+  server.use(cardHandler())
+})
+
 describe('CardModal', () => {
+  it('fetches the full card only after the modal opens', async () => {
+    const getSpy = vi.fn()
+    server.use(agentDefinitionsHandler(), discussionHandler(), http.get('/api/cards/card-1', () => {
+      getSpy()
+      return HttpResponse.json(card)
+    }))
+
+    renderWithProviders(<CardModal boardId="board-1" card={card} opened onClose={() => undefined} />)
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalledTimes(1))
+  })
+
   it('a card in Needs decision leads with its question and a Decide button', async () => {
     server.use(
-      agentDefinitionsHandler(), discussionHandler(),
+      agentDefinitionsHandler(), discussionHandler(), cardHandler({ ...card, status: 'NeedsDecision' }),
       http.get('/api/attention', () => HttpResponse.json({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items: [{
         kind: 'CardNeedsDecision', severity: 'Critical', taskId: null, sessionId: null, agentId: null, messageId: null,
         cardId: 'card-1', boardId: 'board-1', title: 'CARD-0001 — Implement terminal', headline: 'Needs a decision', evidence: 'Should this use WebGL?', sinceUtc: '2026-08-27T10:00:00Z', subtreeCostUsd: null, actions: ['OpenCard'],
@@ -99,7 +119,7 @@ describe('CardModal', () => {
 
   it('falls back to the revision history when the feed has no row yet', async () => {
     server.use(
-      agentDefinitionsHandler(), discussionHandler(),
+      agentDefinitionsHandler(), discussionHandler(), cardHandler({ ...card, status: 'NeedsDecision' }),
       http.get('/api/attention', () => HttpResponse.json({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items: [] })),
       http.get('/api/cards/card-1/revisions', () => HttpResponse.json([{
         id: 'revision-1', cardId: 'card-1', revisionNumber: 1, kind: 'Reopen', title: null, description: null, priority: null, labels: null,
@@ -262,28 +282,21 @@ describe('CardModal', () => {
   })
 
   it('disables spawn while a session is stopping', async () => {
-    server.use(agentDefinitionsHandler(), discussionHandler())
+    const stoppingCard: CardDto = {
+      ...card,
+      sessions: [
+        {
+          id: 'session-1', definitionName: 'claude', agentKind: 'ClaudeCode', status: 'Stopping',
+          cwd: 'D:/repo', createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:00Z',
+          lastSeenAt: '2026-01-01T00:00:01Z', endedAt: null, exitCode: null, failureReason: null,
+        },
+      ],
+    }
+    server.use(agentDefinitionsHandler(), discussionHandler(), cardHandler(stoppingCard))
     renderWithProviders(
       <CardModal
         boardId="board-1"
-        card={{
-          ...card,
-          sessions: [
-            {
-              id: 'session-1',
-              definitionName: 'claude',
-              agentKind: 'ClaudeCode',
-              status: 'Stopping',
-              cwd: 'D:/repo',
-              createdAt: '2026-01-01T00:00:00Z',
-              startedAt: '2026-01-01T00:00:00Z',
-              lastSeenAt: '2026-01-01T00:00:01Z',
-              endedAt: null,
-              exitCode: null,
-              failureReason: null,
-            },
-          ],
-        }}
+        card={stoppingCard}
         opened
         onClose={() => undefined}
       />,

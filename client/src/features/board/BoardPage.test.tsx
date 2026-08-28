@@ -305,7 +305,7 @@ describe('moving a card', () => {
     await userEvent.type(await screen.findByLabelText('Reason'), 'fixed by CARD-0041')
     await userEvent.click(screen.getByRole('button', { name: 'Move' }))
 
-    const optimistic = queryClient.getQueryData<BoardDetailDto>(boardKeys.detail('board-1'))
+    const optimistic = queryClient.getQueryData<BoardDetailDto>(boardKeys.detailSummary('board-1'))
     expect(optimistic?.columns[2].cards).toHaveLength(0)
     expect(optimistic?.columns[3].cards.map((item) => item.id)).toContain('card-2')
 
@@ -331,7 +331,7 @@ describe('moving a card', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Move' }))
 
     await waitFor(() => {
-      const restored = queryClient.getQueryData<BoardDetailDto>(boardKeys.detail('board-1'))
+      const restored = queryClient.getQueryData<BoardDetailDto>(boardKeys.detailSummary('board-1'))
       expect(restored?.columns[2].cards[0].id).toBe('card-2')
       expect(restored?.columns[3].cards.map((item) => item.id)).not.toContain('card-2')
     })
@@ -547,6 +547,22 @@ describe('the mobile state pager', () => {
 })
 
 describe('BoardPage board selector', () => {
+  it('requests the selected board summary representation', async () => {
+    const queries: string[] = []
+    server.use(
+      http.get('/api/boards/board-1', ({ request }) => {
+        queries.push(new URL(request.url).search)
+        return HttpResponse.json(board)
+      }),
+      http.get('/api/boards', () => HttpResponse.json([boardSummary()])),
+      http.get('/api/projects', () => HttpResponse.json([])),
+      agentDefinitionsHandler(),
+    )
+    renderBoardRoute('/boards/board-1')
+    await screen.findByRole('button', { name: 'New Card' })
+    expect(queries).toContain('?view=summary')
+  })
+
   it('opens the card workspace from the card query string and clears it on close', async () => {
     server.use(...boardHandlers())
 

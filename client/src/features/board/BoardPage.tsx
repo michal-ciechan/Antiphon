@@ -85,7 +85,10 @@ export function BoardPage() {
   // card's board carries the toggle with it. The chip that sets it lives in `BoardShapeView`,
   // which reads the same search params.
   const showArchived = searchParams.get('archived') === '1'
-  const { data: board, isLoading: boardLoading, error } = useBoard(id, { includeArchived: showArchived })
+  const { data: board, isLoading: boardLoading, error } = useBoard(id, {
+    includeArchived: showArchived,
+    view: 'summary',
+  })
   const boardIds = useMemo(() => (boards ?? []).map((item) => item.id), [boards])
   const allBoards = useAllBoardDetails(boardIds, !id && !boardsLoading)
   const selectedBoardLoading = !!id && boardLoading

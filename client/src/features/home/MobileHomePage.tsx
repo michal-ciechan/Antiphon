@@ -21,7 +21,7 @@ import {
 } from '../../api/agentTasks'
 import { attentionKeys, useAttention, type AttentionItemDto } from '../../api/attention'
 import { apiGet, getApiErrorMessage } from '../../api/client'
-import { useAllBoardDetails, useBoards } from '../../api/boards'
+import { useCards } from '../../api/boards'
 import { usePlanCatalog } from '../../api/plans'
 import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
 import { displayIdentifier } from '../../shared/cardIdentifier'
@@ -86,13 +86,10 @@ export function MobileHomePage() {
     stampLastSeen(window.localStorage, new Date(nowMs).toISOString())
   }, [nowMs])
 
-  const boards = useBoards()
-  const boardIds = useMemo(() => (boards.data ?? []).map((board) => board.id), [boards.data])
-  const boardDetails = useAllBoardDetails(boardIds)
-  const cards = useMemo(
-    () => (boardDetails.data ?? []).flatMap((board) => board.columns.flatMap((column) => column.cards)),
-    [boardDetails.data],
-  )
+  const cardList = useCards({
+    updatedSince: lastSeen ?? new Date(nowMs - 24 * 60 * 60 * 1000).toISOString(),
+  })
+  const cards = useMemo(() => cardList.data?.cards ?? [], [cardList.data])
 
   // "Plans that appeared" (spec §D3) — the delta computation stays pure; the catalog is just one
   // more list the caller already holds, and an unresolved root contributes nothing rather than

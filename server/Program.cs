@@ -158,6 +158,7 @@ try
         .ValidateOnStart();
     builder.Services.Configure<TranscriptBindingSettings>(builder.Configuration.GetSection("TranscriptBinding"));
     builder.Services.Configure<ContextWindowSettings>(builder.Configuration.GetSection("ContextWindow"));
+    builder.Services.Configure<CardsSettings>(builder.Configuration.GetSection("Cards"));
     builder.Services.AddSingleton<IValidateOptions<ContextCompactionSettings>, ContextCompactionSettingsValidator>();
     builder.Services.AddOptions<ContextCompactionSettings>()
         .Bind(builder.Configuration.GetSection("ContextCompaction"))

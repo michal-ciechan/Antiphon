@@ -8,7 +8,9 @@ import {
   reopenCard,
   useArchiveCard,
   useBoard,
+  useCard,
   useCardRevisions,
+  useMoveCard,
   useReopenCard,
   useUnarchiveCard,
   useUpdateCardContent,
@@ -303,5 +305,47 @@ describe('useBoard', () => {
     // Every mutation invalidates `boardKeys.detail(id)`; react-query matches by key PREFIX, so
     // nesting the archived key beneath it is what let slice A add zero invalidation call sites.
     expect(boardKeys.detailArchived('board-1').slice(0, 2)).toEqual([...boardKeys.detail('board-1')])
+  })
+})
+
+describe('summary and full-card cache boundary', () => {
+  it('fetches a full card under its own cache key', async () => {
+    const getSpy = vi.fn()
+    server.use(http.get('/api/cards/card-1', () => {
+      getSpy()
+      return HttpResponse.json(cardStub)
+    }))
+
+    const { result, queryClient } = renderHookWithProviders(() => useCard('card-1'))
+    await waitFor(() => expect(result.current.data?.description).toBe(cardStub.description))
+
+    expect(getSpy).toHaveBeenCalledTimes(1)
+    expect(queryClient.getQueryData(boardKeys.card('card-1'))).toEqual(cardStub)
+    expect(queryClient.getQueryData(boardKeys.detail('board-1'))).toBeUndefined()
+  })
+
+  it('moves a summary card without replacing its preview description', async () => {
+    const summary: BoardDetailDto = {
+      ...boardStub,
+      columns: [
+        { id: 'backlog', stateKey: 'backlog', name: 'Backlog', columnOrder: 0, cardStatus: 'Backlog', isActive: false, isTerminal: false, maxConcurrentSessions: null, cards: [{ ...cardStub, description: 'preview…', hasMore: true }] },
+        { id: 'review', stateKey: 'review', name: 'Review', columnOrder: 1, cardStatus: 'Review', isActive: false, isTerminal: false, maxConcurrentSessions: null, cards: [] },
+      ],
+    }
+    server.use(http.patch('/api/cards/card-1', () => new Promise((resolve) => {
+      setTimeout(() => resolve(HttpResponse.json({ card: cardStub, spawnedSessionId: null, spawnSuppressed: false })), 100)
+    })))
+
+    const { result, queryClient } = renderHookWithProviders(() => useMoveCard('board-1'))
+    queryClient.setQueryData(boardKeys.detailSummary('board-1'), summary)
+    result.current.mutate({ cardId: 'card-1', request: { boardColumnId: 'review', concurrencyToken: 'token-1' } })
+
+    await waitFor(() => {
+      const optimistic = queryClient.getQueryData<BoardDetailDto>(boardKeys.detailSummary('board-1'))!
+      expect(optimistic.columns[1].cards[0]).toMatchObject({
+        description: 'preview…', hasMore: true, boardColumnId: 'review', status: 'Review',
+      })
+    })
+    expect(queryClient.getQueryData(boardKeys.card('card-1'))).toBeUndefined()
   })
 })

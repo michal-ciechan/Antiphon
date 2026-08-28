@@ -20,6 +20,7 @@ public sealed class BoardService
     private readonly IEventBus _eventBus;
     private readonly TimeProvider _timeProvider;
     private readonly ContextWindowSettings _contextWindow;
+    private readonly CardsSettings _cards;
     private readonly ILogger<BoardService>? _logger;
 
     public BoardService(
@@ -27,13 +28,15 @@ public sealed class BoardService
         IEventBus eventBus,
         TimeProvider timeProvider,
         IOptions<ContextWindowSettings>? contextWindow = null,
-        ILogger<BoardService>? logger = null)
+        ILogger<BoardService>? logger = null,
+        IOptions<CardsSettings>? cards = null)
     {
         _db = db;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _contextWindow = contextWindow?.Value ?? new ContextWindowSettings();
         _logger = logger;
+        _cards = cards?.Value ?? new CardsSettings();
     }
 
     public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct)
@@ -61,13 +64,20 @@ public sealed class BoardService
     }
 
     public async Task<BoardDetailDto> GetByIdAsync(Guid id, CancellationToken ct) =>
-        await GetByIdAsync(id, includeArchived: false, ct);
+        await GetByIdAsync(id, includeArchived: false, summary: false, ct);
 
     public async Task<BoardDetailDto> GetByIdAsync(Guid id, bool includeArchived, CancellationToken ct)
+        => await GetByIdAsync(id, includeArchived, summary: false, ct);
+
+    public async Task<BoardDetailDto> GetByIdAsync(
+        Guid id, bool includeArchived, bool summary, CancellationToken ct)
     {
         var board = await LoadBoardAsync(id, ct);
-        return await SessionContextUsage.AttachToBoardAsync(
-            _db, ToDetailDto(board, includeArchived), _contextWindow, _logger, ct);
+        var detail = ToDetailDto(board, includeArchived);
+        if (summary)
+            return ToSummaryBoardDto(detail, _cards.SummaryPreviewChars);
+
+        return await SessionContextUsage.AttachToBoardAsync(_db, detail, _contextWindow, _logger, ct);
     }
 
     /// <summary>
@@ -266,6 +276,54 @@ public sealed class BoardService
                 ? new ExternalIssueDto(ext.TrackerKind, ext.ExternalKey, ext.Url)
                 : null);
     }
+
+    /// <summary>Reuses the full-card projection, then removes data list surfaces never render.</summary>
+    internal static CardDto ToSummaryDto(CardDto card, int previewChars)
+    {
+        var description = Preview(card.Description, previewChars);
+        var terminalReason = card.TerminalReason is null
+            ? new TextPreview(null, false)
+            : Preview(card.TerminalReason, previewChars);
+
+        return card with
+        {
+            Description = description.Text ?? string.Empty,
+            TerminalReason = terminalReason.Text,
+            Sessions = [],
+            HasMore = description.HasMore || terminalReason.HasMore,
+        };
+    }
+
+    private static BoardDetailDto ToSummaryBoardDto(BoardDetailDto board, int previewChars) => board with
+    {
+        Columns = board.Columns
+            .Select(column => column with
+            {
+                Cards = column.Cards.Select(card => ToSummaryDto(card, previewChars)).ToList(),
+            })
+            .ToList(),
+    };
+
+    private static TextPreview Preview(string? value, int previewChars)
+    {
+        if (value is null || value.Length <= previewChars)
+            return new TextPreview(value, false);
+
+        var limit = Math.Max(1, previewChars);
+        var boundary = value.LastIndexOfAny([' ', '\t', '\r', '\n'], Math.Min(limit - 1, value.Length - 1));
+        if (boundary <= 0)
+        {
+            // A single word longer than the limit has no earlier legal cut point. Keep the word
+            // intact rather than producing a misleading fragment, then mark it as a preview.
+            boundary = value.IndexOfAny([' ', '\t', '\r', '\n'], limit);
+            if (boundary < 0)
+                return new TextPreview(value, false);
+        }
+
+        return new TextPreview(value[..boundary].TrimEnd() + "…", true);
+    }
+
+    private sealed record TextPreview(string? Text, bool HasMore);
 
     internal static CardRevisionDto ToRevisionDto(CardRevision revision)
     {

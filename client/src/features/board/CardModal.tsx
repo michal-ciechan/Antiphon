@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications'
 import { useMemo, useState } from 'react'
 import { TbHistory, TbInfoCircle, TbMessage, TbPencil, TbPlayerPlay, TbTerminal2, TbTimeline, TbX } from 'react-icons/tb'
 import type { BoardColumnDto, CardDto } from '../../api/boards'
-import { CARD_LIMITS, useCardDiscussion, useCardRevisions, useCreateCard, useSpawnCard } from '../../api/boards'
+import { CARD_LIMITS, useCard, useCardDiscussion, useCardRevisions, useCreateCard, useSpawnCard } from '../../api/boards'
 import { useAttention } from '../../api/attention'
 import { displayIdentifier, externalIssueTag } from '../../shared/cardIdentifier'
 import { AgentPicker } from './AgentPicker'
@@ -27,12 +27,16 @@ interface CardModalProps {
   onClose: () => void
 }
 
-export function CardModal({ boardId, card, columns = [], opened, onClose }: CardModalProps) {
+export function CardModal({ boardId, card: summaryCard, columns = [], opened, onClose }: CardModalProps) {
   const [definitionName, setDefinitionName] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   // On a phone the thread IS the card's landing view (spec §4): what happened, what's stuck, and
   // the one-tap verbs — the terminal is the desktop's default, not the thumb's.
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false
+  // List views hold previews. The full card has its own cache key and is fetched only once the
+  // modal is actually open; neither cache is ever populated from the other.
+  const fullCard = useCard(summaryCard?.id, opened && !!summaryCard)
+  const card = fullCard.data ?? summaryCard
   const spawnCard = useSpawnCard(boardId)
   const discussion = useCardDiscussion(card?.id, opened && !!card)
   const attention = useAttention(opened && card?.status === 'NeedsDecision')

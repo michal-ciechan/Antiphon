@@ -242,6 +242,95 @@ public class CardCorrectionApiTests
         body.TryGetProperty("maxTitleLength", out _).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task Summary_view_previews_at_a_word_boundary_and_leaves_short_text_whole()
+    {
+        var longDescription = string.Join(" ", Enumerable.Repeat("abcd", 42));
+        var (board, _) = await SeedAsync("Summary preview board", "Long description", longDescription);
+        using var client = _factory.CreateClient();
+
+        var summary = await client.GetFromJsonAsync<BoardDetailDto>(
+            $"/api/boards/{board.Id}?view=summary", Json);
+        var card = summary!.Columns.SelectMany(column => column.Cards).Single();
+
+        // Forty words plus their thirty-nine separators is 199 characters: the next legal cut
+        // point nearest the 200-character cap, and never the middle of word 41.
+        card.Description.ShouldBe(string.Join(" ", Enumerable.Repeat("abcd", 40)) + "…");
+        card.HasMore.ShouldBeTrue();
+        card.Sessions.ShouldBeEmpty();
+
+        var shortCard = await SeedAdditionalCardAsync(board.Id, "Short description", "This remains whole.");
+        var refreshed = await client.GetFromJsonAsync<BoardDetailDto>(
+            $"/api/boards/{board.Id}?view=summary", Json);
+        var unchanged = refreshed!.Columns.SelectMany(column => column.Cards).Single(c => c.Id == shortCard.Id);
+        unchanged.Description.ShouldBe("This remains whole.");
+        unchanged.HasMore.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Full_board_views_remain_wire_identical_and_do_not_emit_summary_metadata()
+    {
+        var (board, _) = await SeedAsync("Full view board", "As filed", "The complete text.");
+        using var client = _factory.CreateClient();
+
+        var noView = await client.GetStringAsync($"/api/boards/{board.Id}");
+        var explicitFull = await client.GetStringAsync($"/api/boards/{board.Id}?view=full");
+
+        noView.ShouldBe(explicitFull);
+        noView.ShouldNotContain("hasMore");
+    }
+
+    [Test]
+    public async Task Cards_list_requires_a_filter_and_filters_needs_decision_across_boards()
+    {
+        var (board, decision) = await SeedAsync("Decision list board", "Need an answer", "Choose one.");
+        using var scope = _factory.Services.CreateScope();
+        var boards = scope.ServiceProvider.GetRequiredService<BoardService>();
+        var cards = scope.ServiceProvider.GetRequiredService<CardService>();
+        var second = await boards.CreateAsync(new CreateBoardRequest(_projectId, "Second decision board"), CancellationToken.None);
+        var ordinary = await cards.CreateAsync(second.Id, new CreateCardRequest(null, "Not waiting", "No decision."), CancellationToken.None);
+        var decisionColumn = board.Columns.Single(column => column.CardStatus == CardStatus.NeedsDecision);
+        await cards.MoveAsync(decision.Id, new MoveCardRequest(decisionColumn.Id, decision.ConcurrencyToken, "Question for operator."), CancellationToken.None);
+        using var client = _factory.CreateClient();
+
+        var unbounded = await client.GetAsync("/api/cards");
+        unbounded.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        var result = await client.GetFromJsonAsync<CardListDto>("/api/cards?status=NeedsDecision", Json);
+        result!.Cards.Select(card => card.Id).ShouldBe([decision.Id]);
+        result.Cards.ShouldAllBe(card => card.Status == CardStatus.NeedsDecision);
+        result.Cards.ShouldAllBe(card => card.Sessions.Count == 0);
+        ordinary.Status.ShouldBe(CardStatus.Backlog);
+    }
+
+    [Test]
+    public async Task Cards_list_updated_since_uses_the_card_update_timestamp_not_creation_time()
+    {
+        var (board, created) = await SeedAsync("Updated since board", "Old then revised", "Original.");
+        var threshold = DateTime.UtcNow.AddMinutes(-1);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Cards.Where(card => card.Id == created.Id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(card => card.CreatedAt, DateTime.UtcNow.AddDays(-2)));
+            var cards = scope.ServiceProvider.GetRequiredService<CardService>();
+            var current = await cards.GetByIdAsync(created.Id, CancellationToken.None);
+            await cards.UpdateContentAsync(
+                created.Id,
+                new UpdateCardContentRequest(current.ConcurrencyToken, "Revised after filing.", Description: "Current."),
+                CancellationToken.None);
+        }
+        using var client = _factory.CreateClient();
+
+        var result = await client.GetFromJsonAsync<CardListDto>(
+            $"/api/cards?updatedSince={Uri.EscapeDataString(threshold.ToString("O"))}", Json);
+
+        result!.Cards.Select(card => card.Id).ShouldContain(created.Id);
+        result.Cards.Single(card => card.Id == created.Id).CreatedAt.ShouldBeLessThan(threshold);
+        result.Cards.Single(card => card.Id == created.Id).UpdatedAt.ShouldBeGreaterThan(threshold);
+        board.Id.ShouldNotBe(Guid.Empty);
+    }
+
     /// <summary>Seeds one project, one board and one card through the real services.</summary>
     private async Task<(BoardDetailDto Board, CardDto Card)> SeedAsync(
         string boardName, string cardTitle, string cardDescription)
@@ -271,5 +360,14 @@ public class CardCorrectionApiTests
         var card = await cards.CreateAsync(
             board.Id, new CreateCardRequest(null, cardTitle, cardDescription), CancellationToken.None);
         return (board, card);
+    }
+
+    private async Task<CardDto> SeedAdditionalCardAsync(Guid boardId, string title, string description)
+    {
+        using var scope = _factory.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<CardService>().CreateAsync(
+            boardId,
+            new CreateCardRequest(null, title, description),
+            CancellationToken.None);
     }
 }

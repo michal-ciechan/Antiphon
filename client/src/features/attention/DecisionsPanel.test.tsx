@@ -13,25 +13,57 @@ const decision = (overrides: Partial<AttentionItemDto> = {}): AttentionItemDto =
 })
 
 function serve(items: AttentionItemDto[]) {
+  const cards = items
+    .filter((item) => item.cardId && item.boardId)
+    .map((item) => ({
+      id: item.cardId!, boardId: item.boardId!, boardColumnId: 'column-decision', ownerSessionId: null,
+      currentWorktreeId: null, assignedAgentId: null, assignedAgentName: null, agentQueuePosition: null,
+      activeWorkflowRunId: null, workflowRunStatus: null, currentWorkflowStageName: null,
+      identifier: item.title.split(' ')[0], title: item.title.replace(/^.*?\u2014 /, ''), description: '', priority: 1,
+      labels: [], status: 'NeedsDecision', concurrencyToken: 'token-1', createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: item.sinceUtc, startedAt: null, completedAt: null, terminalReason: null, sessions: [],
+      revisionCount: 1, archivedAt: null, archivedReason: null, archivedBy: null,
+    }))
   server.use(
     http.get('/api/attention', () => HttpResponse.json<AttentionDto>({ generatedAt: '2026-08-27T12:00:00Z', runnerConsulted: true, items })),
     http.get('/api/boards', () => HttpResponse.json([{
       id: 'board-1', projectId: 'project-1', projectName: 'Antiphon', name: 'Main board', description: '',
       trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     }])),
-    http.get('/api/boards/board-1', () => HttpResponse.json({
-      id: 'board-1', projectId: 'project-1', projectName: 'Antiphon', name: 'Main board', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1,
-      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', columns: [{
+    http.get('/api/cards', () => HttpResponse.json({ cards, truncated: false })),
+    http.get('/api/boards/board-1/columns', () => HttpResponse.json([
+      {
         id: 'column-backlog', stateKey: 'backlog', name: 'Backlog', columnOrder: 0, cardStatus: 'Backlog', isActive: false, isTerminal: false, maxConcurrentSessions: null, cards: [],
       }, {
         id: 'column-decision', stateKey: 'needs-decision', name: 'Needs decision', columnOrder: 0, cardStatus: 'NeedsDecision', isActive: false, isTerminal: false, maxConcurrentSessions: null,
-        cards: [{ id: 'card-1', boardId: 'board-1', boardColumnId: 'column-decision', ownerSessionId: null, currentWorktreeId: null, assignedAgentId: null, assignedAgentName: null, agentQueuePosition: null, activeWorkflowRunId: null, workflowRunStatus: null, currentWorkflowStageName: null, identifier: 'CARD-0010', title: 'Choose release train', description: '', priority: 1, labels: [], status: 'NeedsDecision', concurrencyToken: 'token-1', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-08-27T09:00:00Z', startedAt: null, completedAt: null, terminalReason: null, sessions: [], revisionCount: 1, archivedAt: null, archivedReason: null, archivedBy: null }],
-      }],
-    })),
+        cards: [],
+      },
+    ])),
   )
 }
 
 describe('DecisionsPanel', () => {
+  it('uses the NeedsDecision card list rather than the board-detail fan-out', async () => {
+    let requestedStatus: string | null = null
+    let boardDetailRequests = 0
+    serve([decision()])
+    server.use(
+      http.get('/api/cards', ({ request }) => {
+        requestedStatus = new URL(request.url).searchParams.get('status')
+        return HttpResponse.json({ cards: [], truncated: false })
+      }),
+      http.get('/api/boards/:id', () => {
+        boardDetailRequests++
+        return HttpResponse.json({})
+      }),
+    )
+
+    renderWithProviders(<DecisionsPanel />)
+
+    await waitFor(() => expect(requestedStatus).toBe('NeedsDecision'))
+    expect(boardDetailRequests).toBe(0)
+  })
+
   it('groups decision cards by board, oldest first, with the whole question unclamped', async () => {
     serve([decision(), decision({ cardId: 'card-2', title: 'CARD-0011 — Second', sinceUtc: '2026-08-27T10:00:00Z' })])
     renderWithProviders(<DecisionsPanel />)

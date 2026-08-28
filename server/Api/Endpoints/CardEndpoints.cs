@@ -1,5 +1,7 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Api.Endpoints;
 
@@ -31,6 +33,22 @@ public static class CardEndpoints
             CardService.MaxDescriptionLength,
             CardService.MaxReasonLength,
             CardService.MaxActorLength)));
+
+        cards.MapGet("/", async (
+            DateTime? updatedSince,
+            CardStatus? status,
+            Guid? boardId,
+            CardService service,
+            CancellationToken cancellationToken) =>
+        {
+            if (updatedSince is null && status is null && boardId is null)
+            {
+                throw new BadRequestException(
+                    "At least one of updatedSince, status, or boardId is required.");
+            }
+
+            return Results.Ok(await service.GetSummaryAsync(updatedSince, status, boardId, cancellationToken));
+        });
 
         cards.MapGet("/{id}", async (
             string id,

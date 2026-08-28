@@ -1,6 +1,6 @@
 import { useParams } from 'react-router'
 import { Alert, Box } from '@mantine/core'
-import { useBoard } from '../../api/boards'
+import { useBoardColumns } from '../../api/boards'
 import { useCardThread } from '../../api/cardThread'
 import { CardThreadPanel } from './CardThreadPanel'
 
@@ -16,7 +16,7 @@ import { CardThreadPanel } from './CardThreadPanel'
 export function CardThreadPage() {
   const { cardId } = useParams<{ cardId: string }>()
   const thread = useCardThread(cardId ?? null)
-  const board = useBoard(thread.data?.card.boardId)
+  const columns = useBoardColumns(thread.data?.card.boardId)
 
   if (!cardId) {
     return (
@@ -31,7 +31,7 @@ export function CardThreadPage() {
       <CardThreadPanel
         identifier={cardId}
         boardId={thread.data?.card.boardId}
-        columns={board.data?.columns ?? []}
+        columns={columns.data ?? []}
         showCardHeader
       />
     </Box>

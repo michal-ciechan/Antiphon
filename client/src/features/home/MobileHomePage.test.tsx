@@ -126,43 +126,32 @@ function seed({
       }),
     ),
     http.get('/api/agent-tasks', () => HttpResponse.json(tasks)),
-    http.get('/api/boards', () =>
-      HttpResponse.json(
-        cards.length === 0
-          ? []
-          : [{ id: 'b1', projectId: 'p1', projectName: 'antiphon', name: 'main', description: '', trackerKind: 'Internal', maxConcurrentSessions: 1, cardCount: cards.length, createdAt: '2026-08-16T08:00:00Z', updatedAt: '2026-08-17T10:00:00Z' }],
-      ),
-    ),
-    http.get('/api/boards/b1', () =>
-      HttpResponse.json({
-        id: 'b1',
-        projectId: 'p1',
-        projectName: 'antiphon',
-        name: 'main',
-        description: '',
-        trackerKind: 'Internal',
-        maxConcurrentSessions: 1,
-        columns: [
-          {
-            id: 'col1',
-            stateKey: 'done',
-            name: 'Done',
-            columnOrder: 0,
-            cardStatus: 'Done',
-            isActive: false,
-            isTerminal: true,
-            maxConcurrentSessions: null,
-            cards,
-          },
-        ],
-        createdAt: '2026-08-16T08:00:00Z',
-        updatedAt: '2026-08-17T10:00:00Z',
-      }),
-    ),
+    http.get('/api/cards', () => HttpResponse.json({ cards, truncated: false })),
   )
 }
 
 describe('MobileHomePage', () => {
+  it('uses the filtered card list instead of fetching board details', async () => {
+    let requestedSince: string | null = null
+    let boardDetailRequests = 0
+    seed({ cards: [card()] })
+    server.use(
+      http.get('/api/cards', ({ request }) => {
+        requestedSince = new URL(request.url).searchParams.get('updatedSince')
+        return HttpResponse.json({ cards: [card()], truncated: false })
+      }),
+      http.get('/api/boards/:id', () => {
+        boardDetailRequests++
+        return HttpResponse.json({})
+      }),
+    )
+
+    renderWithProviders(<MobileHomePage />)
+
+    await waitFor(() => expect(requestedSince).toBeTruthy())
+    expect(boardDetailRequests).toBe(0)
+  })
+
   it('renders its shell and per-band skeletons while both home queries are pending', () => {
     seed()
     server.use(

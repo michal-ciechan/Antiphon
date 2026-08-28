@@ -75,6 +75,7 @@ public sealed class CardService
     // unresolved and the launch tripwire refuses them by name. Production always registers it.
     private readonly ApiKeyEnvResolver? _apiKeyEnvResolver;
     private readonly DelegationSettings _delegationSettings;
+    private readonly CardsSettings _cards;
 
     public CardService(
         AppDbContext db,
@@ -89,7 +90,8 @@ public sealed class CardService
         ILogger<CardService>? logger = null,
         ApiKeyEnvResolver? apiKeyEnvResolver = null,
         IOptions<DelegationSettings>? delegationSettings = null,
-        AgentSessionLaunchComposer? launchComposer = null)
+        AgentSessionLaunchComposer? launchComposer = null,
+        IOptions<CardsSettings>? cards = null)
     {
         _db = db;
         _agentRegistry = agentRegistry;
@@ -104,6 +106,7 @@ public sealed class CardService
         _logger = logger;
         _apiKeyEnvResolver = apiKeyEnvResolver;
         _delegationSettings = delegationSettings?.Value ?? new DelegationSettings();
+        _cards = cards?.Value ?? new CardsSettings();
     }
 
     public async Task<CardDto> CreateAsync(Guid boardId, CreateCardRequest request, CancellationToken ct)
@@ -151,6 +154,42 @@ public sealed class CardService
         var card = await LoadCardAsync(id, ct);
         return await SessionContextUsage.AttachToCardAsync(
             _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
+    }
+
+    public async Task<CardListDto> GetSummaryAsync(
+        DateTime? updatedSince,
+        CardStatus? status,
+        Guid? boardId,
+        CancellationToken ct)
+    {
+        IQueryable<Card> query = _db.Cards
+            .AsNoTracking()
+            .Where(card => card.ArchivedAt == null);
+
+        if (updatedSince is DateTime since)
+            query = query.Where(card => card.UpdatedAt >= since);
+        if (status is CardStatus requestedStatus)
+            query = query.Where(card => card.Status == requestedStatus);
+        if (boardId is Guid requestedBoardId)
+            query = query.Where(card => card.BoardId == requestedBoardId);
+
+        var limit = Math.Max(1, _cards.MaxListResults);
+        var cards = await query
+            .Include(card => card.AssignedAgent)
+            .Include(card => card.ActiveWorkflowRun)!.ThenInclude(run => run!.CurrentStage)
+            .Include(card => card.ExternalIssueRef)
+            .OrderByDescending(card => card.UpdatedAt)
+            .ThenBy(card => card.Id)
+            .Take(limit + 1)
+            .ToListAsync(ct);
+
+        var truncated = cards.Count > limit;
+        if (truncated)
+            cards.RemoveAt(cards.Count - 1);
+
+        return new CardListDto(
+            cards.Select(card => BoardService.ToSummaryDto(BoardService.ToCardDto(card), _cards.SummaryPreviewChars)).ToList(),
+            truncated);
     }
 
     /// <summary>

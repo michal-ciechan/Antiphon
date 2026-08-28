@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type TrackerKind = 'Internal' | 'Linear' | 'GitHubIssues' | 'Jira'
@@ -86,6 +86,19 @@ export interface CardDto {
    */
   autoDispatchHeldAt?: string | null
   externalIssue?: ExternalIssueDto | null
+  /** True only when the summary representation cut card text. Full-card responses omit it. */
+  hasMore?: boolean
+}
+
+export interface CardListDto {
+  cards: CardDto[]
+  truncated: boolean
+}
+
+export interface CardListFilters {
+  updatedSince?: string
+  status?: CardStatus
+  boardId?: string
 }
 
 export interface ExternalIssueDto {
@@ -385,6 +398,7 @@ export interface TrackerSyncRunResultDto {
 export const boardKeys = {
   all: ['boards'] as const,
   detail: (id: string) => ['boards', id] as const,
+  detailSummary: (id: string) => ['boards', id, 'summary'] as const,
   /**
    * The archived-inclusive board is a SIBLING of `detail`, not a variant of it: the two payloads
    * differ and must not share a cache entry. Nesting it under `['boards', id]` is what keeps every
@@ -395,6 +409,10 @@ export const boardKeys = {
   allDetails: ['boards', 'all-details'] as const,
   allDetailsFor: (ids: string[]) => [...boardKeys.allDetails, ids] as const,
   workflow: (id: string) => ['boards', id, 'workflow'] as const,
+  columns: (id: string) => ['boards', id, 'columns'] as const,
+  card: (cardId: string) => ['cards', 'detail', cardId] as const,
+  cards: ['cards', 'list'] as const,
+  cardsFor: (filters: CardListFilters) => ['cards', 'list', filters] as const,
   cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
   cardRevisions: (cardId: string) => ['cards', cardId, 'revisions'] as const,
   cardDiscussion: (cardId: string) => ['cards', cardId, 'discussion'] as const,
@@ -407,14 +425,25 @@ export function useBoards() {
   })
 }
 
-export function useBoard(id: string | undefined, options: { includeArchived?: boolean } = {}) {
+export function useBoard(
+  id: string | undefined,
+  options: { includeArchived?: boolean; view?: 'full' | 'summary' } = {},
+) {
   const includeArchived = options.includeArchived ?? false
+  const view = options.view ?? 'full'
   return useQuery({
     queryKey: id
-      ? (includeArchived ? boardKeys.detailArchived(id) : boardKeys.detail(id))
+      ? (includeArchived
+        ? boardKeys.detailArchived(id)
+        : view === 'summary' ? boardKeys.detailSummary(id) : boardKeys.detail(id))
       : ['boards', 'missing'],
-    queryFn: () =>
-      apiGet<BoardDetailDto>(`/boards/${id}${includeArchived ? '?includeArchived=true' : ''}`),
+    queryFn: () => {
+      const query = new URLSearchParams()
+      if (includeArchived) query.set('includeArchived', 'true')
+      if (view === 'summary') query.set('view', 'summary')
+      const suffix = query.size ? `?${query}` : ''
+      return apiGet<BoardDetailDto>(`/boards/${id}${suffix}`)
+    },
     enabled: !!id,
   })
 }
@@ -422,8 +451,50 @@ export function useBoard(id: string | undefined, options: { includeArchived?: bo
 export function useAllBoardDetails(boardIds: string[], enabled = true) {
   return useQuery({
     queryKey: boardKeys.allDetailsFor(boardIds),
-    queryFn: () => Promise.all(boardIds.map((boardId) => apiGet<BoardDetailDto>(`/boards/${boardId}`))),
+    queryFn: () => Promise.all(boardIds.map((boardId) => apiGet<BoardDetailDto>(`/boards/${boardId}?view=summary`))),
     enabled: enabled && boardIds.length > 0,
+  })
+}
+
+export function useBoardColumns(id: string | undefined) {
+  return useQuery({
+    queryKey: id ? boardKeys.columns(id) : ['boards', 'missing', 'columns'],
+    queryFn: () => apiGet<BoardColumnDto[]>(`/boards/${id}/columns`),
+    enabled: !!id,
+  })
+}
+
+/** Decisions need move targets, not every card on each decision's board. */
+export function useBoardColumnsFor(boardIds: string[], enabled = true) {
+  return useQueries({
+    queries: boardIds.map((boardId) => ({
+      queryKey: boardKeys.columns(boardId),
+      queryFn: () => apiGet<BoardColumnDto[]>(`/boards/${boardId}/columns`),
+      enabled,
+    })),
+  })
+}
+
+export function useCards(filters: CardListFilters, enabled = true) {
+  return useQuery({
+    queryKey: boardKeys.cardsFor(filters),
+    queryFn: () => {
+      const query = new URLSearchParams()
+      if (filters.updatedSince) query.set('updatedSince', filters.updatedSince)
+      if (filters.status) query.set('status', filters.status)
+      if (filters.boardId) query.set('boardId', filters.boardId)
+      return apiGet<CardListDto>(`/cards?${query}`)
+    },
+    enabled,
+  })
+}
+
+/** Full card cache; deliberately unrelated to any board-detail summary cache. */
+export function useCard(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: id ? boardKeys.card(id) : ['cards', 'missing', 'detail'],
+    queryFn: () => apiGet<CardDto>(`/cards/${id}`),
+    enabled: enabled && !!id,
   })
 }
 
@@ -480,29 +551,35 @@ export function useCreateCard(boardId: string) {
 
 export function useMoveCard(boardId: string) {
   const queryClient = useQueryClient()
+  // Keep the two board representations in sync, but do not prefix-match `['boards', id]` here:
+  // that prefix also owns the columns-only query, whose array has no `columns` member to move.
+  const detailKeys = [boardKeys.detail(boardId), boardKeys.detailSummary(boardId)] as const
   return useMutation({
     mutationFn: ({ cardId, request }: { cardId: string; request: MoveCardRequest }) =>
       apiPatch<MoveCardResult>(`/cards/${cardId}`, request),
     onMutate: async ({ cardId, request }) => {
-      await queryClient.cancelQueries({ queryKey: boardKeys.detail(boardId) })
-      const previous = queryClient.getQueryData<BoardDetailDto>(boardKeys.detail(boardId))
-      if (previous) {
-        queryClient.setQueryData(boardKeys.detail(boardId), moveCardOptimistically(previous, cardId, request.boardColumnId))
-      }
+      await Promise.all(detailKeys.map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true })))
+      const previous = detailKeys.map((queryKey) =>
+        [queryKey, queryClient.getQueryData<BoardDetailDto>(queryKey)] as const)
+      detailKeys.forEach((queryKey) => {
+        queryClient.setQueryData<BoardDetailDto>(queryKey, (board) =>
+          board ? moveCardOptimistically(board, cardId, request.boardColumnId) : board)
+      })
       return { previous }
     },
     onError: (_error, _variables, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(boardKeys.detail(boardId), context.previous)
-      }
+      context?.previous.forEach(([key, board]) => queryClient.setQueryData(key, board))
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+      queryClient.invalidateQueries({ queryKey: boardKeys.cards })
     },
-    onSuccess: () => {
+    onSuccess: (_result, { cardId }) => {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+      queryClient.invalidateQueries({ queryKey: boardKeys.cards })
+      queryClient.invalidateQueries({ queryKey: boardKeys.card(cardId) })
     },
   })
 }
@@ -517,6 +594,8 @@ function invalidateAfterCardWrite(queryClient: ReturnType<typeof useQueryClient>
   queryClient.invalidateQueries({ queryKey: boardKeys.all })
   queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
   queryClient.invalidateQueries({ queryKey: boardKeys.cardRevisions(cardId) })
+  queryClient.invalidateQueries({ queryKey: boardKeys.cards })
+  queryClient.invalidateQueries({ queryKey: boardKeys.card(cardId) })
 }
 
 export function useUpdateCardContent(boardId: string) {
@@ -575,6 +654,7 @@ export function useSpawnCard(boardId: string) {
       queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
       queryClient.invalidateQueries({ queryKey: boardKeys.all })
       queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
+      queryClient.invalidateQueries({ queryKey: boardKeys.cards })
     },
   })
 }

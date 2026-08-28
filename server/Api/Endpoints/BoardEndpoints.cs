@@ -23,9 +23,11 @@ public static class BoardEndpoints
             Guid id,
             BoardService service,
             CancellationToken cancellationToken,
-            bool includeArchived = false) =>
+            bool includeArchived = false,
+            string view = "full") =>
         {
-            return Results.Ok(await service.GetByIdAsync(id, includeArchived, cancellationToken));
+            var summary = string.Equals(view, "summary", StringComparison.OrdinalIgnoreCase);
+            return Results.Ok(await service.GetByIdAsync(id, includeArchived, summary, cancellationToken));
         });
 
         // The board's shape without its contents: what a scripted move needs to turn a column NAME

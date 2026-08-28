@@ -72,6 +72,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: (p) => [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['cards', 'list'],
       ['cards', 'thread'],
       // A card parked for (or moved out of) a human decision changes the same attention feed as
       // delegated-task events. This makes the decision chip and panel update on the next paint.
@@ -84,6 +85,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['orchestrator', 'state'],
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
+      ['cards', 'list'],
     ],
   },
   {

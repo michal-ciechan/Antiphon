@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
@@ -69,7 +70,12 @@ public sealed record CardDto(
     string? ArchivedReason = null,
     string? ArchivedBy = null,
     DateTime? AutoDispatchHeldAt = null,
-    ExternalIssueDto? ExternalIssue = null);
+    ExternalIssueDto? ExternalIssue = null,
+    // Full card routes predate summary views. Omitting false preserves that wire contract byte for
+    // byte; summary consumers deserialize an omitted value as false.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HasMore = false);
+
+public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated);
 
 public sealed record ExternalIssueDto(
     TrackerKind TrackerKind,

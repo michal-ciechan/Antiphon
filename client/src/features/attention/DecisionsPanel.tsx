@@ -2,7 +2,7 @@ import { Alert, Badge, Button, Center, Group, Loader, Paper, Stack, Text, Title 
 import { TbAlertCircle, TbChecks, TbHelpCircle } from 'react-icons/tb'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router'
-import { useAllBoardDetails, useBoards } from '../../api/boards'
+import { useBoardColumnsFor, useBoards, useCards } from '../../api/boards'
 import { useAttention, type AttentionItemDto } from '../../api/attention'
 import { formatDuration } from '../delegations/taskVisuals'
 import { ageSeconds, targetOf } from './attentionVisuals'
@@ -15,17 +15,25 @@ import { MoveMenu } from '../board/MoveMenu'
 export function DecisionsPanel() {
   const attention = useAttention()
   const boards = useBoards()
-  const boardIds = useMemo(() => (boards.data ?? []).map((board) => board.id), [boards.data])
-  const details = useAllBoardDetails(boardIds, boards.isSuccess)
+  const cards = useCards({ status: 'NeedsDecision' })
   const navigate = useNavigate()
   const items = useMemo(
     () => (attention.data?.items ?? []).filter((item) => item.kind === 'CardNeedsDecision'),
     [attention.data],
   )
   const boardById = useMemo(() => new Map((boards.data ?? []).map((board) => [board.id, board])), [boards.data])
-  const detailById = useMemo(
-    () => new Map((details.data ?? []).map((board) => [board.id, board])),
-    [details.data],
+  const decisionBoardIds = useMemo(
+    () => [...new Set((cards.data?.cards ?? []).map((card) => card.boardId))],
+    [cards.data],
+  )
+  const columnQueries = useBoardColumnsFor(decisionBoardIds, cards.isSuccess)
+  const columnsByBoardId = useMemo(
+    () => new Map(decisionBoardIds.map((id, index) => [id, columnQueries[index]?.data ?? []])),
+    [columnQueries, decisionBoardIds],
+  )
+  const cardById = useMemo(
+    () => new Map((cards.data?.cards ?? []).map((card) => [card.id, card])),
+    [cards.data],
   )
 
   if (attention.isLoading || boards.isLoading) {
@@ -61,8 +69,8 @@ export function DecisionsPanel() {
         <Stack key={boardName} gap={6}>
           <Text size="xs" tt="uppercase" fw={700} c="dimmed">{boardName}</Text>
           {rows.map((item) => {
-            const detail = item.boardId ? detailById.get(item.boardId) : undefined
-            const card = detail?.columns.flatMap((column) => column.cards).find((candidate) => candidate.id === item.cardId)
+            const card = item.cardId ? cardById.get(item.cardId) : undefined
+            const columns = item.boardId ? columnsByBoardId.get(item.boardId) ?? [] : []
             const age = ageSeconds(item)
             const target = targetOf(item)
             return (
@@ -77,7 +85,7 @@ export function DecisionsPanel() {
                   </Group>
                   <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{item.evidence}</Text>
                   <Group gap="xs">
-                    {card && detail && <MoveMenu boardId={detail.id} card={card} columns={detail.columns} variant="decide" />}
+                    {card && columns.length > 0 && <MoveMenu boardId={card.boardId} card={card} columns={columns} variant="decide" />}
                     <Button size="xs" variant="subtle" onClick={() => target && navigate(target)}>Open card</Button>
                   </Group>
                 </Stack>
