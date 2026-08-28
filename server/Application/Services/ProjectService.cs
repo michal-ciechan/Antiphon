@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
@@ -17,24 +18,31 @@ public class ProjectService
     private readonly GithubSettings _githubSettings;
     private readonly ILogger<ProjectService> _logger;
     private readonly ProjectReadinessCache? _readinessCache;
+    private readonly IEventBus? _eventBus;
 
     public ProjectService(
         AppDbContext db,
         IHttpClientFactory httpClientFactory,
         IOptions<GithubSettings> githubSettings,
         ILogger<ProjectService> logger,
-        ProjectReadinessCache? readinessCache = null)
+        ProjectReadinessCache? readinessCache = null,
+        IEventBus? eventBus = null)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
         _githubSettings = githubSettings.Value;
         _logger = logger;
         _readinessCache = readinessCache;
+        _eventBus = eventBus;
     }
 
-    public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken)
+    public async Task<List<ProjectDto>> GetAllAsync(CancellationToken cancellationToken) =>
+        await GetAllAsync(includeArchived: false, cancellationToken);
+
+    public async Task<List<ProjectDto>> GetAllAsync(bool includeArchived, CancellationToken cancellationToken)
     {
         var projects = await _db.Projects
+            .Where(p => includeArchived || p.ArchivedAt == null)
             .OrderBy(p => p.Name)
             .ToListAsync(cancellationToken);
 
@@ -174,6 +182,57 @@ public class ProjectService
         _logger.LogInformation(
             "Deleted project {ProjectName} ({ProjectId}) with {BoardCount} board(s) and {CardCount} card(s)",
             project.Name, project.Id, counts.BoardCount, counts.CardCount);
+    }
+
+    public async Task<ProjectDto> ArchiveAsync(
+        Guid id, ArchiveProjectRequest request, CancellationToken cancellationToken)
+    {
+        EntityArchive.Validate(request.Reason, request.ArchivedBy);
+
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Project), id);
+        if (project.ArchivedAt is not null)
+            throw new ConflictException($"Project '{project.Name}' is already archived.");
+
+        await EntityArchive.EnsureProjectArchiveableAsync(_db, project.Id, project.Name, cancellationToken);
+
+        var now = DateTime.UtcNow;
+        project.ArchivedAt = now;
+        project.ArchivedReason = request.Reason.Trim();
+        project.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
+        project.UpdatedAt = now;
+        await _db.SaveChangesAsync(cancellationToken);
+        _readinessCache?.Remove(project.Id);
+        if (_eventBus is not null)
+            await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = true }, cancellationToken);
+
+        _logger.LogInformation("Archived project {ProjectName} ({ProjectId})", project.Name, project.Id);
+        return ToDto(project);
+    }
+
+    public async Task<ProjectDto> UnarchiveAsync(
+        Guid id, UnarchiveProjectRequest request, CancellationToken cancellationToken)
+    {
+        EntityArchive.Validate(request.Reason, request.UnarchivedBy);
+
+        var project = await _db.Projects
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Project), id);
+        if (project.ArchivedAt is null)
+            throw new ConflictException($"Project '{project.Name}' is not archived.");
+
+        project.ArchivedAt = null;
+        project.ArchivedReason = null;
+        project.ArchivedBy = null;
+        project.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+        _readinessCache?.Remove(project.Id);
+        if (_eventBus is not null)
+            await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = project.Id, archived = false }, cancellationToken);
+
+        _logger.LogInformation("Unarchived project {ProjectName} ({ProjectId})", project.Name, project.Id);
+        return ToDto(project);
     }
 
     private static ProjectDeletionImpactDto ToImpactDto(Project project, ProjectImpactCounts counts) =>
@@ -351,7 +410,10 @@ public class ProjectService
             entity.NotificationsEnabled,
             entity.CreatedAt,
             entity.UpdatedAt,
-            AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson));
+            AgentLaunchEnv.Parse(entity.DefaultLaunchEnvJson),
+            entity.ArchivedAt,
+            entity.ArchivedReason,
+            entity.ArchivedBy);
 }
 
 public record TestGitConnectivityResult(bool Success, string Message);

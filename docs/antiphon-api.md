@@ -106,9 +106,11 @@ GET    /api/boards  |  /api/boards/{id}  |  /api/boards/{id}/columns
 POST   /api/boards            DELETE /api/boards/{id}
 POST   /api/boards/{id}/cards                create a card on this board
 GET    /api/boards/{id}/workflow   PUT /api/boards/{id}/workflow    the board's workflow YAML
+POST   /api/boards/{id}/archive | /unarchive  hide/restore a board (reason body; not a delete)
 
 GET    /api/projects  |  /api/projects/{id}
 POST   /api/projects   PUT /api/projects/{id}   DELETE /api/projects/{id}
+POST   /api/projects/{id}/archive | /unarchive  hide/restore a project (reason body; not a delete)
 GET    /api/projects/{id}/deletion-impact
 POST   /api/projects/test-connectivity
 GET    /api/projects/{id}/readiness                 ProjectReadinessDto
@@ -118,6 +120,10 @@ POST   /api/projects/setup                          ProjectSetupResultDto
 
 > A move into an active column **does not start an agent** unless `spawn: true` (CARD-0051), and
 > the orchestrator tick will not pick that card up either (CARD-0087).
+>
+> `GET /api/boards` and `GET /api/projects` hide archived rows unless `?includeArchived=true`
+> (the same query name the board-detail endpoint already uses for archived cards). Archive is
+> reversible hide, not delete; `scripts/prune-test-data.ps1` is the bulk front door.
 
 ### Agents and their sessions
 

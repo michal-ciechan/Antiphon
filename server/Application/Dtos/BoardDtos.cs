@@ -13,7 +13,10 @@ public sealed record BoardSummaryDto(
     int MaxConcurrentSessions,
     int CardCount,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    DateTime? ArchivedAt = null,
+    string? ArchivedReason = null,
+    string? ArchivedBy = null);
 
 public sealed record BoardDetailDto(
     Guid Id,
@@ -25,7 +28,10 @@ public sealed record BoardDetailDto(
     int MaxConcurrentSessions,
     IReadOnlyList<BoardColumnDto> Columns,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    DateTime? ArchivedAt = null,
+    string? ArchivedReason = null,
+    string? ArchivedBy = null);
 
 public sealed record BoardColumnDto(
     Guid Id,
@@ -115,6 +121,15 @@ public sealed record CreateBoardRequest(
     string Name,
     string? Description = null,
     int MaxConcurrentSessions = 1);
+
+/// <summary>
+/// Archive is what "delete" means for a board: the row stays, so cards and agents never dangle.
+/// Boards have no concurrency token (unlike cards); the reason is the whole request.
+/// </summary>
+public sealed record ArchiveBoardRequest(string Reason, string? ArchivedBy = null);
+
+/// <summary>Undoing a board archive — same reason contract; mistakes need correcting too.</summary>
+public sealed record UnarchiveBoardRequest(string Reason, string? UnarchivedBy = null);
 
 public sealed record CreateCardRequest(
     Guid? BoardColumnId,

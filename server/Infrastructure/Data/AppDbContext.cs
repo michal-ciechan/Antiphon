@@ -321,6 +321,8 @@ public class AppDbContext : DbContext
             entity.Property(p => p.NotificationsEnabled).IsRequired();
             entity.Property(p => p.CreatedAt).IsRequired();
             entity.Property(p => p.UpdatedAt).IsRequired();
+            entity.Property(p => p.ArchivedReason).HasColumnType("text");
+            entity.Property(p => p.ArchivedBy).HasMaxLength(200);
             entity.Property(p => p.DefaultLaunchEnvJson)
                 .IsRequired()
                 .HasColumnType("jsonb")
@@ -547,6 +549,8 @@ public class AppDbContext : DbContext
             entity.Property(b => b.MaxConcurrentSessions).IsRequired();
             entity.Property(b => b.CreatedAt).IsRequired();
             entity.Property(b => b.UpdatedAt).IsRequired();
+            entity.Property(b => b.ArchivedReason).HasColumnType("text");
+            entity.Property(b => b.ArchivedBy).HasMaxLength(200);
 
             entity.HasIndex(b => b.ProjectId).HasDatabaseName("IX_Boards_ProjectId");
             entity.HasIndex(b => new { b.ProjectId, b.Name })

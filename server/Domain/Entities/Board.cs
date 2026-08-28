@@ -25,6 +25,15 @@ public class Board
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    /// <summary>
+    /// Set when the board is archived. Archive is what "delete" means here — the row stays so
+    /// agents, cards and history never dangle, and the list endpoints can hide residue without
+    /// destroying it.
+    /// </summary>
+    public DateTime? ArchivedAt { get; set; }
+    public string? ArchivedReason { get; set; }
+    public string? ArchivedBy { get; set; }
+
     public Project Project { get; set; } = null!;
     public ICollection<BoardColumn> Columns { get; set; } = new List<BoardColumn>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();

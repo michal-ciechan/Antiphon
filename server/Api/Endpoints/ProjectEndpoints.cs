@@ -12,9 +12,10 @@ public static class ProjectEndpoints
 
         projects.MapGet("/", async (
             ProjectService service,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            bool includeArchived = false) =>
         {
-            var result = await service.GetAllAsync(cancellationToken);
+            var result = await service.GetAllAsync(includeArchived, cancellationToken);
             return Results.Ok(result);
         });
 
@@ -110,6 +111,26 @@ public static class ProjectEndpoints
         {
             var result = await service.TestGitConnectivityAsync(request.GitRepositoryUrl, cancellationToken);
             return Results.Ok(result);
+        });
+
+        // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
+        // and this is not a delete — hard delete remains the existing DELETE /{id}.
+        projects.MapPost("/{id:guid}/archive", async (
+            Guid id,
+            ArchiveProjectRequest request,
+            ProjectService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ArchiveAsync(id, request, cancellationToken));
+        });
+
+        projects.MapPost("/{id:guid}/unarchive", async (
+            Guid id,
+            UnarchiveProjectRequest request,
+            ProjectService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UnarchiveAsync(id, request, cancellationToken));
         });
     }
 

@@ -12,9 +12,10 @@ public static class BoardEndpoints
 
         boards.MapGet("/", async (
             BoardService service,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            bool includeArchived = false) =>
         {
-            return Results.Ok(await service.GetAllAsync(cancellationToken));
+            return Results.Ok(await service.GetAllAsync(includeArchived, cancellationToken));
         });
 
         // Archived cards are hidden by default and shown on request — archive is not deletion, so
@@ -84,6 +85,26 @@ public static class BoardEndpoints
             CancellationToken cancellationToken) =>
         {
             return Results.Ok(await loader.UpdateAsync(id, request, cancellationToken));
+        });
+
+        // POST, not DELETE-with-a-body: a body on DELETE is hostile to proxies and some clients,
+        // and this is not a delete — hard delete remains the existing DELETE /{id}.
+        boards.MapPost("/{id:guid}/archive", async (
+            Guid id,
+            ArchiveBoardRequest request,
+            BoardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.ArchiveAsync(id, request, cancellationToken));
+        });
+
+        boards.MapPost("/{id:guid}/unarchive", async (
+            Guid id,
+            UnarchiveBoardRequest request,
+            BoardService service,
+            CancellationToken cancellationToken) =>
+        {
+            return Results.Ok(await service.UnarchiveAsync(id, request, cancellationToken));
         });
     }
 }

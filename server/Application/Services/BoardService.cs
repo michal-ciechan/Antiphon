@@ -39,12 +39,17 @@ public sealed class BoardService
         _cards = cards?.Value ?? new CardsSettings();
     }
 
-    public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(CancellationToken ct) =>
+        await GetAllAsync(includeArchived: false, ct);
+
+    public async Task<IReadOnlyList<BoardSummaryDto>> GetAllAsync(bool includeArchived, CancellationToken ct)
     {
         return await _db.Boards
             .AsNoTracking()
             .Include(b => b.Project)
             .Include(b => b.Cards)
+            .Where(b => includeArchived
+                || (b.ArchivedAt == null && b.Project.ArchivedAt == null))
             .OrderBy(b => b.Project.Name)
             .ThenBy(b => b.Name)
             .Select(b => new BoardSummaryDto(
@@ -59,7 +64,10 @@ public sealed class BoardService
                 // means to a reader of the list.
                 b.Cards.Count(c => c.ArchivedAt == null),
                 b.CreatedAt,
-                b.UpdatedAt))
+                b.UpdatedAt,
+                b.ArchivedAt,
+                b.ArchivedReason,
+                b.ArchivedBy))
             .ToListAsync(ct);
     }
 
@@ -122,6 +130,8 @@ public sealed class BoardService
         var project = await _db.Projects
             .FirstOrDefaultAsync(p => p.Id == request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
+        if (project.ArchivedAt is not null)
+            throw new ConflictException($"Project '{project.Name}' is archived; unarchive it before adding a board.");
 
         var duplicate = await _db.Boards.AnyAsync(
             b => b.ProjectId == request.ProjectId && b.Name == request.Name.Trim(),
@@ -179,6 +189,53 @@ public sealed class BoardService
         return new DeleteBoardResultDto(id, board.ProjectId, projectIsEmpty);
     }
 
+    public async Task<BoardSummaryDto> ArchiveAsync(
+        Guid id, ArchiveBoardRequest request, CancellationToken ct)
+    {
+        EntityArchive.Validate(request.Reason, request.ArchivedBy);
+
+        var board = await _db.Boards
+            .Include(b => b.Project)
+            .Include(b => b.Cards)
+            .FirstOrDefaultAsync(b => b.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Board), id);
+        if (board.ArchivedAt is not null)
+            throw new ConflictException($"Board '{board.Name}' is already archived.");
+
+        await EntityArchive.EnsureBoardArchiveableAsync(_db, board.Id, board.Name, ct);
+
+        var now = UtcNow();
+        board.ArchivedAt = now;
+        board.ArchivedReason = request.Reason.Trim();
+        board.ArchivedBy = string.IsNullOrWhiteSpace(request.ArchivedBy) ? null : request.ArchivedBy.Trim();
+        board.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id, archived = true }, ct);
+        return ToSummaryDto(board);
+    }
+
+    public async Task<BoardSummaryDto> UnarchiveAsync(
+        Guid id, UnarchiveBoardRequest request, CancellationToken ct)
+    {
+        EntityArchive.Validate(request.Reason, request.UnarchivedBy);
+
+        var board = await _db.Boards
+            .Include(b => b.Project)
+            .Include(b => b.Cards)
+            .FirstOrDefaultAsync(b => b.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Board), id);
+        if (board.ArchivedAt is null)
+            throw new ConflictException($"Board '{board.Name}' is not archived.");
+
+        board.ArchivedAt = null;
+        board.ArchivedReason = null;
+        board.ArchivedBy = null;
+        board.UpdatedAt = UtcNow();
+        await _db.SaveChangesAsync(ct);
+        await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id, archived = false }, ct);
+        return ToSummaryDto(board);
+    }
+
     internal static BoardDetailDto ToDetailDto(Board board) => ToDetailDto(board, includeArchived: false);
 
     /// <remarks>
@@ -221,8 +278,27 @@ public sealed class BoardService
             board.MaxConcurrentSessions,
             columns,
             board.CreatedAt,
-            board.UpdatedAt);
+            board.UpdatedAt,
+            board.ArchivedAt,
+            board.ArchivedReason,
+            board.ArchivedBy);
     }
+
+    internal static BoardSummaryDto ToSummaryDto(Board board) =>
+        new(
+            board.Id,
+            board.ProjectId,
+            board.Project.Name,
+            board.Name,
+            board.Description,
+            board.TrackerKind,
+            board.MaxConcurrentSessions,
+            board.Cards.Count(c => c.ArchivedAt == null),
+            board.CreatedAt,
+            board.UpdatedAt,
+            board.ArchivedAt,
+            board.ArchivedReason,
+            board.ArchivedBy);
 
     internal static CardDto ToCardDto(Card card)
     {

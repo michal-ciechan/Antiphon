@@ -18,6 +18,15 @@ public class Project
     public DateTime UpdatedAt { get; set; }
 
     /// <summary>
+    /// Set when the project is archived. Archive is what "delete" means here — the row stays so
+    /// boards, agents and history never dangle, and the list endpoints can hide residue without
+    /// destroying it.
+    /// </summary>
+    public DateTime? ArchivedAt { get; set; }
+    public string? ArchivedReason { get; set; }
+    public string? ArchivedBy { get; set; }
+
+    /// <summary>
     /// Default launch environment inherited by every agent and pool delegate under this
     /// project unless the agent's own <c>LaunchEnvJson</c> (or a launch-time override) sets
     /// the same variable (CARD-0106 gap 2). JSON object, default <c>{}</c>. Values may
